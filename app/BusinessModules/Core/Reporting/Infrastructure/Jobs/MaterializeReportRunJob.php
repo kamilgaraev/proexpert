@@ -25,6 +25,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -72,6 +73,7 @@ final class MaterializeReportRunJob implements ShouldQueue
         if (! $attempts->claimOrRenew($this->runId, $leaseToken, $leaseExpiresAt, $claimedAt)) {
             return;
         }
+        $startedAt = hrtime(true);
 
         $run = null;
         try {
@@ -95,6 +97,12 @@ final class MaterializeReportRunJob implements ShouldQueue
             ) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
             }
+            Log::info('report_run_execution_started', [
+                'run_id' => $this->runId,
+                'report_code' => $run->reportCode,
+                'definition_hash' => $run->definitionHash->value,
+                'query_hash' => $run->queryHash->value,
+            ]);
 
             $persistedProgress = new ReportProgress($run->progress);
             $progress = new ReportProgress($run->progress);
@@ -122,6 +130,20 @@ final class MaterializeReportRunJob implements ShouldQueue
             $progress->advance(100);
             $runs->sealReady($context, $this->runId, $leaseToken, $snapshot, $result, $sourceHash, $clock->now());
             $telemetry->runTransition($run->reportCode, ReportRunStatus::READY->value);
+            $telemetry->runDuration(
+                $run->reportCode,
+                ReportRunStatus::READY->value,
+                $this->elapsedSeconds($startedAt),
+            );
+            Log::info('report_run_execution_ready', [
+                'run_id' => $this->runId,
+                'report_code' => $run->reportCode,
+                'definition_hash' => $run->definitionHash->value,
+                'query_hash' => $run->queryHash->value,
+                'source_hash' => $sourceHash->value,
+                'snapshot_id' => $snapshot->id,
+                'row_count' => $result->metadata->rowCount,
+            ]);
         } catch (ReportContractException $exception) {
             $descriptor = ReportErrorCatalog::descriptor($exception->errorCode);
             if (! $descriptor->retryable) {
@@ -133,14 +155,57 @@ final class MaterializeReportRunJob implements ShouldQueue
                 );
                 if ($failed && $run !== null) {
                     $telemetry->runTransition($run->reportCode, ReportRunStatus::FAILED->value);
+                    $telemetry->runDuration(
+                        $run->reportCode,
+                        ReportRunStatus::FAILED->value,
+                        $this->elapsedSeconds($startedAt),
+                    );
                 }
+                Log::warning('report_run_execution_failed', [
+                    'run_id' => $this->runId,
+                    'report_code' => $run?->reportCode,
+                    'definition_hash' => $run?->definitionHash->value,
+                    'query_hash' => $run?->queryHash->value,
+                    'error_code' => $exception->errorCode->value,
+                    'retryable' => false,
+                ]);
 
                 return;
             }
             $telemetry->executionAttempt('run', $exception->errorCode->value);
+            if ($run !== null) {
+                $telemetry->runDuration(
+                    $run->reportCode,
+                    ReportRunStatus::MATERIALIZING->value,
+                    $this->elapsedSeconds($startedAt),
+                );
+            }
+            Log::warning('report_run_execution_failed', [
+                'run_id' => $this->runId,
+                'report_code' => $run?->reportCode,
+                'definition_hash' => $run?->definitionHash->value,
+                'query_hash' => $run?->queryHash->value,
+                'error_code' => $exception->errorCode->value,
+                'retryable' => true,
+            ]);
             throw $exception;
         } catch (Throwable $exception) {
             $telemetry->executionAttempt('run', ReportErrorCode::REPORT_INTERNAL_ERROR->value);
+            if ($run !== null) {
+                $telemetry->runDuration(
+                    $run->reportCode,
+                    ReportRunStatus::MATERIALIZING->value,
+                    $this->elapsedSeconds($startedAt),
+                );
+            }
+            Log::warning('report_run_execution_failed', [
+                'run_id' => $this->runId,
+                'report_code' => $run?->reportCode,
+                'definition_hash' => $run?->definitionHash->value,
+                'query_hash' => $run?->queryHash->value,
+                'error_code' => ReportErrorCode::REPORT_INTERNAL_ERROR->value,
+                'retryable' => true,
+            ]);
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, previous: $exception);
         }
     }
@@ -162,5 +227,10 @@ final class MaterializeReportRunJob implements ShouldQueue
             : ReportErrorCode::REPORT_INTERNAL_ERROR;
 
         return ReportContractException::fromCode($code, previous: $exception);
+    }
+
+    private function elapsedSeconds(int $startedAt): float
+    {
+        return max(0.0, (hrtime(true) - $startedAt) / 1_000_000_000);
     }
 }

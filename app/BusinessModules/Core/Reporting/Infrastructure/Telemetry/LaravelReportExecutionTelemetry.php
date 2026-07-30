@@ -48,6 +48,12 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             $this->nonNegative($seconds),
             ['report_code' => $reportCode, 'status' => $status, 'duration_bucket' => $this->durationBucket($seconds)],
         );
+        $this->alertSignal('duration_observation', [
+            'report_code' => $reportCode,
+            'status' => $status,
+            'duration_seconds' => $seconds,
+            'regression_ratio_threshold' => $this->alertThresholds['duration_regression_ratio'] ?? null,
+        ]);
     }
 
     public function exportTransition(string $reportCode, string $format, string $status): void
@@ -73,6 +79,13 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
                 'duration_bucket' => $this->durationBucket($seconds),
             ],
         );
+        $this->alertSignal('duration_observation', [
+            'report_code' => $reportCode,
+            'format' => $format,
+            'status' => $status,
+            'duration_seconds' => $seconds,
+            'regression_ratio_threshold' => $this->alertThresholds['duration_regression_ratio'] ?? null,
+        ]);
     }
 
     public function exportArtifact(string $reportCode, string $format, int $rows, int $bytes): void
@@ -96,6 +109,11 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             1,
             ['report_code' => $reportCode, 'format' => $format],
         );
+        $this->alertSignal('storage_abort', [
+            'report_code' => $reportCode,
+            'format' => $format,
+            'ratio_threshold' => $this->alertThresholds['storage_abort_ratio'] ?? null,
+        ]);
     }
 
     public function dispatchIntent(string $intentType, string $topic, string $outcome, float $ageSeconds): void
@@ -118,12 +136,26 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
         );
         if (in_array($outcome, ['retry', 'failed'], true)) {
             $this->metric('reports_dispatch_publish_failed_total', 1, $labels);
+            $this->alertSignal('dispatch_failure', $labels + [
+                'ratio_threshold' => $this->alertThresholds['dispatch_failure_ratio'] ?? null,
+            ]);
         }
         if ($outcome === 'reclaimed') {
             $this->metric('reports_dispatch_lease_reclaimed_total', 1, $labels);
+            $this->alertSignal('dispatch_lease_reclaimed', $labels + [
+                'count_threshold' => $this->alertThresholds['lease_reclaims'] ?? null,
+            ]);
         }
         if ($outcome === 'dead_letter') {
             $this->metric('reports_dispatch_dead_letter_total', 1, $labels);
+            $this->alertSignal('dispatch_dead_letter', $labels, true);
+        }
+        $oldestPendingThreshold = $this->alertThresholds['oldest_pending_seconds'] ?? null;
+        if (is_int($oldestPendingThreshold) && $age >= $oldestPendingThreshold) {
+            $this->alertSignal('oldest_pending', $labels + [
+                'age_seconds' => $age,
+                'age_threshold_seconds' => $oldestPendingThreshold,
+            ], true);
         }
     }
 
@@ -138,6 +170,12 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             1,
             ['intent_type' => $intentType, 'error_code' => $errorCode, 'queue_class' => 'reports'],
         );
+        $this->alertSignal('execution_error', [
+            'intent_type' => $intentType,
+            'error_code' => $errorCode,
+            'queue_class' => 'reports',
+            'ratio_threshold' => $this->alertThresholds['execution_error_ratio'] ?? null,
+        ]);
     }
 
     public function executionLeaseReclaimed(string $intentType): void
@@ -148,6 +186,11 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             1,
             ['intent_type' => $intentType, 'queue_class' => 'reports'],
         );
+        $this->alertSignal('execution_lease_reclaimed', [
+            'intent_type' => $intentType,
+            'queue_class' => 'reports',
+            'count_threshold' => $this->alertThresholds['lease_reclaims'] ?? null,
+        ]);
     }
 
     public function auditDeliveryFailure(string $errorCode, string $outcome): void
@@ -161,6 +204,14 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             1,
             ['error_code' => $errorCode, 'outcome' => $outcome, 'queue_class' => 'reports'],
         );
+        if ($outcome === 'dead_letter') {
+            $this->alertSignal('audit_dead_letter', [
+                'error_code' => $errorCode,
+                'outcome' => $outcome,
+                'queue_class' => 'reports',
+                'count_threshold' => $this->alertThresholds['audit_dead_letters'] ?? null,
+            ], true);
+        }
     }
 
     private function metric(string $family, int|float $value, array $labels): void
@@ -170,6 +221,22 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             'value' => $value,
             'labels' => $labels,
         ]);
+    }
+
+    private function alertSignal(string $signal, array $context, bool $critical = false): void
+    {
+        if ($this->alertThresholds === []) {
+            return;
+        }
+
+        $context = ['signal' => $signal] + $context;
+        if ($critical) {
+            $this->logger->critical('reports.alert', $context);
+
+            return;
+        }
+
+        $this->logger->info('reports.alert_input', $context);
     }
 
     private function assertExportDimensions(string $reportCode, string $format, string $status): void

@@ -308,6 +308,8 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
             $authorizer,
             new ReportExecutionContextFactory,
             $files,
+            960,
+            3600,
         );
     }
 

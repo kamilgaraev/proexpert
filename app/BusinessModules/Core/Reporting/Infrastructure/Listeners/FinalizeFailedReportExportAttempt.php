@@ -23,14 +23,19 @@ final readonly class FinalizeFailedReportExportAttempt
 
     public function __invoke(JobFailed $event): void
     {
-        $uuid = $event->job->uuid();
-        $failure = $event->exception;
-        $exportId = $this->exportId($event);
         if (
             $event->connectionName !== 'redis_reports'
             || $event->job->getQueue() !== 'reports'
             || $event->job->resolveName() !== GenerateReportExportJob::class
-            || ! is_string($uuid)
+        ) {
+            return;
+        }
+
+        $uuid = $event->job->uuid();
+        $failure = $event->exception;
+        $exportId = $this->exportId($event);
+        if (
+            ! is_string($uuid)
             || ! Str::isUuid($uuid)
             || $exportId === null
             || ! $failure instanceof Throwable

@@ -51,10 +51,6 @@ final readonly class ReportCompletedArtifactReconciliationResult
 
 final readonly class ReconcileCompletedReportArtifacts
 {
-    private const LEASE_SECONDS = 960;
-
-    private const DELETE_GRACE_SECONDS = 3600;
-
     public function __construct(
         private ReportArtifactVersionInventory $inventory,
         private ReportCompletedArtifactRecoveryStore $recovery,
@@ -65,7 +61,15 @@ final readonly class ReconcileCompletedReportArtifacts
         private CurrentReportExactManyAuthorizer $authorizer,
         private ReportExecutionContextFactory $contextFactory,
         private FileService $files,
-    ) {}
+        private int $leaseSeconds,
+        private int $deleteGraceSeconds,
+    ) {
+        if ($leaseSeconds !== 960 || $deleteGraceSeconds !== 3600) {
+            throw new InvalidArgumentException(
+                'report_completed_artifact_reconciliation_configuration_invalid',
+            );
+        }
+    }
 
     public function reconcile(
         ReportExecutionContext $context,
@@ -127,7 +131,7 @@ final readonly class ReconcileCompletedReportArtifacts
             $current,
             $exportId,
             $leaseToken,
-            $occurredAt->modify('+'.self::LEASE_SECONDS.' seconds'),
+            $occurredAt->modify("+{$this->leaseSeconds} seconds"),
             $occurredAt,
         );
         if (! hash_equals($claimed->id, $exportId)) {
@@ -372,7 +376,7 @@ final readonly class ReconcileCompletedReportArtifacts
         foreach ($versions as $version) {
             if (
                 $version['created_at']
-                <= $occurredAt->modify('-'.self::DELETE_GRACE_SECONDS.' seconds')
+                <= $occurredAt->modify("-{$this->deleteGraceSeconds} seconds")
             ) {
                 $this->files->deleteVersion(
                     $version['path'],

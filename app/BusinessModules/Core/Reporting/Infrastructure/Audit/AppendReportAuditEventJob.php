@@ -39,7 +39,7 @@ final class AppendReportAuditEventJob implements ShouldQueue
         }
 
         $this->onConnection('redis_reports');
-        $this->onQueue('reports-audit');
+        $this->onQueue('reports');
     }
 
     public function handle(

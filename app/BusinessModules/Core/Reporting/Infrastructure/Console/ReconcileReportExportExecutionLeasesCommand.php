@@ -8,17 +8,20 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExe
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportExecutionWatchdog;
 use Illuminate\Console\Command;
 
+use function trans_message;
+
 final class ReconcileReportExportExecutionLeasesCommand extends Command
 {
     protected $signature = 'reports:exports:reconcile-execution-leases {--limit=100}';
 
-    protected $description = 'Возвращает в очередь экспорты отчётов с истёкшей арендой выполнения';
+    protected $description;
 
     public function __construct(
         private readonly ReportExportExecutionWatchdog $watchdog,
         private readonly ReportExecutionClock $clock,
     ) {
         parent::__construct();
+        $this->description = trans_message('reports.commands.reconcile_export_execution_leases');
     }
 
     public function handle(): int

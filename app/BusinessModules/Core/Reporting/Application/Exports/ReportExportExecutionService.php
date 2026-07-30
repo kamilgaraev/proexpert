@@ -23,8 +23,8 @@ use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
@@ -36,9 +36,10 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRen
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\ReportExportRendererRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactStream;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
-use App\Services\Storage\FileService;
 use App\Services\Storage\DTO\StoredFile;
+use App\Services\Storage\FileService;
 use DateTimeImmutable;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -83,11 +84,14 @@ final readonly class ReportExportExecutionService
         )) {
             return;
         }
+        $startedAt = hrtime(true);
 
         $stream = null;
         $completed = false;
         $reportCode = null;
         $format = null;
+        $export = null;
+        $source = null;
 
         try {
             $context = $this->contexts->forExport($exportId);
@@ -104,6 +108,15 @@ final readonly class ReportExportExecutionService
                 ->assemble($this->definitions)
                 ->get($reportCode);
             $this->assertBindingIdentity($published, $source, $binding);
+            Log::info('report_export_execution_started', [
+                'export_id' => $exportId,
+                'run_id' => $source->run->id,
+                'report_code' => $reportCode,
+                'format' => $format,
+                'export_hash' => $export->exportHash->value,
+                'definition_hash' => $source->run->definitionHash->value,
+                'result_hash' => $source->resultHash->value,
+            ]);
 
             $data = new CreateReportExportData(
                 $export->format,
@@ -153,6 +166,13 @@ final readonly class ReportExportExecutionService
                         $source->result->metadata->rowCount,
                         $artifact->sizeBytes,
                     );
+                    $this->telemetry->exportDuration(
+                        $reportCode,
+                        $format,
+                        ReportExportStatus::READY->value,
+                        $this->elapsedSeconds($startedAt),
+                    );
+                    $this->logReady($ready, $source);
 
                     return;
                 }
@@ -238,16 +258,39 @@ final readonly class ReportExportExecutionService
                 $rowCount,
                 $artifact->sizeBytes,
             );
+            $this->telemetry->exportDuration(
+                $reportCode,
+                $format,
+                ReportExportStatus::READY->value,
+                $this->elapsedSeconds($startedAt),
+            );
+            $this->logReady($ready, $source);
         } catch (ReportContractException $exception) {
             $this->abortIncomplete($stream, $completed, $reportCode, $format);
             $descriptor = ReportErrorCatalog::descriptor($exception->errorCode);
             if (! $descriptor->retryable) {
-                $this->attempts->failLeased(
+                $failed = $this->attempts->failLeased(
                     $exportId,
                     $leaseToken,
                     $exception->errorCode,
                     $this->clock->now(),
                 );
+                if ($failed && $reportCode !== null && $format !== null) {
+                    $this->telemetry->exportTransition(
+                        $reportCode,
+                        $format,
+                        ReportExportStatus::FAILED->value,
+                    );
+                }
+                if ($reportCode !== null && $format !== null) {
+                    $this->telemetry->exportDuration(
+                        $reportCode,
+                        $format,
+                        ReportExportStatus::FAILED->value,
+                        $this->elapsedSeconds($startedAt),
+                    );
+                }
+                $this->logFailure($exportId, $export, $source, $exception->errorCode, false);
 
                 return;
             }
@@ -256,6 +299,15 @@ final readonly class ReportExportExecutionService
                 'export',
                 $exception->errorCode->value,
             );
+            if ($reportCode !== null && $format !== null) {
+                $this->telemetry->exportDuration(
+                    $reportCode,
+                    $format,
+                    ReportExportStatus::RUNNING->value,
+                    $this->elapsedSeconds($startedAt),
+                );
+            }
+            $this->logFailure($exportId, $export, $source, $exception->errorCode, true);
 
             throw $exception;
         } catch (Throwable $exception) {
@@ -263,6 +315,21 @@ final readonly class ReportExportExecutionService
             $this->telemetry->executionAttempt(
                 'export',
                 ReportErrorCode::REPORT_INTERNAL_ERROR->value,
+            );
+            if ($reportCode !== null && $format !== null) {
+                $this->telemetry->exportDuration(
+                    $reportCode,
+                    $format,
+                    ReportExportStatus::RUNNING->value,
+                    $this->elapsedSeconds($startedAt),
+                );
+            }
+            $this->logFailure(
+                $exportId,
+                $export,
+                $source,
+                ReportErrorCode::REPORT_INTERNAL_ERROR,
+                true,
             );
 
             throw ReportContractException::fromCode(
@@ -376,7 +443,7 @@ final readonly class ReportExportExecutionService
     }
 
     /**
-     * @param list<string> $columns
+     * @param  list<string>  $columns
      */
     private function authorizationFence(
         ReportExecutionContext $context,
@@ -504,7 +571,7 @@ final readonly class ReportExportExecutionService
     }
 
     /**
-     * @param array<string, mixed> $version
+     * @param  array<string, mixed>  $version
      */
     private function assertCompletedVersion(
         ReportExecutionContext $context,
@@ -572,6 +639,41 @@ final readonly class ReportExportExecutionService
         );
     }
 
+    private function logReady(ReportExport $ready, ReportRunExportSource $source): void
+    {
+        Log::info('report_export_execution_ready', [
+            'export_id' => $ready->id,
+            'run_id' => $source->run->id,
+            'report_code' => $source->run->reportCode,
+            'format' => $ready->format,
+            'export_hash' => $ready->exportHash->value,
+            'definition_hash' => $source->run->definitionHash->value,
+            'result_hash' => $source->resultHash->value,
+            'row_count' => $ready->rowCount,
+            'size_bytes' => $ready->sizeBytes,
+        ]);
+    }
+
+    private function logFailure(
+        string $exportId,
+        ?ReportExport $export,
+        ?ReportRunExportSource $source,
+        ReportErrorCode $errorCode,
+        bool $retryable,
+    ): void {
+        Log::warning('report_export_execution_failed', [
+            'export_id' => $exportId,
+            'run_id' => $source?->run->id ?? $export?->runId,
+            'report_code' => $source?->run->reportCode,
+            'format' => $export?->format,
+            'export_hash' => $export?->exportHash->value,
+            'definition_hash' => $source?->run->definitionHash->value,
+            'result_hash' => $source?->resultHash->value,
+            'error_code' => $errorCode->value,
+            'retryable' => $retryable,
+        ]);
+    }
+
     private function cancelled(
         ReportExecutionContext $context,
         string $exportId,
@@ -597,5 +699,10 @@ final readonly class ReportExportExecutionService
         if ($reportCode !== null && $format !== null) {
             $this->telemetry->multipartAbort($reportCode, $format);
         }
+    }
+
+    private function elapsedSeconds(int $startedAt): float
+    {
+        return max(0.0, (hrtime(true) - $startedAt) / 1_000_000_000);
     }
 }

@@ -12,6 +12,6 @@ final class LaravelReportAuditDispatcher implements ReportAuditDispatcher
     {
         AppendReportAuditEventJob::dispatch($intentId)
             ->onConnection('redis_reports')
-            ->onQueue('reports-audit');
+            ->onQueue('reports');
     }
 }

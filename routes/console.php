@@ -12,6 +12,21 @@ Schedule::command('reports:audit-intents:deliver')
     ->withoutOverlapping(5)
     ->onOneServer();
 
+Schedule::command('reports:dispatch-intents:reconcile')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::command('reports:runs:reconcile-execution-leases --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::command('reports:exports:reconcile-execution-leases --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
 Schedule::command('reports:retention:expire')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)

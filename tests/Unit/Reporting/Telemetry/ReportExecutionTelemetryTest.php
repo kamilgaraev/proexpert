@@ -73,4 +73,57 @@ final class ReportExecutionTelemetryTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $telemetry->runTransition('cash_flow', 'ready:01J123456789012345678901234');
     }
+
+    public function test_failure_reclaim_and_dead_letter_families_are_emitted(): void
+    {
+        $logger = new class extends AbstractLogger
+        {
+            public array $records = [];
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                $this->records[] = [$level, $message, $context];
+            }
+        };
+        $telemetry = new LaravelReportExecutionTelemetry($logger, [
+            'oldest_pending_seconds' => 300,
+            'audit_dead_letters' => 0,
+            'dispatch_failure_ratio' => 0.05,
+            'lease_reclaims' => 3,
+            'execution_error_ratio' => 0.05,
+            'duration_regression_ratio' => 1.25,
+            'storage_abort_ratio' => 0.01,
+        ]);
+
+        $telemetry->runTransition('cash_flow', 'failed');
+        $telemetry->exportTransition('cash_flow', 'pdf', 'failed');
+        $telemetry->dispatchIntent('run', 'materialize_run', 'failed', 301.0);
+        $telemetry->dispatchIntent('export', 'generate_export', 'reclaimed', 10.0);
+        $telemetry->dispatchIntent('run', 'materialize_run', 'dead_letter', 20.0);
+        $telemetry->auditDeliveryFailure('REPORT_DEPENDENCY_FAILED', 'dead_letter');
+
+        $metrics = array_values(array_filter(
+            $logger->records,
+            static fn (array $record): bool => $record[1] === 'reports.metric',
+        ));
+        $families = array_column(array_column($metrics, 2), 'family');
+        foreach ([
+            'reports_run_failed_total',
+            'reports_export_failed_total',
+            'reports_dispatch_publish_failed_total',
+            'reports_dispatch_lease_reclaimed_total',
+            'reports_dispatch_dead_letter_total',
+            'reports_audit_transition_failed_total',
+        ] as $family) {
+            self::assertContains($family, $families);
+        }
+
+        $alerts = array_values(array_filter(
+            $logger->records,
+            static fn (array $record): bool => $record[1] === 'reports.alert',
+        ));
+        self::assertNotEmpty($alerts);
+        self::assertContains('oldest_pending', array_column(array_column($alerts, 2), 'signal'));
+        self::assertContains('audit_dead_letter', array_column(array_column($alerts, 2), 'signal'));
+    }
 }

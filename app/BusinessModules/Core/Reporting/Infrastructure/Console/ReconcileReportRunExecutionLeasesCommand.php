@@ -8,11 +8,19 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExe
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExecutionWatchdog;
 use Illuminate\Console\Command;
 
+use function trans_message;
+
 final class ReconcileReportRunExecutionLeasesCommand extends Command
 {
     protected $signature = 'reports:runs:reconcile-execution-leases {--limit=100}';
 
-    protected $description = 'Возвращает в очередь запуски отчётов с истёкшей арендой выполнения';
+    protected $description;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->description = trans_message('reports.commands.reconcile_run_execution_leases');
+    }
 
     public function handle(ReportRunExecutionWatchdog $watchdog, ReportExecutionClock $clock): int
     {

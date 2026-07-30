@@ -36,7 +36,7 @@ final class AppendReportAuditEventJobTest extends TestCase
 
         self::assertSame(self::INTENT_ID, $job->intentId);
         self::assertSame('redis_reports', $job->connection);
-        self::assertSame('reports-audit', $job->queue);
+        self::assertSame('reports', $job->queue);
         $serializedPayload = get_object_vars($job);
 
         self::assertArrayHasKey('intentId', $serializedPayload);

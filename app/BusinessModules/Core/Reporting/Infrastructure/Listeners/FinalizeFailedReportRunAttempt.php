@@ -23,14 +23,19 @@ final readonly class FinalizeFailedReportRunAttempt
 
     public function __invoke(JobFailed $event): void
     {
-        $uuid = $event->job->uuid();
-        $failure = $event->exception;
-        $runId = $this->runId($event);
         if (
             $event->connectionName !== 'redis_reports'
             || $event->job->getQueue() !== 'reports'
             || $event->job->resolveName() !== MaterializeReportRunJob::class
-            || ! is_string($uuid)
+        ) {
+            return;
+        }
+
+        $uuid = $event->job->uuid();
+        $failure = $event->exception;
+        $runId = $this->runId($event);
+        if (
+            ! is_string($uuid)
             || ! Str::isUuid($uuid)
             || $runId === null
             || ! $failure instanceof Throwable

@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportRow
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportRunHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\RetryReportExportHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\RetryReportRunHandler;
+use App\BusinessModules\Core\Reporting\Application\Audit\ReportAuditOutboxScheduler;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
@@ -56,10 +57,27 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentPublisher;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentReconciler;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunAttemptFinalizer;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExecutionWatchdog;
+use App\BusinessModules\Core\Reporting\Application\Exports\ReconcileCompletedReportArtifacts;
+use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportAttemptFinalizer;
+use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportExecutionWatchdog;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelCurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportHttpAuthorizationTargetResolver;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Audit\CoreReportAuditIntentConsumer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeleteExpiredReportArtifactsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeliverReportAuditIntentsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ExpireReportsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\PublishReportDispatchIntentsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportDispatchIntentsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportExportExecutionLeasesCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportRunExecutionLeasesCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelCurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelReportExportExecutionContextRehydrator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelReportRunExecutionContextRehydrator;
@@ -81,10 +99,12 @@ use App\BusinessModules\Core\Reporting\ReportingExecutionServiceProvider;
 use Illuminate\Config\Repository;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Foundation\Application;
+use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
+use ReflectionClass;
 
 final class ReportingExecutionBindingsTest extends TestCase
 {
@@ -138,6 +158,8 @@ final class ReportingExecutionBindingsTest extends TestCase
     public function test_catalog_remains_owned_by_plan_one_c(): void
     {
         self::assertFalse($this->app->bound(GetReportCatalogAction::class));
+        self::assertFalse($this->app->bound(ReportDefinitionRegistry::class));
+        self::assertFalse($this->app->bound(ReportDefinitionBindingAssembler::class));
     }
 
     #[DataProvider('executionBindings')]
@@ -181,6 +203,204 @@ final class ReportingExecutionBindingsTest extends TestCase
             $this->app->make(LaravelReportScopedResourceAuthorizerRegistry::class),
         );
         self::assertInstanceOf(ReportExportRendererRegistry::class, $this->app->make(ReportExportRendererRegistry::class));
+    }
+
+    public function test_runtime_drivers_are_registered_and_closed_schedules_are_present(): void
+    {
+        $providerSource = file_get_contents((new ReflectionClass(ReportingExecutionServiceProvider::class))->getFileName());
+        $consoleRoutes = file_get_contents(base_path('routes/console.php'));
+
+        self::assertIsString($providerSource);
+        self::assertIsString($consoleRoutes);
+        self::assertStringContainsString('$this->commands([', $providerSource);
+
+        foreach ([
+            PublishReportDispatchIntentsCommand::class,
+            ReconcileReportDispatchIntentsCommand::class,
+            DeliverReportAuditIntentsCommand::class,
+            ReconcileReportRunExecutionLeasesCommand::class,
+            ReconcileReportExportExecutionLeasesCommand::class,
+            ExpireReportsCommand::class,
+            DeleteExpiredReportArtifactsCommand::class,
+        ] as $command) {
+            self::assertStringContainsString(class_basename($command).'::class', $providerSource);
+        }
+
+        foreach ([
+            "Schedule::command('reports:dispatch-intents:reconcile')",
+            "Schedule::command('reports:audit-intents:deliver')",
+            "Schedule::command('reports:runs:reconcile-execution-leases --limit=100')",
+            "Schedule::command('reports:exports:reconcile-execution-leases --limit=100')",
+        ] as $schedule) {
+            self::assertStringContainsString($schedule, $consoleRoutes);
+        }
+    }
+
+    public function test_execution_coordinators_and_listeners_are_registered_once(): void
+    {
+        foreach ([
+            ReportDispatchIntentPublisher::class,
+            ReportDispatchIntentReconciler::class,
+            ReportAuditOutboxScheduler::class,
+            CoreReportAuditIntentConsumer::class,
+            ReportRunExecutionWatchdog::class,
+            ReportExportExecutionWatchdog::class,
+            ReportRunAttemptFinalizer::class,
+            ReportExportAttemptFinalizer::class,
+            ReconcileCompletedReportArtifacts::class,
+            ReportExportRendererRegistry::class,
+        ] as $service) {
+            self::assertTrue($this->app->bound($service), "Missing singleton {$service}");
+        }
+
+        self::assertCount(
+            2,
+            $this->app->make('events')->getListeners(JobFailed::class),
+        );
+
+        foreach ([
+            'FinalizeFailedReportRunAttempt.php' => 'MaterializeReportRunJob::class',
+            'FinalizeFailedReportExportAttempt.php' => 'GenerateReportExportJob::class',
+        ] as $file => $jobClass) {
+            $source = file_get_contents(base_path(
+                "app/BusinessModules/Core/Reporting/Infrastructure/Listeners/{$file}",
+            ));
+            self::assertIsString($source);
+            self::assertStringContainsString(
+                "if (\n"
+                ."            \$event->connectionName !== 'redis_reports'\n"
+                ."            || \$event->job->getQueue() !== 'reports'\n"
+                ."            || \$event->job->resolveName() !== {$jobClass}\n"
+                ."        ) {\n"
+                ."            return;\n"
+                .'        }',
+                str_replace("\r\n", "\n", $source),
+            );
+        }
+    }
+
+    public function test_completed_artifact_recovery_uses_the_closed_runtime_configuration(): void
+    {
+        $provider = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/ReportingExecutionServiceProvider.php',
+        ));
+        $service = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Application/Exports/ReconcileCompletedReportArtifacts.php',
+        ));
+
+        self::assertIsString($provider);
+        self::assertIsString($service);
+        self::assertStringContainsString(
+            "\$this->configArray('execution')['lease_seconds']",
+            $provider,
+        );
+        self::assertStringContainsString(
+            "\$this->configArray('artifacts')['reconciliation_grace_seconds']",
+            $provider,
+        );
+        self::assertStringContainsString('private int $leaseSeconds', $service);
+        self::assertStringContainsString('private int $deleteGraceSeconds', $service);
+        self::assertStringNotContainsString('private const LEASE_SECONDS', $service);
+        self::assertStringNotContainsString('private const DELETE_GRACE_SECONDS', $service);
+    }
+
+    public function test_audit_dispatch_uses_the_serviced_reports_queue(): void
+    {
+        $source = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Audit/LaravelReportAuditDispatcher.php',
+        ));
+
+        self::assertIsString($source);
+        self::assertStringContainsString("->onConnection('redis_reports')", $source);
+        self::assertStringContainsString("->onQueue('reports')", $source);
+        self::assertStringNotContainsString("->onQueue('reports-audit')", $source);
+
+        $job = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Audit/AppendReportAuditEventJob.php',
+        ));
+        self::assertIsString($job);
+        self::assertStringContainsString("\$this->onQueue('reports')", $job);
+        self::assertStringNotContainsString('reports-audit', $job);
+    }
+
+    public function test_run_and_export_lifecycle_logs_use_closed_structured_identity(): void
+    {
+        $runJob = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Jobs/MaterializeReportRunJob.php',
+        ));
+        $exportService = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Application/Exports/ReportExportExecutionService.php',
+        ));
+
+        self::assertIsString($runJob);
+        self::assertIsString($exportService);
+        foreach ([
+            'report_run_execution_started',
+            'report_run_execution_ready',
+            "'run_id'",
+            "'definition_hash'",
+            "'query_hash'",
+            "'source_hash'",
+            '->runDuration(',
+        ] as $token) {
+            self::assertStringContainsString($token, $runJob);
+        }
+        foreach ([
+            'report_export_execution_started',
+            'report_export_execution_ready',
+            "'export_id'",
+            "'run_id'",
+            "'export_hash'",
+            "'definition_hash'",
+            "'result_hash'",
+            '->exportDuration(',
+        ] as $token) {
+            self::assertStringContainsString($token, $exportService);
+        }
+        self::assertStringNotContainsString('->getMessage()', $runJob);
+        self::assertStringNotContainsString('->getMessage()', $exportService);
+    }
+
+    public function test_registered_console_drivers_use_safe_translations(): void
+    {
+        $commands = [
+            'PublishReportDispatchIntentsCommand.php' => 'publish_dispatch_intents',
+            'ReconcileReportDispatchIntentsCommand.php' => 'reconcile_dispatch_intents',
+            'ReconcileReportRunExecutionLeasesCommand.php' => 'reconcile_run_execution_leases',
+            'ReconcileReportExportExecutionLeasesCommand.php' => 'reconcile_export_execution_leases',
+        ];
+        $translations = require base_path('lang/ru/reports.php');
+
+        foreach ($commands as $file => $translationKey) {
+            $source = file_get_contents(base_path(
+                "app/BusinessModules/Core/Reporting/Infrastructure/Console/{$file}",
+            ));
+            self::assertIsString($source);
+            self::assertStringContainsString(
+                "trans_message('reports.commands.{$translationKey}')",
+                $source,
+            );
+            self::assertIsString($translations['commands'][$translationKey] ?? null);
+            self::assertNotSame('', trim($translations['commands'][$translationKey]));
+        }
+    }
+
+    #[DataProvider('invalidStoreConfiguration')]
+    public function test_boot_rejects_values_outside_the_store_contract(string $key, int $value): void
+    {
+        config()->set($key, $value);
+
+        $this->expectException(\InvalidArgumentException::class);
+        (new ReportingExecutionServiceProvider($this->app))->boot();
+    }
+
+    #[DataProvider('invalidClosedConfiguration')]
+    public function test_boot_rejects_open_or_malformed_configuration(string $key, mixed $value): void
+    {
+        config()->set($key, $value);
+
+        $this->expectException(\InvalidArgumentException::class);
+        (new ReportingExecutionServiceProvider($this->app))->boot();
     }
 
     private function concrete(string $contract): string
@@ -243,6 +463,87 @@ final class ReportingExecutionBindingsTest extends TestCase
             [ReportExportDispatcher::class, \App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportExportDispatcher::class],
             [ReportAuditDispatcher::class, \App\BusinessModules\Core\Reporting\Infrastructure\Audit\LaravelReportAuditDispatcher::class],
             [ReportSnapshotSealVerifier::class, \App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier::class],
+        ];
+    }
+
+    public static function invalidStoreConfiguration(): array
+    {
+        return [
+            'run ttl above maximum' => ['reporting_execution.runs.ttl_seconds', 2_592_001],
+            'run poll below minimum' => ['reporting_execution.runs.poll_after_ms', 249],
+            'run poll above maximum' => ['reporting_execution.runs.poll_after_ms', 30_001],
+            'export ttl above maximum' => ['reporting_execution.exports.ttl_seconds', 2_592_001],
+            'export poll below minimum' => ['reporting_execution.exports.poll_after_ms', 249],
+            'export poll above maximum' => ['reporting_execution.exports.poll_after_ms', 30_001],
+        ];
+    }
+
+    public static function invalidClosedConfiguration(): array
+    {
+        $publicKey = str_repeat('A', 43);
+
+        return [
+            'run settings missing member' => [
+                'reporting_execution.runs',
+                ['ttl_seconds' => 86400],
+            ],
+            'dispatch settings contain extra member' => [
+                'reporting_execution.dispatch',
+                [
+                    'batch_size' => 100,
+                    'lease_seconds' => 60,
+                    'max_attempts' => 12,
+                    'fallback' => 1,
+                ],
+            ],
+            'execution setting is not integer' => [
+                'reporting_execution.execution.lease_seconds',
+                '960',
+            ],
+            'trusted keys are a list' => [
+                'reporting_execution.trusted_seal_keys',
+                [['public_key' => $publicKey, 'revoked' => false]],
+            ],
+            'trusted key has private material' => [
+                'reporting_execution.trusted_seal_keys',
+                [
+                    'primary' => [
+                        'public_key' => $publicKey,
+                        'revoked' => false,
+                        'private_key' => str_repeat('x', 32),
+                    ],
+                ],
+            ],
+            'trusted key is padded' => [
+                'reporting_execution.trusted_seal_keys',
+                [
+                    'primary' => [
+                        'public_key' => str_repeat('A', 42).'=',
+                        'revoked' => false,
+                    ],
+                ],
+            ],
+            'reports queue is changed' => [
+                'queue.connections.redis_reports.queue',
+                'default',
+            ],
+            'horizon timeout is changed' => [
+                'horizon.environments.production.supervisor-reports.timeout',
+                900,
+            ],
+            'alert map contains extra member' => [
+                'reporting_execution.alerts',
+                [
+                    'oldest_pending_seconds' => 300,
+                    'audit_dead_letters' => 0,
+                    'dispatch_failure_ratio' => 0.05,
+                    'lease_reclaims' => 3,
+                    'execution_error_ratio' => 0.05,
+                    'duration_regression_ratio' => 1.25,
+                    'storage_abort_ratio' => 0.01,
+                    'fallback' => true,
+                ],
+            ],
         ];
     }
 }

@@ -76,6 +76,13 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Audit\CoreReportAuditInten
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LaravelReportAuditDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\OutboxReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeleteExpiredReportArtifactsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeliverReportAuditIntentsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ExpireReportsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\PublishReportDispatchIntentsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportDispatchIntentsCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportExportExecutionLeasesCommand;
+use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportRunExecutionLeasesCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportCursorCodec;
 use App\BusinessModules\Core\Reporting\Infrastructure\Dispatch\LaravelReportDispatchIntentPublisher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelCurrentReportScopeAuthorizer;
@@ -125,6 +132,18 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->validatedConfiguration();
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                PublishReportDispatchIntentsCommand::class,
+                ReconcileReportDispatchIntentsCommand::class,
+                DeliverReportAuditIntentsCommand::class,
+                ReconcileReportRunExecutionLeasesCommand::class,
+                ReconcileReportExportExecutionLeasesCommand::class,
+                ExpireReportsCommand::class,
+                DeleteExpiredReportArtifactsCommand::class,
+            ]);
+        }
 
         $events = $this->app->make('events');
         $events->listen(JobFailed::class, FinalizeFailedReportRunAttempt::class);
@@ -302,6 +321,15 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
 
     private function registerExecutionServices(): void
     {
+        $this->app->when(PublishReportDispatchIntentsCommand::class)
+            ->needs('$batchSize')
+            ->give(fn (): int => $this->configArray('dispatch')['batch_size']);
+        $this->app->when(ReconcileReportDispatchIntentsCommand::class)
+            ->needs('$batchSize')
+            ->give(fn (): int => $this->configArray('dispatch')['batch_size']);
+        $this->app->when(DeliverReportAuditIntentsCommand::class)
+            ->needs('$batchSize')
+            ->give(fn (): int => $this->configArray('audit')['batch_size']);
         $this->app->singleton(LaravelReportDispatchIntentPublisher::class);
         $this->app->singleton(ReportDispatchBackoffPolicy::class);
         $this->app->singleton(ReportDispatchIntentPublisher::class, function (Container $app): ReportDispatchIntentPublisher {
@@ -341,6 +369,12 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 $this->configArray('exports')['chunk_size'],
             );
         });
+        $this->app->when(ReconcileCompletedReportArtifacts::class)
+            ->needs('$leaseSeconds')
+            ->give(fn (): int => $this->configArray('execution')['lease_seconds']);
+        $this->app->when(ReconcileCompletedReportArtifacts::class)
+            ->needs('$deleteGraceSeconds')
+            ->give(fn (): int => $this->configArray('artifacts')['reconciliation_grace_seconds']);
         $this->app->singleton(ReconcileCompletedReportArtifacts::class);
     }
 
@@ -354,10 +388,10 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $artifacts = $this->closedIntegerMap('artifacts', ['reconciliation_grace_seconds']);
 
         if (
-            $runs['ttl_seconds'] < 3600 || $runs['ttl_seconds'] > 31_536_000
-            || $runs['poll_after_ms'] < 100 || $runs['poll_after_ms'] > 60_000
-            || $exports['ttl_seconds'] < 3600 || $exports['ttl_seconds'] > 31_536_000
-            || $exports['poll_after_ms'] < 100 || $exports['poll_after_ms'] > 60_000
+            $runs['ttl_seconds'] < 3600 || $runs['ttl_seconds'] > 2_592_000
+            || $runs['poll_after_ms'] < 250 || $runs['poll_after_ms'] > 30_000
+            || $exports['ttl_seconds'] < 3600 || $exports['ttl_seconds'] > 2_592_000
+            || $exports['poll_after_ms'] < 250 || $exports['poll_after_ms'] > 30_000
             || $exports['chunk_size'] < 1 || $exports['chunk_size'] > 5000
             || $dispatch !== ['batch_size' => 100, 'lease_seconds' => 60, 'max_attempts' => 12]
             || $audit !== ['batch_size' => 100, 'lease_seconds' => 300, 'max_attempts' => 12]

@@ -10,17 +10,20 @@ use DateTimeZone;
 use Illuminate\Console\Command;
 use InvalidArgumentException;
 
+use function trans_message;
+
 final class ReconcileReportDispatchIntentsCommand extends Command
 {
     protected $signature = 'reports:dispatch-intents:reconcile';
 
-    protected $description = 'Восстанавливает и публикует задания формирования отчётов';
+    protected $description;
 
     public function __construct(
         private readonly ReportDispatchIntentReconciler $reconciler,
         private readonly int $batchSize,
     ) {
         parent::__construct();
+        $this->description = trans_message('reports.commands.reconcile_dispatch_intents');
         if ($batchSize < 1 || $batchSize > 500) {
             throw new InvalidArgumentException('report_dispatch_batch_size_invalid');
         }
