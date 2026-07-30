@@ -1,1 +1,965 @@
-{"status":"passed"}
+{
+    "schema_version":  "1.0.0",
+    "plan_id":  "1b",
+    "evidence_scope":  "fixture",
+    "status":  "passed",
+    "generated_at":  "2026-07-30T12:00:00Z",
+    "plan_1a_reference":  {
+                              "lock_sha256":  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                              "evidence_sha256":  "8a8f1b26e3d209559cbc58bf73fc40d7633532011c52e38795b5bf9592633071",
+                              "generated_at":  "2026-07-28T14:00:00Z",
+                              "status":  "passed"
+                          },
+    "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1",
+    "gates":  [
+                  {
+                      "id":  "plan1a_handoff",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Evidence/PlanOneACompletionVerifierTest.php tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php --no-coverage --log-junit build/reports/gates/results/plan1a_handoff.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  6,
+                                     "required_checks":  [
+                                                             "immutable_history",
+                                                             "forward_only_lineage",
+                                                             "exact_ownership_manifest",
+                                                             "strict_clean_preflight",
+                                                             "fresh_runner_counts",
+                                                             "verify_existing_no_write"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.plan1a_handoff",
+                                            "type":  "contract_json",
+                                            "sha256":  "621daaa0dc056e7f4fa4b7853c6b21b5674c554af330f4bc611707f502e6bf9c",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "ownership_boundary",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Architecture/Reporting/PlanOneBOwnershipBoundaryTest.php tests/Architecture/Reporting/PlanOneBCrossFileSymbolTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php tests/Architecture/Reporting/ReportingExecutionBindingsTest.php --no-coverage --log-junit build/reports/gates/results/ownership_boundary.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  4,
+                                     "required_checks":  [
+                                                             "plan1a_symbol_intersection_empty",
+                                                             "plans_2_3_candidate_only",
+                                                             "plan1c_publication_owner",
+                                                             "plan4_rollout_owner"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.ownership_boundary",
+                                            "type":  "architecture_json",
+                                            "sha256":  "1577d912bc56fe5b1a182babb91d73950121adbd6ef6c5babab9a7619bcbf7e9",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "run_state_machine",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Execution/ReportRunAttemptFinalizerTest.php tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php --no-coverage --log-junit build/reports/gates/results/run_state_machine.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  2,
+                                     "required_checks":  [
+                                                             "six_state_transition_matrix",
+                                                             "audit_precedes_ready"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.run_state_machine",
+                                            "type":  "unit_json",
+                                            "sha256":  "c4734ad51c0cea994ef71dd2f527e307ae605af8c8cb6d3ec6430961e15863db",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "run_idempotency",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Unit/Reporting/Actions/ReportRunHandlersTest.php --no-coverage --log-junit build/reports/gates/results/run_idempotency.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  4,
+                                     "required_checks":  [
+                                                             "same_org_cross_actor_reuse",
+                                                             "changed_body_conflict",
+                                                             "other_org_independence",
+                                                             "retry_key_replay"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.run_idempotency",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "5b30b2ea8577bb182172c65516029de7f5f250b3b1c3e39a22bfe3b7f8c90c70",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "snapshot_identity",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Execution/CanonicalReportSourceHashBuilderTest.php tests/Unit/Reporting/Execution/ReportSnapshotSealValidatorTest.php tests/Unit/Reporting/Actions/ReportRunHandlersTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php --no-coverage --log-junit build/reports/gates/results/snapshot_identity.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  7,
+                                     "required_checks":  [
+                                                             "validator_equalities",
+                                                             "decimal_grammar_negative_zero",
+                                                             "source_projection_sort",
+                                                             "duplicate_identity",
+                                                             "no_input_mutation",
+                                                             "expired_status_only",
+                                                             "expired_data_fail_closed"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.snapshot_identity",
+                                            "type":  "contract_json",
+                                            "sha256":  "b6a5f23a8b341c3d01dbe01735318b7027e7c72d20e5722054f10f68b233baed",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "snapshot_seal_trust",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Execution/ReportSnapshotSealValidatorTest.php tests/Unit/Reporting/Execution/TrustedReportSnapshotSealVerifierTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php --no-coverage --log-junit build/reports/gates/results/snapshot_seal_trust.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  7,
+                                     "required_checks":  [
+                                                             "typed_structural_reasons",
+                                                             "official_seal_mapping",
+                                                             "closed_public_key_map",
+                                                             "sodium_detached_verification",
+                                                             "trust_case_matrix",
+                                                             "signed_field_mutations",
+                                                             "payload_binding"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.snapshot_seal_trust",
+                                            "type":  "cryptographic_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "typed_data_classification",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php --no-coverage --log-junit build/reports/gates/results/typed_data_classification.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "sensitive_access_typed",
+                                                             "audit_access_typed",
+                                                             "heuristics_absent"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.typed_data_classification",
+                                            "type":  "authorization_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "rows_cursor_drill_parity",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Contract/Reporting/ReportRowsParityContractTest.php tests/Contract/Reporting/ReportExportParityContractTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php tests/Unit/Reporting/Cursors/SignedReportCursorCodecTest.php --no-coverage --log-junit build/reports/gates/results/rows_cursor_drill_parity.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "rows_cursor_identity",
+                                                             "drill_down_identity",
+                                                             "summary_semantic_parity"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.rows_cursor_drill_parity",
+                                            "type":  "contract_json",
+                                            "sha256":  "9e0ed00d511b6da446804227172b949b1dee6be26cbaf82b9e8919f2aadad7d1",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "row_stream_shape",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Rows/ReportRowChunkReaderTest.php --no-coverage --log-junit build/reports/gates/results/row_stream_shape.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  4,
+                                     "required_checks":  [
+                                                             "one_row_envelope",
+                                                             "bounded_internal_chunks",
+                                                             "nested_shape_rejected",
+                                                             "identity_drift_rejected"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.row_stream_shape",
+                                            "type":  "unit_json",
+                                            "sha256":  "95886e480e4bcf1fdc193abbf61ac7cd51a965bab2c31566128e8fcd9a68e283",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "export_state_machine",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Actions/ReportExportHandlersTest.php tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php --no-coverage --log-junit build/reports/gates/results/export_state_machine.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "seven_state_transition_matrix",
+                                                             "retry_parent_ready_unexpired",
+                                                             "retry_denial_before_side_effects"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.export_state_machine",
+                                            "type":  "unit_json",
+                                            "sha256":  "d64ea3b94fbf391c4fa2286f42af14d61bd26db87db05fa998fbe9e965e3d7eb",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "export_idempotency",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php tests/Unit/Reporting/Actions/ReportExportHandlersTest.php --no-coverage --log-junit build/reports/gates/results/export_idempotency.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  5,
+                                     "required_checks":  [
+                                                             "same_org_cross_actor_reuse",
+                                                             "changed_body_conflict",
+                                                             "other_org_independence",
+                                                             "retry_key_replay",
+                                                             "parent_run_fence"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.export_idempotency",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "2bb7ff82f2dae610093a4c979d52b16ded5d84bc601f8fb66c3614bf85ffad55",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "dispatch_outbox_atomicity",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportAuditIntentContractTest.php tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php --no-coverage --log-junit build/reports/gates/results/dispatch_outbox_atomicity.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  4,
+                                     "required_checks":  [
+                                                             "closed_named_schemas",
+                                                             "aggregate_transport_rollback",
+                                                             "unique_event_keys",
+                                                             "closed_subjects"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.dispatch_outbox_atomicity",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "dispatch_lease_recovery",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportDispatchBackoffPolicyTest.php tests/Unit/Reporting/Dispatch/ReportDispatchIntentPublisherTest.php tests/Unit/Reporting/Dispatch/ReportDispatchIntentReconcilerTest.php tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php --no-coverage --log-junit build/reports/gates/results/dispatch_lease_recovery.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  4,
+                                     "required_checks":  [
+                                                             "skip_locked_claims",
+                                                             "lease_fencing_reclaim",
+                                                             "deterministic_backoff",
+                                                             "publication_redelivery"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.dispatch_lease_recovery",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "dispatch_dead_letter",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportDispatchIntentPublisherTest.php tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/dispatch_dead_letter.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "run_attempt_12_atomic_failure",
+                                                             "export_attempt_12_atomic_failure",
+                                                             "pre_table_branch_absent"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.dispatch_dead_letter",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "audit_outbox_delivery",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportAuditIntentContractTest.php tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php tests/Integration/Reporting/Audit/CoreReportAuditIntentConsumerTest.php tests/Unit/Reporting/Audit/AppendReportAuditEventJobTest.php tests/Unit/Reporting/Audit/ReportAuditOutboxSchedulerTest.php tests/Architecture/Reporting/ReportingExecutionBindingsTest.php --no-coverage --log-junit build/reports/gates/results/audit_outbox_delivery.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  7,
+                                     "required_checks":  [
+                                                             "id_only_mapping",
+                                                             "transactional_intent",
+                                                             "append_ack_order",
+                                                             "append_replay",
+                                                             "lease_fenced_backoff",
+                                                             "attempt_12_dead_letter",
+                                                             "critical_alerting"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.audit_outbox_delivery",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "current_async_authorization",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Execution/CurrentReportAuthorizationTargetTest.php tests/Unit/Reporting/Access/ReportAuthorizationSubjectTest.php tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php tests/Unit/Reporting/Access/CurrentReportPermissionDecisionTest.php tests/Unit/Reporting/Access/ReportScopedResourceAccessDecisionTest.php tests/Unit/Reporting/Access/ReportScopedResourceAuthorizerContractTest.php tests/Unit/Reporting/Access/ReportHttpAuthorizationOrchestratorTest.php tests/Unit/Reporting/Access/LaravelReportHttpAuthorizationTargetResolverTest.php tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorTest.php tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorBehaviorTest.php tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorRaceTest.php tests/Feature/Reporting/Execution/LaravelCurrentReportScopeAuthorizerTest.php tests/Feature/Reporting/Execution/LaravelCurrentReportScopeAuthorizationRaceTest.php tests/Feature/Reporting/Persistence/ReportTypedResourceScopeCutoverMigrationTest.php tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php tests/Architecture/Reporting/ReportAuthorizationSubjectReaderOwnershipTest.php tests/Feature/Reporting/Persistence/EloquentReportAuthorizationSubjectReaderTest.php tests/Feature/Reporting/Persistence/EloquentReportRunAsyncContextSeedReaderTest.php tests/Feature/Reporting/Persistence/EloquentReportExportAsyncContextSeedReaderTest.php tests/Unit/Reporting/Execution/LaravelReportRunExecutionContextRehydratorTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php tests/Feature/Reporting/Persistence/EloquentReportExportAuthorizationPostgresTest.php --no-coverage --log-junit build/reports/gates/results/current_async_authorization.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  8,
+                                     "required_checks":  [
+                                                             "typed_scope_cutover",
+                                                             "exact_resource_decisions",
+                                                             "repeatable_read_snapshot",
+                                                             "state_operation_matrix",
+                                                             "revocation_before_side_effects",
+                                                             "request_globals_bypassed",
+                                                             "authority_cache_bypassed",
+                                                             "atomic_cutover_rollback"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.current_async_authorization",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "execution_attempt_leases",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php tests/Architecture/Reporting/ReportingExecutionBindingsTest.php tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php tests/Unit/Reporting/Execution/ReportRunLeaseRecoveryStoreContractTest.php tests/Unit/Reporting/Execution/ReportRunAttemptFinalizerTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Feature/Reporting/Persistence/EloquentReportRunLeaseRecoveryStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportRunAttemptLifecycleStoreTest.php tests/Unit/Reporting/Execution/ReportExportLeaseRecoveryStoreContractTest.php tests/Unit/Reporting/Exports/ReportExportAttemptFinalizerTest.php tests/Unit/Reporting/Exports/FinalizeFailedReportExportAttemptTest.php tests/Unit/Reporting/Jobs/GenerateReportExportJobTest.php tests/Feature/Reporting/Persistence/EloquentReportExportLeaseRecoveryStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportExportAttemptLifecycleStoreTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/execution_attempt_leases.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  7,
+                                     "required_checks":  [
+                                                             "runtime_inequalities",
+                                                             "authority_free_claim",
+                                                             "same_token_renewal",
+                                                             "token_fencing",
+                                                             "leased_failure",
+                                                             "watchdog_requeue",
+                                                             "job_failed_aba_fence"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.execution_attempt_leases",
+                                            "type":  "queue_json",
+                                            "sha256":  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "renderer_parity",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Contract/Reporting/ReportExportParityContractTest.php tests/Unit/Reporting/Exports/CsvReportExportRendererTest.php tests/Unit/Reporting/Exports/XlsxReportExportRendererTest.php tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php tests/Unit/Reporting/Exports/ReportExportRendererRegistryTest.php --no-coverage --log-junit build/reports/gates/results/renderer_parity.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "csv_semantic_identity",
+                                                             "xlsx_semantic_identity",
+                                                             "pdf_semantic_identity"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.renderer_parity",
+                                            "type":  "parity_json",
+                                            "sha256":  "2d5949307f76de37de0be9d49f764447c4847d0347a942f8bdaf41e8f37ffec9",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "pdf_renderer_budget",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Evidence/PlanOneBGateArtifactRecorderTest.php tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php tests/Unit/Reporting/Exports/ReportExportRendererRegistryTest.php tests/Performance/Reporting/ReportExportStreamingBudgetTest.php tests/Unit/Reporting/Jobs/GenerateReportExportJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php tests/Unit/Reporting/Exports/ReconcileCompletedReportArtifactsTest.php tests/Unit/Reporting/Exports/FinalizeFailedReportExportAttemptTest.php --no-coverage --log-junit build/reports/gates/results/pdf_renderer_budget.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  6,
+                                     "required_checks":  [
+                                                             "locked_dependency_versions",
+                                                             "definition_budget_registry",
+                                                             "row_boundary_5000",
+                                                             "page_html_pdf_memory_limits",
+                                                             "safe_failure_mapping",
+                                                             "retry_cleanup"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.pdf_renderer_budget",
+                                            "type":  "performance_json",
+                                            "sha256":  "d43a63e1d08e05038bf17a222f7842c58245d693b0babe7f9ec8d45de6f64dcb",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+                                           {
+                                               "id":  "pdf_detail_rows",
+                                               "value":  5000,
+                                               "unit":  "rows",
+                                               "limit":  5000,
+                                               "status":  "passed"
+                                           },
+                                           {
+                                               "id":  "pdf_pages",
+                                               "value":  20,
+                                               "unit":  "pages",
+                                               "limit":  20,
+                                               "status":  "passed"
+                                           },
+                                           {
+                                               "id":  "pdf_html_bytes",
+                                               "value":  1000000,
+                                               "unit":  "bytes",
+                                               "limit":  2000000,
+                                               "status":  "passed"
+                                           },
+                                           {
+                                               "id":  "pdf_output_bytes",
+                                               "value":  1000000,
+                                               "unit":  "bytes",
+                                               "limit":  2000000,
+                                               "status":  "passed"
+                                           },
+                                           {
+                                               "id":  "pdf_memory_delta_bytes",
+                                               "value":  67108864,
+                                               "unit":  "bytes",
+                                               "limit":  134217728,
+                                               "status":  "passed"
+                                           }
+                                       ]
+                  },
+                  {
+                      "id":  "streaming_budget",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Performance/Reporting/ReportExportStreamingBudgetTest.php tests/Unit/Reporting/Exports/CsvReportExportRendererTest.php tests/Unit/Reporting/Exports/XlsxReportExportRendererTest.php tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/streaming_budget.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "bounded_chunks",
+                                                             "bounded_peak_memory",
+                                                             "bounded_artifact_bytes"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.streaming_budget",
+                                            "type":  "performance_json",
+                                            "sha256":  "7464ad2a53fe894a466c48b318672faf426a5152e3ceaabc7fe3af9225c85de7",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+                                           {
+                                               "id":  "stream_chunk_rows",
+                                               "value":  5000,
+                                               "unit":  "rows",
+                                               "limit":  5000,
+                                               "status":  "passed"
+                                           },
+                                           {
+                                               "id":  "stream_peak_memory_bytes",
+                                               "value":  67108864,
+                                               "unit":  "bytes",
+                                               "limit":  134217728,
+                                               "status":  "passed"
+                                           },
+                                           {
+                                               "id":  "stream_artifact_bytes",
+                                               "value":  1048576,
+                                               "unit":  "bytes",
+                                               "limit":  524288000,
+                                               "status":  "passed"
+                                           }
+                                       ]
+                  },
+                  {
+                      "id":  "file_service_call_graph",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Services/Storage/FileServiceMultipartTest.php tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php tests/Feature/Reporting/Actions/ReportDownloadLinkHandlerTest.php tests/Unit/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php --no-coverage --log-junit build/reports/gates/results/file_service_call_graph.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  7,
+                                     "required_checks":  [
+                                                             "multipart_create",
+                                                             "multipart_upload_part",
+                                                             "multipart_complete",
+                                                             "multipart_abort",
+                                                             "exact_version_head",
+                                                             "temporary_link",
+                                                             "exact_version_delete"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.file_service_call_graph",
+                                            "type":  "architecture_json",
+                                            "sha256":  "a7e751a4c23e338686b56664de280809e528d226b02f3015e49b5e4be2080997",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "s3_version_race",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Integration/Reporting/Exports/S3ReportArtifactIntegrationTest.php tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php tests/Unit/Reporting/Exports/ReconcileCompletedReportArtifactsTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/s3_version_race.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  4,
+                                     "required_checks":  [
+                                                             "conditional_race_winner",
+                                                             "loser_abort_once",
+                                                             "post_completion_identity",
+                                                             "metadata_drift_fail_closed"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.s3_version_race",
+                                            "type":  "s3_json",
+                                            "sha256":  "7a996f93bea4caf721089236cc7a8a1dd25faaa88501de3c43142d2f49dc44ab",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "audit_fail_closed",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/audit_fail_closed.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "ready_transition_rollback",
+                                                             "terminal_transition_rollback",
+                                                             "remote_io_outside_transaction"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.audit_fail_closed",
+                                            "type":  "postgresql_json",
+                                            "sha256":  "86504ce262ca87faeee609cf45b35c15364a225789cc2a7b3413e2302e0c196d",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "retention_exact_version",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Exports/ReconcileCompletedReportArtifactsTest.php tests/Unit/Reporting/Retention/ExpireReportsServiceTest.php tests/Unit/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php tests/Feature/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php tests/Integration/Reporting/Exports/S3ReportArtifactIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/retention_exact_version.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  4,
+                                     "required_checks":  [
+                                                             "exact_version_inventory",
+                                                             "lease_fenced_delete",
+                                                             "historical_identity_retained",
+                                                             "replay_idempotency"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.retention_exact_version",
+                                            "type":  "s3_json",
+                                            "sha256":  "ce0889cc7a3058989be193a7b45d03d407c7d79d60b23b6ab18b0f810889004b",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "action_bindings",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Architecture/Reporting/ReportingExecutionBindingsTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Unit/Reporting/Actions/ReportRunHandlersTest.php tests/Unit/Reporting/Actions/ReportExportHandlersTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php --no-coverage --log-junit build/reports/gates/results/action_bindings.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "one_handler_per_action",
+                                                             "thin_controllers",
+                                                             "catalog_publication_unbound"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.action_bindings",
+                                            "type":  "architecture_json",
+                                            "sha256":  "c473eaf3ca82764e9cd49ffc4df3772707f0810dec4cad0517cb0834254183c2",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "error_retryability",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Errors/ReportExecutionErrorMappingTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php --no-coverage --log-junit build/reports/gates/results/error_retryability.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "status_mapping",
+                                                             "retryability_mapping",
+                                                             "technical_message_absent"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.error_retryability",
+                                            "type":  "contract_json",
+                                            "sha256":  "aece88607ade16939a958bae606db6e3eef2f5ccea17b9df6b60d8a7c9e47f9b",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "run_export_observability",
+                      "status":  "passed",
+                      "command":  "php vendor/bin/phpunit tests/Unit/Reporting/Telemetry/ReportExecutionTelemetryTest.php --no-coverage --log-junit build/reports/gates/results/run_export_observability.junit.xml",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  1,
+                                     "assertions":  3,
+                                     "required_checks":  [
+                                                             "bounded_run_families",
+                                                             "bounded_export_families",
+                                                             "non_run_export_family_absent"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.run_export_observability",
+                                            "type":  "observability_json",
+                                            "sha256":  "8619a9f4250d1ce7369b9953ec40eef42a9cc4a6a928c9b83b12dd13e9117448",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  },
+                  {
+                      "id":  "static_analysis",
+                      "status":  "passed",
+                      "command":  "php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php \u0026\u0026 php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php \u0026\u0026 php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBGateArtifactRecorder.php \u0026\u0026 php -l scripts/reporting/run-plan-1b-gate.php \u0026\u0026 php -d memory_limit=1G vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --error-format=json --no-progress app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBGateArtifactRecorder.php scripts/reporting/run-plan-1b-gate.php",
+                      "result":  {
+                                     "exit_code":  0,
+                                     "tests":  0,
+                                     "assertions":  2,
+                                     "required_checks":  [
+                                                             "changed_php_syntax",
+                                                             "changed_php_phpstan"
+                                                         ]
+                                 },
+                      "duration_ms":  1,
+                      "artifacts":  [
+                                        {
+                                            "id":  "plan1b.gate.static_analysis",
+                                            "type":  "phpstan_json",
+                                            "sha256":  "5ce7cb0e0d7d59e50afbc41f230f11d46939aa53152062766362e76c9a9e8beb",
+                                            "repository_revision":  "0771b87dbba48b1934668f379bdc09152e0db6d1"
+                                        }
+                                    ],
+                      "measurements":  [
+
+                                       ]
+                  }
+              ],
+    "ownership":  {
+                      "plan_1a_symbols":  [
+                                              "CandidateReportDefinition",
+                                              "CreateReportExportData",
+                                              "CreateReportRunData",
+                                              "PublishedReportDefinition",
+                                              "ReportCursor",
+                                              "ReportDataProvider",
+                                              "ReportDefinition",
+                                              "ReportDefinitionBinding",
+                                              "ReportDefinitionBindingMap",
+                                              "ReportDownloadLink",
+                                              "ReportDrillDownProvider",
+                                              "ReportExport",
+                                              "ReportPage",
+                                              "ReportQuery",
+                                              "ReportRowQuery",
+                                              "ReportRun"
+                                          ],
+                      "plan_1b_symbols":  [
+                                              "PlanOneACompletionRef",
+                                              "PlanOneACompletionVerifier",
+                                              "PlanOneBEvidenceBuilder",
+                                              "PlanOneBEvidenceValidator",
+                                              "PlanOneBGateArtifactRecorder"
+                                          ],
+                      "external_plan_owners":  [
+                                                   "plan_1c_publication_registry",
+                                                   "plan_2_candidate_provider_bindings",
+                                                   "plan_3_candidate_provider_bindings",
+                                                   "plan_4_evidence_verification_rollout"
+                                               ]
+                  },
+    "performance_measurements":  [
+                                     {
+                                         "id":  "pdf_detail_rows",
+                                         "value":  5000,
+                                         "unit":  "rows",
+                                         "limit":  5000,
+                                         "status":  "passed"
+                                     },
+                                     {
+                                         "id":  "pdf_pages",
+                                         "value":  20,
+                                         "unit":  "pages",
+                                         "limit":  20,
+                                         "status":  "passed"
+                                     },
+                                     {
+                                         "id":  "pdf_html_bytes",
+                                         "value":  1000000,
+                                         "unit":  "bytes",
+                                         "limit":  2000000,
+                                         "status":  "passed"
+                                     },
+                                     {
+                                         "id":  "pdf_output_bytes",
+                                         "value":  1000000,
+                                         "unit":  "bytes",
+                                         "limit":  2000000,
+                                         "status":  "passed"
+                                     },
+                                     {
+                                         "id":  "pdf_memory_delta_bytes",
+                                         "value":  67108864,
+                                         "unit":  "bytes",
+                                         "limit":  134217728,
+                                         "status":  "passed"
+                                     },
+                                     {
+                                         "id":  "stream_chunk_rows",
+                                         "value":  5000,
+                                         "unit":  "rows",
+                                         "limit":  5000,
+                                         "status":  "passed"
+                                     },
+                                     {
+                                         "id":  "stream_peak_memory_bytes",
+                                         "value":  67108864,
+                                         "unit":  "bytes",
+                                         "limit":  134217728,
+                                         "status":  "passed"
+                                     },
+                                     {
+                                         "id":  "stream_artifact_bytes",
+                                         "value":  1048576,
+                                         "unit":  "bytes",
+                                         "limit":  524288000,
+                                         "status":  "passed"
+                                     }
+                                 ],
+    "unresolved_risks":  [
+
+                         ],
+    "handoff":  {
+                    "plans_2_and_3":  "plan_1a_provider_ports_candidate_bindings_only",
+                    "plan_1c":  "published_registry_map_and_all_publication_transitions",
+                    "plan_4":  "evidence_verification_and_deployment_rollout_only",
+                    "artifact_path":  "build/reports/plan-1b-completion.json",
+                    "digest_algorithm":  "sha256"
+                }
+}

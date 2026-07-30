@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:plan-1c-platform-completion:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_id", "status", "repository_commit", "generated_at", "plan_1c_lock_sha256", "plan_1a_completion_sha256", "plan_1a_artifact_hashes", "plan_1b_completion_sha256", "plan_1b_gate_hashes", "plan_1b_plan_sha256", "plan_1b_document_sha256", "plan_1c_document_sha256", "prerequisite_bundle_sha256", "published_count", "binding_count", "unresolved_risks"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "plan_id": {"const": "1c"},
+    "status": {"const": "platform_passed"},
+    "repository_commit": {"$ref": "#/$defs/sha1"},
+    "generated_at": {"$ref": "#/$defs/timestamp"},
+    "plan_1c_lock_sha256": {"$ref": "#/$defs/sha256"},
+    "plan_1a_completion_sha256": {"$ref": "#/$defs/sha256"},
+    "plan_1a_artifact_hashes": {"$ref": "#/$defs/planOneAArtifacts"},
+    "plan_1b_completion_sha256": {"$ref": "#/$defs/sha256"},
+    "plan_1b_gate_hashes": {"$ref": "#/$defs/planOneBGates"},
+    "plan_1b_plan_sha256": {"const": "58f865ed19b1f040057a37b72dfc52a1822a2925416a1fea3ecc30ee50d4c626"},
+    "plan_1b_document_sha256": {"$ref": "#/$defs/sha256"},
+    "plan_1c_document_sha256": {"$ref": "#/$defs/sha256"},
+    "prerequisite_bundle_sha256": {"$ref": "#/$defs/sha256"},
+    "published_count": {"type": "integer", "minimum": 0, "maximum": 28},
+    "binding_count": {"type": "integer", "minimum": 0, "maximum": 28},
+    "unresolved_risks": {"type": "array", "maxItems": 0}
+  },
+  "$defs": {
+    "sha1": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "planOneAArtifacts": {"type": "object", "additionalProperties": false, "required": ["contract_lock", "resource_schema", "route_snapshot", "ci_authorization", "ci_malformed"], "properties": {"contract_lock": {"$ref": "#/$defs/sha256"}, "resource_schema": {"$ref": "#/$defs/sha256"}, "route_snapshot": {"$ref": "#/$defs/sha256"}, "ci_authorization": {"$ref": "#/$defs/sha256"}, "ci_malformed": {"$ref": "#/$defs/sha256"}}},
+    "planOneBGates": {"type": "object", "additionalProperties": false, "required": ["plan1a_handoff", "ownership_boundary", "run_state_machine", "run_idempotency", "snapshot_identity", "rows_cursor_drill_parity", "row_stream_shape", "export_state_machine", "export_idempotency", "renderer_parity", "pdf_renderer_budget", "streaming_budget", "file_service_call_graph", "s3_version_race", "audit_fail_closed", "retention_exact_version", "action_bindings", "error_retryability", "run_export_observability", "static_analysis"], "properties": {"plan1a_handoff": {"$ref": "#/$defs/sha256"}, "ownership_boundary": {"$ref": "#/$defs/sha256"}, "run_state_machine": {"$ref": "#/$defs/sha256"}, "run_idempotency": {"$ref": "#/$defs/sha256"}, "snapshot_identity": {"$ref": "#/$defs/sha256"}, "rows_cursor_drill_parity": {"$ref": "#/$defs/sha256"}, "row_stream_shape": {"$ref": "#/$defs/sha256"}, "export_state_machine": {"$ref": "#/$defs/sha256"}, "export_idempotency": {"$ref": "#/$defs/sha256"}, "renderer_parity": {"$ref": "#/$defs/sha256"}, "pdf_renderer_budget": {"$ref": "#/$defs/sha256"}, "streaming_budget": {"$ref": "#/$defs/sha256"}, "file_service_call_graph": {"$ref": "#/$defs/sha256"}, "s3_version_race": {"$ref": "#/$defs/sha256"}, "audit_fail_closed": {"$ref": "#/$defs/sha256"}, "retention_exact_version": {"$ref": "#/$defs/sha256"}, "action_bindings": {"$ref": "#/$defs/sha256"}, "error_retryability": {"$ref": "#/$defs/sha256"}, "run_export_observability": {"$ref": "#/$defs/sha256"}, "static_analysis": {"$ref": "#/$defs/sha256"}}}
+  }
+}
