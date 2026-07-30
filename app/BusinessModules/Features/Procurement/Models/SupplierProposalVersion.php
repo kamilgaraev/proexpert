@@ -19,15 +19,20 @@ class SupplierProposalVersion extends Model
     protected $fillable = [
         'organization_id',
         'supplier_proposal_id',
+        'supplier_party_id',
+        'supplier_request_id',
         'version_number',
         'commercial_snapshot',
         'attachment_snapshot',
+        'dimension_snapshot',
+        'dimension_hash',
         'created_by',
     ];
 
     protected $casts = [
         'commercial_snapshot' => 'array',
         'attachment_snapshot' => 'array',
+        'dimension_snapshot' => 'array',
     ];
 
     protected $attributes = [

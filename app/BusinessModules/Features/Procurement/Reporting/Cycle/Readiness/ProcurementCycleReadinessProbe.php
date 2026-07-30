@@ -10,7 +10,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Queries\ProcurementCycleFilteredUniverse;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent;
-use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
@@ -56,37 +55,6 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
             ->distinct()
             ->count('purchase_request_line_id');
         $stageGaps = 0;
-        foreach ([
-            'request_approved' => PurchaseRequestLine::query()
-                ->join('purchase_requests as readiness_request', 'readiness_request.id', '=', 'purchase_request_lines.purchase_request_id')
-                ->whereIn('purchase_request_lines.id', clone $eligibleLineIds)
-                ->where('readiness_request.status', 'approved')
-                ->count('purchase_request_lines.id'),
-            'cancelled' => PurchaseRequestLine::query()
-                ->join('purchase_requests as readiness_request', 'readiness_request.id', '=', 'purchase_request_lines.purchase_request_id')
-                ->whereIn('purchase_request_lines.id', clone $eligibleLineIds)
-                ->whereIn('readiness_request.status', ['rejected', 'cancelled'])
-                ->count('purchase_request_lines.id'),
-            'solicitation_sent' => PurchaseRequestLine::query()
-                ->join('supplier_request_lines as readiness_supplier_line', 'readiness_supplier_line.purchase_request_line_id', '=', 'purchase_request_lines.id')
-                ->join('supplier_requests as readiness_supplier_request', 'readiness_supplier_request.id', '=', 'readiness_supplier_line.supplier_request_id')
-                ->whereIn('purchase_request_lines.id', clone $eligibleLineIds)
-                ->whereNotNull('readiness_supplier_request.sent_at')
-                ->distinct()
-                ->count('purchase_request_lines.id'),
-            'supplier_responded' => PurchaseRequestLine::query()
-                ->join('supplier_request_lines as readiness_supplier_line', 'readiness_supplier_line.purchase_request_line_id', '=', 'purchase_request_lines.id')
-                ->join('supplier_proposal_lines as readiness_proposal_line', 'readiness_proposal_line.supplier_request_line_id', '=', 'readiness_supplier_line.id')
-                ->whereIn('purchase_request_lines.id', clone $eligibleLineIds)
-                ->distinct()
-                ->count('purchase_request_lines.id'),
-        ] as $eventCode => $expectedCount) {
-            $actualCount = (clone $events)
-                ->where('event_code', $eventCode)
-                ->distinct()
-                ->count('purchase_request_line_id');
-            $stageGaps += max(0, $expectedCount - $actualCount);
-        }
 
         return new SourceReadinessResult(
             $eligible,

@@ -11,12 +11,22 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('supplier_proposal_versions', function (Blueprint $table): void {
+            $table->unsignedBigInteger('supplier_party_id')->nullable();
+            $table->unsignedBigInteger('supplier_request_id')->nullable();
+            $table->jsonb('dimension_snapshot')->nullable();
+            $table->char('dimension_hash', 64)->nullable();
+        });
         Schema::create('supplier_award_decision_versions', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('decision_id');
             $table->unsignedInteger('decision_version');
             $table->unsignedBigInteger('purchase_request_id')->nullable();
+            $table->unsignedBigInteger('project_id')->nullable();
+            $table->unsignedBigInteger('selected_supplier_party_id');
+            $table->jsonb('dimension_snapshot');
+            $table->char('dimension_hash', 64);
             $table->unsignedBigInteger('supplier_request_id');
             $table->unsignedBigInteger('selected_proposal_version_id');
             $table->unsignedBigInteger('cheapest_proposal_version_id');
@@ -72,11 +82,11 @@ return new class extends Migration
             $table->char('snapshot_id', 26);
             $table->string('row_key', 128);
             $table->unsignedBigInteger('project_id')->nullable();
-            $table->unsignedBigInteger('material_id')->nullable();
+            $table->jsonb('material_ids');
             $table->unsignedBigInteger('decision_id');
             $table->unsignedInteger('decision_version');
             $table->unsignedBigInteger('proposal_version_id');
-            $table->unsignedBigInteger('supplier_id');
+            $table->unsignedBigInteger('supplier_party_id');
             $table->unsignedBigInteger('selected_proposal_version_id');
             $table->unsignedBigInteger('cheapest_proposal_version_id');
             $table->unsignedBigInteger('median_proposal_version_id');
@@ -103,7 +113,7 @@ return new class extends Migration
                 'supplier_award_row_default_idx',
             );
             $table->index(
-                ['organization_id', 'snapshot_id', 'material_id', 'supplier_id', 'row_key'],
+                ['organization_id', 'snapshot_id', 'supplier_party_id', 'row_key'],
                 'supplier_award_row_filter_idx',
             );
         });
@@ -127,6 +137,14 @@ return new class extends Migration
         Schema::dropIfExists('supplier_award_rows');
         Schema::dropIfExists('supplier_award_snapshots');
         Schema::dropIfExists('supplier_award_decision_versions');
+        Schema::table('supplier_proposal_versions', function (Blueprint $table): void {
+            $table->dropColumn([
+                'supplier_party_id',
+                'supplier_request_id',
+                'dimension_snapshot',
+                'dimension_hash',
+            ]);
+        });
     }
 
     private function installConstraints(): void
@@ -136,6 +154,7 @@ return new class extends Migration
         }
 
         DB::statement('ALTER TABLE supplier_award_decision_versions ADD CONSTRAINT supplier_award_decision_version_check CHECK (decision_version > 0)');
+        DB::statement("ALTER TABLE supplier_award_decision_versions ADD CONSTRAINT supplier_award_dimension_hash_check CHECK (dimension_hash ~ '^[a-f0-9]{64}$' AND jsonb_typeof(dimension_snapshot) = 'object')");
         DB::statement("ALTER TABLE supplier_award_decision_versions ADD CONSTRAINT supplier_award_reason_check CHECK (is_lowest_price_selected OR NULLIF(BTRIM(decision_reason), '') IS NOT NULL)");
         DB::statement("ALTER TABLE supplier_award_snapshots ADD CONSTRAINT supplier_award_quality_check CHECK (quality_status IN ('complete','partial','invalid'))");
         DB::statement("ALTER TABLE supplier_award_snapshots ADD CONSTRAINT supplier_award_reconciliation_check CHECK (reconciliation_status IN ('matched','mismatch','not_applicable'))");

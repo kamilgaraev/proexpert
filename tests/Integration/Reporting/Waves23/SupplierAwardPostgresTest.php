@@ -15,5 +15,8 @@ final class SupplierAwardPostgresTest extends Waves23PostgresTestCase
         );
         self::assertSame(1, (int) $this->column('supplier_award_rows', 'median_amount_minor')->numeric_scale);
         self::assertSame(1, (int) $this->column('supplier_award_rows', 'median_variance_minor')->numeric_scale);
+        self::assertNotNull($this->column('supplier_award_rows', 'supplier_party_id'));
+        self::assertNotNull($this->column('supplier_award_rows', 'material_ids'));
+        self::assertNotNull($this->column('supplier_award_decision_versions', 'dimension_hash'));
     }
 }

@@ -187,6 +187,12 @@ final class SupplyReportingHardeningTest extends TestCase
 
             self::assertStringContainsString($resourceKind, $query, $queryPath);
             self::assertStringContainsString($resourceColumn, $query, $queryPath);
+            if (str_contains($materializer, '$this->universe->query(')) {
+                $universePath = str_contains($materializerPath, '/Award/')
+                    ? 'Procurement/Reporting/Award/Queries/SupplierAwardFilteredUniverse.php'
+                    : 'Procurement/Reporting/Cycle/Queries/ProcurementCycleFilteredUniverse.php';
+                $materializer = $this->source('app/BusinessModules/Features/'.$universePath);
+            }
             self::assertStringContainsString('allowedIds(', $materializer, $materializerPath);
             self::assertStringContainsString($resourceKind, $materializer, $materializerPath);
             self::assertStringContainsString('whereIn(', $materializer, $materializerPath);
@@ -228,7 +234,8 @@ final class SupplyReportingHardeningTest extends TestCase
         ] as $suffix) {
             $source = $this->source('app/BusinessModules/Features/'.$suffix);
             self::assertStringContainsString('OwnerSnapshotFirstWriter::run(', $source, $suffix);
-            if (str_contains($suffix, 'ProcurementCycleSnapshotMaterializer')) {
+            if (str_contains($suffix, 'ProcurementCycleSnapshotMaterializer')
+                || str_contains($suffix, 'SupplierAwardSnapshotMaterializer')) {
                 self::assertStringContainsString('$this->universe->query(', $source, $suffix);
             } else {
                 self::assertStringContainsString('OwnerReportFilterApplier', $source, $suffix);
@@ -333,13 +340,13 @@ final class SupplyReportingHardeningTest extends TestCase
         );
 
         foreach ([
-            'cycle_owner_site_request.project_id',
-            'cycle_owner_site_request.user_id',
-            'cycle_owner_request.assigned_to',
-            'purchase_request_lines.material_id',
-            'cycle_owner_material.category',
-            'cycle_owner_request.budget_amount',
-            'cycle_owner_site_request.priority',
+            "cycle_filter_event.evidence->>'project_id'",
+            "cycle_filter_event.evidence->>'requester_id'",
+            "cycle_filter_event.evidence->>'buyer_id'",
+            "cycle_filter_event.evidence->>'material_id'",
+            "cycle_filter_event.evidence->>'category'",
+            "cycle_filter_event.evidence->>'amount'",
+            "cycle_filter_event.evidence->>'priority'",
         ] as $persistedDimension) {
             self::assertStringContainsString($persistedDimension, $universe);
         }
@@ -351,22 +358,72 @@ final class SupplyReportingHardeningTest extends TestCase
         );
     }
 
-    public function test_award_filters_use_canonical_project_and_real_proposal_lines(): void
+    public function test_award_filters_use_immutable_pinned_dimensions_and_party_namespace(): void
     {
         $source = $this->source(
             'app/BusinessModules/Features/Procurement/Reporting/Award/Queries/'
             .'SupplierAwardFilteredUniverse.php',
         );
 
-        self::assertStringContainsString('award_filter_request.site_request_id', $source);
-        self::assertStringContainsString('award_filter_site_request.project_id', $source);
-        self::assertStringContainsString('supplier_proposal_lines as award_filter_line', $source);
-        self::assertStringContainsString('award_filter_line.material_id', $source);
-        self::assertStringContainsString('award_filter_material.category', $source);
+        self::assertStringContainsString('supplier_award_decision_versions.project_id', $source);
+        self::assertStringContainsString('selected_supplier_party_id', $source);
+        self::assertStringContainsString("dimension_snapshot->>'procurement_method'", $source);
+        self::assertStringContainsString("dimension_snapshot->>'currency'", $source);
+        self::assertStringContainsString('jsonb_array_elements', $source);
+        self::assertStringNotContainsString('supplier_proposals as', $source);
+        self::assertStringNotContainsString('supplier_proposal_lines as', $source);
+        self::assertStringNotContainsString('materials as', $source);
         self::assertStringNotContainsString('award_filter_request.project_id', $source);
         self::assertStringNotContainsString("commercial_snapshot->>'material_id'", $source);
         self::assertStringNotContainsString("commercial_snapshot->>'category_id'", $source);
         self::assertStringNotContainsString("commercial_snapshot->>'procurement_method'", $source);
+    }
+
+    public function test_supply_filters_and_owner_gaps_are_bounded_by_immutable_as_of_facts(): void
+    {
+        $materializer = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Services/'
+            .'SupplyReliabilitySnapshotMaterializer.php',
+        );
+        $readiness = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/'
+            .'SupplyReliabilityReadinessProbe.php',
+        );
+
+        foreach ([
+            'purchase_order_promise_versions.warehouse_id',
+            'purchase_order_promise_versions.buyer_id',
+            'purchase_order_promise_versions.priority',
+            'purchase_order_promise_versions.promised_at',
+            'statusAt(',
+            'matchesDelayFilter(',
+        ] as $immutableFilter) {
+            self::assertStringContainsString($immutableFilter, $materializer);
+        }
+        self::assertStringContainsString(
+            "'confirmed_event.occurred_at', '<=', \$query->asOf",
+            $readiness,
+        );
+        self::assertStringContainsString(
+            "'cancelled_event.occurred_at', '<=', \$query->asOf",
+            $readiness,
+        );
+        self::assertStringNotContainsString("owner_order.metadata->>'buyer_id'", $materializer);
+        self::assertStringNotContainsString("owner_request.metadata->>'priority'", $materializer);
+    }
+
+    public function test_inventory_readiness_replays_the_same_full_event_history_as_balance_materializer(): void
+    {
+        $readiness = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/Reporting/InventoryRisk/Readiness/'
+            .'InventoryRiskReadinessProbe.php',
+        );
+
+        self::assertStringContainsString('$eligible = (clone $events)', $readiness);
+        self::assertStringContainsString('(clone $events)', $readiness);
+        self::assertStringContainsString("'transfer_pair_key'", $readiness);
+        self::assertStringNotContainsString('WarehouseMovement::query()', $readiness);
+        self::assertStringNotContainsString("'period' => 'warehouse_inventory_events.occurred_at'", $readiness);
     }
 
     public function test_database_fences_bind_inventory_events_and_receipt_lots_to_sources(): void

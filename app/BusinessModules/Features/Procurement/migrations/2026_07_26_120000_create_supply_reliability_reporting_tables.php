@@ -68,6 +68,8 @@ return new class extends Migration
             $table->unsignedBigInteger('project_id')->nullable();
             $table->unsignedBigInteger('warehouse_id')->nullable();
             $table->unsignedBigInteger('material_id')->nullable();
+            $table->unsignedBigInteger('buyer_id')->nullable();
+            $table->string('priority', 32)->nullable();
             $table->decimal('ordered_quantity', 24, 6);
             $table->unsignedBigInteger('ordered_value_minor')->nullable();
             $table->string('value_basis', 128)->nullable();

@@ -11,20 +11,16 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
-use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardDecisionVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardRow;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardSnapshot;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Queries\SupplierAwardFilteredUniverse;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
 use App\Support\Reporting\OwnerSnapshotFirstWriter;
-use App\Support\Reporting\OwnerReportFilterApplier;
-use App\Support\Reporting\ReportSourceAccessPolicy;
 use DateTimeImmutable;
 use DomainException;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Throwable;
@@ -39,7 +35,8 @@ final readonly class SupplierAwardSnapshotMaterializer
         ['id' => 'decision_id'],
         ['id' => 'decision_version'],
         ['id' => 'proposal_version_id'],
-        ['id' => 'supplier_id'],
+        ['id' => 'supplier_party_id'],
+        ['id' => 'material_ids'],
         ['id' => 'currency'],
         ['id' => 'selected_amount_minor'],
         ['id' => 'cheapest_amount_minor'],
@@ -55,8 +52,7 @@ final readonly class SupplierAwardSnapshotMaterializer
         private ComparableProposalVersionFactory $proposalFactory,
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
-        private ReportSourceAccessPolicy $sourceAccess,
-        private OwnerReportFilterApplier $filters,
+        private SupplierAwardFilteredUniverse $universe,
     ) {}
 
     public function materialize(
@@ -77,97 +73,14 @@ final readonly class SupplierAwardSnapshotMaterializer
     ): ReportSnapshotRef {
         $this->assertScope($context, $query);
         $organizationId = $context->scope->organizationId;
-        $allowedDecisionIds = $this->sourceAccess->allowedIds(
-            $context->scope->resources,
-            'supplier_award_decision',
-        );
-        $decisionQuery = SupplierAwardDecisionVersion::query()
-            ->leftJoin(
-                'purchase_requests as award_filter_request',
-                'award_filter_request.id',
-                '=',
-                'supplier_award_decision_versions.purchase_request_id',
-            )
-            ->leftJoin(
-                'site_requests as award_filter_site_request',
-                'award_filter_site_request.id',
-                '=',
-                'award_filter_request.site_request_id',
-            )
-            ->leftJoin(
-                'supplier_proposal_versions as award_filter_version',
-                'award_filter_version.id',
-                '=',
-                'supplier_award_decision_versions.selected_proposal_version_id',
-            )
-            ->leftJoin(
-                'supplier_proposals as award_filter_proposal',
-                'award_filter_proposal.id',
-                '=',
-                'award_filter_version.supplier_proposal_id',
-            )
-            ->leftJoin(
-                'supplier_proposal_lines as award_filter_line',
-                'award_filter_line.supplier_proposal_id',
-                '=',
-                'award_filter_proposal.id',
-            )
-            ->leftJoin(
-                'materials as award_filter_material',
-                'award_filter_material.id',
-                '=',
-                'award_filter_line.material_id',
-            )
-            ->where('supplier_award_decision_versions.organization_id', $organizationId)
-            ->where('supplier_award_decision_versions.selected_at', '<=', $query->asOf)
-            ->when(
-                $allowedDecisionIds !== null,
-                static fn (Builder $builder): Builder => $builder->whereIn(
-                    'decision_id',
-                    $allowedDecisionIds,
-                ),
-            );
-        if ($context->scope->projectIds !== []) {
-            $decisionQuery->whereIn(
-                'award_filter_site_request.project_id',
-                $context->scope->projectIds,
-            );
-        }
-        $this->filters->apply($decisionQuery, $query->filters, [
-            'project' => 'award_filter_site_request.project_id',
-            'category' => 'award_filter_material.category',
-            'material' => 'award_filter_line.material_id',
-            'buyer' => 'supplier_award_decision_versions.selected_by',
-            'supplier' => 'award_filter_proposal.supplier_id',
-            'decision' => 'supplier_award_decision_versions.decision_id',
-            'method' => DB::raw(
-                "CASE WHEN jsonb_array_length(supplier_award_decision_versions.invited_supplier_ids) > 1 "
-                ."THEN 'competitive' ELSE 'single_source' END",
-            ),
-            'currency' => 'award_filter_proposal.currency',
-            'non_lowest' => [
-                'column' => 'supplier_award_decision_versions.is_lowest_price_selected',
-                'invert_boolean' => true,
-            ],
-            'period' => 'supplier_award_decision_versions.selected_at',
-        ]);
-        $decisions = $decisionQuery
-            ->select('supplier_award_decision_versions.*')
-            ->distinct()
+        $decisions = $this->universe->query($context, $query)
             ->orderBy('decision_id')
             ->orderBy('decision_version')
             ->get();
-        $purchaseRequests = PurchaseRequest::query()
-            ->with('siteRequest')
-            ->where('organization_id', $organizationId)
-            ->whereIn('id', $decisions->pluck('purchase_request_id')->filter()->unique()->all())
-            ->get()
-            ->keyBy('id');
         $versionIds = $decisions->flatMap(
             static fn (SupplierAwardDecisionVersion $decision): array => $decision->comparable_proposal_version_ids,
         )->unique()->values()->all();
         $versions = SupplierProposalVersion::query()
-            ->with('supplierProposal')
             ->where('organization_id', $organizationId)
             ->whereIn('id', $versionIds)
             ->get()
@@ -178,6 +91,9 @@ final readonly class SupplierAwardSnapshotMaterializer
                 CanonicalJson::encode([
                     'id' => $version->getKey(),
                     'snapshot' => $version->commercial_snapshot,
+                    'dimension_hash' => $version->dimension_hash,
+                    'supplier_party_id' => $version->supplier_party_id,
+                    'supplier_request_id' => $version->supplier_request_id,
                     'supplier_proposal_id' => $version->supplier_proposal_id,
                     'version_number' => $version->version_number,
                 ]),
@@ -188,12 +104,6 @@ final readonly class SupplierAwardSnapshotMaterializer
             [
                 ...$decisions->pluck('source_hash')->all(),
                 ...$versionHashes,
-                ...$purchaseRequests->map(
-                    static fn (PurchaseRequest $request): string => hash(
-                        'sha256',
-                        $request->id.':'.$request->siteRequest?->project_id,
-                    ),
-                )->values()->all(),
             ],
         );
         $existing = SupplierAwardSnapshot::query()
@@ -214,7 +124,6 @@ final readonly class SupplierAwardSnapshotMaterializer
             $query,
             $sourceHash,
             $versions,
-            $purchaseRequests,
         ) {
             $rows = [];
             $gapCount = 0;
@@ -242,8 +151,7 @@ final readonly class SupplierAwardSnapshotMaterializer
                         throw new DomainException('Pinned comparable proposal set does not match source versions.');
                     }
                     $selected = $versions->get($decision->selected_proposal_version_id);
-                    if (! $selected instanceof SupplierProposalVersion
-                        || ! $selected->supplierProposal instanceof SupplierProposal) {
+                    if (! $selected instanceof SupplierProposalVersion) {
                         throw new DomainException('Selected proposal version is unavailable.');
                     }
                     $selectedData = $this->proposalFactory->make($selected);
@@ -255,19 +163,25 @@ final readonly class SupplierAwardSnapshotMaterializer
 
                 $premiumByCurrency[$selectedData->currency] = ($premiumByCurrency[$selectedData->currency] ?? 0)
                     + $metric->premiumMinor;
-                $snapshotData = $selected->commercial_snapshot;
-                $firstLine = is_array($snapshotData['lines'] ?? null) ? ($snapshotData['lines'][0] ?? []) : [];
+                $dimensionLines = is_array($decision->dimension_snapshot['lines'] ?? null)
+                    ? $decision->dimension_snapshot['lines']
+                    : [];
+                $materialIds = collect($dimensionLines)
+                    ->pluck('material_id')
+                    ->filter(static fn (mixed $id): bool => is_int($id) && $id > 0)
+                    ->unique()
+                    ->sort()
+                    ->values()
+                    ->all();
                 $rows[] = [
                     'organization_id' => $organizationId,
                     'row_key' => 'award_'.$decision->decision_id.'_'.$decision->decision_version,
-                    'project_id' => $decision->purchase_request_id === null
-                        ? null
-                        : $purchaseRequests->get($decision->purchase_request_id)?->siteRequest?->project_id,
-                    'material_id' => isset($firstLine['material_id']) ? (int) $firstLine['material_id'] : null,
+                    'project_id' => $decision->project_id,
+                    'material_ids' => $materialIds,
                     'decision_id' => $decision->decision_id,
                     'decision_version' => $decision->decision_version,
                     'proposal_version_id' => $selected->getKey(),
-                    'supplier_id' => $selectedData->supplierId,
+                    'supplier_party_id' => $selectedData->supplierId,
                     'selected_proposal_version_id' => $decision->selected_proposal_version_id,
                     'cheapest_proposal_version_id' => $decision->cheapest_proposal_version_id,
                     'median_proposal_version_id' => $decision->median_proposal_version_id,

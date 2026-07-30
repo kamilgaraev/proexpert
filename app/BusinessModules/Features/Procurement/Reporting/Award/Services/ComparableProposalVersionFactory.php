@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Award\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ComparableProposalVersion;
 use Brick\Math\BigDecimal;
@@ -16,13 +15,10 @@ final readonly class ComparableProposalVersionFactory
 {
     public function make(SupplierProposalVersion $version): ComparableProposalVersion
     {
-        $version->loadMissing('supplierProposal');
         $snapshot = $version->commercial_snapshot;
         $lines = is_array($snapshot['lines'] ?? null) ? array_values($snapshot['lines']) : [];
-        $proposal = $version->supplierProposal;
         if ($lines === []
-            || ! $proposal instanceof SupplierProposal
-            || $proposal->supplier_party_id === null
+            || $version->supplier_party_id === null
             || ! is_string($snapshot['total_amount'] ?? null)
             || ! is_string($snapshot['delivery_amount'] ?? null)
             || ! is_string($snapshot['currency'] ?? null)
@@ -75,7 +71,7 @@ final readonly class ComparableProposalVersionFactory
 
         return new ComparableProposalVersion(
             proposalVersionId: (int) $version->getKey(),
-            supplierId: (int) $proposal->supplier_party_id,
+            supplierId: (int) $version->supplier_party_id,
             amountMinor: $amount,
             currency: (string) $snapshot['currency'],
             materialSpecificationHash: hash('sha256', CanonicalJson::encode($basisLines)),

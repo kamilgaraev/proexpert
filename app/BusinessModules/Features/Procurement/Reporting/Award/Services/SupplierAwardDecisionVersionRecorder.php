@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Award\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardDecisionVersion;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use DateTimeInterface;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +30,7 @@ final readonly class SupplierAwardDecisionVersionRecorder
         DateTimeInterface $selectedAt,
         ?int $purchaseRequestId = null,
         ?int $selectedBy = null,
+        ?int $projectId = null,
     ): SupplierAwardDecisionVersion {
         if ($organizationId < 1 || $decisionId < 1 || $decisionVersion < 1 || $supplierRequestId < 1) {
             throw new DomainException('Supplier award decision identity is invalid.');
@@ -52,12 +54,40 @@ final readonly class SupplierAwardDecisionVersionRecorder
         if (! hash_equals(hash('sha256', implode(',', $comparableProposalVersionIds)), $comparableSetHash)) {
             throw new DomainException('Award comparable proposal set hash is invalid.');
         }
+        $selectedVersion = SupplierProposalVersion::query()
+            ->whereKey($selectedProposalVersionId)
+            ->where('organization_id', $organizationId)
+            ->first();
+        if (! $selectedVersion instanceof SupplierProposalVersion
+            || $selectedVersion->supplier_party_id === null
+            || (int) $selectedVersion->supplier_request_id !== $supplierRequestId
+            || ! is_array($selectedVersion->dimension_snapshot)
+            || ! is_string($selectedVersion->dimension_hash)
+            || ! hash_equals(
+                hash('sha256', CanonicalJson::encode($selectedVersion->dimension_snapshot)),
+                $selectedVersion->dimension_hash,
+            )) {
+            throw new DomainException('Selected proposal version lacks immutable award dimensions.');
+        }
+        $proposalDimensions = $selectedVersion->dimension_snapshot;
+        $dimensionSnapshot = [
+            'project_id' => $projectId,
+            'supplier_party_id' => (int) $selectedVersion->supplier_party_id,
+            'currency' => $proposalDimensions['currency'] ?? null,
+            'lines' => $proposalDimensions['lines'] ?? [],
+            'procurement_method' => count($invitedSupplierIds) > 1 ? 'competitive' : 'single_source',
+        ];
+        $dimensionHash = hash('sha256', CanonicalJson::encode($dimensionSnapshot));
 
         $attributes = [
             'organization_id' => $organizationId,
             'decision_id' => $decisionId,
             'decision_version' => $decisionVersion,
             'purchase_request_id' => $purchaseRequestId,
+            'project_id' => $projectId,
+            'selected_supplier_party_id' => (int) $selectedVersion->supplier_party_id,
+            'dimension_snapshot' => $dimensionSnapshot,
+            'dimension_hash' => $dimensionHash,
             'supplier_request_id' => $supplierRequestId,
             'selected_proposal_version_id' => $selectedProposalVersionId,
             'cheapest_proposal_version_id' => $cheapestProposalVersionId,
@@ -82,6 +112,12 @@ final readonly class SupplierAwardDecisionVersionRecorder
             $decisionVersion,
             $organizationId,
         ): SupplierAwardDecisionVersion {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select(
+                    'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                    ['supplier-award:'.$organizationId.':'.$decisionId],
+                );
+            }
             $existing = SupplierAwardDecisionVersion::query()
                 ->where('organization_id', $organizationId)
                 ->where('decision_id', $decisionId)

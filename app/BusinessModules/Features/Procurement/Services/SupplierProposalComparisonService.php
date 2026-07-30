@@ -690,6 +690,7 @@ class SupplierProposalComparisonService
             selectedAt: $decision->selected_at,
             purchaseRequestId: (int) $purchaseRequest->id,
             selectedBy: $decision->selected_by,
+            projectId: $purchaseRequest->siteRequest?->project_id,
         );
         $this->reportingLifecycle->awardDecided($decision);
     }

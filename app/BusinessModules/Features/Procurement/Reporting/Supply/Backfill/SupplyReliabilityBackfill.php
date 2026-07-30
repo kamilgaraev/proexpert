@@ -28,7 +28,7 @@ final readonly class SupplyReliabilityBackfill
     {
         $limit = min(self::MAX_SLICE, max(1, $limit));
         $items = PurchaseOrderItem::query()
-            ->with(['purchaseOrder.purchaseRequest', 'receiptLines.purchaseReceipt'])
+            ->with(['purchaseOrder.purchaseRequest.siteRequest', 'receiptLines.purchaseReceipt'])
             ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
             ->where('purchase_orders.organization_id', $organizationId)
             ->whereNotNull('purchase_orders.sent_at')

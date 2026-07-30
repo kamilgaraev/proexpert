@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 
 class SupplierProposalVersionService
 {
@@ -16,13 +17,30 @@ class SupplierProposalVersionService
 
     public function createInitialVersion(SupplierProposal $proposal, ?int $actorId = null): SupplierProposalVersion
     {
-        $proposal->loadMissing(['lines.supplierRequestLine', 'intake']);
+        $proposal->loadMissing(['lines.material', 'lines.supplierRequestLine', 'intake']);
+        $commercialSnapshot = $this->commercialSnapshot($proposal);
+        $dimensionSnapshot = [
+            'supplier_party_id' => $proposal->supplier_party_id,
+            'supplier_request_id' => $proposal->supplier_request_id,
+            'currency' => $proposal->currency,
+            'lines' => array_map(
+                static fn (array $line): array => [
+                    'material_id' => $line['material_id'],
+                    'category' => $line['category'],
+                ],
+                $commercialSnapshot['lines'],
+            ),
+        ];
 
         $version = SupplierProposalVersion::query()->create([
             'organization_id' => $proposal->organization_id,
             'supplier_proposal_id' => $proposal->id,
             'version_number' => 1,
-            'commercial_snapshot' => $this->commercialSnapshot($proposal),
+            'commercial_snapshot' => $commercialSnapshot,
+            'supplier_party_id' => $proposal->supplier_party_id,
+            'supplier_request_id' => $proposal->supplier_request_id,
+            'dimension_snapshot' => $dimensionSnapshot,
+            'dimension_hash' => hash('sha256', CanonicalJson::encode($dimensionSnapshot)),
             'attachment_snapshot' => $this->attachmentSnapshot($proposal),
             'created_by' => $actorId,
         ]);
@@ -66,6 +84,7 @@ class SupplierProposalVersionService
                 'id' => $line->id,
                 'supplier_request_line_id' => $line->supplier_request_line_id,
                 'material_id' => $line->material_id,
+                'category' => $line->material?->category,
                 'name' => $line->name,
                 'quantity' => (string) $line->quantity,
                 'unit' => $line->unit,

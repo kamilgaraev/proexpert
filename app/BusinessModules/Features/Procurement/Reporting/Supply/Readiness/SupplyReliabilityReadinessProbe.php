@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityPolicyVersion;
 use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
@@ -43,6 +44,18 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             $context->scope->resources,
             'purchase_order_item',
         );
+        $policy = SupplyReliabilityPolicyVersion::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('effective_from', '<=', $query->asOf)
+            ->where(static fn ($builder) => $builder
+                ->whereNull('effective_to')
+                ->orWhere('effective_to', '>', $query->asOf))
+            ->orderByDesc('effective_from')
+            ->orderByDesc('policy_version')
+            ->first();
+        $tolerance = $policy instanceof SupplyReliabilityPolicyVersion
+            ? (string) $policy->quantity_tolerance
+            : '0';
         $ownerItems = PurchaseOrderItem::query()
             ->join('purchase_orders as readiness_owner_order', 'readiness_owner_order.id', '=', 'purchase_order_items.purchase_order_id')
             ->leftJoin('purchase_requests as readiness_owner_request', 'readiness_owner_request.id', '=', 'readiness_owner_order.purchase_request_id')
@@ -64,24 +77,6 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     $projects,
                 ),
             );
-        $this->filters->apply($ownerItems, $this->filters->only($query->filters, [
-            'supplier', 'supplier_id', 'project', 'project_id', 'warehouse', 'warehouse_id',
-            'material', 'material_id', 'buyer', 'priority', 'status', 'period', 'promised_month',
-        ]), [
-            'supplier' => 'readiness_owner_order.supplier_id',
-            'supplier_id' => 'readiness_owner_order.supplier_id',
-            'project' => 'readiness_owner_site_request.project_id',
-            'project_id' => 'readiness_owner_site_request.project_id',
-            'warehouse' => DB::raw("NULLIF(readiness_owner_order.metadata->>'warehouse_id', '')::bigint"),
-            'warehouse_id' => DB::raw("NULLIF(readiness_owner_order.metadata->>'warehouse_id', '')::bigint"),
-            'material' => 'purchase_order_items.material_id',
-            'material_id' => 'purchase_order_items.material_id',
-            'buyer' => DB::raw("NULLIF(readiness_owner_order.metadata->>'buyer_id', '')::bigint"),
-            'priority' => DB::raw("readiness_owner_request.metadata->>'priority'"),
-            'status' => 'readiness_owner_order.status',
-            'period' => 'readiness_owner_order.sent_at',
-            'promised_month' => 'readiness_owner_order.delivery_date',
-        ]);
         $eligibleItemIds = (clone $ownerItems)->select('purchase_order_items.id');
         $eligible = (clone $ownerItems)->distinct()->count('purchase_order_items.id');
         $promises = PurchaseOrderPromiseVersion::query()
@@ -89,6 +84,26 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             ->where('promise_version', 1)
             ->where('effective_from', '<=', $query->asOf)
             ->whereIn('purchase_order_item_id', $eligibleItemIds);
+        $this->filters->apply($promises, $this->filters->only($query->filters, [
+            'supplier', 'supplier_id', 'project', 'project_id', 'warehouse', 'warehouse_id',
+            'material', 'material_id', 'buyer', 'priority', 'status', 'period', 'promised_month',
+            'delay',
+        ]), [
+            'supplier' => 'purchase_order_promise_versions.supplier_id',
+            'supplier_id' => 'purchase_order_promise_versions.supplier_id',
+            'project' => 'purchase_order_promise_versions.project_id',
+            'project_id' => 'purchase_order_promise_versions.project_id',
+            'warehouse' => 'purchase_order_promise_versions.warehouse_id',
+            'warehouse_id' => 'purchase_order_promise_versions.warehouse_id',
+            'material' => 'purchase_order_promise_versions.material_id',
+            'material_id' => 'purchase_order_promise_versions.material_id',
+            'buyer' => 'purchase_order_promise_versions.buyer_id',
+            'priority' => 'purchase_order_promise_versions.priority',
+            'status' => $this->statusExpression($query, $tolerance),
+            'period' => 'purchase_order_promise_versions.promised_at',
+            'promised_month' => DB::raw("to_char(purchase_order_promise_versions.promised_at, 'YYYY-MM')"),
+            'delay' => $this->delayExpression($query, $tolerance),
+        ]);
         $eligiblePromiseIds = (clone $promises)->select('id');
         $projected = (clone $promises)->distinct()->count('purchase_order_item_id');
         $missingPromise = max(0, $eligible - $projected);
@@ -118,24 +133,25 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     ->where(function ($confirmed) use ($context, $query): void {
                         $confirmed->whereNotNull('readiness_order.confirmed_at')
                             ->where('readiness_order.confirmed_at', '<=', $query->asOf)
-                            ->whereNotExists(function ($event) use ($context): void {
+                            ->whereNotExists(function ($event) use ($context, $query): void {
                                 $event->selectRaw('1')
                                     ->from('supply_lifecycle_events as confirmed_event')
                                     ->whereColumn(
                                         'confirmed_event.promise_version_id',
                                         'readiness_promise.id',
                                     )
-                                    ->where(
-                                        'confirmed_event.organization_id',
-                                        $context->scope->organizationId,
-                                    )
-                                    ->where('confirmed_event.event_type', 'confirmed');
+                            ->where(
+                                'confirmed_event.organization_id',
+                                $context->scope->organizationId,
+                            )
+                                    ->where('confirmed_event.event_type', 'confirmed')
+                                    ->where('confirmed_event.occurred_at', '<=', $query->asOf);
                             });
                     })
                     ->orWhere(function ($cancelled) use ($context, $query): void {
                         $cancelled->whereNotNull('readiness_order.cancelled_at')
                             ->where('readiness_order.cancelled_at', '<=', $query->asOf)
-                            ->whereNotExists(function ($event) use ($context): void {
+                            ->whereNotExists(function ($event) use ($context, $query): void {
                                 $event->selectRaw('1')
                                     ->from('supply_lifecycle_events as cancelled_event')
                                     ->whereColumn(
@@ -146,7 +162,8 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                                         'cancelled_event.organization_id',
                                         $context->scope->organizationId,
                                     )
-                                    ->where('cancelled_event.event_type', 'cancelled');
+                                    ->where('cancelled_event.event_type', 'cancelled')
+                                    ->where('cancelled_event.occurred_at', '<=', $query->asOf);
                             });
                     });
             })
@@ -235,6 +252,59 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             (clone $promises)->whereRaw('LENGTH(source_hash) <> 64')->count()
                 + (clone $lifecycle)->whereRaw('LENGTH(source_hash) <> 64')->count(),
             new DateTimeImmutable,
+        );
+    }
+
+    private function statusExpression(
+        ReportQuery $query,
+        string $tolerance,
+    ): \Illuminate\Contracts\Database\Query\Expression
+    {
+        $cutoff = $query->asOf->format(DATE_ATOM);
+
+        return DB::raw(
+            "(CASE "
+            ."WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_cancel "
+            ."WHERE status_cancel.promise_version_id = purchase_order_promise_versions.id "
+            ."AND status_cancel.event_type = 'cancelled' AND status_cancel.occurred_at <= '{$cutoff}') "
+            ."THEN 'cancelled' "
+            ."WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty "
+            ."WHERE status_qty.promise_version_id = purchase_order_promise_versions.id "
+            ."AND status_qty.occurred_at <= '{$cutoff}'), 0) >= "
+            ."(purchase_order_promise_versions.ordered_quantity - {$tolerance}) "
+            ."THEN 'delivered' "
+            ."WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty "
+            ."WHERE status_qty.promise_version_id = purchase_order_promise_versions.id "
+            ."AND status_qty.occurred_at <= '{$cutoff}'), 0) > 0 THEN 'partially_delivered' "
+            ."WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_confirm "
+            ."WHERE status_confirm.promise_version_id = purchase_order_promise_versions.id "
+            ."AND status_confirm.event_type = 'confirmed' AND status_confirm.occurred_at <= '{$cutoff}') "
+            ."THEN 'confirmed' ELSE 'sent' END)",
+        );
+    }
+
+    private function delayExpression(
+        ReportQuery $query,
+        string $tolerance,
+    ): \Illuminate\Contracts\Database\Query\Expression
+    {
+        $cutoff = $query->asOf->format(DATE_ATOM);
+        $receipt = "(SELECT MIN(delay_event.occurred_at) FROM supply_lifecycle_events delay_event "
+            ."WHERE delay_event.promise_version_id = purchase_order_promise_versions.id "
+            ."AND delay_event.occurred_at <= '{$cutoff}' "
+            ."AND (SELECT COALESCE(SUM(delay_running.signed_quantity), 0) "
+            ."FROM supply_lifecycle_events delay_running "
+            ."WHERE delay_running.promise_version_id = purchase_order_promise_versions.id "
+            ."AND (delay_running.occurred_at < delay_event.occurred_at "
+            ."OR (delay_running.occurred_at = delay_event.occurred_at AND delay_running.id <= delay_event.id))) "
+            .">= (purchase_order_promise_versions.ordered_quantity - {$tolerance}))";
+
+        return DB::raw(
+            "(CASE WHEN {$receipt} IS NULL THEN 'unreceived' "
+            ."WHEN {$receipt} <= purchase_order_promise_versions.promised_at THEN 'on_time' "
+            ."WHEN {$receipt} <= purchase_order_promise_versions.promised_at + INTERVAL '3 days' THEN 'delay_1_3' "
+            ."WHEN {$receipt} <= purchase_order_promise_versions.promised_at + INTERVAL '7 days' THEN 'delay_4_7' "
+            ."ELSE 'delay_over_7' END)",
         );
     }
 }

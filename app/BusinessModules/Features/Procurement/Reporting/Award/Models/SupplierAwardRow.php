@@ -22,11 +22,11 @@ final class SupplierAwardRow extends Model
         return [
             'organization_id' => 'integer',
             'project_id' => 'integer',
-            'material_id' => 'integer',
             'decision_id' => 'integer',
             'decision_version' => 'integer',
             'proposal_version_id' => 'integer',
-            'supplier_id' => 'integer',
+            'supplier_party_id' => 'integer',
+            'material_ids' => 'array',
             'selected_proposal_version_id' => 'integer',
             'cheapest_proposal_version_id' => 'integer',
             'median_proposal_version_id' => 'integer',

@@ -125,6 +125,10 @@ final readonly class ProcurementCycleSnapshotMaterializer
         $promises = PurchaseOrderPromiseVersion::query()
             ->where('organization_id', $organizationId)
             ->where('promise_version', 1)
+            ->where('effective_from', '<=', $query->asOf)
+            ->where(static fn (Builder $builder): Builder => $builder
+                ->whereNull('effective_to')
+                ->orWhere('effective_to', '>', $query->asOf))
             ->whereIn('purchase_order_id', $purchaseOrderIds)
             ->get();
         $expectedItemsByOrder = PurchaseOrderItem::query()

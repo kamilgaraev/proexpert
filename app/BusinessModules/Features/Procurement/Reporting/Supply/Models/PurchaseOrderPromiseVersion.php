@@ -28,6 +28,7 @@ final class PurchaseOrderPromiseVersion extends Model
             'project_id' => 'integer',
             'warehouse_id' => 'integer',
             'material_id' => 'integer',
+            'buyer_id' => 'integer',
             'supersedes_id' => 'integer',
             'promised_at' => 'immutable_datetime',
             'effective_from' => 'immutable_datetime',

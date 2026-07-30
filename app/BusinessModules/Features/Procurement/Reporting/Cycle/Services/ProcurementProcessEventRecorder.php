@@ -52,6 +52,39 @@ final readonly class ProcurementProcessEventRecorder
             || strlen($sourceEventId) > 128) {
             throw new DomainException('Procurement process event stage or source identity is invalid.');
         }
+        $owner = DB::table('purchase_request_lines as event_owner_line')
+            ->join('purchase_requests as event_owner_request', 'event_owner_request.id', '=', 'event_owner_line.purchase_request_id')
+            ->join('site_requests as event_owner_site_request', 'event_owner_site_request.id', '=', 'event_owner_request.site_request_id')
+            ->leftJoin('materials as event_owner_material', 'event_owner_material.id', '=', 'event_owner_line.material_id')
+            ->where('event_owner_line.id', $purchaseRequestLineId)
+            ->where('event_owner_request.id', $purchaseRequestId)
+            ->first([
+                'event_owner_site_request.project_id',
+                'event_owner_site_request.user_id as requester_id',
+                'event_owner_request.assigned_to as buyer_id',
+                'event_owner_line.material_id',
+                'event_owner_material.category',
+                'event_owner_request.budget_amount',
+                'event_owner_request.budget_currency',
+                'event_owner_site_request.priority',
+            ]);
+        if ($owner === null) {
+            throw new DomainException('Procurement process event owner is unavailable.');
+        }
+        $supplierPartyId = $purchaseOrderId === null
+            ? DB::table('supplier_requests')->where('id', $supplierRequestId)->value('supplier_party_id')
+            : DB::table('purchase_orders')->where('id', $purchaseOrderId)->value('supplier_party_id');
+        $evidence = array_merge($evidence, [
+            'project_id' => $owner->project_id,
+            'requester_id' => $owner->requester_id,
+            'buyer_id' => $owner->buyer_id,
+            'material_id' => $owner->material_id,
+            'category' => $owner->category,
+            'amount' => (string) $owner->budget_amount,
+            'currency' => $owner->budget_currency,
+            'priority' => $owner->priority,
+            'supplier_party_id' => $supplierPartyId,
+        ]);
 
         $attributes = [
             'organization_id' => $organizationId,

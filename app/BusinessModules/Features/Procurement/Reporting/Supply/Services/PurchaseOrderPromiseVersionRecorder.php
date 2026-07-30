@@ -146,6 +146,8 @@ final readonly class PurchaseOrderPromiseVersionRecorder
             'project_id' => $projectId,
             'warehouse_id' => $orderMetadata['warehouse_id'] ?? null,
             'material_id' => $item->material_id,
+            'buyer_id' => $order->purchaseRequest?->assigned_to,
+            'priority' => $order->purchaseRequest?->siteRequest?->priority?->value,
             'ordered_quantity' => (string) $item->quantity,
             'ordered_value_minor' => $orderedValueMinor,
             'value_basis' => $valueBasis,
