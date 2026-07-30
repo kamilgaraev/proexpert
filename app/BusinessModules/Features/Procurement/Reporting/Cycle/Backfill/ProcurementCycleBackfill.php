@@ -26,7 +26,6 @@ final readonly class ProcurementCycleBackfill
         'order_sent' => 5,
         'first_receipt' => 6,
         'fully_received' => 7,
-        'cancelled' => 8,
     ];
 
     public function __construct(private ProcurementProcessEventRecorder $events) {}
@@ -303,11 +302,9 @@ final readonly class ProcurementCycleBackfill
                 'item.quantity',
                 'item.metadata',
                 'purchase_order.sent_at',
-                'purchase_order.metadata as purchase_order_metadata',
             ]);
         $requestLineByOrderItem = [];
         $orderedByLine = [];
-        $cancellationByLine = [];
         $seen = [];
         foreach ($orderItems as $item) {
             $lineId = $this->requestLineId((string) $item->metadata, $requestLineBySupplierLine);
@@ -317,21 +314,6 @@ final readonly class ProcurementCycleBackfill
             $requestLineByOrderItem[(int) $item->id] = $lineId;
             $orderedByLine[$lineId] = ($orderedByLine[$lineId] ?? BigDecimal::zero())
                 ->plus((string) $item->quantity);
-            $orderMetadata = json_decode((string) $item->purchase_order_metadata, true);
-            $cancelledAt = is_array($orderMetadata)
-                ? ($orderMetadata['reporting_cancelled_at'] ?? null)
-                : null;
-            if (is_string($cancelledAt) && trim($cancelledAt) !== '') {
-                $candidate = CarbonImmutable::parse($cancelledAt);
-                if (! isset($cancellationByLine[$lineId])
-                    || $candidate->lessThan($cancellationByLine[$lineId]['occurred_at'])) {
-                    $cancellationByLine[$lineId] = [
-                        'occurred_at' => $candidate,
-                        'purchase_order_id' => (int) $item->purchase_order_id,
-                        'source_id' => (int) $item->id,
-                    ];
-                }
-            }
             if (isset($seen[$lineId])) {
                 continue;
             }
@@ -342,15 +324,6 @@ final readonly class ProcurementCycleBackfill
                 (string) $item->sent_at,
                 'purchase_order_item:'.$item->id.':sent',
                 purchaseOrderId: (int) $item->purchase_order_id,
-            );
-        }
-        foreach ($cancellationByLine as $lineId => $cancellation) {
-            $facts[$lineId][] = $this->fact(
-                'cancelled',
-                'cancelled',
-                $cancellation['occurred_at']->toIso8601String(),
-                'purchase_order_item:'.$cancellation['source_id'].':cancelled',
-                purchaseOrderId: $cancellation['purchase_order_id'],
             );
         }
         $receiptLines = DB::table('purchase_receipt_lines as line')

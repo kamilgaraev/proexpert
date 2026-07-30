@@ -262,7 +262,7 @@ final readonly class ProcurementReportingLifecycleRecorder
         }
     }
 
-    public function orderCancelled(PurchaseOrder $order, CarbonImmutable $occurredAt): void
+    public function orderCancelled(PurchaseOrder $order, CarbonImmutable $occurredAt, string $reasonCode): void
     {
         $order->loadMissing('items');
         foreach ($order->items as $item) {
@@ -276,6 +276,7 @@ final readonly class ProcurementReportingLifecycleRecorder
                 '0',
                 $occurredAt,
                 'purchase_order_item:'.$item->id.':cancelled',
+                reasonCode: $reasonCode,
                 evidence: ['purchase_order_id' => (int) $order->id],
             );
         }

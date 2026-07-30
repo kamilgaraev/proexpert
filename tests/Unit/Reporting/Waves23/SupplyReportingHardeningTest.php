@@ -218,8 +218,8 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('$missingSent', $source);
         self::assertStringNotContainsString('->get([', $source);
         self::assertStringNotContainsString('->pluck(', $source);
-        self::assertStringContainsString('PurchaseOrderItem::query()', $source);
-        self::assertStringContainsString("'authoritative_order.sent_at'", $source);
+        self::assertStringContainsString('SentPurchaseOrderLineOwner::query()', $source);
+        self::assertStringContainsString("'sent_purchase_order_line_owners.effective_from'", $source);
         self::assertStringContainsString('$missingOwner', $source);
         self::assertStringContainsString('$incompleteBackfill', $source);
         self::assertStringContainsString('SupplyReliabilityBackfillWatermark::query()', $source);

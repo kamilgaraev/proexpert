@@ -234,7 +234,7 @@ class PurchaseOrderService
                 'cancelled_at' => $occurredAt,
                 'notes' => trim((string) $locked->notes)."\n".trim($reason),
             ])->save();
-            $this->reportingLifecycle->orderCancelled($locked->fresh('items'), $occurredAt);
+            $this->reportingLifecycle->orderCancelled($locked->fresh('items'), $occurredAt, $reason);
 
             return $locked->fresh([
                 'items',

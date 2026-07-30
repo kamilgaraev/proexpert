@@ -11,7 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLifecycleFact;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLineFact;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
@@ -101,32 +101,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         if (! $policy instanceof SupplyReliabilityPolicyVersion) {
             throw new DomainException('Supply reliability policy is unavailable for the requested cutoff.');
         }
-        $ownerQuery = PurchaseOrderItem::query()
-            ->join(
-                'purchase_orders as authoritative_order',
-                'authoritative_order.id',
-                '=',
-                'purchase_order_items.purchase_order_id',
-            )
-            ->join(
-                'purchase_requests as authoritative_request',
-                'authoritative_request.id',
-                '=',
-                'authoritative_order.purchase_request_id',
-            )
-            ->join(
-                'site_requests as authoritative_site',
-                'authoritative_site.id',
-                '=',
-                'authoritative_request.site_request_id',
-            )
-            ->leftJoin('sent_purchase_order_line_owners', function ($join): void {
-                $join->on(
-                    'sent_purchase_order_line_owners.purchase_order_item_id',
-                    '=',
-                    'purchase_order_items.id',
-                )->where('sent_purchase_order_line_owners.source_version', 1);
-            })
+        $ownerQuery = SentPurchaseOrderLineOwner::query()
             ->leftJoin('purchase_order_promise_versions as owner_promise', function ($join): void {
                 $join->on(
                     'owner_promise.purchase_order_item_id',
@@ -134,20 +109,19 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                     'sent_purchase_order_line_owners.purchase_order_item_id',
                 )->where('owner_promise.promise_version', 1);
             })
-            ->where('authoritative_order.organization_id', $organizationId)
-            ->whereNotNull('authoritative_order.sent_at')
-            ->where('authoritative_order.sent_at', '<=', $query->asOf)
+            ->where('sent_purchase_order_line_owners.organization_id', $organizationId)
+            ->where('sent_purchase_order_line_owners.effective_from', '<=', $query->asOf)
             ->when(
                 $allowedItemIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'purchase_order_items.id',
+                    'sent_purchase_order_line_owners.purchase_order_item_id',
                     $allowedItemIds,
                 ),
             )
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'authoritative_site.project_id',
+                    'sent_purchase_order_line_owners.project_id',
                     $context->scope->projectIds,
                 ),
             );
@@ -157,8 +131,8 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         ]), [
             'supplier' => 'sent_purchase_order_line_owners.supplier_id',
             'supplier_id' => 'sent_purchase_order_line_owners.supplier_id',
-            'project' => 'authoritative_site.project_id',
-            'project_id' => 'authoritative_site.project_id',
+            'project' => 'sent_purchase_order_line_owners.project_id',
+            'project_id' => 'sent_purchase_order_line_owners.project_id',
             'warehouse' => 'sent_purchase_order_line_owners.warehouse_id',
             'warehouse_id' => 'sent_purchase_order_line_owners.warehouse_id',
             'material' => 'sent_purchase_order_line_owners.material_id',
@@ -168,10 +142,9 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             'period' => 'owner_promise.promised_at',
             'promised_month' => DB::raw("to_char(owner_promise.promised_at, 'YYYY-MM')"),
         ]);
-        $eligibleSentCount = (clone $ownerQuery)->distinct()->count('purchase_order_items.id');
-        $eligibleSentMaxItemId = (int) ((clone $ownerQuery)->max('purchase_order_items.id') ?? 0);
+        $eligibleSentCount = (clone $ownerQuery)->distinct()->count('sent_purchase_order_line_owners.purchase_order_item_id');
+        $eligibleSentMaxItemId = (int) ((clone $ownerQuery)->max('sent_purchase_order_line_owners.purchase_order_item_id') ?? 0);
         $ownerItems = $ownerQuery
-            ->whereNotNull('sent_purchase_order_line_owners.id')
             ->select('sent_purchase_order_line_owners.*')
             ->orderBy('sent_purchase_order_line_owners.purchase_order_item_id')
             ->get();

@@ -8,7 +8,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadines
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
@@ -57,32 +57,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         $tolerance = $policy instanceof SupplyReliabilityPolicyVersion
             ? (string) $policy->quantity_tolerance
             : '0';
-        $promises = PurchaseOrderItem::query()
-            ->join(
-                'purchase_orders as authoritative_order',
-                'authoritative_order.id',
-                '=',
-                'purchase_order_items.purchase_order_id',
-            )
-            ->join(
-                'purchase_requests as authoritative_request',
-                'authoritative_request.id',
-                '=',
-                'authoritative_order.purchase_request_id',
-            )
-            ->join(
-                'site_requests as authoritative_site',
-                'authoritative_site.id',
-                '=',
-                'authoritative_request.site_request_id',
-            )
-            ->leftJoin('sent_purchase_order_line_owners', function ($join): void {
-                $join->on(
-                    'sent_purchase_order_line_owners.purchase_order_item_id',
-                    '=',
-                    'purchase_order_items.id',
-                )->where('sent_purchase_order_line_owners.source_version', 1);
-            })
+        $promises = SentPurchaseOrderLineOwner::query()
             ->leftJoin('purchase_order_promise_versions as owner_promise', function ($join): void {
                 $join->on(
                     'owner_promise.purchase_order_item_id',
@@ -90,20 +65,19 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     'sent_purchase_order_line_owners.purchase_order_item_id',
                 )->where('owner_promise.promise_version', 1);
             })
-            ->where('authoritative_order.organization_id', $context->scope->organizationId)
-            ->whereNotNull('authoritative_order.sent_at')
-            ->where('authoritative_order.sent_at', '<=', $query->asOf)
+            ->where('sent_purchase_order_line_owners.organization_id', $context->scope->organizationId)
+            ->where('sent_purchase_order_line_owners.effective_from', '<=', $query->asOf)
             ->when(
                 $allowedItemIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'purchase_order_items.id',
+                    'sent_purchase_order_line_owners.purchase_order_item_id',
                     $allowedItemIds,
                 ),
             )
             ->when(
                 $projects !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'authoritative_site.project_id',
+                    'sent_purchase_order_line_owners.project_id',
                     $projects,
                 ),
             );
@@ -114,8 +88,8 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         ]), [
             'supplier' => 'sent_purchase_order_line_owners.supplier_id',
             'supplier_id' => 'sent_purchase_order_line_owners.supplier_id',
-            'project' => 'authoritative_site.project_id',
-            'project_id' => 'authoritative_site.project_id',
+            'project' => 'sent_purchase_order_line_owners.project_id',
+            'project_id' => 'sent_purchase_order_line_owners.project_id',
             'warehouse' => 'sent_purchase_order_line_owners.warehouse_id',
             'warehouse_id' => 'sent_purchase_order_line_owners.warehouse_id',
             'material' => 'sent_purchase_order_line_owners.material_id',
@@ -129,19 +103,17 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         ]);
         $eligiblePromiseIds = (clone $promises)->whereNotNull('owner_promise.id')->select('owner_promise.id');
         $eligible = (clone $promises)->distinct()->count(
-            'purchase_order_items.id',
+            'sent_purchase_order_line_owners.purchase_order_item_id',
         );
-        $eligibleMaxItemId = (int) ((clone $promises)->max('purchase_order_items.id') ?? 0);
-        $owned = (clone $promises)->whereNotNull('sent_purchase_order_line_owners.id')->distinct()->count(
-            'purchase_order_items.id',
-        );
+        $eligibleMaxItemId = (int) ((clone $promises)->max('sent_purchase_order_line_owners.purchase_order_item_id') ?? 0);
+        $owned = $eligible;
         $projected = (clone $promises)->whereNotNull('owner_promise.id')->distinct()->count(
-            'purchase_order_items.id',
+            'sent_purchase_order_line_owners.purchase_order_item_id',
         );
         $missingOwner = max(0, $eligible - $owned);
         $missingPromise = max(0, $owned - $projected);
         $eligibleItemIds = (clone $promises)->select(
-            'purchase_order_items.id',
+            'sent_purchase_order_line_owners.purchase_order_item_id',
         );
         $missingSent = (clone $promises)
             ->whereNotNull('owner_promise.id')
@@ -154,7 +126,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     )
                     ->whereColumn(
                         'readiness_event.purchase_order_item_id',
-                        'purchase_order_items.id',
+                        'sent_purchase_order_line_owners.purchase_order_item_id',
                     )
                     ->where('readiness_event.organization_id', $context->scope->organizationId)
                     ->where('readiness_event.event_type', 'sent')

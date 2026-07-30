@@ -55,8 +55,8 @@ final class SupplyRound15OwnershipTest extends TestCase
             .'SupplyReliabilityReadinessProbe.php',
         );
 
-        self::assertStringContainsString('PurchaseOrderItem::query()', $materializer);
-        self::assertStringContainsString("'authoritative_order.sent_at', '<=', \$query->asOf", $materializer);
+        self::assertStringContainsString('SentPurchaseOrderLineOwner::query()', $materializer);
+        self::assertStringNotContainsString('PurchaseOrderItem::query()', $materializer);
         self::assertStringNotContainsString('owner_site_request', $materializer);
         self::assertStringNotContainsString('readiness_owner_order', $readiness);
         self::assertStringContainsString('$missingPromise = max(0, $owned - $projected)', $readiness);
