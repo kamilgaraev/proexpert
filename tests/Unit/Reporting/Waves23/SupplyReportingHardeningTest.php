@@ -157,10 +157,24 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString("->where('organization_id', \$organizationId)", $method);
         self::assertStringContainsString("->where('purchase_order_id', \$purchaseOrderId)", $method);
         self::assertStringContainsString('->lockForUpdate()', $method);
-        self::assertStringContainsString('$this->warehouseService->writeOffAsset(', $method);
+        self::assertStringContainsString('$this->receiptInventory->reverse(', $method);
+        self::assertStringNotContainsString('->writeOffAsset(', $method);
         self::assertStringContainsString('$this->reportingLifecycle->receiptReversed(', $method);
         self::assertStringContainsString('$this->auditService->record(', $method);
         self::assertStringContainsString("'reversed_at' => \$occurredAt", $method);
+        self::assertStringContainsString("'reversal_idempotency_key' => \$idempotencyKey", $method);
+    }
+
+    public function test_receipt_reversal_uses_immutable_linked_inventory_lot(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/Services/PurchaseReceiptInventoryService.php',
+        );
+
+        self::assertStringContainsString("->where('purchase_receipt_line_id', \$line->id)", $source);
+        self::assertStringContainsString("->where('batch_number', 'purchase-receipt-line:'.\$line->id)", $source);
+        self::assertStringContainsString('->lockForUpdate()', $source);
+        self::assertStringNotContainsString('writeOffAsset(', $source);
     }
 
     public function test_supply_exports_delegate_to_project_scoped_keyset_cursor(): void

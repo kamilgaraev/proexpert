@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class PurchaseReceiptLine extends Model
 {
@@ -20,6 +21,7 @@ class PurchaseReceiptLine extends Model
         'reversed_by_user_id',
         'reversal_reason_code',
         'reversal_warehouse_movement_id',
+        'reversal_idempotency_key',
     ];
 
     protected $casts = [
@@ -38,5 +40,10 @@ class PurchaseReceiptLine extends Model
     public function purchaseOrderItem(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrderItem::class);
+    }
+
+    public function inventoryLot(): HasOne
+    {
+        return $this->hasOne(PurchaseReceiptInventoryLot::class, 'purchase_receipt_line_id');
     }
 }

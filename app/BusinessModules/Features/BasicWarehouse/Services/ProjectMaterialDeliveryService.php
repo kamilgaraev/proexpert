@@ -221,6 +221,10 @@ class ProjectMaterialDeliveryService
     public function ship(ProjectMaterialDelivery $delivery, User $user, array $data): ProjectMaterialDelivery
     {
         return DB::transaction(function () use ($delivery, $user, $data): ProjectMaterialDelivery {
+            $delivery = ProjectMaterialDelivery::query()
+                ->where('organization_id', $delivery->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($delivery->id);
             $quantity = (float) ($data['quantity'] ?? $delivery->remainingQuantityToShip());
             $newShippedQuantity = (float) $delivery->shipped_quantity + $quantity;
             $expectedQuantity = max((float) $delivery->reserved_quantity, (float) $delivery->requested_quantity);
@@ -265,6 +269,10 @@ class ProjectMaterialDeliveryService
         ?string $notes = null
     ): ProjectMaterialDelivery {
         return DB::transaction(function () use ($delivery, $user, $quantity, $notes): ProjectMaterialDelivery {
+            $delivery = ProjectMaterialDelivery::query()
+                ->where('organization_id', $delivery->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($delivery->id);
             if (! $delivery->canReceive()) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.cannot_receive'));
             }

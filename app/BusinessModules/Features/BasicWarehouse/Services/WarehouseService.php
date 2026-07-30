@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\CanonicalWarehouseReportingIdentity;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\WarehouseInventoryEventRecorder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseReceiptStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -38,6 +39,7 @@ class WarehouseService implements WarehouseReportDataProvider
     public function __construct(
         LoggingService $logging,
         private readonly WarehouseInventoryEventRecorder $inventoryEventRecorder,
+        private readonly CanonicalWarehouseReportingIdentity $reportingIdentity,
     ) {
         $this->logging = $logging;
     }
@@ -530,7 +532,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 + (float) $balance->reserved_quantity);
         $openingBasis = ! $hasMovement && $currentOnHand === 0.0 ? 'verified_zero' : null;
 
-        return array_merge([
+        return $this->reportingIdentity->merge([
             'reporting_source_version' => 1,
             'unit_dimension' => $unitIdentity,
             'unit_code' => $unit?->short_name ?? 'unknown',

@@ -290,16 +290,48 @@ AS $$
 DECLARE pair_count integer;
 DECLARE on_hand_sum numeric;
 DECLARE dimension_count integer;
+DECLARE material_count integer;
+DECLARE warehouse_count integer;
+DECLARE relationship_count integer;
 BEGIN
     IF NEW.transfer_pair_key IS NULL THEN
         RETURN NEW;
     END IF;
-    SELECT COUNT(*), COALESCE(SUM(on_hand_delta), 0), COUNT(DISTINCT unit_dimension || ':' || unit_code || ':' || conversion_version)
-      INTO pair_count, on_hand_sum, dimension_count
+    SELECT COUNT(*),
+           COALESCE(SUM(on_hand_delta), 0),
+           COUNT(DISTINCT unit_dimension || ':' || unit_code || ':' || conversion_version),
+           COUNT(DISTINCT material_id),
+           COUNT(DISTINCT warehouse_id)
+      INTO pair_count, on_hand_sum, dimension_count, material_count, warehouse_count
       FROM warehouse_inventory_events
      WHERE organization_id = NEW.organization_id
        AND transfer_pair_key = NEW.transfer_pair_key;
-    IF pair_count <> 2 OR dimension_count <> 1 OR on_hand_sum <> 0 THEN
+    SELECT COUNT(*)
+      INTO relationship_count
+      FROM warehouse_inventory_events event_out
+      JOIN warehouse_inventory_events event_in
+        ON event_in.organization_id = event_out.organization_id
+       AND event_in.transfer_pair_key = event_out.transfer_pair_key
+       AND event_in.event_type = 'transfer_in'
+      JOIN warehouse_movements movement_out
+        ON movement_out.id = event_out.source_movement_id
+       AND movement_out.organization_id = event_out.organization_id
+      JOIN warehouse_movements movement_in
+        ON movement_in.id = event_in.source_movement_id
+       AND movement_in.organization_id = event_in.organization_id
+     WHERE event_out.organization_id = NEW.organization_id
+       AND event_out.transfer_pair_key = NEW.transfer_pair_key
+       AND event_out.event_type = 'transfer_out'
+       AND movement_out.warehouse_id = event_out.warehouse_id
+       AND movement_out.to_warehouse_id = event_in.warehouse_id
+       AND movement_in.warehouse_id = event_in.warehouse_id
+       AND movement_in.from_warehouse_id = event_out.warehouse_id;
+    IF pair_count <> 2
+       OR dimension_count <> 1
+       OR material_count <> 1
+       OR warehouse_count <> 2
+       OR relationship_count <> 1
+       OR on_hand_sum <> 0 THEN
         RAISE EXCEPTION 'warehouse transfer pair is incomplete' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;

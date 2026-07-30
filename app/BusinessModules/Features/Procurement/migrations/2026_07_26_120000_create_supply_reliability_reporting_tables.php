@@ -16,9 +16,33 @@ return new class extends Migration
             $table->unsignedBigInteger('reversed_by_user_id')->nullable();
             $table->string('reversal_reason_code', 64)->nullable();
             $table->unsignedBigInteger('reversal_warehouse_movement_id')->nullable();
+            $table->string('reversal_idempotency_key', 128)->nullable();
             $table->index(['purchase_order_item_id', 'reversed_at'], 'receipt_line_reversal_idx');
+            $table->unique(
+                ['purchase_receipt_id', 'reversal_idempotency_key'],
+                'receipt_line_reversal_idempotency_unique',
+            );
             $table->foreign('reversed_by_user_id')->references('id')->on('users')->nullOnDelete();
             $table->foreign('reversal_warehouse_movement_id')->references('id')->on('warehouse_movements')->nullOnDelete();
+        });
+
+        Schema::create('purchase_receipt_inventory_lots', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('purchase_receipt_line_id');
+            $table->unsignedBigInteger('warehouse_balance_id');
+            $table->unsignedBigInteger('receipt_warehouse_movement_id');
+            $table->decimal('original_quantity', 24, 6);
+            $table->decimal('reversed_quantity', 24, 6)->default(0);
+            $table->string('unit_dimension', 128);
+            $table->string('unit_code', 64);
+            $table->string('conversion_version', 128);
+            $table->timestampsTz();
+            $table->unique('purchase_receipt_line_id', 'receipt_inventory_lot_line_unique');
+            $table->unique('receipt_warehouse_movement_id', 'receipt_inventory_lot_movement_unique');
+            $table->foreign('purchase_receipt_line_id')->references('id')->on('purchase_receipt_lines')->restrictOnDelete();
+            $table->foreign('warehouse_balance_id')->references('id')->on('warehouse_balances')->restrictOnDelete();
+            $table->foreign('receipt_warehouse_movement_id')->references('id')->on('warehouse_movements')->restrictOnDelete();
         });
 
         Schema::create('purchase_order_promise_versions', function (Blueprint $table): void {
@@ -200,15 +224,18 @@ return new class extends Migration
         Schema::dropIfExists('supply_reliability_policy_versions');
         Schema::dropIfExists('supply_lifecycle_events');
         Schema::dropIfExists('purchase_order_promise_versions');
+        Schema::dropIfExists('purchase_receipt_inventory_lots');
         Schema::table('purchase_receipt_lines', function (Blueprint $table): void {
             $table->dropForeign(['reversed_by_user_id']);
             $table->dropForeign(['reversal_warehouse_movement_id']);
             $table->dropIndex('receipt_line_reversal_idx');
+            $table->dropUnique('receipt_line_reversal_idempotency_unique');
             $table->dropColumn([
                 'reversed_at',
                 'reversed_by_user_id',
                 'reversal_reason_code',
                 'reversal_warehouse_movement_id',
+                'reversal_idempotency_key',
             ]);
         });
     }
@@ -232,6 +259,29 @@ return new class extends Migration
         DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_quantity_otif_check CHECK (quantity_otif_numerator >= 0 AND quantity_otif_numerator <= quantity_otif_denominator)');
         DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_value_otif_check CHECK (value_otif_numerator_minor IS NULL OR (value_otif_denominator_minor IS NOT NULL AND value_otif_numerator_minor <= value_otif_denominator_minor))');
         DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_value_basis_check CHECK ((value_otif_numerator_minor IS NULL AND value_currency IS NULL AND value_basis IS NULL) OR (value_otif_numerator_minor IS NOT NULL AND value_currency IS NOT NULL AND value_basis IS NOT NULL))');
+        DB::statement('ALTER TABLE purchase_receipt_inventory_lots ADD CONSTRAINT receipt_inventory_lot_quantity_check CHECK (original_quantity > 0 AND reversed_quantity >= 0 AND reversed_quantity <= original_quantity)');
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION most_receipt_inventory_lot_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.organization_id <> OLD.organization_id
+       OR NEW.purchase_receipt_line_id <> OLD.purchase_receipt_line_id
+       OR NEW.warehouse_balance_id <> OLD.warehouse_balance_id
+       OR NEW.receipt_warehouse_movement_id <> OLD.receipt_warehouse_movement_id
+       OR NEW.original_quantity <> OLD.original_quantity
+       OR NEW.unit_dimension <> OLD.unit_dimension
+       OR NEW.unit_code <> OLD.unit_code
+       OR NEW.conversion_version <> OLD.conversion_version THEN
+        RAISE EXCEPTION 'receipt inventory lot identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER purchase_receipt_inventory_lot_identity
+BEFORE UPDATE ON purchase_receipt_inventory_lots
+FOR EACH ROW EXECUTE FUNCTION most_receipt_inventory_lot_identity_v1()
+SQL);
     }
 
     private function installAppendOnlyTriggers(array $tables): void

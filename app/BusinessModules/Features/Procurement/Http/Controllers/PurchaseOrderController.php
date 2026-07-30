@@ -380,6 +380,7 @@ class PurchaseOrderController extends Controller
                 $id,
                 $line,
                 (string) $request->validated('reason_code'),
+                (string) $request->validated('idempotency_key'),
                 (int) $request->user()->getAuthIdentifier(),
             );
 

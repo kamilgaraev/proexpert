@@ -7,7 +7,6 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
-use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -36,7 +35,7 @@ class PurchaseOrderService
         private readonly PurchaseOrderPaymentGateService $paymentGateService,
         private readonly ProjectMaterialDeliveryService $deliveryService,
         private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
-        private readonly WarehouseService $warehouseService,
+        private readonly PurchaseReceiptInventoryService $receiptInventory,
     ) {}
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
@@ -244,6 +243,7 @@ class PurchaseOrderService
                 'metadata' => $receiptMetadata,
             ]);
 
+            $inventoryItems = [];
             foreach ($items as $item) {
                 $quantity = (float) $item['quantity_received'];
                 $price = (float) $item['price'];
@@ -264,6 +264,9 @@ class PurchaseOrderService
                     ),
                 ]);
                 $this->reportingLifecycle->receipt($receiptLine, $userId);
+                $inventoryItems[] = array_merge($item, [
+                    'receipt_line_id' => (int) $receiptLine->id,
+                ]);
             }
 
             $order->update([
@@ -273,7 +276,7 @@ class PurchaseOrderService
             event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
                 $order,
                 $warehouse->id,
-                $items,
+                $inventoryItems,
                 $userId
             ));
 
@@ -370,6 +373,7 @@ class PurchaseOrderService
         int $purchaseOrderId,
         int $lineId,
         string $reasonCode,
+        string $idempotencyKey,
         int $actorId,
     ): PurchaseOrder {
         return DB::transaction(function () use (
@@ -377,6 +381,7 @@ class PurchaseOrderService
             $purchaseOrderId,
             $lineId,
             $reasonCode,
+            $idempotencyKey,
             $actorId,
         ): PurchaseOrder {
             $line = PurchaseReceiptLine::query()
@@ -401,8 +406,15 @@ class PurchaseOrderService
                 );
             }
             if ($line->reversed_at !== null) {
+                if (hash_equals((string) $line->reversal_idempotency_key, $idempotencyKey)) {
+                    return $line->purchaseReceipt->purchaseOrder->fresh([
+                        'items.receiptLines',
+                        'receipts.lines',
+                        'receipts.warehouse',
+                    ]);
+                }
                 throw new \DomainException(
-                    trans_message('procurement.purchase_orders.receipt_line_already_reversed')
+                    trans_message('procurement.purchase_orders.receipt_line_reversal_conflict')
                 );
             }
             $receipt = $line->purchaseReceipt;
@@ -414,20 +426,12 @@ class PurchaseOrderService
                 );
             }
             $occurredAt = CarbonImmutable::now('UTC');
-            $movementResult = $this->warehouseService->writeOffAsset(
-                (int) $order->organization_id,
-                (int) $receipt->warehouse_id,
-                (int) $item->material_id,
-                (float) $line->quantity_received,
-                [
-                    'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
-                    'user_id' => $actorId,
-                    'document_number' => $receipt->receipt_number,
-                    'reason' => $reasonCode,
-                    'operation_category' => 'procurement_receipt_reversal',
-                ],
+            $movement = $this->receiptInventory->reverse(
+                $line,
+                $reasonCode,
+                $actorId,
+                $occurredAt,
             );
-            $movement = $movementResult['movement'];
             $event = $this->reportingLifecycle->receiptReversed($line->fresh(), $reasonCode, $occurredAt);
             $metadata = is_array($line->metadata) ? $line->metadata : [];
             $corrections = is_array($metadata['reporting_return_events'] ?? null)
@@ -448,6 +452,7 @@ class PurchaseOrderService
                 'reversed_by_user_id' => $actorId,
                 'reversal_reason_code' => $reasonCode,
                 'reversal_warehouse_movement_id' => $movement->id,
+                'reversal_idempotency_key' => $idempotencyKey,
             ])->save();
 
             $order->update([

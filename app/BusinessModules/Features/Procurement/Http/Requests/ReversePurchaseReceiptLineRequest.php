@@ -17,6 +17,7 @@ final class ReversePurchaseReceiptLineRequest extends FormRequest
     {
         return [
             'reason_code' => ['required', 'string', 'max:64', 'regex:/^[a-z0-9_]+$/'],
+            'idempotency_key' => ['required', 'string', 'min:16', 'max:128', 'regex:/^[A-Za-z0-9._:-]+$/'],
         ];
     }
 }

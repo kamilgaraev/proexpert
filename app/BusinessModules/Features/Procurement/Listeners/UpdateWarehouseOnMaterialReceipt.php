@@ -8,6 +8,8 @@ use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptInventoryLot;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
@@ -24,8 +26,7 @@ class UpdateWarehouseOnMaterialReceipt
         private readonly AccessController $accessController,
         private readonly AssetService $assetService,
         private readonly SiteRequestService $siteRequestService
-    ) {
-    }
+    ) {}
 
     public function handle(MaterialReceivedFromSupplier $event): void
     {
@@ -33,7 +34,7 @@ class UpdateWarehouseOnMaterialReceipt
         $warehouseId = $event->warehouseId;
         $items = $event->items;
 
-        if (!$this->accessController->hasModuleAccess($order->organization_id, 'basic-warehouse')) {
+        if (! $this->accessController->hasModuleAccess($order->organization_id, 'basic-warehouse')) {
             throw new \DomainException(trans_message('procurement.purchase_orders.receive_error'));
         }
 
@@ -43,7 +44,7 @@ class UpdateWarehouseOnMaterialReceipt
         foreach ($items as $itemData) {
             $orderItem = $order->items()->find($itemData['item_id']);
 
-            if (!$orderItem) {
+            if (! $orderItem) {
                 throw new \DomainException(trans_message('procurement.purchase_orders.item_not_found'));
             }
 
@@ -54,7 +55,11 @@ class UpdateWarehouseOnMaterialReceipt
             );
             $receivedMaterialIds[] = $materialId;
 
-            $warehouseService->receiveAsset(
+            $receiptLine = PurchaseReceiptLine::query()
+                ->whereKey((int) ($itemData['receipt_line_id'] ?? 0))
+                ->where('purchase_order_item_id', $orderItem->id)
+                ->firstOrFail();
+            $result = $warehouseService->receiveAsset(
                 $order->organization_id,
                 $warehouseId,
                 $materialId,
@@ -68,8 +73,21 @@ class UpdateWarehouseOnMaterialReceipt
                     'source_type' => 'procurement',
                     'source_id' => $order->id,
                     'purchase_order_item_id' => $orderItem->id,
+                    'batch_number' => 'purchase-receipt-line:'.$receiptLine->id,
                 ]
             );
+            $reporting = is_array($result['movement']->metadata) ? $result['movement']->metadata : [];
+            PurchaseReceiptInventoryLot::query()->create([
+                'organization_id' => (int) $order->organization_id,
+                'purchase_receipt_line_id' => (int) $receiptLine->id,
+                'warehouse_balance_id' => (int) $result['balance']->id,
+                'receipt_warehouse_movement_id' => (int) $result['movement']->id,
+                'original_quantity' => (string) $itemData['quantity_received'],
+                'reversed_quantity' => '0',
+                'unit_dimension' => (string) $reporting['unit_dimension'],
+                'unit_code' => (string) $reporting['unit_code'],
+                'conversion_version' => (string) $reporting['unit_conversion_version'],
+            ]);
         }
 
         $siteRequest = $order->purchaseRequest?->siteRequest;
