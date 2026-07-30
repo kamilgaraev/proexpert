@@ -27,6 +27,7 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         Model $source,
         ?DateTimeInterface $occurredAt = null,
         bool $tombstone = false,
+        ?DateTimeInterface $recordedAt = null,
     ): ?PortfolioLiquiditySourceVersion {
         $this->loadOwnerRelations($source);
         $identity = $this->identity($source);
@@ -50,7 +51,7 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             ?? $source->getAttribute('created_at')
             ?? now();
         $createdAt = $source->getAttribute('created_at') ?? $occurredAt;
-        $recordedAt = now();
+        $recordedAt ??= now();
         $versionPayload = [
             'identity' => [$organizationId, $sourceType, $sourceId],
             'occurred_at' => $occurredAt->format(DateTimeInterface::ATOM),

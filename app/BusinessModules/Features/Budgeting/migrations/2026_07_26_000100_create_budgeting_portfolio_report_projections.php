@@ -72,6 +72,28 @@ SQL);
             );
         });
 
+        Schema::create('budgeting_portfolio_liquidity_backfill_checkpoints', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('source_type', 64);
+            $table->unsignedBigInteger('source_cursor')->default(0);
+            $table->string('status', 16)->default('pending');
+            $table->uuid('lease_token')->nullable();
+            $table->dateTimeTz('lease_expires_at')->nullable();
+            $table->dateTimeTz('ingestion_started_at')->nullable();
+            $table->dateTimeTz('completed_at')->nullable();
+            $table->text('failure_code')->nullable();
+            $table->timestampsTz();
+            $table->unique(
+                ['organization_id', 'source_type'],
+                'budgeting_liquidity_backfill_checkpoint_unique',
+            );
+            $table->index(
+                ['status', 'lease_expires_at', 'id'],
+                'budgeting_liquidity_backfill_checkpoint_claim',
+            );
+        });
+
         Schema::create('budgeting_portfolio_report_snapshots', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->unsignedBigInteger('organization_id');
@@ -165,6 +187,7 @@ SQL);
         Schema::dropIfExists('budgeting_portfolio_liquidity_rows');
         Schema::dropIfExists('budgeting_project_portfolio_health_rows');
         Schema::dropIfExists('budgeting_portfolio_report_snapshots');
+        Schema::dropIfExists('budgeting_portfolio_liquidity_backfill_checkpoints');
         Schema::dropIfExists('budgeting_portfolio_liquidity_source_gaps');
         Schema::dropIfExists('budgeting_portfolio_liquidity_source_versions');
     }

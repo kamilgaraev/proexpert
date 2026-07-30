@@ -73,25 +73,37 @@ final readonly class HoldingPerformanceBackfill
     {
         $acts = ContractPerformanceAct::query()
             ->where('id', '>', $afterId)
-            ->where('is_approved', true)
-            ->whereIn('status', [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED])
             ->whereHas('contract', static fn ($query) => $query->where('organization_id', $organizationId))
             ->with(['contract.contractor', 'lines', 'completedWorks'])
             ->orderBy('id')
             ->limit($this->limit($limit))
             ->get();
         $factIds = [];
+        $gapSourceIds = [];
         foreach ($acts as $act) {
+            $active = (bool) $act->is_approved
+                && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true);
+            if (! $active) {
+                if ($act->approval_date !== null
+                    || $act->approved_by_user_id !== null
+                    || $act->signed_at !== null) {
+                    $this->projector->recordGap([
+                        'organization_id' => $organizationId,
+                        'source_type' => 'performance_act',
+                        'source_id' => (int) $act->getKey(),
+                        'source_version' => (int) $act->getKey(),
+                        'monetary_basis' => 'accepted_accrual',
+                    ], ['accepted_work_event_history'], $act->approval_date ?? $act->created_at ?? now());
+                    $gapSourceIds[] = (int) $act->getKey();
+                }
+
+                continue;
+            }
             $occurredAt = $act->approval_date ?? $act->signed_at ?? $act->created_at ?? now();
             $event = HoldingAcceptedWorkEventVersion::record(
                 $act,
                 true,
                 $occurredAt,
-                'backfill:approved-act:'.$act->getKey().':'.hash('sha256', implode('|', [
-                    (string) $act->updated_at,
-                    (string) $act->status,
-                    (string) $act->amount,
-                ])),
             );
             $fact = $this->acceptedWorkFacts->project(
                 $act,
@@ -104,7 +116,14 @@ final readonly class HoldingPerformanceBackfill
             }
         }
 
-        return $this->sliceResult($acts->pluck('id')->map(static fn ($id): int => (int) $id)->all(), $factIds, $limit);
+        return [
+            ...$this->sliceResult(
+                $acts->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+                $factIds,
+                $limit,
+            ),
+            'gap_source_ids' => $gapSourceIds,
+        ];
     }
 
     public function projectPaidTransactions(int $organizationId, int $afterId = 0, int $limit = 500): array

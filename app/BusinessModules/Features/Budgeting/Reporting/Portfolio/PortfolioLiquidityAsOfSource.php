@@ -12,7 +12,9 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapOpeningBalanceSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceGap;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceVersion;
+use Carbon\CarbonImmutable;
 use DateTimeInterface;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 
 final readonly class PortfolioLiquidityAsOfSource
 {
@@ -22,24 +24,44 @@ final readonly class PortfolioLiquidityAsOfSource
         int $organizationId,
         PaymentCalendarSourceFilters $filters,
         DateTimeInterface $asOf,
+        ?DateTimeInterface $ingestedThrough = null,
     ): array {
-        $latestIds = PortfolioLiquiditySourceVersion::query()
-            ->selectRaw('MAX(id)')
-            ->where('organization_id', $organizationId)
-            ->where('occurred_at', '<=', $asOf)
-            ->where('recorded_at', '<=', $asOf)
-            ->groupBy('source_type', 'source_id');
+        $ingestedThrough = $ingestedThrough === null
+            ? CarbonImmutable::now()
+            : CarbonImmutable::parse($ingestedThrough->format(DateTimeInterface::ATOM));
         $versions = PortfolioLiquiditySourceVersion::query()
             ->where('organization_id', $organizationId)
-            ->whereIn('id', $latestIds)
-            ->orderBy('id')
+            ->where('occurred_at', '<=', $asOf)
+            ->where('recorded_at', '<=', $ingestedThrough)
+            ->whereNotExists(static function (QueryBuilder $newer) use ($asOf, $ingestedThrough): void {
+                $table = 'budgeting_portfolio_liquidity_source_versions';
+                $newer
+                    ->selectRaw('1')
+                    ->from($table.' as newer_source')
+                    ->whereColumn('newer_source.organization_id', $table.'.organization_id')
+                    ->whereColumn('newer_source.source_type', $table.'.source_type')
+                    ->whereColumn('newer_source.source_id', $table.'.source_id')
+                    ->where('newer_source.occurred_at', '<=', $asOf)
+                    ->where('newer_source.recorded_at', '<=', $ingestedThrough)
+                    ->where(static fn (QueryBuilder $order): QueryBuilder => $order
+                        ->whereColumn('newer_source.occurred_at', '>', $table.'.occurred_at')
+                        ->orWhere(static fn (QueryBuilder $sameOccurrence): QueryBuilder => $sameOccurrence
+                            ->whereColumn('newer_source.occurred_at', $table.'.occurred_at')
+                            ->where(static fn (QueryBuilder $ingestionOrder): QueryBuilder => $ingestionOrder
+                                ->whereColumn('newer_source.recorded_at', '>', $table.'.recorded_at')
+                                ->orWhere(static fn (QueryBuilder $sameIngestion): QueryBuilder => $sameIngestion
+                                    ->whereColumn('newer_source.recorded_at', $table.'.recorded_at')
+                                    ->whereColumn('newer_source.id', '>', $table.'.id')))));
+            })
+            ->orderBy('source_type')
+            ->orderBy('source_id')
             ->get();
         $gaps = PortfolioLiquiditySourceGap::query()
             ->where('organization_id', $organizationId)
-            ->where('observed_at', '<=', $asOf)
+            ->where('observed_at', '<=', $ingestedThrough)
             ->where(static fn ($query) => $query
                 ->whereNull('resolved_at')
-                ->orWhere('resolved_at', '>', $asOf))
+                ->orWhere('resolved_at', '>', $ingestedThrough))
             ->orderBy('id')
             ->get()
             ->map(static fn (PortfolioLiquiditySourceGap $gap): array => [
@@ -89,6 +111,7 @@ final readonly class PortfolioLiquidityAsOfSource
                 'source_hash' => (string) $version->source_hash,
             ])->all(),
             'gaps' => $gaps,
+            'ingestion_watermark' => $ingestedThrough->format(DateTimeInterface::ATOM),
         ];
     }
 

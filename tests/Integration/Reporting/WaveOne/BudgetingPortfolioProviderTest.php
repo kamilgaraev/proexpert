@@ -17,10 +17,12 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioProjectionService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityAsOfSource;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBackfillRunner;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionBackfill;
 use DateTimeImmutable;
 use DateTimeZone;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -111,10 +113,142 @@ final class BudgetingPortfolioProviderTest extends TestCase
                 currency: 'RUB',
             ),
             new DateTimeImmutable('2026-07-30T12:00:00+00:00'),
+            new DateTimeImmutable('2026-07-30T12:00:00+00:00'),
         );
 
         self::assertSame('100.00', $result['balances']['RUB']->amount);
         self::assertCount(1, $result['versions']);
+    }
+
+    #[Test]
+    public function historical_as_of_uses_late_backfill_known_at_explicit_ingestion_cutoff(): void
+    {
+        if (config('database.default') !== 'pgsql') {
+            self::markTestSkipped('PostgreSQL integration only.');
+        }
+
+        $organizationId = 730002;
+        DB::table('budgeting_portfolio_liquidity_source_versions')->insert([
+            'organization_id' => $organizationId,
+            'source_type' => 'opening_balance',
+            'source_id' => 'late-balance',
+            'source_version' => hash('sha256', 'late-backfill'),
+            'occurred_at' => '2026-06-01 10:00:00+00',
+            'created_at' => '2026-06-01 10:00:00+00',
+            'recorded_at' => '2026-07-30 10:00:00+00',
+            'effective_at' => '2026-06-01 00:00:00+00',
+            'payload' => json_encode([
+                'kind' => 'opening_balance',
+                'id' => 'late-balance',
+                'organization_id' => $organizationId,
+                'balance_date' => '2026-06-01',
+                'currency' => 'RUB',
+                'amount' => '250.00',
+                'status' => 'approved',
+            ], JSON_THROW_ON_ERROR),
+            'source_hash' => hash('sha256', 'late-backfill'),
+        ]);
+
+        $result = (new PortfolioLiquidityAsOfSource(new PaymentCalendarSourceService))->read(
+            $organizationId,
+            new PaymentCalendarSourceFilters($organizationId, '2026-06-01', '2026-06-30', currency: 'RUB'),
+            new DateTimeImmutable('2026-06-30T23:59:59+00:00'),
+            new DateTimeImmutable('2026-07-30T11:00:00+00:00'),
+        );
+
+        self::assertSame('250.00', $result['balances']['RUB']->amount);
+        self::assertSame('2026-07-30T11:00:00+00:00', $result['ingestion_watermark']);
+    }
+
+    #[Test]
+    public function historical_as_of_prefers_business_occurrence_before_ingestion_order(): void
+    {
+        if (config('database.default') !== 'pgsql') {
+            self::markTestSkipped('PostgreSQL integration only.');
+        }
+
+        $organizationId = 730003;
+        foreach ([
+            ['version' => 'newer-business', 'occurred' => '2026-06-20 10:00:00+00', 'recorded' => '2026-07-01 10:00:00+00', 'amount' => '300.00'],
+            ['version' => 'older-business-late', 'occurred' => '2026-06-10 10:00:00+00', 'recorded' => '2026-07-20 10:00:00+00', 'amount' => '100.00'],
+        ] as $version) {
+            DB::table('budgeting_portfolio_liquidity_source_versions')->insert([
+                'organization_id' => $organizationId,
+                'source_type' => 'opening_balance',
+                'source_id' => 'ordered-balance',
+                'source_version' => hash('sha256', $version['version']),
+                'occurred_at' => $version['occurred'],
+                'created_at' => $version['occurred'],
+                'recorded_at' => $version['recorded'],
+                'effective_at' => '2026-06-01 00:00:00+00',
+                'payload' => json_encode([
+                    'kind' => 'opening_balance',
+                    'id' => 'ordered-balance',
+                    'organization_id' => $organizationId,
+                    'balance_date' => '2026-06-01',
+                    'currency' => 'RUB',
+                    'amount' => $version['amount'],
+                    'status' => 'approved',
+                ], JSON_THROW_ON_ERROR),
+                'source_hash' => hash('sha256', $version['version']),
+            ]);
+        }
+
+        $result = (new PortfolioLiquidityAsOfSource(new PaymentCalendarSourceService))->read(
+            $organizationId,
+            new PaymentCalendarSourceFilters($organizationId, '2026-06-01', '2026-06-30', currency: 'RUB'),
+            new DateTimeImmutable('2026-06-30T23:59:59+00:00'),
+            new DateTimeImmutable('2026-07-30T11:00:00+00:00'),
+        );
+
+        self::assertSame('300.00', $result['balances']['RUB']->amount);
+        self::assertCount(1, $result['versions']);
+    }
+
+    #[Test]
+    public function durable_backfill_resumes_every_canonical_source_from_its_checkpoint(): void
+    {
+        if (config('database.default') !== 'pgsql') {
+            self::markTestSkipped('PostgreSQL integration only.');
+        }
+
+        $organizationId = 730004;
+        $backfill = app(PortfolioLiquiditySourceVersionBackfill::class);
+        $runner = app(PortfolioLiquidityBackfillRunner::class);
+        foreach ($backfill->supportedSourceTypes() as $sourceType) {
+            DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')->insert([
+                'organization_id' => $organizationId,
+                'source_type' => $sourceType,
+                'source_cursor' => 900000000,
+                'status' => 'failed',
+                'lease_token' => null,
+                'lease_expires_at' => null,
+                'ingestion_started_at' => '2026-07-30 09:00:00+00',
+                'completed_at' => null,
+                'failure_code' => 'interrupted',
+                'created_at' => '2026-07-30 09:00:00+00',
+                'updated_at' => '2026-07-30 09:00:00+00',
+            ]);
+
+            $result = $runner->runChunk($organizationId, $sourceType, 10);
+
+            self::assertFalse($result['has_more']);
+            self::assertNull($result['next_cursor']);
+            self::assertSame(
+                900000000,
+                DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')
+                    ->where('organization_id', $organizationId)
+                    ->where('source_type', $sourceType)
+                    ->value('source_cursor'),
+            );
+            self::assertSame(
+                'completed',
+                DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')
+                    ->where('organization_id', $organizationId)
+                    ->where('source_type', $sourceType)
+                    ->value('status'),
+            );
+        }
     }
 
     #[Test]

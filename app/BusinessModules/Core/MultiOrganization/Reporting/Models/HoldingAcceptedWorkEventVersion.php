@@ -8,7 +8,6 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Models\ContractPerformanceAct;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Str;
 use InvalidArgumentException;
 use LogicException;
 
@@ -61,7 +60,16 @@ final class HoldingAcceptedWorkEventVersion extends Model
             'occurred_at' => $occurredAt->format(DateTimeInterface::ATOM),
         ];
         $sourceHash = hash('sha256', CanonicalJson::encode($payload));
-        $eventKey = $idempotencyKey ?? (string) Str::uuid();
+        $eventKey = $idempotencyKey ?? self::deterministicEventKey(
+            (int) $act->getKey(),
+            (int) $contract->getKey(),
+            (int) $act->project_id,
+            (int) $contract->organization_id,
+            $active,
+            (string) $act->amount,
+            (string) $act->status,
+            $occurredAt->format(DateTimeInterface::ATOM),
+        );
         $record = self::query()->firstOrCreate(
             ['event_key' => $eventKey],
             [
@@ -75,5 +83,34 @@ final class HoldingAcceptedWorkEventVersion extends Model
         }
 
         return $record;
+    }
+
+    public static function deterministicEventKey(
+        int $performanceActId,
+        int $contractId,
+        int $projectId,
+        int $organizationId,
+        bool $active,
+        string $amount,
+        string $status,
+        string $occurredAt,
+    ): string {
+        if (min($performanceActId, $contractId, $projectId, $organizationId) < 1
+            || trim($amount) === ''
+            || trim($status) === ''
+            || trim($occurredAt) === '') {
+            throw new InvalidArgumentException('accepted_work_event_identity_invalid');
+        }
+
+        return 'owner:performance-act:'.hash('sha256', CanonicalJson::encode([
+            'active' => $active,
+            'amount' => $amount,
+            'contract_id' => $contractId,
+            'occurred_at' => $occurredAt,
+            'organization_id' => $organizationId,
+            'performance_act_id' => $performanceActId,
+            'project_id' => $projectId,
+            'status' => $status,
+        ]));
     }
 }

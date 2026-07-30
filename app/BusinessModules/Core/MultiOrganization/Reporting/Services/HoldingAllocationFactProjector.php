@@ -321,8 +321,11 @@ final readonly class HoldingAllocationFactProjector
         return array_values(array_unique($missing));
     }
 
-    public function recordGap(array $source, array $missingFields): void
-    {
+    public function recordGap(
+        array $source,
+        array $missingFields,
+        ?\DateTimeInterface $observedAt = null,
+    ): void {
         $organizationId = (int) ($source['organization_id'] ?? 0);
         $sourceId = (int) ($source['source_id'] ?? 0);
         $sourceVersion = (int) ($source['source_version'] ?? 0);
@@ -350,7 +353,7 @@ final readonly class HoldingAllocationFactProjector
         ];
         HoldingAllocationProjectionGap::query()->firstOrCreate(
             [...$identity, 'source_hash' => hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR))],
-            ['observed_at' => now(), 'resolved_at' => null],
+            ['observed_at' => $observedAt ?? now(), 'resolved_at' => null],
         );
     }
 

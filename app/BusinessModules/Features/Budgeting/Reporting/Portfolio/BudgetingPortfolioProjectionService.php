@@ -644,7 +644,8 @@ final readonly class BudgetingPortfolioProjectionService
             ),
             'opening_balances' => [],
             'source_versions' => $versionedSource['versions'],
-            'source_gaps' => $gaps,
+            'source_gaps' => [],
+            'ingestion_watermark' => $versionedSource['ingestion_watermark'],
         ];
 
         foreach ($currencies as $currency) {
@@ -703,7 +704,9 @@ final readonly class BudgetingPortfolioProjectionService
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
         }
 
-        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($sourcePayload)));
+        $sourceEvidence = self::liquiditySourceEvidence($sourcePayload, $gaps);
+        $sourcePayload = $sourceEvidence['payload'];
+        $sourceHash = new Sha256Hash($sourceEvidence['hash']);
         $sourceRefs = $this->sourceRefs($sourcePayload);
         $snapshot = $this->persistLiquidity(
             $context,
@@ -718,6 +721,21 @@ final readonly class BudgetingPortfolioProjectionService
         $progress->advance(100);
 
         return $snapshot;
+    }
+
+    public static function liquiditySourceEvidence(array $sourcePayload, array $gaps): array
+    {
+        usort($gaps, static fn (array $left, array $right): int => strcmp(
+            CanonicalJson::encode($left),
+            CanonicalJson::encode($right),
+        ));
+        $sourcePayload['source_gaps'] = array_values($gaps);
+        ksort($sourcePayload, SORT_STRING);
+
+        return [
+            'payload' => $sourcePayload,
+            'hash' => hash('sha256', CanonicalJson::encode($sourcePayload)),
+        ];
     }
 
     private function filters(

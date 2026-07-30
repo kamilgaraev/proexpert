@@ -10,6 +10,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Features\Budgeting\Models\BudgetAmount;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
 use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
+use DateTimeImmutable;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use InvalidArgumentException;
 
@@ -36,6 +38,7 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
         int $organizationId,
         int $afterId = 0,
         int $limit = 500,
+        ?DateTimeInterface $ingestedAt = null,
     ): array {
         $model = self::SOURCES[$sourceType] ?? null;
         if (! is_string($model) || $organizationId < 1) {
@@ -49,6 +52,9 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
             ->orderBy($idColumn)
             ->limit($this->limit($limit))
             ->get();
+        $ingestedAt = $ingestedAt === null
+            ? new DateTimeImmutable
+            : DateTimeImmutable::createFromInterface($ingestedAt);
         $versionIds = [];
         $gapSourceIds = [];
 
@@ -56,6 +62,8 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
             $version = $this->recorder->record(
                 $row,
                 $row->getAttribute('updated_at') ?? $row->getAttribute('created_at'),
+                false,
+                $ingestedAt,
             );
             if ($version === null) {
                 $gapSourceIds[] = (string) $row->getKey();
@@ -73,6 +81,7 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
             'gap_source_ids' => $gapSourceIds,
             'next_cursor' => $sourceIds === [] ? null : max($sourceIds),
             'has_more' => count($sourceIds) === $this->limit($limit),
+            'ingestion_watermark' => $ingestedAt->format(DateTimeInterface::ATOM),
         ];
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Waves23;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\HoldingPerformanceRowQuery;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceFormula;
@@ -183,5 +184,71 @@ final class PortfolioHardeningBehaviorTest extends TestCase
             'budget_amount',
             'opening_balance',
         ], $backfill->supportedSourceTypes());
+    }
+
+    #[Test]
+    public function accepted_work_owner_event_identity_is_deterministic_and_transition_sensitive(): void
+    {
+        $approved = HoldingAcceptedWorkEventVersion::deterministicEventKey(
+            91,
+            44,
+            12,
+            7,
+            true,
+            '1500.00',
+            'approved',
+            '2026-07-01T10:00:00+00:00',
+        );
+
+        self::assertSame(
+            $approved,
+            HoldingAcceptedWorkEventVersion::deterministicEventKey(
+                91,
+                44,
+                12,
+                7,
+                true,
+                '1500.00',
+                'approved',
+                '2026-07-01T10:00:00+00:00',
+            ),
+        );
+        self::assertNotSame(
+            $approved,
+            HoldingAcceptedWorkEventVersion::deterministicEventKey(
+                91,
+                44,
+                12,
+                7,
+                false,
+                '1500.00',
+                'rejected',
+                '2026-07-03T10:00:00+00:00',
+            ),
+        );
+    }
+
+    #[Test]
+    public function liquidity_source_evidence_hash_includes_late_quality_gaps(): void
+    {
+        $base = [
+            'payment_calendar' => [],
+            'opening_balances' => [],
+            'source_versions' => [['id' => 1, 'source_hash' => str_repeat('a', 64)]],
+            'source_gaps' => [],
+            'ingestion_watermark' => '2026-07-30T10:00:00+00:00',
+        ];
+
+        $complete = BudgetingPortfolioProjectionService::liquiditySourceEvidence($base, []);
+        $partial = BudgetingPortfolioProjectionService::liquiditySourceEvidence(
+            $base,
+            [['code' => 'opening_balance_missing', 'currency' => 'RUB']],
+        );
+
+        self::assertNotSame($complete['hash'], $partial['hash']);
+        self::assertSame(
+            [['code' => 'opening_balance_missing', 'currency' => 'RUB']],
+            $partial['payload']['source_gaps'],
+        );
     }
 }
