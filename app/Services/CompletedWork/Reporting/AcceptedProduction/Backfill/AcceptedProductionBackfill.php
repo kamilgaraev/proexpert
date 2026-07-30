@@ -11,14 +11,14 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillResult;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Models\ContractPerformanceAct;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionBackfillReconciler;
 use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 
 final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
 {
     public function __construct(
-        private ProductionAcceptanceEventRecorder $events,
+        private AcceptedProductionBackfillReconciler $reconciler,
     ) {}
 
     public function sourceCode(): string
@@ -106,6 +106,7 @@ final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
                 continue;
             }
             $act = ContractPerformanceAct::query()
+                ->with('contract')
                 ->whereKey((int) $row['source_id'])
                 ->whereIn('project_id', $context->projectIds)
                 ->first();
@@ -116,15 +117,17 @@ final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
             }
 
             try {
-                $transition = $this->events->recordTransition(
+                $reconciliation = $this->reconciler->reconcile(
                     $act,
-                    'pending',
-                    'approved',
                     CarbonImmutable::parse($row['recognized_at']),
-                    null,
                 );
+                if (! $reconciliation['projected']) {
+                    $gaps++;
+
+                    continue;
+                }
                 $projected[] = [
-                    'event_ids' => $transition->eventIds,
+                    'event_ids' => $reconciliation['event_ids'],
                     'source_id' => (int) $act->id,
                 ];
             } catch (InvalidArgumentException) {

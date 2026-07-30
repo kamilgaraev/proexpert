@@ -69,6 +69,16 @@ final readonly class AcceptedProductionLifecycleCompleteness
                 'source_line_type' => (string) ($orphan['source_line_type'] ?? ''),
             ];
         }
+        foreach ($universe['legacy_gaps'] ?? [] as $legacyGap) {
+            if (! is_array($legacyGap)) {
+                throw new InvalidArgumentException('accepted_production_owner_universe_invalid');
+            }
+            $gaps[] = [
+                'ledger_id' => (int) ($legacyGap['ledger_id'] ?? 0),
+                'performance_act_id' => (int) ($legacyGap['performance_act_id'] ?? 0),
+                'reason' => (string) ($legacyGap['reason'] ?? 'historical_membership_unprovable'),
+            ];
+        }
 
         return $gaps;
     }

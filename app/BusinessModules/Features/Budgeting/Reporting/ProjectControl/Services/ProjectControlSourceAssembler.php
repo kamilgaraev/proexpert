@@ -39,7 +39,7 @@ final readonly class ProjectControlSourceAssembler
             ->limit(2)
             ->get();
         $baseline = $baselines->first();
-        if (!$baseline instanceof ProjectControlBaselineVersion) {
+        if (! $baseline instanceof ProjectControlBaselineVersion) {
             throw new InvalidArgumentException('project_control_baseline_unavailable');
         }
         if ($baselines->count() > 1
@@ -74,7 +74,7 @@ final readonly class ProjectControlSourceAssembler
             ->orderByDesc('as_of_date')
             ->orderByDesc('version_number')
             ->first();
-        if (!$version instanceof WipForecastVersion
+        if (! $version instanceof WipForecastVersion
             || trim((string) $version->source_snapshot_hash) === ''
             || $version->lines->isEmpty()
         ) {
@@ -92,27 +92,29 @@ final readonly class ProjectControlSourceAssembler
 
         $payload = (array) $baseline->source_payload;
         $baselineRows = $payload['rows'] ?? null;
-        if (!is_array($baselineRows) || !array_is_list($baselineRows) || $baselineRows === []) {
+        if (! is_array($baselineRows) || ! array_is_list($baselineRows) || $baselineRows === []) {
             throw new InvalidArgumentException('project_control_baseline_payload_invalid');
         }
 
         $rows = [];
+        $baselineTaskIds = [];
         foreach ($baselineRows as $baselineRow) {
-            if (!is_array($baselineRow)) {
+            if (! is_array($baselineRow)) {
                 throw new InvalidArgumentException('project_control_baseline_row_invalid');
             }
             $taskId = $this->positiveInt($baselineRow['task_id'] ?? null);
+            $baselineTaskIds[$taskId] = true;
             $currency = (string) ($baselineRow['currency'] ?? '');
             if (($scopedTaskIds !== null && ! in_array($taskId, $scopedTaskIds, true))
-                || !$this->matches($query->filters->values['project_ids'] ?? [], $projectId)
-                || !$this->matches($query->filters->values['task_ids'] ?? [], $taskId)
-                || !$this->matches($query->filters->values['wbs_ids'] ?? [], $baselineRow['wbs_code'] ?? null)
-                || !$this->matches($query->filters->values['currencies'] ?? [], $currency)
+                || ! $this->matches($query->filters->values['project_ids'] ?? [], $projectId)
+                || ! $this->matches($query->filters->values['task_ids'] ?? [], $taskId)
+                || ! $this->matches($query->filters->values['wbs_ids'] ?? [], $baselineRow['wbs_code'] ?? null)
+                || ! $this->matches($query->filters->values['currencies'] ?? [], $currency)
             ) {
                 continue;
             }
             $line = $linesByTask[$taskId] ?? null;
-            if (!$line instanceof WipForecastLine) {
+            if (! $line instanceof WipForecastLine) {
                 throw new InvalidArgumentException('project_control_progress_source_incomplete');
             }
             if ($currency === '' || $currency !== (string) $line->currency) {
@@ -121,8 +123,8 @@ final readonly class ProjectControlSourceAssembler
             $dimensions = (array) $line->dimensions;
             $contractorId = $this->nullablePositiveInt($dimensions['contractor_id'] ?? null);
             $costCenterId = $this->nullablePositiveInt($dimensions['cost_center_id'] ?? null);
-            if (!$this->matches($query->filters->values['contractor_ids'] ?? [], $contractorId)
-                || !$this->matches($query->filters->values['cost_center_ids'] ?? [], $costCenterId)
+            if (! $this->matches($query->filters->values['contractor_ids'] ?? [], $contractorId)
+                || ! $this->matches($query->filters->values['cost_center_ids'] ?? [], $costCenterId)
             ) {
                 continue;
             }
@@ -174,6 +176,28 @@ final readonly class ProjectControlSourceAssembler
                 sourceRefs: $sourceRefs,
             );
         }
+        foreach ($linesByTask as $taskId => $line) {
+            if (isset($baselineTaskIds[$taskId])
+                || ($scopedTaskIds !== null && ! in_array($taskId, $scopedTaskIds, true))
+                || ! $this->matches($query->filters->values['project_ids'] ?? [], $projectId)
+                || ! $this->matches($query->filters->values['task_ids'] ?? [], $taskId)
+                || ! $this->matches($query->filters->values['currencies'] ?? [], (string) $line->currency)
+            ) {
+                continue;
+            }
+            $dimensions = (array) $line->dimensions;
+            if (! $this->matches(
+                $query->filters->values['contractor_ids'] ?? [],
+                $this->nullablePositiveInt($dimensions['contractor_id'] ?? null),
+            ) || ! $this->matches(
+                $query->filters->values['cost_center_ids'] ?? [],
+                $this->nullablePositiveInt($dimensions['cost_center_id'] ?? null),
+            )) {
+                continue;
+            }
+
+            throw new InvalidArgumentException('project_control_wip_line_without_baseline');
+        }
 
         $isActive = (string) $version->status === 'active';
         $approvedBy = $isActive ? $version->activated_by : $version->approved_by;
@@ -214,13 +238,13 @@ final readonly class ProjectControlSourceAssembler
 
     private function plannedValueMinor(array $curve, DateTimeImmutable $statusDate, int $bacMinor): int
     {
-        if (!array_is_list($curve) || $curve === []) {
+        if (! array_is_list($curve) || $curve === []) {
             throw new InvalidArgumentException('project_control_baseline_curve_invalid');
         }
         $value = null;
         $previousDate = null;
         foreach ($curve as $point) {
-            if (!is_array($point) || !is_string($point['date'] ?? null)) {
+            if (! is_array($point) || ! is_string($point['date'] ?? null)) {
                 throw new InvalidArgumentException('project_control_baseline_curve_invalid');
             }
             $date = new DateTimeImmutable($point['date']);
@@ -233,6 +257,7 @@ final readonly class ProjectControlSourceAssembler
             }
             if (isset($point['planned_value_minor']) && is_int($point['planned_value_minor'])) {
                 $value = $point['planned_value_minor'];
+
                 continue;
             }
             if (isset($point['cumulative_percent']) && is_string($point['cumulative_percent'])) {
@@ -241,6 +266,7 @@ final readonly class ProjectControlSourceAssembler
                     $this->percentage($point['cumulative_percent']),
                     1_000_000,
                 );
+
                 continue;
             }
             throw new InvalidArgumentException('project_control_baseline_curve_value_invalid');
@@ -297,7 +323,7 @@ final readonly class ProjectControlSourceAssembler
         if ($value === null || $value === '') {
             return null;
         }
-        if (!is_numeric($value) || (int) $value < 1) {
+        if (! is_numeric($value) || (int) $value < 1) {
             throw new InvalidArgumentException('project_control_positive_integer_required');
         }
 
@@ -306,7 +332,7 @@ final readonly class ProjectControlSourceAssembler
 
     private function sourceRefs(array $refs): array
     {
-        if (!array_is_list($refs)) {
+        if (! array_is_list($refs)) {
             throw new InvalidArgumentException('project_control_source_refs_invalid');
         }
 
@@ -319,7 +345,7 @@ final readonly class ProjectControlSourceAssembler
         if ($statusDate === null) {
             return;
         }
-        if (!is_string($statusDate)
+        if (! is_string($statusDate)
             || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $statusDate) !== 1
             || $statusDate !== $query->asOf->format('Y-m-d')
         ) {
@@ -332,7 +358,7 @@ final readonly class ProjectControlSourceAssembler
         if ($filter === []) {
             return true;
         }
-        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+        if (! is_array($filter) || ! array_is_list($filter) || $value === null) {
             return false;
         }
 

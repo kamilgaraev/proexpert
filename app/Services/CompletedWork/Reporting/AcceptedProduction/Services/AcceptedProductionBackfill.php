@@ -10,7 +10,7 @@ use InvalidArgumentException;
 
 final readonly class AcceptedProductionBackfill
 {
-    public function __construct(private ProductionAcceptanceEventRecorder $events) {}
+    public function __construct(private AcceptedProductionBackfillReconciler $reconciler) {}
 
     public function run(int $organizationId, array $projectIds, ?int $actorId = null): array
     {
@@ -30,6 +30,7 @@ final readonly class AcceptedProductionBackfill
                         ContractPerformanceAct::STATUS_SIGNED,
                     ]);
             })
+            ->with('contract')
             ->orderBy('id')
             ->get();
         foreach ($acts as $act) {
@@ -37,14 +38,11 @@ final readonly class AcceptedProductionBackfill
             if ($recognizedAt === null) {
                 continue;
             }
-            $transition = $this->events->recordTransition(
+            $reconciliation = $this->reconciler->reconcile(
                 $act,
-                'pending',
-                'approved',
                 CarbonImmutable::instance($recognizedAt),
-                $actorId,
             );
-            $eventIds = [...$eventIds, ...$transition->eventIds];
+            $eventIds = [...$eventIds, ...$reconciliation['event_ids']];
         }
         sort($eventIds, SORT_NUMERIC);
 

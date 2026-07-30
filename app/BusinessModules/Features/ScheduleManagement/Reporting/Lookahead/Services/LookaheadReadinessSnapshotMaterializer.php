@@ -14,7 +14,6 @@ use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadConstraintState;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadEligibilityInput;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessRow;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\LookaheadResourceCandidateQuery;
@@ -136,6 +135,14 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     ->map(static function ($constraintEvents) {
                         $latest = $constraintEvents->last();
                         $latest->setAttribute('opened_at_source', $constraintEvents->first()->occurred_at);
+                        $latest->setAttribute('transition_lineage', $constraintEvents
+                            ->map(static fn (WorkConstraintTransitionEvent $event): array => [
+                                'id' => (int) $event->id,
+                                'version' => (int) $event->event_version,
+                                'source_hash' => (string) $event->source_hash,
+                            ])
+                            ->values()
+                            ->all());
 
                         return $latest;
                     })
@@ -195,6 +202,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     openedAt: new DateTimeImmutable($event->opened_at_source->format(DATE_ATOM)),
                     linkedResourceType: $linkedResource['type'] ?? null,
                     linkedResourceId: $linkedResource['id'] ?? null,
+                    transitionLineage: (array) $event->transition_lineage,
                 );
             }
             $constraints = $this->resourceScope->filterConstraints(
@@ -333,6 +341,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'row_count' => count($projectionRows),
                 ]);
 
+                $rowBatch = [];
                 foreach ($projectionRows as [$input, $metric, $constraint]) {
                     $payload = [
                         ...$input->eligibilityExplanation(),
@@ -358,10 +367,33 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                         'waiver_evidence_ref' => $constraint?->waiverEvidenceRef,
                         'linked_resource_type' => $constraint?->linkedResourceType,
                         'linked_resource_id' => $constraint?->linkedResourceId,
+                        'transition_lineage' => $constraint?->transitionLineage ?? [],
                         'warning_code' => $metric->warningCode,
                         'unknown_metrics' => $metric->warningCode === null ? [] : ['waiver_validity'],
                     ];
-                    LookaheadReadinessRow::query()->create([
+                    $rowSourceRefs = [
+                        ['type' => 'schedule_task', 'id' => $input->taskId, 'project_id' => $input->projectId],
+                        ['type' => 'schedule', 'id' => $input->scheduleId, 'project_id' => $input->projectId],
+                        [
+                            'type' => 'schedule_task_state_version',
+                            'id' => $input->taskStateVersion,
+                            'project_id' => $input->projectId,
+                            'source_hash' => $input->taskStateSourceHash,
+                            'effective_at' => $input->taskStateEffectiveAt?->format(DATE_ATOM),
+                        ],
+                        ...($constraint === null ? [] : [[
+                            'type' => 'work_constraint',
+                            'id' => $constraint->constraintId,
+                            'project_id' => $input->projectId,
+                            'transition_lineage' => $constraint->transitionLineage,
+                        ]]),
+                        ...($constraint?->linkedResourceId === null ? [] : [[
+                            'type' => $constraint->linkedResourceType,
+                            'id' => $constraint->linkedResourceId,
+                            'project_id' => $input->projectId,
+                        ]]),
+                    ];
+                    $rowBatch[] = [
                         'organization_id' => $scope->organizationId,
                         'snapshot_id' => $snapshotId,
                         'row_key' => implode(':', [
@@ -386,29 +418,16 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                         'eligible' => $metric->eligible,
                         'ready' => $metric->ready,
                         'age_days' => $metric->maxConstraintAgeDays,
-                        'payload' => $payload,
-                        'source_refs' => [
-                            ['type' => 'schedule_task', 'id' => $input->taskId, 'project_id' => $input->projectId],
-                            ['type' => 'schedule', 'id' => $input->scheduleId, 'project_id' => $input->projectId],
-                            [
-                                'type' => 'schedule_task_state_version',
-                                'id' => $input->taskStateVersion,
-                                'project_id' => $input->projectId,
-                                'source_hash' => $input->taskStateSourceHash,
-                                'effective_at' => $input->taskStateEffectiveAt?->format(DATE_ATOM),
-                            ],
-                            ...($constraint === null ? [] : [[
-                                'type' => 'work_constraint',
-                                'id' => $constraint->constraintId,
-                                'project_id' => $input->projectId,
-                            ]]),
-                            ...($constraint?->linkedResourceId === null ? [] : [[
-                                'type' => $constraint->linkedResourceType,
-                                'id' => $constraint->linkedResourceId,
-                                'project_id' => $input->projectId,
-                            ]]),
-                        ],
-                    ]);
+                        'payload' => CanonicalJson::encode($payload),
+                        'source_refs' => CanonicalJson::encode($rowSourceRefs),
+                    ];
+                    if (count($rowBatch) === 500) {
+                        DB::table('lookahead_readiness_rows')->insert($rowBatch);
+                        $rowBatch = [];
+                    }
+                }
+                if ($rowBatch !== []) {
+                    DB::table('lookahead_readiness_rows')->insert($rowBatch);
                 }
 
                 return $this->reference($scope, $query, $snapshot);

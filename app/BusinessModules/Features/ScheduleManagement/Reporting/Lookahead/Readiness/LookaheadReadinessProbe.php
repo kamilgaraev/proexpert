@@ -178,6 +178,14 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
                 openedAt: new DateTimeImmutable($events->first()->occurred_at->format(DATE_ATOM)),
                 linkedResourceType: $linkedResource['type'] ?? null,
                 linkedResourceId: $linkedResource['id'] ?? null,
+                transitionLineage: $events
+                    ->map(static fn (WorkConstraintTransitionEvent $event): array => [
+                        'id' => (int) $event->id,
+                        'version' => (int) $event->event_version,
+                        'source_hash' => (string) $event->source_hash,
+                    ])
+                    ->values()
+                    ->all(),
             );
             if (! $this->resourceScope->allowsConstraintIdentity(
                 $context->scope,
@@ -192,7 +200,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             }
             $allowedConstraintsByTask[(int) $latest->task_id][] = $state;
             $projectedConstraints[(int) $constraint->id] = [
-                'event_hashes' => $events->pluck('source_hash')->all(),
+                'transition_lineage' => $state->transitionLineage,
                 'kind' => 'constraint',
                 'source_id' => (int) $constraint->id,
             ];

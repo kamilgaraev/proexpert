@@ -11,7 +11,6 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAcceptanceFact;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionRow;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use DateTimeImmutable;
@@ -150,6 +149,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'row_count' => $rows->count(),
                 ]);
 
+                $rowBatch = [];
                 foreach ($rows as [$item, $metric]) {
                     $event = $item['event'];
                     $rowKey = $this->grain->key($event);
@@ -180,7 +180,31 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         'accepted_amount_minor' => $metric->acceptedAmountMinor,
                         'unknown_metrics' => $metric->acceptedAmountMinor === null ? ['accepted_amount_minor'] : [],
                     ];
-                    AcceptedProductionRow::query()->create([
+                    $sourceRefs = [
+                        [
+                            'type' => 'performance_act',
+                            'id' => (int) $event->performance_act_id,
+                            'project_id' => (int) $event->project_id,
+                        ],
+                        [
+                            'type' => 'production_acceptance_owner_version',
+                            'id' => (int) $item['owner']['owner_version_id'],
+                            'project_id' => (int) $event->project_id,
+                            'source_hash' => (string) $item['owner']['owner_source_hash'],
+                        ],
+                        ...($event->work_id === null ? [] : [[
+                            'type' => 'completed_work',
+                            'id' => (int) $event->work_id,
+                            'project_id' => (int) $event->project_id,
+                        ]]),
+                        ...(array) $event->evidence_refs,
+                        [
+                            'type' => 'acceptance_event',
+                            'ids' => $item['event_ids'],
+                            'project_id' => (int) $event->project_id,
+                        ],
+                    ];
+                    $rowBatch[] = [
                         'organization_id' => $scope->organizationId,
                         'snapshot_id' => $snapshotId,
                         'row_key' => $rowKey,
@@ -198,32 +222,16 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         'currency' => $event->currency,
                         'accepted_quantity' => $metric->acceptedQuantity,
                         'accepted_amount_minor' => $metric->acceptedAmountMinor,
-                        'payload' => $payload,
-                        'source_refs' => [
-                            [
-                                'type' => 'performance_act',
-                                'id' => (int) $event->performance_act_id,
-                                'project_id' => (int) $event->project_id,
-                            ],
-                            [
-                                'type' => 'production_acceptance_owner_version',
-                                'id' => (int) $item['owner']['owner_version_id'],
-                                'project_id' => (int) $event->project_id,
-                                'source_hash' => (string) $item['owner']['owner_source_hash'],
-                            ],
-                            ...($event->work_id === null ? [] : [[
-                                'type' => 'completed_work',
-                                'id' => (int) $event->work_id,
-                                'project_id' => (int) $event->project_id,
-                            ]]),
-                            ...(array) $event->evidence_refs,
-                            [
-                                'type' => 'acceptance_event',
-                                'ids' => $item['event_ids'],
-                                'project_id' => (int) $event->project_id,
-                            ],
-                        ],
-                    ]);
+                        'payload' => CanonicalJson::encode($payload),
+                        'source_refs' => CanonicalJson::encode($sourceRefs),
+                    ];
+                    if (count($rowBatch) === 500) {
+                        DB::table('accepted_production_rows')->insert($rowBatch);
+                        $rowBatch = [];
+                    }
+                }
+                if ($rowBatch !== []) {
+                    DB::table('accepted_production_rows')->insert($rowBatch);
                 }
 
                 return $this->reference($scope, $query, $snapshot);

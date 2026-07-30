@@ -77,6 +77,7 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
                     'constraint_id' => $row['constraint_id'],
                     'constraint_type' => $row['constraint_type'],
                     'constraint_status' => $row['constraint_status'],
+                    'transition_lineage' => $row['transition_lineage'] ?? [],
                 ];
             }
             if (($row['linked_resource_id'] ?? null) !== null) {

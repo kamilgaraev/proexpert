@@ -64,6 +64,7 @@ final readonly class LookaheadEligibilityInput
                     'severity' => $constraint->severity,
                     'status' => $constraint->status,
                     'type' => $constraint->type,
+                    'transition_lineage' => $constraint->transitionLineage,
                     'waiver_evidence_ref' => $constraint->waiverEvidenceRef,
                     'waiver_until' => $constraint->waiverUntil?->format(DATE_ATOM),
                 ],

@@ -6,6 +6,8 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\Models\ContractPerformanceAct;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceBackfillLedger;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceOwnerVersion;
 use App\Support\Reporting\ReportScopedResourceFilter;
@@ -66,7 +68,6 @@ final readonly class AcceptedProductionEventUniverse
                 $actIds !== null,
                 static fn (Builder $builder) => $builder->whereIn('performance_act_id', $actIds),
             );
-        $this->applyOwnerScalarFilters($ownerQuery, $query);
         foreach ($ownerQuery->lazyById(500) as $owner) {
             foreach ((array) $owner->members as $member) {
                 if (! $this->matchesMember($member, $workIds, $actLineIds, $query)) {
@@ -74,6 +75,7 @@ final readonly class AcceptedProductionEventUniverse
                 }
                 $candidate = [
                     'event_type' => (string) $owner->event_type,
+                    'effective_at' => $owner->effective_at->format(DATE_ATOM),
                     'owner_source_hash' => (string) $owner->source_hash,
                     'owner_version_id' => (int) $owner->id,
                     'performance_act_id' => (int) $owner->performance_act_id,
@@ -86,6 +88,59 @@ final readonly class AcceptedProductionEventUniverse
                 $candidateKeys[$key] = true;
                 $candidates[$key] = $candidate;
             }
+        }
+        $legacyGaps = [];
+        $legacyQuery = ContractPerformanceAct::query()
+            ->whereIn('project_id', $projectIds)
+            ->whereHas('contract', static fn (Builder $builder) => $builder
+                ->where('organization_id', $scope->organizationId))
+            ->where(static function (Builder $builder) use ($query): void {
+                $builder
+                    ->where(static fn (Builder $signed) => $signed
+                        ->whereNotNull('signed_at')
+                        ->where('signed_at', '<=', $query->asOf))
+                    ->orWhere(static fn (Builder $approved) => $approved
+                        ->whereNotNull('approval_date')
+                        ->where('approval_date', '<=', $query->asOf));
+            })
+            ->whereNotExists(static function ($builder) use ($scope, $query): void {
+                $builder
+                    ->selectRaw('1')
+                    ->from('production_acceptance_owner_versions as owner_coverage')
+                    ->whereColumn(
+                        'owner_coverage.performance_act_id',
+                        'contract_performance_acts.id',
+                    )
+                    ->where('owner_coverage.organization_id', $scope->organizationId)
+                    ->where('owner_coverage.effective_at', '<=', $query->asOf);
+            })
+            ->when(
+                $actIds !== null,
+                static fn (Builder $builder) => $builder->whereIn('id', $actIds),
+            );
+        foreach ($legacyQuery->lazyById(500) as $act) {
+            $legacyGaps['act:'.(int) $act->id] = [
+                'performance_act_id' => (int) $act->id,
+                'project_id' => (int) $act->project_id,
+                'reason' => 'historical_membership_unprovable',
+            ];
+        }
+        $ledgerQuery = ProductionAcceptanceBackfillLedger::query()
+            ->where('organization_id', $scope->organizationId)
+            ->whereIn('project_id', $projectIds)
+            ->where('recognized_at', '<=', $query->asOf)
+            ->where('status', 'unprovable')
+            ->when(
+                $actIds !== null,
+                static fn (Builder $builder) => $builder->whereIn('performance_act_id', $actIds),
+            );
+        foreach ($ledgerQuery->lazyById(500) as $ledger) {
+            $legacyGaps['act:'.(int) $ledger->performance_act_id] = [
+                'ledger_id' => (int) $ledger->id,
+                'performance_act_id' => (int) $ledger->performance_act_id,
+                'project_id' => (int) $ledger->project_id,
+                'reason' => (string) $ledger->reason,
+            ];
         }
 
         $events = collect();
@@ -112,7 +167,9 @@ final readonly class AcceptedProductionEventUniverse
             } else {
                 $orphanEvents[(int) $event->id] = [
                     'event_id' => (int) $event->id,
+                    'event_type' => (string) $event->event_type,
                     'performance_act_id' => (int) $event->performance_act_id,
+                    'recognized_at' => $event->recognized_at->format(DATE_ATOM),
                     'source_line_id' => (int) $event->source_line_id,
                     'source_line_type' => (string) $event->source_line_type,
                 ];
@@ -126,35 +183,20 @@ final readonly class AcceptedProductionEventUniverse
                 ['transition_version', 'asc'],
             ])
             ->values();
+        [$candidates, $events, $orphanEvents] = $this->applyStateFilters(
+            $candidates,
+            $events,
+            $orphanEvents,
+            $query,
+        );
 
         return [
             'candidates' => array_values($candidates),
             'events' => $events,
+            'legacy_gaps' => array_values($legacyGaps),
             'orphan_events' => array_values($orphanEvents),
             'project_ids' => $projectIds,
         ];
-    }
-
-    private function applyOwnerScalarFilters(Builder $builder, ReportQuery $query): void
-    {
-        $values = $query->filters->values;
-        [$from, $to] = $this->period($values);
-        $builder
-            ->when(
-                ($values['statuses'] ?? []) !== [],
-                static fn (Builder $queryBuilder) => $queryBuilder->whereIn(
-                    'event_type',
-                    array_map('strval', $values['statuses']),
-                ),
-            )
-            ->when(
-                $from !== null,
-                static fn (Builder $queryBuilder) => $queryBuilder->whereDate('effective_at', '>=', $from),
-            )
-            ->when(
-                $to !== null,
-                static fn (Builder $queryBuilder) => $queryBuilder->whereDate('effective_at', '<=', $to),
-            );
     }
 
     private function applyEventScalarFilters(
@@ -165,7 +207,6 @@ final readonly class AcceptedProductionEventUniverse
         ?array $actLineIds,
     ): void {
         $values = $query->filters->values;
-        [$from, $to] = $this->period($values);
         $builder
             ->when($workIds !== null, static fn (Builder $queryBuilder) => $queryBuilder->whereIn('work_id', $workIds))
             ->when(
@@ -198,22 +239,64 @@ final readonly class AcceptedProductionEventUniverse
                     'zone',
                     array_map('strval', $values['zones']),
                 ),
-            )
-            ->when(
-                ($values['statuses'] ?? []) !== [],
-                static fn (Builder $queryBuilder) => $queryBuilder->whereIn(
-                    'event_type',
-                    array_map('strval', $values['statuses']),
-                ),
-            )
-            ->when(
-                $from !== null,
-                static fn (Builder $queryBuilder) => $queryBuilder->whereDate('recognized_at', '>=', $from),
-            )
-            ->when(
-                $to !== null,
-                static fn (Builder $queryBuilder) => $queryBuilder->whereDate('recognized_at', '<=', $to),
             );
+    }
+
+    private function applyStateFilters(
+        array $candidates,
+        \Illuminate\Support\Collection $events,
+        array $orphanEvents,
+        ReportQuery $query,
+    ): array {
+        $values = $query->filters->values;
+        [$from, $to] = $this->period($values);
+        $statuses = $values['statuses'] ?? [];
+        $keptKeys = [];
+        $candidates = array_filter(
+            $candidates,
+            function (array $candidate) use ($statuses, $from, $to, &$keptKeys): bool {
+                $date = substr((string) $candidate['effective_at'], 0, 10);
+                $keep = $this->matches($statuses, $candidate['event_type'])
+                    && ($from === null || $date >= $from)
+                    && ($to === null || $date <= $to);
+                if ($keep) {
+                    $keptKeys[$this->key($candidate)] = true;
+                }
+
+                return $keep;
+            },
+        );
+        $events = $events
+            ->filter(function (ProductionAcceptanceEvent $event) use (
+                $keptKeys,
+                $statuses,
+                $from,
+                $to,
+            ): bool {
+                $date = $event->recognized_at->format('Y-m-d');
+
+                return isset($keptKeys[$this->key([
+                    'performance_act_id' => (int) $event->performance_act_id,
+                    'source_line_id' => (int) $event->source_line_id,
+                    'source_line_type' => (string) $event->source_line_type,
+                ])])
+                    && $this->matches($statuses, (string) $event->event_type)
+                    && ($from === null || $date >= $from)
+                    && ($to === null || $date <= $to);
+            })
+            ->values();
+        $orphanEvents = array_filter(
+            $orphanEvents,
+            function (array $event) use ($statuses, $from, $to): bool {
+                $date = substr((string) $event['recognized_at'], 0, 10);
+
+                return $this->matches($statuses, $event['event_type'])
+                    && ($from === null || $date >= $from)
+                    && ($to === null || $date <= $to);
+            },
+        );
+
+        return [$candidates, $events, $orphanEvents];
     }
 
     private function matchesMember(

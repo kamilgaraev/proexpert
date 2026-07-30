@@ -65,6 +65,27 @@ final class AcceptedProductionOwnerCompletenessTest extends TestCase
         self::assertSame(101, $universe['candidates'][0]['source_line_id']);
     }
 
+    #[Test]
+    public function approved_legacy_act_without_provable_membership_is_never_ready_at_zero_over_zero(): void
+    {
+        $gaps = (new AcceptedProductionLifecycleCompleteness)->inspect(
+            $this->scope(),
+            new DateTimeImmutable('2026-07-30T12:00:00Z'),
+            collect(),
+            [
+                'candidates' => [],
+                'legacy_gaps' => [[
+                    'performance_act_id' => 11,
+                    'project_id' => 7,
+                    'reason' => 'historical_membership_unprovable',
+                ]],
+            ],
+        );
+
+        self::assertSame('historical_membership_unprovable', $gaps[0]['reason']);
+        self::assertSame(11, $gaps[0]['performance_act_id']);
+    }
+
     private function candidate(int $actId, int $lineId, string $eventType): array
     {
         return [

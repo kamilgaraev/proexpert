@@ -64,6 +64,13 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
                 'performance_act_id' => (int) $orphan['performance_act_id'],
             ];
         }
+        foreach ($universe['legacy_gaps'] as $legacyGap) {
+            $eligible[] = [
+                'kind' => 'legacy_owner_unprovable',
+                'ledger_id' => (int) ($legacyGap['ledger_id'] ?? 0),
+                'performance_act_id' => (int) $legacyGap['performance_act_id'],
+            ];
+        }
         $projected = [];
         foreach ($universe['candidates'] as $candidate) {
             $event = $latestEvents->get(implode(':', [

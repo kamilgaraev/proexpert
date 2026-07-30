@@ -9,16 +9,18 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
-use App\BusinessModules\Features\Budgeting\Models\WipForecastVersion;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlBaselineVersion;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceRow;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectControlSourceAssembler;
 use App\Support\Reporting\ReportSourceReadinessFactory;
+use InvalidArgumentException;
 
 final readonly class ProjectControlReadinessProbe implements ReportSourceReadinessProbe
 {
     public function __construct(
         private ReportSourceReadinessFactory $readiness,
-    ) {
-    }
+        private ProjectControlSourceAssembler $sources,
+    ) {}
 
     public function supports(ReportDefinition $definition): bool
     {
@@ -35,69 +37,44 @@ final readonly class ProjectControlReadinessProbe implements ReportSourceReadine
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        $eligible = [];
-        $projected = [];
-        $gapCount = 0;
-        foreach ($context->scope->projectIds as $projectId) {
-            $eligible[] = ['kind' => 'approved_baseline', 'project_id' => $projectId];
-            $baseline = ProjectControlBaselineVersion::query()
-                ->where('organization_id', $context->scope->organizationId)
-                ->where('project_id', $projectId)
-                ->where('approved_at', '<=', $query->asOf)
-                ->orderByDesc('approved_at')
-                ->orderByDesc('version_number')
-                ->first();
-            if ($baseline === null) {
-                $gapCount++;
-            } else {
-                $projected[] = [
-                    'kind' => 'approved_baseline',
-                    'project_id' => $projectId,
-                    'source_hash' => (string) $baseline->source_hash,
-                ];
-            }
-
-            $eligible[] = ['kind' => 'approved_wip', 'project_id' => $projectId];
-            $wip = WipForecastVersion::query()
-                ->where('organization_id', $context->scope->organizationId)
-                ->where('project_id', $projectId)
-                ->whereDate('as_of_date', '<=', $query->asOf->format('Y-m-d'))
-                ->where(function ($builder) use ($query): void {
-                    $builder
-                        ->where(function ($approved) use ($query): void {
-                            $approved
-                                ->where('status', 'approved')
-                                ->whereNotNull('approved_at')
-                                ->where('approved_at', '<=', $query->asOf);
-                        })
-                        ->orWhere(function ($active) use ($query): void {
-                            $active
-                                ->where('status', 'active')
-                                ->whereNotNull('activated_at')
-                                ->where('activated_at', '<=', $query->asOf);
-                        });
-                })
-                ->whereNotNull('source_snapshot_hash')
-                ->whereHas('lines')
-                ->orderByDesc('as_of_date')
-                ->orderByDesc('version_number')
-                ->first();
-            if ($wip === null || trim((string) $wip->source_snapshot_hash) === '') {
-                $gapCount++;
-            } else {
-                $projected[] = [
-                    'kind' => 'approved_wip',
-                    'project_id' => $projectId,
-                    'source_hash' => (string) $wip->source_snapshot_hash,
-                ];
-            }
+        try {
+            $source = $this->sources->assemble($context->scope, $query);
+        } catch (InvalidArgumentException $exception) {
+            return $this->readiness->make(
+                [['kind' => 'project_control_source', 'reason' => $exception->getMessage()]],
+                [],
+                1,
+                0,
+                'project-control:unavailable',
+            );
         }
 
-        $watermark = 'project-control:'.hash(
-            'sha256',
-            implode(':', array_column($projected, 'source_hash')),
-        );
+        $identity = $source['identity'];
+        $eligible = [[
+            'kind' => 'project_control_identity',
+            'project_id' => $identity->projectId,
+            'source_hash' => $identity->sourceHash,
+        ]];
+        $projected = $eligible;
+        foreach ($source['rows'] as $row) {
+            if (! $row instanceof ProjectControlSourceRow) {
+                throw new InvalidArgumentException('project_control_readiness_row_invalid');
+            }
+            $candidate = [
+                'kind' => 'project_control_row',
+                'row_key' => $row->rowKey,
+                'source_hash' => hash('sha256', CanonicalJson::encode($row->canonicalIdentity())),
+            ];
+            $eligible[] = $candidate;
+            $projected[] = $candidate;
+        }
+        $watermark = 'project-control:'.hash('sha256', implode(':', [
+            $identity->sourceHash,
+            $identity->wipVersion,
+            $identity->progressWatermark,
+            ...array_column($projected, 'source_hash'),
+        ]));
 
-        return $this->readiness->make($eligible, $projected, $gapCount, 0, $watermark);
+        return $this->readiness->make($eligible, $projected, 0, 0, $watermark);
     }
 }

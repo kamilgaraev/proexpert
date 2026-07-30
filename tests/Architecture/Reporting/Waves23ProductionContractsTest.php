@@ -313,6 +313,74 @@ final class Waves23ProductionContractsTest extends TestCase
         );
     }
 
+    #[Test]
+    public function r05_readiness_and_materializer_share_one_exact_source_universe(): void
+    {
+        $readiness = $this->source(
+            'app/BusinessModules/Features/Budgeting/Reporting/ProjectControl/Readiness/'
+            .'ProjectControlReadinessProbe.php',
+        );
+        $assembler = $this->source(
+            'app/BusinessModules/Features/Budgeting/Reporting/ProjectControl/Services/'
+            .'ProjectControlSourceAssembler.php',
+        );
+
+        self::assertStringContainsString('$this->sources->assemble($context->scope, $query)', $readiness);
+        self::assertStringContainsString('project_control_wip_line_without_baseline', $assembler);
+        self::assertStringContainsString('$baselineTaskIds', $assembler);
+    }
+
+    #[Test]
+    public function r07_persists_exact_transition_lineage_and_uses_bulk_rows(): void
+    {
+        $state = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/DTO/'
+            .'LookaheadConstraintState.php',
+        );
+        $materializer = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadReadinessSnapshotMaterializer.php',
+        );
+        $drilldown = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/DrillDown/'
+            .'LookaheadReadinessDrillDownProvider.php',
+        );
+
+        self::assertStringContainsString('public array $transitionLineage', $state);
+        foreach (["'id' => (int) \$event->id", "'version' => (int) \$event->event_version", "'source_hash' => (string) \$event->source_hash"] as $identity) {
+            self::assertStringContainsString($identity, $materializer);
+        }
+        self::assertStringContainsString("'transition_lineage' => \$constraint->transitionLineage", $materializer);
+        self::assertStringContainsString("'transition_lineage' => \$row['transition_lineage']", $drilldown);
+        self::assertStringContainsString("DB::table('lookahead_readiness_rows')->insert(\$rowBatch)", $materializer);
+    }
+
+    #[Test]
+    public function accepted_production_backfill_records_unprovable_history_without_fabrication(): void
+    {
+        $reconciler = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionBackfillReconciler.php',
+        );
+        $backfill = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionBackfill.php',
+        );
+        $materializer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionSnapshotMaterializer.php',
+        );
+
+        self::assertStringContainsString('historical_membership_unprovable', $reconciler);
+        self::assertStringContainsString("where('status', 'unprovable')", $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        ));
+        self::assertStringContainsString('$this->reconciler->reconcile(', $backfill);
+        self::assertStringNotContainsString('ProductionAcceptanceEventRecorder', $backfill);
+        self::assertStringContainsString("DB::table('accepted_production_rows')->insert(\$rowBatch)", $materializer);
+    }
+
     private function source(string $path): string
     {
         $source = file_get_contents(dirname(__DIR__, 3).'/'.$path);
