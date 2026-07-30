@@ -273,6 +273,7 @@ final class QualityDefectService
                 'storage_sha256' => $stored['sha256'],
                 'size_bytes' => $stored['size'],
                 'mime_type' => $stored['content_type'],
+                'storage_identity_verified' => true,
                 'caption' => $photo['caption'] ?? null,
                 'metadata' => $photo['metadata'] ?? null,
             ]);
@@ -307,6 +308,7 @@ final class QualityDefectService
                 ->get([
                     'id', 'type', 'url', 'storage_version_id', 'storage_etag', 'storage_sha256',
                     'size_bytes', 'mime_type', 'caption', 'metadata', 'uploaded_by', 'created_at',
+                    'storage_identity_verified',
                 ])
                 ->map(static fn ($photo): array => [
                     'caption' => $photo->caption,
@@ -320,6 +322,7 @@ final class QualityDefectService
                         'storage_key' => (string) $photo->url,
                         'storage_sha256' => (string) $photo->storage_sha256,
                         'storage_version_id' => (string) $photo->storage_version_id,
+                        'storage_identity_verified' => (bool) $photo->storage_identity_verified,
                         'type' => (string) $photo->type,
                         'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
                     ])),
@@ -335,6 +338,7 @@ final class QualityDefectService
                     'storage_version_id' => (string) $photo->storage_version_id,
                     'type' => 'quality_defect_photo',
                     'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
+                    'storage_identity_verified' => (bool) $photo->storage_identity_verified,
                 ])
                 ->all(),
         ]);

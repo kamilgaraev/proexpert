@@ -96,6 +96,7 @@ final class QualityDefectFlowPostgresTest extends TestCase
             'storage_sha256' => str_repeat('a', 64),
             'size_bytes' => 123,
             'mime_type' => 'image/jpeg',
+            'storage_identity_verified' => true,
             'caption' => 'Original',
             'metadata' => json_encode(['sha256' => str_repeat('a', 64)], JSON_THROW_ON_ERROR),
             'created_at' => $createdAt,
@@ -111,6 +112,7 @@ final class QualityDefectFlowPostgresTest extends TestCase
             'storage_key' => 'org-'.$organization->id.'/quality/exact.jpg',
             'storage_sha256' => str_repeat('a', 64),
             'storage_version_id' => 'version-1',
+            'storage_identity_verified' => true,
             'type' => 'evidence',
             'uploaded_by' => (int) $actor->id,
         ];

@@ -114,6 +114,7 @@ final class SafetyComplianceService
                 $normalized,
                 $date,
                 $asOf,
+                $context->projectId,
             );
         }
 

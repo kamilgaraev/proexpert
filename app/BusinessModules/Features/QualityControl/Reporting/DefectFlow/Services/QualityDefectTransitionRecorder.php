@@ -72,11 +72,13 @@ final readonly class QualityDefectTransitionRecorder
                 $required = [
                     'caption', 'content_hash', 'created_at', 'metadata', 'mime_type', 'photo_type',
                     'size_bytes', 'storage_etag', 'storage_key', 'storage_sha256', 'storage_version_id', 'uploaded_by',
+                    'storage_identity_verified',
                 ];
                 if (array_filter($required, static fn (string $key): bool => ! array_key_exists($key, $evidence)) !== []
                     || ! is_string($evidence['content_hash'])
                     || ! is_string($evidence['storage_key'])
                     || preg_match('/^[a-f0-9]{64}$/D', (string) $evidence['storage_sha256']) !== 1
+                    || $evidence['storage_identity_verified'] !== true
                     || ! hash_equals($evidence['content_hash'], hash('sha256', CanonicalJson::encode([
                         'caption' => $evidence['caption'],
                         'created_at' => $evidence['created_at'],
@@ -87,6 +89,7 @@ final readonly class QualityDefectTransitionRecorder
                         'storage_key' => $evidence['storage_key'],
                         'storage_sha256' => $evidence['storage_sha256'],
                         'storage_version_id' => $evidence['storage_version_id'],
+                        'storage_identity_verified' => true,
                         'type' => $evidence['photo_type'],
                         'uploaded_by' => $evidence['uploaded_by'],
                     ])))) {

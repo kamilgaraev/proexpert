@@ -76,6 +76,36 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString('capture_safety_briefing_evidence_version', $migration);
         self::assertStringContainsString("'evidence_version_id' => \$evidenceVersion['id']", $materializer);
         self::assertStringContainsString("'evidence_hash' => \$evidenceVersion['hash']", $materializer);
+        self::assertStringContainsString('history_complete', $migration);
+        self::assertStringContainsString("jsonb_build_object('_deleted', true)", $migration);
+    }
+
+    #[Test]
+    public function sealed_outputs_and_photo_storage_identity_use_a_forward_migration(): void
+    {
+        $migration = file_get_contents(
+            dirname(__DIR__, 4).'/database/migrations/2026_07_30_000002_harden_reporting_evidence_integrity.php',
+        );
+        $originalPhotoMigration = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/migrations/'
+            .'2026_05_14_000002_create_quality_defect_photos_table.php',
+        );
+
+        self::assertIsString($migration);
+        self::assertIsString($originalPhotoMigration);
+        self::assertStringContainsString("Schema::table('quality_defect_photos'", $migration);
+        self::assertStringContainsString('sealed_reporting_record_guard', $migration);
+        self::assertStringContainsString('quality_defect_flow_snapshots', $migration);
+        self::assertStringContainsString('safety_incident_snapshots', $migration);
+        self::assertStringContainsString('safety_admission_snapshots', $migration);
+        self::assertStringNotContainsString('storage_version_id', $originalPhotoMigration);
+        $drillDown = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/Reporting/Admission/DrillDown/'
+            .'WorkforceAdmissionDrillDownProvider.php',
+        );
+        self::assertIsString($drillDown);
+        self::assertStringContainsString('$row->evidence_id !== null', $drillDown);
+        self::assertStringContainsString('$row->evidence_version_id !== null', $drillDown);
     }
 
     #[Test]

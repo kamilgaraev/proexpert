@@ -21,6 +21,7 @@ class QualityDefectPhoto extends Model
         'storage_sha256',
         'size_bytes',
         'mime_type',
+        'storage_identity_verified',
         'caption',
         'metadata',
     ];
@@ -28,6 +29,7 @@ class QualityDefectPhoto extends Model
     protected $casts = [
         'metadata' => 'array',
         'size_bytes' => 'integer',
+        'storage_identity_verified' => 'boolean',
     ];
 
     public function defect(): BelongsTo

@@ -15,6 +15,7 @@ use App\Models\Project;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -222,12 +223,30 @@ final class WorkforceAdmissionPostgresTest extends TestCase
         $evidenceIdentity = [
             'evidence_id' => $trainingId,
             'evidence_type' => 'training',
+            'employee_id' => $employeeId,
+            'project_id' => (int) $project->id,
+            'safety_site_id' => $siteId,
+            'site_assignment_id' => $mappingId,
             'version_hash' => (string) $evidenceVersion->content_hash,
             'version_id' => (int) $evidenceVersion->id,
+            'workforce_assignment_id' => $assignmentId,
         ];
         $evidenceCutoff = CarbonImmutable::now();
-        DB::table('safety_admission_rows')->where('id', $rowId)->update([
+        $evidenceRowId = DB::table('safety_admission_rows')->insertGetId([
+            'organization_id' => $organization->id,
+            'snapshot_id' => $snapshotId,
+            'project_id' => $project->id,
+            'safety_site_id' => $siteId,
+            'site_assignment_id' => $mappingId,
+            'workforce_assignment_id' => $assignmentId,
+            'employee_id' => $employeeId,
+            'snapshot_date' => '2026-07-30',
+            'row_type' => 'requirement',
+            'row_key' => 'mapping-evidence-'.$mappingId,
+            'requirement_code' => 'training',
+            'requirement_type' => 'training',
             'status' => 'fulfilled',
+            'mandatory' => true,
             'blocked' => false,
             'verified' => true,
             'evidence_type' => 'training',
@@ -235,8 +254,9 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             'evidence_version_id' => $evidenceVersion->id,
             'evidence_hash' => $evidenceVersion->content_hash,
             'evidence_identity' => json_encode($evidenceIdentity, JSON_THROW_ON_ERROR),
+            'blocker_codes' => '[]',
         ]);
-        $resource = new ReportScopedResource('workforce_snapshot_evidence', $rowId, (int) $project->id);
+        $resource = new ReportScopedResource('workforce_snapshot_evidence', $evidenceRowId, (int) $project->id);
         $facts = new CurrentReportAuthorizationFacts(
             'queue',
             (int) $actor->id,
@@ -259,12 +279,24 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             ['code' => 'training', 'type' => 'training', 'label' => 'Обучение', 'required' => true],
             CarbonImmutable::parse('2026-07-30'),
             $evidenceCutoff,
+            (int) $project->id,
         );
         self::assertSame('fulfilled', $temporal->status);
         self::assertNotSame(
             (string) $evidenceVersion->content_hash,
             (string) DB::table('safety_evidence_versions')->latest('id')->value('content_hash'),
         );
+        foreach ([
+            ['safety_admission_rows', $evidenceRowId, ['status' => 'missing']],
+            ['safety_admission_snapshots', $snapshotId, ['output_hash' => str_repeat('0', 64)]],
+        ] as [$table, $id, $mutation]) {
+            try {
+                DB::table($table)->where('id', $id)->update($mutation);
+                self::fail('Sealed reporting record accepted mutation');
+            } catch (QueryException $exception) {
+                self::assertSame('55000', $exception->getCode());
+            }
+        }
     }
 
     private function structure(int $organizationId): array

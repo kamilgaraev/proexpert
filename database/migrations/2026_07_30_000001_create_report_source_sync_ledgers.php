@@ -52,6 +52,13 @@ BEGIN
         ON CONFLICT (organization_id, source_code) DO UPDATE
         SET revision = report_source_generations.revision + 1,
             watermark = EXCLUDED.watermark;
+        IF TG_OP = 'UPDATE' AND OLD.organization_id IS DISTINCT FROM NEW.organization_id THEN
+            INSERT INTO report_source_generations (organization_id, source_code, revision, watermark)
+            VALUES (OLD.organization_id, code, 1, clock_timestamp())
+            ON CONFLICT (organization_id, source_code) DO UPDATE
+            SET revision = report_source_generations.revision + 1,
+                watermark = EXCLUDED.watermark;
+        END IF;
     END LOOP;
     RETURN COALESCE(NEW, OLD);
 END;
@@ -73,6 +80,7 @@ SQL);
 CREATE FUNCTION bump_briefing_participant_report_generation() RETURNS trigger AS $$
 DECLARE
     owner_organization_id bigint;
+    old_organization_id bigint;
 BEGIN
     SELECT organization_id INTO owner_organization_id
     FROM safety_briefings
@@ -85,6 +93,15 @@ BEGIN
     ON CONFLICT (organization_id, source_code) DO UPDATE
     SET revision = report_source_generations.revision + 1,
         watermark = EXCLUDED.watermark;
+    IF TG_OP = 'UPDATE' AND OLD.briefing_id IS DISTINCT FROM NEW.briefing_id THEN
+        SELECT organization_id INTO old_organization_id FROM safety_briefings WHERE id = OLD.briefing_id;
+        IF old_organization_id IS NOT NULL AND old_organization_id IS DISTINCT FROM owner_organization_id THEN
+            INSERT INTO report_source_generations (organization_id, source_code, revision, watermark)
+            VALUES (old_organization_id, 'safety_site_workforce_assignments', 1, clock_timestamp())
+            ON CONFLICT (organization_id, source_code) DO UPDATE
+            SET revision = report_source_generations.revision + 1, watermark = EXCLUDED.watermark;
+        END IF;
+    END IF;
     RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;

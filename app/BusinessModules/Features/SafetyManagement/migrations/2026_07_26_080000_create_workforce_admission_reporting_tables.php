@@ -94,6 +94,7 @@ return new class extends Migration
             $table->timestampTz('effective_at');
             $table->jsonb('content');
             $table->char('content_hash', 64);
+            $table->boolean('history_complete');
             $table->timestampTz('recorded_at');
             $table->index(
                 ['organization_id', 'evidence_type', 'evidence_id', 'effective_at', 'id'],
@@ -198,16 +199,31 @@ DECLARE
     owner_employee_id bigint;
     owner_project_id bigint;
 BEGIN
+    IF TG_OP = 'UPDATE' AND (
+        OLD.organization_id IS DISTINCT FROM NEW.organization_id
+        OR OLD.employee_id IS DISTINCT FROM NEW.employee_id
+        OR to_jsonb(OLD)->>'project_id' IS DISTINCT FROM to_jsonb(NEW)->>'project_id'
+    ) THEN
+        source_row := to_jsonb(OLD) || jsonb_build_object('_deleted', true);
+        INSERT INTO safety_evidence_versions (
+            organization_id, evidence_type, evidence_id, employee_id, project_id,
+            effective_at, content, content_hash, history_complete, recorded_at
+        ) VALUES (
+            OLD.organization_id, TG_ARGV[0], OLD.id, OLD.employee_id,
+            NULLIF(to_jsonb(OLD)->>'project_id', '')::bigint, clock_timestamp(), source_row,
+            encode(digest(source_row::text, 'sha256'), 'hex'), true, clock_timestamp()
+        );
+    END IF;
     source_row := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) || jsonb_build_object('_deleted', true) ELSE to_jsonb(NEW) END;
     owner_organization_id := (source_row->>'organization_id')::bigint;
     owner_employee_id := NULLIF(source_row->>'employee_id', '')::bigint;
     owner_project_id := NULLIF(source_row->>'project_id', '')::bigint;
     INSERT INTO safety_evidence_versions (
         organization_id, evidence_type, evidence_id, employee_id, project_id,
-        effective_at, content, content_hash, recorded_at
+        effective_at, content, content_hash, history_complete, recorded_at
     ) VALUES (
         owner_organization_id, TG_ARGV[0], (source_row->>'id')::bigint, owner_employee_id, owner_project_id,
-        clock_timestamp(), source_row, encode(digest(source_row::text, 'sha256'), 'hex'), clock_timestamp()
+        clock_timestamp(), source_row, encode(digest(source_row::text, 'sha256'), 'hex'), true, clock_timestamp()
     );
     RETURN COALESCE(NEW, OLD);
 END;
@@ -220,28 +236,46 @@ SQL);
             'safety_ppe_issues' => 'ppe',
         ] as $table => $type) {
             DB::statement("CREATE TRIGGER {$table}_evidence_version AFTER INSERT OR UPDATE OR DELETE ON {$table} FOR EACH ROW EXECUTE FUNCTION capture_safety_evidence_version('{$type}')");
-            DB::statement("INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, recorded_at) SELECT organization_id, '{$type}', id, employee_id, ".($table === 'safety_employee_requirements' ? 'project_id' : 'NULL').", COALESCE(created_at, clock_timestamp()), to_jsonb(source), encode(digest(to_jsonb(source)::text, 'sha256'), 'hex'), clock_timestamp() FROM {$table} source");
+            DB::statement("INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, history_complete, recorded_at) SELECT organization_id, '{$type}', id, employee_id, ".($table === 'safety_employee_requirements' ? 'project_id' : 'NULL').", clock_timestamp(), to_jsonb(source), encode(digest(to_jsonb(source)::text, 'sha256'), 'hex'), false, clock_timestamp() FROM {$table} source");
         }
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION capture_safety_briefing_evidence_version() RETURNS trigger AS $$
 DECLARE
     participant_row record;
     briefing_row record;
+    old_briefing_row record;
     content jsonb;
 BEGIN
     IF TG_TABLE_NAME = 'safety_briefing_participants' THEN
+        IF TG_OP = 'UPDATE' AND (
+            OLD.briefing_id IS DISTINCT FROM NEW.briefing_id
+            OR OLD.employee_id IS DISTINCT FROM NEW.employee_id
+        ) THEN
+            SELECT * INTO old_briefing_row FROM safety_briefings WHERE id = OLD.briefing_id;
+            content := jsonb_build_object('participant', to_jsonb(OLD), 'briefing', to_jsonb(old_briefing_row), '_deleted', true);
+            INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, history_complete, recorded_at)
+            VALUES (old_briefing_row.organization_id, 'briefing', OLD.id, OLD.employee_id, old_briefing_row.project_id, clock_timestamp(), content, encode(digest(content::text, 'sha256'), 'hex'), true, clock_timestamp());
+        END IF;
         SELECT * INTO participant_row FROM safety_briefing_participants WHERE id = COALESCE(NEW.id, OLD.id);
         SELECT * INTO briefing_row FROM safety_briefings WHERE id = COALESCE(NEW.briefing_id, OLD.briefing_id);
         content := jsonb_build_object('participant', COALESCE(to_jsonb(participant_row), to_jsonb(OLD)), 'briefing', to_jsonb(briefing_row));
         IF TG_OP = 'DELETE' THEN content := content || jsonb_build_object('_deleted', true); END IF;
-        INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, recorded_at)
-        VALUES (briefing_row.organization_id, 'briefing', COALESCE(NEW.id, OLD.id), COALESCE(NEW.employee_id, OLD.employee_id), briefing_row.project_id, clock_timestamp(), content, encode(digest(content::text, 'sha256'), 'hex'), clock_timestamp());
+        INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, history_complete, recorded_at)
+        VALUES (briefing_row.organization_id, 'briefing', COALESCE(NEW.id, OLD.id), COALESCE(NEW.employee_id, OLD.employee_id), briefing_row.project_id, clock_timestamp(), content, encode(digest(content::text, 'sha256'), 'hex'), true, clock_timestamp());
     ELSE
         FOR participant_row IN SELECT * FROM safety_briefing_participants WHERE briefing_id = COALESCE(NEW.id, OLD.id) LOOP
+            IF TG_OP = 'UPDATE' AND (
+                OLD.organization_id IS DISTINCT FROM NEW.organization_id
+                OR OLD.project_id IS DISTINCT FROM NEW.project_id
+            ) THEN
+                content := jsonb_build_object('participant', to_jsonb(participant_row), 'briefing', to_jsonb(OLD), '_deleted', true);
+                INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, history_complete, recorded_at)
+                VALUES (OLD.organization_id, 'briefing', participant_row.id, participant_row.employee_id, OLD.project_id, clock_timestamp(), content, encode(digest(content::text, 'sha256'), 'hex'), true, clock_timestamp());
+            END IF;
             content := jsonb_build_object('participant', to_jsonb(participant_row), 'briefing', CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END);
             IF TG_OP = 'DELETE' THEN content := content || jsonb_build_object('_deleted', true); END IF;
-            INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, recorded_at)
-            VALUES (COALESCE(NEW.organization_id, OLD.organization_id), 'briefing', participant_row.id, participant_row.employee_id, COALESCE(NEW.project_id, OLD.project_id), clock_timestamp(), content, encode(digest(content::text, 'sha256'), 'hex'), clock_timestamp());
+            INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, history_complete, recorded_at)
+            VALUES (COALESCE(NEW.organization_id, OLD.organization_id), 'briefing', participant_row.id, participant_row.employee_id, COALESCE(NEW.project_id, OLD.project_id), clock_timestamp(), content, encode(digest(content::text, 'sha256'), 'hex'), true, clock_timestamp());
         END LOOP;
     END IF;
     RETURN COALESCE(NEW, OLD);
@@ -253,10 +287,10 @@ FOR EACH ROW EXECUTE FUNCTION capture_safety_briefing_evidence_version();
 CREATE TRIGGER safety_briefings_evidence_version
 AFTER UPDATE OR DELETE ON safety_briefings
 FOR EACH ROW EXECUTE FUNCTION capture_safety_briefing_evidence_version();
-INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, recorded_at)
+INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, history_complete, recorded_at)
 SELECT briefing.organization_id, 'briefing', participant.id, participant.employee_id, briefing.project_id,
        COALESCE(participant.created_at, briefing.created_at), jsonb_build_object('participant', to_jsonb(participant), 'briefing', to_jsonb(briefing)),
-       encode(digest(jsonb_build_object('participant', to_jsonb(participant), 'briefing', to_jsonb(briefing))::text, 'sha256'), 'hex'), clock_timestamp()
+       encode(digest(jsonb_build_object('participant', to_jsonb(participant), 'briefing', to_jsonb(briefing))::text, 'sha256'), 'hex'), false, clock_timestamp()
 FROM safety_briefing_participants participant
 JOIN safety_briefings briefing ON briefing.id = participant.briefing_id;
 SQL);

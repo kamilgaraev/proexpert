@@ -71,16 +71,24 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
             $values['medical_details'] = $row->medical_details;
         }
 
-        return new ReportDrillDownResult(
-            [$values],
-            null,
-            [new ReportResourceLink(
+        $links = [];
+        if ($row->evidence_id !== null
+            && $row->evidence_version_id !== null
+            && $row->evidence_hash !== null
+            && (bool) $row->verified) {
+            $links[] = new ReportResourceLink(
                 'safety_requirement',
                 'requirement_'.(int) $row->id,
                 $route,
                 ['id' => (int) $row->evidence_id],
                 $medical && ! $canViewMedical ? 'forbidden' : 'available',
-            )],
+            );
+        }
+
+        return new ReportDrillDownResult(
+            [$values],
+            null,
+            $links,
         );
     }
 

@@ -138,6 +138,7 @@ final class ProductionReportScopedResourceAuthorizers
                 'photo.storage_etag',
                 'photo.storage_sha256',
                 'photo.storage_version_id',
+                'photo.storage_identity_verified',
                 'photo.type',
                 'photo.uploaded_by',
                 'photo.url',
@@ -155,6 +156,7 @@ final class ProductionReportScopedResourceAuthorizers
             'storage_key' => (string) $photo->url,
             'storage_sha256' => (string) $photo->storage_sha256,
             'storage_version_id' => (string) $photo->storage_version_id,
+            'storage_identity_verified' => (bool) $photo->storage_identity_verified,
             'type' => (string) $photo->type,
             'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
         ]));
@@ -166,7 +168,8 @@ final class ProductionReportScopedResourceAuthorizers
         } catch (\Throwable) {
             return false;
         }
-        if (! hash_equals((string) $photo->storage_sha256, $stored->checksum->value)
+        if (! (bool) $photo->storage_identity_verified
+            || ! hash_equals((string) $photo->storage_sha256, $stored->checksum->value)
             || ! hash_equals((string) $photo->storage_etag, $stored->etag)
             || (int) $photo->size_bytes !== $stored->sizeBytes
             || ! hash_equals((string) $photo->mime_type, $stored->mime)) {
@@ -381,6 +384,11 @@ final class ProductionReportScopedResourceAuthorizers
             || (int) ($identity['version_id'] ?? 0) !== (int) $row->evidence_version_id
             || ! hash_equals((string) ($identity['version_hash'] ?? ''), (string) $row->evidence_hash)
             || (int) ($identity['evidence_id'] ?? 0) !== (int) $row->evidence_id
+            || (int) ($identity['employee_id'] ?? 0) !== (int) $row->employee_id
+            || (int) ($identity['project_id'] ?? 0) !== $projectId
+            || (int) ($identity['safety_site_id'] ?? 0) !== (int) $row->safety_site_id
+            || (int) ($identity['site_assignment_id'] ?? 0) !== (int) $row->site_assignment_id
+            || (int) ($identity['workforce_assignment_id'] ?? 0) !== (int) $row->workforce_assignment_id
             || ($identity['evidence_type'] ?? null) !== $row->evidence_type) {
             return false;
         }
@@ -390,6 +398,7 @@ final class ProductionReportScopedResourceAuthorizers
             ->where('evidence_type', $row->evidence_type)
             ->where('evidence_id', $row->evidence_id)
             ->where('employee_id', $row->employee_id)
+            ->where('history_complete', true)
             ->where('content_hash', $row->evidence_hash)
             ->first(['content']);
         if ($version === null) {

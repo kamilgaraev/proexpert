@@ -15,11 +15,35 @@ final class SafetyEvidenceVersionResolver
         string $evidenceType,
         int $evidenceId,
         CarbonImmutable $asOf,
+        int $employeeId,
+        int $projectId,
+        int $siteId,
+        int $siteAssignmentId,
+        int $workforceAssignmentId,
     ): ?array {
+        $provenance = DB::table('safety_site_workforce_assignments')
+            ->where('id', $siteAssignmentId)
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('safety_site_id', $siteId)
+            ->where('workforce_assignment_id', $workforceAssignmentId)
+            ->where('employee_id', $employeeId)
+            ->where('created_at', '<=', $asOf)
+            ->whereDate('valid_from', '<=', $asOf->toDateString())
+            ->where(static fn ($query) => $query
+                ->whereNull('valid_to')
+                ->orWhereDate('valid_to', '>=', $asOf->toDateString()))
+            ->exists();
+        if (! $provenance) {
+            return null;
+        }
         $version = DB::table('safety_evidence_versions')
             ->where('organization_id', $organizationId)
             ->where('evidence_type', $evidenceType)
             ->where('evidence_id', $evidenceId)
+            ->where('employee_id', $employeeId)
+            ->where('history_complete', true)
+            ->where(static fn ($query) => $query->whereNull('project_id')->orWhere('project_id', $projectId))
             ->where('effective_at', '<=', $asOf)
             ->orderByDesc('effective_at')
             ->orderByDesc('id')
@@ -45,12 +69,16 @@ final class SafetyEvidenceVersionResolver
         array $requirement,
         CarbonImmutable $date,
         CarbonImmutable $asOf,
+        ?int $projectId,
     ): SafetyComplianceRequirementResult {
         $type = (string) $requirement['type'];
         $code = (string) $requirement['code'];
         $versions = DB::table('safety_evidence_versions')
             ->where('organization_id', $organizationId)
             ->where('employee_id', $employeeId)
+            ->where('history_complete', true)
+            ->when($projectId !== null, static fn ($query) => $query
+                ->where(static fn ($query) => $query->whereNull('project_id')->orWhere('project_id', $projectId)))
             ->whereIn('evidence_type', ['employee_requirement', $type])
             ->where('effective_at', '<=', $asOf)
             ->orderByRaw("CASE WHEN evidence_type = 'employee_requirement' THEN 0 ELSE 1 END")

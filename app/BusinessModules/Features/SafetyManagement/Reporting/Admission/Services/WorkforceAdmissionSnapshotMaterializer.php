@@ -417,6 +417,11 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                         $state->evidenceType,
                         $state->evidenceId,
                         $asOf,
+                        (int) $assignment->employee_id,
+                        (int) $assignment->project_id,
+                        (int) $assignment->safety_site_id,
+                        (int) $assignment->id,
+                        (int) $assignment->workforce_assignment_id,
                     );
                     if ($evidenceVersion === null) {
                         $gapCount++;
@@ -511,6 +516,11 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'evidence_identity' => $evidenceVersion === null ? null : [
                         'evidence_id' => $state->evidenceId,
                         'evidence_type' => $state->evidenceType,
+                        'employee_id' => (int) $assignment->employee_id,
+                        'project_id' => (int) $assignment->project_id,
+                        'safety_site_id' => (int) $assignment->safety_site_id,
+                        'site_assignment_id' => (int) $assignment->id,
+                        'workforce_assignment_id' => (int) $assignment->workforce_assignment_id,
                         'version_hash' => $evidenceVersion['hash'],
                         'version_id' => $evidenceVersion['id'],
                     ],
