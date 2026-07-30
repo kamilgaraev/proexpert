@@ -61,6 +61,7 @@ final class ReportingArtifactTransferServiceTest extends TestCase
         $this->write($source, 'build/reports/report-catalog-activation.json', "{\"status\":\"catalog_activated\"}\n");
         $this->write($source, 'docs/reports/contracts/report-catalog-activation.schema.json', "{}\n");
         $this->write($source, 'docs/reports/contracts/reporting-artifact-transfer.schema.json', "{}\n");
+        $this->write($destination, 'build/reports/intake/report-catalog-activation.json', "{\"status\":\"catalog_activated\"}\n");
 
         (new ReportingArtifactTransferService())->transfer(
             'activation', $source, 'build/reports/report-catalog-activation.json',
@@ -69,7 +70,29 @@ final class ReportingArtifactTransferServiceTest extends TestCase
             new DateTimeImmutable('2026-07-26T00:00:00Z'), true,
         );
 
-        self::assertFileDoesNotExist($destination.'/build/reports/intake/report-catalog-activation.json');
+        self::assertSame(
+            "{\"status\":\"catalog_activated\"}\n",
+            file_get_contents($destination.'/build/reports/intake/report-catalog-activation.json'),
+        );
+    }
+
+    public function test_check_mode_rejects_a_destination_artifact_that_differs_from_the_source(): void
+    {
+        $source = $this->directory();
+        $destination = $this->directory();
+        $this->write($source, 'build/reports/report-catalog-activation.json', "{\"status\":\"catalog_activated\"}\n");
+        $this->write($source, 'docs/reports/contracts/report-catalog-activation.schema.json', "{}\n");
+        $this->write($source, 'docs/reports/contracts/reporting-artifact-transfer.schema.json', "{}\n");
+        $this->write($destination, 'build/reports/intake/report-catalog-activation.json', "{\"status\":\"other\"}\n");
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new ReportingArtifactTransferService())->transfer(
+            'activation', $source, 'build/reports/report-catalog-activation.json',
+            'docs/reports/contracts/report-catalog-activation.schema.json', str_repeat('a', 40),
+            str_repeat('b', 40), str_repeat('a', 40), null, $destination,
+            new DateTimeImmutable('2026-07-26T00:00:00Z'), true,
+        );
     }
 
     /**
@@ -87,6 +110,9 @@ final class ReportingArtifactTransferServiceTest extends TestCase
         $this->write($source, $sourcePath, json_encode(['status' => $status], JSON_THROW_ON_ERROR)."\n");
         $this->write($source, $schemaPath, "{}\n");
         $this->writeTransferSchema($source);
+        if ($kind === 'admin-evidence') {
+            $this->writeAdminEvidenceLedgers($source, $destination, str_repeat('d', 40));
+        }
 
         $adminTransfer = $kind === 'release' ? $this->adminTransfer() : null;
         (new ReportingArtifactTransferService())->transfer(
@@ -94,7 +120,7 @@ final class ReportingArtifactTransferServiceTest extends TestCase
             $source,
             $sourcePath,
             $schemaPath,
-            str_repeat('a', 40),
+            $kind === 'admin-evidence' ? '' : str_repeat('c', 40),
             str_repeat('b', 40),
             str_repeat('c', 40),
             $adminTransfer,
@@ -109,6 +135,43 @@ final class ReportingArtifactTransferServiceTest extends TestCase
         self::assertSame(hash_file('sha256', $source.'/'.$sourcePath), $descriptor->source_sha256, $kind);
         self::assertSame(hash_file('sha256', $destination.'/'.$descriptor->destination_path), $descriptor->destination_sha256, $kind);
         self::assertTrue((new CompliantValidator())->validate($descriptor, $schema)->isValid(), $kind);
+    }
+
+    public function test_admin_evidence_derives_its_source_commit_from_matching_ledgers(): void
+    {
+        $source = $this->directory();
+        $destination = $this->directory();
+        $this->write($source, 'docs/reports/admin-evidence.json', "{\"status\":\"admin_evidence_passed\"}\n");
+        $this->write($source, 'docs/reports/contracts/report-admin-evidence.schema.json', "{}\n");
+        $this->writeTransferSchema($source);
+        $this->writeAdminEvidenceLedgers($source, $destination, str_repeat('d', 40));
+
+        $transfer = (new ReportingArtifactTransferService())->transfer(
+            'admin-evidence', $source, 'docs/reports/admin-evidence.json',
+            'docs/reports/contracts/report-admin-evidence.schema.json', '', str_repeat('b', 40),
+            str_repeat('c', 40), null, $destination, new DateTimeImmutable('2026-07-26T00:00:00Z'), false,
+        );
+
+        self::assertSame(str_repeat('d', 40), $transfer->sourceCommitSha);
+        self::assertSame(str_repeat('d', 40), $transfer->adminEvidenceCommitSha);
+    }
+
+    public function test_admin_evidence_rejects_a_caller_supplied_source_commit(): void
+    {
+        $source = $this->directory();
+        $destination = $this->directory();
+        $this->write($source, 'docs/reports/admin-evidence.json', "{\"status\":\"admin_evidence_passed\"}\n");
+        $this->write($source, 'docs/reports/contracts/report-admin-evidence.schema.json', "{}\n");
+        $this->writeTransferSchema($source);
+        $this->writeAdminEvidenceLedgers($source, $destination, str_repeat('d', 40));
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new ReportingArtifactTransferService())->transfer(
+            'admin-evidence', $source, 'docs/reports/admin-evidence.json',
+            'docs/reports/contracts/report-admin-evidence.schema.json', str_repeat('a', 40), str_repeat('b', 40),
+            str_repeat('c', 40), null, $destination, new DateTimeImmutable('2026-07-26T00:00:00Z'), false,
+        );
     }
 
     /**
@@ -130,13 +193,14 @@ final class ReportingArtifactTransferServiceTest extends TestCase
         $this->write($source, 'docs/reports/admin-evidence.json', "{\"status\":\"admin_evidence_passed\"}\n");
         $this->write($source, 'docs/reports/contracts/report-admin-evidence.schema.json', "{}\n");
         $this->writeTransferSchema($source);
+        $this->writeAdminEvidenceLedgers($source, $destination, str_repeat('d', 40));
 
         return (new ReportingArtifactTransferService())->transfer(
             'admin-evidence',
             $source,
             'docs/reports/admin-evidence.json',
             'docs/reports/contracts/report-admin-evidence.schema.json',
-            str_repeat('a', 40),
+            '',
             str_repeat('b', 40),
             str_repeat('c', 40),
             null,
@@ -144,6 +208,13 @@ final class ReportingArtifactTransferServiceTest extends TestCase
             new DateTimeImmutable('2026-07-26T00:00:00Z'),
             false,
         );
+    }
+
+    private function writeAdminEvidenceLedgers(string $source, string $destination, string $commit): void
+    {
+        $line = 'Plan 4 admin evidence commit: '.$commit."\n";
+        $this->write($source, '.superpowers/sdd/2026-07-26-reports-plan-4-admin-cutover/progress.md', $line);
+        $this->write($destination, '.superpowers/sdd/2026-07-26-reports-canonical/progress.md', $line);
     }
 
     private function writeTransferSchema(string $root): void

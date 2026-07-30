@@ -84,12 +84,31 @@ final class ReportingArtifactTransferService
             throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
         }
         $this->assertTimestamp($generatedAt);
+        if ($kind === 'admin-evidence') {
+            if ($sourceCommitSha !== '') {
+                throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
+            }
+            $sourceCommitSha = $this->adminEvidenceCommitSha($sourceRoot, $destinationRoot);
+        }
+        $adminEvidenceCommitSha = $kind === 'admin-evidence'
+            ? $sourceCommitSha
+            : $adminTransfer?->sourceCommitSha;
 
         $artifact = $this->read($sourceRoot, $definition['source']);
         $schema = $this->read($sourceRoot, $definition['schema']);
         $transferSchema = $this->read($sourceRoot, self::TRANSFER_SCHEMA);
         $document = json_decode($artifact, true, 512, JSON_THROW_ON_ERROR);
         if (! is_array($document) || ($document['status'] ?? null) !== $definition['status']) {
+            throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
+        }
+
+        if (! $check) {
+            $this->publishArtifacts($destinationRoot, $definition, $artifact, $schema, $transferSchema);
+        }
+
+        $sourceSha256 = hash('sha256', $artifact);
+        $destinationSha256 = hash('sha256', $this->read($destinationRoot, $definition['destination']));
+        if (! hash_equals($sourceSha256, $destinationSha256)) {
             throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
         }
 
@@ -103,10 +122,10 @@ final class ReportingArtifactTransferService
             $releaseSha,
             $sourceCommitSha,
             $activationCommitSha,
-            $adminTransfer?->sourceCommitSha,
+            $adminEvidenceCommitSha,
             $generatedAt,
-            hash('sha256', $artifact),
-            hash('sha256', $artifact),
+            $sourceSha256,
+            $destinationSha256,
             hash('sha256', $schema),
             hash('sha256', $transferSchema),
         );
@@ -115,12 +134,12 @@ final class ReportingArtifactTransferService
             return $transfer;
         }
 
-        $this->publish($destinationRoot, $definition, $artifact, $schema, $transferSchema, $transfer);
+        $this->publishDescriptor($destinationRoot, $definition, $transfer);
 
         return $transfer;
     }
 
-    private function publish(string $root, array $definition, string $artifact, string $schema, string $transferSchema, ReportingArtifactTransfer $transfer): void
+    private function publishArtifacts(string $root, array $definition, string $artifact, string $schema, string $transferSchema): void
     {
         $files = [
             $definition['destination'] => $artifact,
@@ -133,6 +152,10 @@ final class ReportingArtifactTransferService
                 throw new RuntimeException('reporting_artifact_transfer_final_mismatch');
             }
         }
+    }
+
+    private function publishDescriptor(string $root, array $definition, ReportingArtifactTransfer $transfer): void
+    {
         $descriptor = [
             'artifact_id' => $transfer->artifactId,
             'schema_version' => $transfer->schemaVersion,
@@ -158,6 +181,29 @@ final class ReportingArtifactTransferService
         if ($this->read($root, $definition['descriptor']) !== $descriptor) {
             throw new RuntimeException('reporting_artifact_transfer_final_mismatch');
         }
+    }
+
+    private function adminEvidenceCommitSha(string $sourceRoot, string $destinationRoot): string
+    {
+        $sourceLedger = $this->read($sourceRoot, '.superpowers/sdd/2026-07-26-reports-plan-4-admin-cutover/progress.md');
+        $destinationLedger = $this->read($destinationRoot, '.superpowers/sdd/2026-07-26-reports-canonical/progress.md');
+        $sourceCommit = $this->ledgerCommit($sourceLedger);
+        $destinationCommit = $this->ledgerCommit($destinationLedger);
+        if (! hash_equals($sourceCommit, $destinationCommit)) {
+            throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
+        }
+
+        return $sourceCommit;
+    }
+
+    private function ledgerCommit(string $ledger): string
+    {
+        preg_match_all('/^Plan 4 admin evidence commit: ([a-f0-9]{40})$/m', $ledger, $matches);
+        if (count($matches[1]) !== 1) {
+            throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
+        }
+
+        return $matches[1][0];
     }
 
     private function assertTimestamp(DateTimeImmutable $generatedAt): void

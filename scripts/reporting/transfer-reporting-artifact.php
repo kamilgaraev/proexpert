@@ -17,7 +17,12 @@ try {
             throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
         }
     }
-    $sourceCommit = $options['source-commit'] ?? $options['activation-commit'];
+    if ($options['kind'] === 'admin-evidence' && array_key_exists('source-commit', $options)) {
+        throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
+    }
+    $sourceCommit = $options['kind'] === 'admin-evidence'
+        ? ''
+        : ($options['source-commit'] ?? $options['activation-commit']);
     if (! is_string($sourceCommit)) {
         throw new InvalidArgumentException('reporting_artifact_transfer_invalid');
     }

@@ -44,7 +44,7 @@
     "adminEvidence": {
       "allOf": [
         { "$ref": "#/$defs/base" },
-        { "properties": { "artifact_id": { "const": "plan4_admin_evidence_transfer" }, "kind": { "const": "admin-evidence" }, "source_path": { "const": "docs/reports/admin-evidence.json" }, "destination_path": { "const": "build/reports/intake/plan-4-admin-evidence.json" }, "schema_path": { "const": "docs/reports/contracts/report-admin-evidence.schema.json" } } }
+        { "required": ["admin_evidence_commit_sha"], "properties": { "artifact_id": { "const": "plan4_admin_evidence_transfer" }, "kind": { "const": "admin-evidence" }, "source_path": { "const": "docs/reports/admin-evidence.json" }, "destination_path": { "const": "build/reports/intake/plan-4-admin-evidence.json" }, "schema_path": { "const": "docs/reports/contracts/report-admin-evidence.schema.json" } } }
       ]
     },
     "release": {
