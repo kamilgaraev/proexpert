@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
 use DateTimeZone;
 use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -113,26 +114,37 @@ final class ContractorScorecardContractTest extends TestCase
     }
 
     #[Test]
-    public function scoped_source_authorization_uses_bound_access_services_and_fails_closed(): void
+    public function scoped_source_authorization_requires_profile_and_underlying_domain_permissions(): void
     {
         $actor = (new User)->forceFill(['id' => 17]);
         $actor->exists = true;
         $project = (new Project)->forceFill(['id' => 101, 'organization_id' => 10]);
         $project->exists = true;
         $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->expects(self::once())
+        $authorization->expects(self::exactly(2))
             ->method('can')
-            ->with(
-                $actor,
-                'contractor_marketplace.profile.view',
-                [
-                    'organization_id' => 10,
-                    'project_id' => 101,
-                    'source_type' => 'quality_defect_flow',
-                    'source_id' => 7331,
-                ],
-            )
-            ->willReturn(false);
+            ->willReturnCallback(static function (
+                User $actualActor,
+                string $permission,
+                array $authorizationContext,
+            ) use ($actor): bool {
+                self::assertSame($actor, $actualActor);
+                self::assertSame(
+                    [
+                        'organization_id' => 10,
+                        'project_id' => 101,
+                        'source_type' => 'quality_defect_flow',
+                        'source_id' => 7331,
+                    ],
+                    $authorizationContext,
+                );
+
+                return match ($permission) {
+                    'contractor_marketplace.profile.view' => true,
+                    'quality-control.defects.view' => false,
+                    default => throw new InvalidArgumentException('unexpected_permission'),
+                };
+            });
         $projectAccess = $this->createMock(UserProjectAccessService::class);
         $projectAccess->expects(self::once())
             ->method('canAccessProject')
@@ -146,7 +158,11 @@ final class ContractorScorecardContractTest extends TestCase
         $this->app->instance(UserProjectAccessService::class, $projectAccess);
         $this->app->instance(ReportSourceObjectReader::class, $sources);
         $context = new ReportExecutionContext(
-            new ReportActor(17, 'active', ['contractor_marketplace.profile.view']),
+            new ReportActor(
+                17,
+                'active',
+                ['contractor_marketplace.profile.view', 'quality-control.defects.view'],
+            ),
             new ReportScope(10, [10], [101], [], new DateTimeZone('Europe/Moscow')),
             new ReportVisibility(true, true, false, false, false, false, false),
             new AuthorizationDecisionContext(
@@ -181,7 +197,7 @@ final class ContractorScorecardContractTest extends TestCase
         $project = (new Project)->forceFill(['id' => 101, 'organization_id' => 10]);
         $project->exists = true;
         $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('can')->willReturn(true);
+        $authorization->expects(self::exactly(2))->method('can')->willReturn(true);
         $projectAccess = $this->createMock(UserProjectAccessService::class);
         $projectAccess->method('canAccessProject')->willReturn(true);
         $sources = $this->createMock(ReportSourceObjectReader::class);
@@ -208,6 +224,55 @@ final class ContractorScorecardContractTest extends TestCase
     }
 
     #[Test]
+    #[DataProvider('objectiveSourcePermissions')]
+    public function every_objective_source_requires_profile_and_its_domain_permission(
+        string $sourceType,
+        string $domainPermission,
+    ): void {
+        $actor = (new User)->forceFill(['id' => 17]);
+        $actor->exists = true;
+        $project = (new Project)->forceFill(['id' => 101, 'organization_id' => 10]);
+        $project->exists = true;
+        $seen = [];
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturnCallback(
+            static function (User $actualActor, string $permission) use (&$seen, $actor): bool {
+                self::assertSame($actor, $actualActor);
+                $seen[] = $permission;
+
+                return true;
+            },
+        );
+        $projectAccess = $this->createMock(UserProjectAccessService::class);
+        $projectAccess->method('canAccessProject')->willReturn(true);
+        $sources = $this->createMock(ReportSourceObjectReader::class);
+        $sources->method('actor')->willReturn($actor);
+        $sources->method('project')->willReturn($project);
+        $sources->method('exists')->willReturn(true);
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $this->app->instance(UserProjectAccessService::class, $projectAccess);
+        $this->app->instance(ReportSourceObjectReader::class, $sources);
+
+        self::assertSame(
+            'available',
+            $this->app->make(ReportSourceObjectAuthorizer::class)->availability(
+                $this->context([
+                    'contractor_marketplace.profile.view',
+                    $domainPermission,
+                ]),
+                $sourceType,
+                7331,
+                10,
+                101,
+            ),
+        );
+        self::assertSame(
+            ['contractor_marketplace.profile.view', $domainPermission],
+            $seen,
+        );
+    }
+
+    #[Test]
     public function forbidden_source_evidence_is_redacted_without_leaking_its_identity(): void
     {
         $payload = (new ReportEvidenceRedactor)->reference(
@@ -230,10 +295,23 @@ final class ContractorScorecardContractTest extends TestCase
         self::assertArrayNotHasKey('source_snapshot_id', $payload);
     }
 
-    private function context(): ReportExecutionContext
+    public static function objectiveSourcePermissions(): array
+    {
+        return [
+            'R06 schedule' => ['baseline_schedule_variance', 'schedule.view'],
+            'R17 procurement' => ['supply_reliability', 'procurement.purchase_orders.view'],
+            'R23 quality' => ['quality_defect_flow', 'quality-control.defects.view'],
+            'R24 safety' => ['safety_incident_actions', 'safety-management.view'],
+        ];
+    }
+
+    private function context(?array $permissions = null): ReportExecutionContext
     {
         return new ReportExecutionContext(
-            new ReportActor(17, 'active', ['contractor_marketplace.profile.view']),
+            new ReportActor(17, 'active', $permissions ?? [
+                'contractor_marketplace.profile.view',
+                'quality-control.defects.view',
+            ]),
             new ReportScope(10, [10], [101], [], new DateTimeZone('Europe/Moscow')),
             new ReportVisibility(true, true, false, false, false, false, false),
             new AuthorizationDecisionContext(

@@ -16,7 +16,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceReadinessStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final readonly class ContractorScorecardReadinessProbe implements ReportSourceReadinessProbe
@@ -65,26 +64,27 @@ final readonly class ContractorScorecardReadinessProbe implements ReportSourceRe
                 )
                 ->orderBy('id')
                 ->get();
-            $profiles = DB::table('marketplace_contractor_profiles')
-                ->whereIn('id', $reviews->pluck('contractor_profile_id')->all())
-                ->pluck('organization_id', 'id');
+            $objectiveObservations = $this->observations->load($tuple);
             $validReviews = $reviews->filter(
-                static fn (MarketplaceHiringOfferReview $review): bool => isset($profiles[(int) $review->contractor_profile_id])
-                    && (int) $profiles[(int) $review->contractor_profile_id]
+                static fn (MarketplaceHiringOfferReview $review): bool => $objectiveObservations
+                    ->profileOrganizationId((int) $review->contractor_profile_id)
                         === (int) $review->contractor_organization_id
+                    && in_array(
+                        (int) $review->category_id,
+                        $objectiveObservations->categoryIds((int) $review->contractor_profile_id),
+                        true,
+                    )
                     && (int) $review->category_id > 0
                     && (int) $review->project_id > 0,
             );
             $projected = $validReviews->count();
             $eligible = $reviews->count();
             $unknown = $eligible - $projected;
-            $objectiveDimensions = $this->observations->load($tuple)->profileProjects();
+            $objectiveDimensions = $objectiveObservations->profileProjects();
             foreach ($objectiveDimensions as $profileId => $projects) {
                 foreach (array_keys($projects) as $projectId) {
                     $eligible++;
-                    $hasCategory = DB::table('marketplace_contractor_categories')
-                        ->where('profile_id', (int) $profileId)
-                        ->exists();
+                    $hasCategory = $objectiveObservations->categoryIds((int) $profileId) !== [];
                     if ($hasCategory) {
                         $projected++;
                     } else {

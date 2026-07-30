@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services;
 
 use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOfferReview;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorMembershipEvidence;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorScorecardSourceTuple;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -29,11 +30,17 @@ final readonly class ContractorScorecardSourceResolver
         'safety_incident_actions',
     ];
 
+    public function __construct(private ContractorMembershipEvidenceResolver $memberships) {}
+
     public function resolve(
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ContractorScorecardSourceTuple {
         try {
+            $membershipEvidence = $this->memberships->resolve(
+                $query->scope->organizationId,
+                CarbonImmutable::instance($query->asOf),
+            );
             $refs = [];
             foreach (self::REPORT_CODES as $code) {
                 $refs[$code] = $this->reportSnapshot($context, $query, $code);
@@ -43,7 +50,7 @@ final readonly class ContractorScorecardSourceResolver
                 $refs['supply_reliability'],
                 $refs['quality_defect_flow'],
                 $refs['safety_incident_actions'],
-                $this->marketplaceReviewsSnapshot($context, $query),
+                $this->marketplaceReviewsSnapshot($context, $query, $membershipEvidence),
             );
             $tuple->assertCompatible($context, $query);
 
@@ -127,6 +134,7 @@ final readonly class ContractorScorecardSourceResolver
     private function marketplaceReviewsSnapshot(
         ReportExecutionContext $context,
         ReportQuery $query,
+        ContractorMembershipEvidence $membershipEvidence,
     ): ReportSnapshotRef {
         $reviews = MarketplaceHiringOfferReview::query()
             ->where('reviewer_organization_id', $context->scope->organizationId)
@@ -158,6 +166,7 @@ final readonly class ContractorScorecardSourceResolver
         ])->all();
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'as_of' => $query->asOf->format(DATE_ATOM),
+            'membership_evidence_hash' => $membershipEvidence->sourceHash,
             'rows' => $projection,
             'scope' => $query->scope->canonicalIdentity(),
         ])));
@@ -178,6 +187,8 @@ final readonly class ContractorScorecardSourceResolver
                 'cohort_key' => $query->filters->values['cohort'] ?? null,
                 'project_ids' => $query->scope->projectIds,
                 'last_review_id' => (int) ($reviews->max('id') ?? 0),
+                'membership_coverage_started_at' => $membershipEvidence->coverageStartedAt,
+                'membership_evidence_hash' => $membershipEvidence->sourceHash,
                 'row_count' => $reviews->count(),
             ],
             ReportSnapshotClassification::OPERATIONAL,

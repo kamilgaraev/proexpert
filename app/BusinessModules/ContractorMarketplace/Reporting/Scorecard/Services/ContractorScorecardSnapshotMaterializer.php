@@ -385,21 +385,14 @@ final readonly class ContractorScorecardSnapshotMaterializer
                 $objectiveObservations->profileProjects($objectiveCohort, $period),
                 $objectiveCohort,
             );
-        $profileIds = array_map('intval', array_keys($objectiveDimensions));
-        $categories = DB::table('marketplace_contractor_categories')
-            ->whereIn('profile_id', $profileIds)
-            ->orderByDesc('is_primary')
-            ->orderBy('category_id')
-            ->get(['profile_id', 'category_id'])
-            ->groupBy('profile_id');
         foreach ($objectiveDimensions as $profileId => $projects) {
             foreach ($projects as $projectId => $cohorts) {
                 foreach (array_keys($cohorts) as $cohortKey) {
-                    foreach ($categories->get($profileId, collect()) as $category) {
-                        $key = implode(':', [$profileId, (int) $category->category_id, $projectId, $cohortKey]);
+                    foreach ($objectiveObservations->categoryIds((int) $profileId) as $categoryId) {
+                        $key = implode(':', [$profileId, $categoryId, $projectId, $cohortKey]);
                         $groups[$key] ??= [
                             'profile_id' => (int) $profileId,
-                            'category_id' => (int) $category->category_id,
+                            'category_id' => $categoryId,
                             'project_id' => (int) $projectId,
                             'cohort_key' => $cohortKey,
                             'reviews' => collect(),

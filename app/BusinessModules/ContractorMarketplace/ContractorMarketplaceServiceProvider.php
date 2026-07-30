@@ -34,6 +34,7 @@ class ContractorMarketplaceServiceProvider extends ServiceProvider
         $this->app->singleton(MarketplaceRatingService::class);
         $this->app->singleton(MarketplaceSearchService::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardFormula::class);
+        $this->app->singleton(Reporting\Scorecard\Services\ContractorMembershipEvidenceResolver::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardSourceResolver::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardObservationReader::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardPolicyWriter::class);

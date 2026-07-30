@@ -9,7 +9,23 @@ use InvalidArgumentException;
 
 final readonly class ContractorObjectiveObservationIndex
 {
-    public function __construct(private array $rows) {}
+    public function __construct(
+        private array $rows,
+        private array $categoriesByProfile = [],
+        private array $profileOrganizationById = [],
+    ) {}
+
+    public function categoryIds(int $profileId): array
+    {
+        return array_map('intval', array_keys($this->categoriesByProfile[$profileId] ?? []));
+    }
+
+    public function profileOrganizationId(int $profileId): ?int
+    {
+        $organizationId = $this->profileOrganizationById[$profileId] ?? null;
+
+        return is_int($organizationId) ? $organizationId : null;
+    }
 
     public function observations(
         string $sourceReportCode,

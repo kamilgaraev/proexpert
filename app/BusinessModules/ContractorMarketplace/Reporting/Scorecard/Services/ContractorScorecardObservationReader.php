@@ -6,81 +6,36 @@ namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services
 
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorObjectiveObservationIndex;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorScorecardSourceTuple;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 final readonly class ContractorScorecardObservationReader
 {
-    public function __construct(private ContractorObjectiveObservationPeriodResolver $periods) {}
+    public function __construct(
+        private ContractorObjectiveObservationPeriodResolver $periods,
+        private ContractorMembershipEvidenceResolver $memberships,
+    ) {}
 
     public function load(ContractorScorecardSourceTuple $tuple): ContractorObjectiveObservationIndex
     {
         $organizationId = $tuple->baselineScheduleVariance->scope->organizationId;
-        $contractors = DB::table('contractors')
-            ->where('organization_id', $organizationId)
-            ->whereNotNull('source_organization_id')
-            ->get(['id', 'source_organization_id']);
-        $suppliers = DB::table('suppliers')
-            ->where('organization_id', $organizationId)
-            ->get(['id', 'additional_info']);
-        $supplierMetadata = $suppliers->mapWithKeys(static function (object $supplier): array {
-            $metadata = is_string($supplier->additional_info)
-                ? json_decode($supplier->additional_info, true)
-                : $supplier->additional_info;
-
-            return [(int) $supplier->id => is_array($metadata) ? $metadata : []];
-        });
-        $profileIds = $supplierMetadata
-            ->pluck('contractor_profile_id')
-            ->filter(static fn (mixed $id): bool => is_numeric($id) && (int) $id > 0)
-            ->map(static fn (mixed $id): int => (int) $id);
-        $profileOrganizationIds = $contractors
-            ->pluck('source_organization_id')
-            ->merge($supplierMetadata->pluck('contractor_organization_id'))
-            ->filter(static fn (mixed $id): bool => is_numeric($id) && (int) $id > 0)
-            ->map(static fn (mixed $id): int => (int) $id)
-            ->unique()
-            ->values();
-        $profiles = DB::table('marketplace_contractor_profiles')
-            ->where(static function ($query) use ($profileIds, $profileOrganizationIds): void {
-                $query->whereIn('id', $profileIds->all())
-                    ->orWhereIn('organization_id', $profileOrganizationIds->all());
-            })
-            ->get(['id', 'organization_id']);
-        $profileByOrganization = DB::table('marketplace_contractor_profiles')
-            ->whereIn('id', $profiles->pluck('id')->all())
-            ->pluck('id', 'organization_id')
-            ->mapWithKeys(static fn (mixed $id, mixed $organization): array => [(int) $organization => (int) $id])
-            ->all();
-        $profileById = $profiles
-            ->pluck('id', 'id')
-            ->mapWithKeys(static fn (mixed $id): array => [(int) $id => (int) $id])
-            ->all();
-        $profileByContractor = $contractors
-            ->mapWithKeys(static fn (object $contractor): array => [
-                (int) $contractor->id => $profileByOrganization[(int) $contractor->source_organization_id] ?? null,
-            ])
-            ->filter()
-            ->all();
-        $profileBySupplier = $supplierMetadata
-            ->mapWithKeys(static function (array $metadata, int $supplierId) use (
-                $profileById,
-                $profileByOrganization,
-            ): array {
-                $profileId = isset($metadata['contractor_profile_id'])
-                    ? ($profileById[(int) $metadata['contractor_profile_id']] ?? null)
-                    : ($profileByOrganization[(int) ($metadata['contractor_organization_id'] ?? 0)] ?? null);
-
-                return [$supplierId => $profileId];
-            })
-            ->filter()
-            ->all();
+        $asOf = $tuple->marketplaceReviews->watermarks['as_of'] ?? null;
+        $expectedMembershipHash = $tuple->marketplaceReviews->watermarks['membership_evidence_hash'] ?? null;
+        if (! is_string($asOf) || ! is_string($expectedMembershipHash)) {
+            throw new InvalidArgumentException('contractor_membership_evidence_unpinned');
+        }
+        $membershipEvidence = $this->memberships->resolve($organizationId, CarbonImmutable::parse($asOf));
+        if (! hash_equals($expectedMembershipHash, $membershipEvidence->sourceHash)) {
+            throw new InvalidArgumentException('contractor_membership_evidence_changed');
+        }
 
         return new ContractorObjectiveObservationIndex([
             'baseline_schedule_variance' => $this->baselineRows(
                 $organizationId,
                 $tuple->baselineScheduleVariance,
-                $profileByContractor,
+                $membershipEvidence->profileByContractor,
                 'baseline_schedule_variance',
             ),
             'supply_reliability' => $this->contractorRows(
@@ -88,7 +43,7 @@ final readonly class ContractorScorecardObservationReader
                     ->where('organization_id', $organizationId)
                     ->where('snapshot_id', $tuple->supplyReliability->id)
                     ->get(),
-                $profileBySupplier,
+                $membershipEvidence->profileBySupplier,
                 'supplier_id',
                 'supply_reliability',
             ),
@@ -97,7 +52,7 @@ final readonly class ContractorScorecardObservationReader
                     ->where('organization_id', $organizationId)
                     ->where('snapshot_id', $tuple->qualityDefectFlow->id)
                     ->get(),
-                $profileByContractor,
+                $membershipEvidence->profileByContractor,
                 'contractor_id',
                 'quality_defect_flow',
             ),
@@ -106,11 +61,11 @@ final readonly class ContractorScorecardObservationReader
                     ->where('organization_id', $organizationId)
                     ->where('snapshot_id', $tuple->safetyIncidentActions->id)
                     ->get(),
-                $profileByContractor,
+                $membershipEvidence->profileByContractor,
                 'contractor_id',
                 'safety_incident_actions',
             ),
-        ]);
+        ], $membershipEvidence->categoriesByProfile, $membershipEvidence->profileOrganizationById);
     }
 
     private function baselineRows(

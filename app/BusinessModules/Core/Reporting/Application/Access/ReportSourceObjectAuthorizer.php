@@ -18,33 +18,49 @@ final readonly class ReportSourceObjectAuthorizer
         private ReportSourceObjectReader $sources,
     ) {}
 
-    private const PERMISSIONS = [
-        'acceptance_checklist_item' => ['reports.project_readiness.view'],
-        'acceptance_finding' => ['reports.project_readiness.view'],
-        'acceptance_scope' => ['reports.project_readiness.view'],
-        'baseline_schedule_variance' => ['contractor_marketplace.profile.view'],
+    private const PERMISSION_GROUPS = [
+        'acceptance_checklist_item' => [['reports.project_readiness.view']],
+        'acceptance_finding' => [['reports.project_readiness.view']],
+        'acceptance_scope' => [['reports.project_readiness.view']],
+        'baseline_schedule_variance' => [
+            ['contractor_marketplace.profile.view'],
+            ['schedule.view'],
+        ],
         'change' => [
-            'change-management.changes.create',
-            'change-management.changes.approve',
-            'change-management.changes.implement',
+            [
+                'change-management.changes.create',
+                'change-management.changes.approve',
+                'change-management.changes.implement',
+            ],
         ],
         'change_request' => [
-            'change-management.changes.create',
-            'change-management.changes.approve',
-            'change-management.changes.implement',
+            [
+                'change-management.changes.create',
+                'change-management.changes.approve',
+                'change-management.changes.implement',
+            ],
         ],
-        'constraint' => ['schedule.view'],
-        'customer_issue' => ['customer.issues.view'],
-        'customer_request' => ['customer.requests.view'],
-        'handover_document' => ['reports.project_readiness.view'],
-        'document' => ['reports.project_readiness.view'],
-        'inspection' => ['reports.project_readiness.view'],
-        'marketplace_review' => ['contractor_marketplace.profile.view'],
-        'quality_defect' => ['quality-control.defects.view'],
-        'quality_defect_flow' => ['contractor_marketplace.profile.view'],
-        'rfi' => ['change-management.rfi.create', 'change-management.rfi.answer'],
-        'safety_incident_actions' => ['contractor_marketplace.profile.view'],
-        'supply_reliability' => ['contractor_marketplace.profile.view'],
+        'constraint' => [['schedule.view']],
+        'customer_issue' => [['customer.issues.view']],
+        'customer_request' => [['customer.requests.view']],
+        'handover_document' => [['reports.project_readiness.view']],
+        'document' => [['reports.project_readiness.view']],
+        'inspection' => [['reports.project_readiness.view']],
+        'marketplace_review' => [['contractor_marketplace.profile.view']],
+        'quality_defect' => [['quality-control.defects.view']],
+        'quality_defect_flow' => [
+            ['contractor_marketplace.profile.view'],
+            ['quality-control.defects.view'],
+        ],
+        'rfi' => [['change-management.rfi.create', 'change-management.rfi.answer']],
+        'safety_incident_actions' => [
+            ['contractor_marketplace.profile.view'],
+            ['safety-management.view'],
+        ],
+        'supply_reliability' => [
+            ['contractor_marketplace.profile.view'],
+            ['procurement.purchase_orders.view'],
+        ],
     ];
 
     public function availability(
@@ -63,10 +79,10 @@ final readonly class ReportSourceObjectAuthorizer
             return 'forbidden';
         }
 
-        $permissions = self::PERMISSIONS[$sourceType] ?? [];
-        if ($permissions === [] || ! $this->hasAnyPermission(
+        $permissionGroups = self::PERMISSION_GROUPS[$sourceType] ?? [];
+        if ($permissionGroups === [] || ! $this->hasRequiredPermissions(
             $context,
-            $permissions,
+            $permissionGroups,
             $sourceType,
             $sourceId,
             $organizationId,
@@ -80,9 +96,9 @@ final readonly class ReportSourceObjectAuthorizer
             : 'missing';
     }
 
-    private function hasAnyPermission(
+    private function hasRequiredPermissions(
         ReportExecutionContext $context,
-        array $permissions,
+        array $permissionGroups,
         string $sourceType,
         int|string $sourceId,
         int $organizationId,
@@ -107,15 +123,22 @@ final readonly class ReportSourceObjectAuthorizer
             'source_type' => $sourceType,
             'source_id' => $sourceId,
         ];
-        foreach ($permissions as $permission) {
-            if (
-                in_array($permission, $context->actor->permissionSlugs, true)
-                && $this->authorization->can($actor, $permission, $authorizationContext)
-            ) {
-                return true;
+        foreach ($permissionGroups as $permissions) {
+            $granted = false;
+            foreach ($permissions as $permission) {
+                if (
+                    in_array($permission, $context->actor->permissionSlugs, true)
+                    && $this->authorization->can($actor, $permission, $authorizationContext)
+                ) {
+                    $granted = true;
+                    break;
+                }
+            }
+            if (! $granted) {
+                return false;
             }
         }
 
-        return false;
+        return true;
     }
 }
