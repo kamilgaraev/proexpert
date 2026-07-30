@@ -30,6 +30,8 @@ final class QualityReportsPostgresEndToEndContractTest extends TestCase
             'report_snapshot_seals',
             'quality-contract-v2',
             'snapshot_seal_signature',
+            'GetReportRowsAction::class',
+            'GetReportDrillDownAction::class',
             'SignedReportCursorCodec::class',
         ] as $required) {
             self::assertStringContainsString($required, $source);
@@ -87,6 +89,19 @@ final class QualityReportsPostgresEndToEndContractTest extends TestCase
         self::assertStringContainsString("DB::table('report_snapshot_seals')->insert", $sealStore);
         self::assertStringContainsString('report_snapshot_seal_immutable', $migration);
         self::assertStringNotContainsString('updateOrInsert', $sealStore);
+        self::assertStringContainsString('pg_advisory_xact_lock', $sealStore);
+        $backfill = (string) file_get_contents(
+            $root.'/app/BusinessModules/Core/Reporting/Infrastructure/Persistence/ReportSnapshotSealBackfill.php',
+        );
+        self::assertStringContainsString("'status' => 'failed'", $backfill);
+        self::assertStringContainsString("'status' => 'ready'", $backfill);
+        self::assertStringContainsString('failure_fingerprint', $backfill);
+        $race = (string) file_get_contents(
+            $root.'/tests/Integration/Reporting/Waves23/ReportingSealRacePostgresTest.php',
+        );
+        self::assertStringContainsString('test_two_processes_persist_exactly_one_identical_crypto_seal', $race);
+        self::assertGreaterThanOrEqual(2, substr_count($race, '$race->spawn('));
+        self::assertStringContainsString('$race->waitForChildren(', $race);
 
         foreach ([
             'QualityControl/Reporting/DefectFlow/Providers/QualityDefectFlowReportProvider.php',

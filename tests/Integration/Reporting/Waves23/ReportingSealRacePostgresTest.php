@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\Waves23;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -93,6 +96,52 @@ final class ReportingSealRacePostgresTest extends TestCase
         } finally {
             DB::statement("DROP TABLE IF EXISTS {$rows}");
             DB::statement("DROP TABLE IF EXISTS {$snapshots}");
+            $race->cleanup();
+        }
+    }
+
+    public function test_two_processes_persist_exactly_one_identical_crypto_seal(): void
+    {
+        if (getenv('RUN_REPORTING_PG_RACE') !== '1') {
+            self::markTestSkipped('Set RUN_REPORTING_PG_RACE=1 on an isolated PostgreSQL test database.');
+        }
+        $suffix = strtolower(Str::random(12));
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-crypto-seal-'.$suffix;
+        $race = new PostgresProcessRaceHarness($directory);
+        $pair = sodium_crypto_sign_keypair();
+        $private = rtrim(strtr(base64_encode(sodium_crypto_sign_secretkey($pair)), '+/', '-_'), '=');
+        putenv('REPORT_SNAPSHOT_SIGNING_KEY_ID=race-contract-v1');
+        putenv('REPORT_SNAPSHOT_SIGNING_PRIVATE_KEY='.$private);
+        $kind = 'race_'.$suffix;
+        $snapshotId = 'snapshot-'.$suffix;
+
+        try {
+            $workers = [];
+            foreach ([1, 2] as $worker) {
+                $workers[] = $race->spawn($worker, static function () use ($kind, $snapshotId): array {
+                    $seal = app(ReportSnapshotSealStore::class)->create(
+                        $kind,
+                        $snapshotId,
+                        new DateTimeImmutable('2026-07-30T08:00:00Z'),
+                        new Sha256Hash(str_repeat('d', 64)),
+                        new DateTimeImmutable('2026-07-30T08:01:00Z'),
+                    );
+
+                    return ['key_id' => $seal->keyId, 'signature' => $seal->signature];
+                });
+            }
+            $race->release(1);
+            $race->release(2);
+            $race->waitForChildren($workers);
+
+            self::assertSame($race->result(1), $race->result(2));
+            self::assertSame(1, DB::table('report_snapshot_seals')
+                ->where('snapshot_kind', $kind)
+                ->where('snapshot_id', $snapshotId)
+                ->count());
+        } finally {
+            putenv('REPORT_SNAPSHOT_SIGNING_KEY_ID');
+            putenv('REPORT_SNAPSHOT_SIGNING_PRIVATE_KEY');
             $race->cleanup();
         }
     }

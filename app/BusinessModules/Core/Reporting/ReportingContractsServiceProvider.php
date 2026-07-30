@@ -45,6 +45,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunAttemptLifecycleStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSnapshotSealStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionRegistry;
@@ -77,6 +78,7 @@ final class ReportingContractsServiceProvider extends ServiceProvider
         );
         $this->app->singleton(ReportSnapshotSealStore::class, EloquentReportSnapshotSealStore::class);
         $this->app->singleton(ReportSnapshotSealValidator::class);
+        $this->app->singleton(ReportSnapshotSealBackfill::class);
         $this->app->singleton(CandidateReportDefinitionRegistry::class, ProductionCandidateReportDefinitionRegistry::class);
         $this->app->singleton(ReportDefinitionBindingAssembler::class, ProductionReportDefinitionBindingAssembler::class);
         $this->app->singleton(ReportDefinitionRegistry::class, ProductionReportDefinitionRegistry::class);

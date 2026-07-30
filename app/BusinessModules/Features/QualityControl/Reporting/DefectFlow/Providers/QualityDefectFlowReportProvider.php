@@ -24,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowSnapshot;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectFlowSnapshotMaterializer;
 use DateTimeImmutable;
@@ -33,6 +34,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
     public function __construct(
         private QualityDefectFlowSnapshotMaterializer $materializer,
         private ReportSnapshotSealStore $seals,
+        private ReportSnapshotSealBackfill $sealBackfill,
     ) {}
 
     public function materialize(
@@ -42,6 +44,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
     ): ReportSnapshotRef {
         $snapshot = $this->materializer->materialize($context, $query);
         $progress->advance(100);
+        $this->sealBackfill->ensureCovered('quality_defect_flow');
 
         return $this->reference($context, $snapshot, $query->definition->snapshotClassification);
     }

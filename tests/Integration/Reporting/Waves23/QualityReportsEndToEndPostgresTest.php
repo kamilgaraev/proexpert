@@ -7,6 +7,8 @@ namespace Tests\Integration\Reporting\Waves23;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
+use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportDrillDownAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
@@ -25,6 +27,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRowsWindow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
@@ -36,6 +39,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportCursor
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\MaterializeReportRunJob;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill;
@@ -66,6 +70,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use PDO;
+use PDOException;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 use ZipArchive;
@@ -253,6 +258,7 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         self::assertStringContainsString('evidence_id', $admissionSensitive['csv']);
         self::assertStringContainsString('evidence_id', $admissionSensitive['xlsx_xml']);
 
+        $this->assertHistoricalSnapshotBackfill($quality['source']);
         $this->assertSealRotationAndRejection($quality['source'], $ordinary, $asOf);
     }
 
@@ -462,6 +468,7 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             ->where('snapshot_kind', $oldSource->snapshot->kind)
             ->where('snapshot_id', $oldSource->snapshot->id)
             ->value('key_id'));
+        $this->assertImmutableSealRecord($oldSource->snapshot->kind, $oldSource->snapshot->id);
         $trusted = json_decode(
             (string) config('reporting.snapshot_signing.trusted_public_keys_json'),
             true,
@@ -521,13 +528,74 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         $this->expectUntrustedReadyRun($context, $newSource->run->id);
     }
 
+    private function assertHistoricalSnapshotBackfill(ReportRunExportSource $source): void
+    {
+        $record = DB::table('quality_defect_flow_snapshots')->where('id', $source->snapshot->id)->first();
+        self::assertNotNull($record);
+        $historicalId = (string) Str::ulid();
+        $attributes = (array) $record;
+        $attributes['id'] = $historicalId;
+        $attributes['as_of'] = (new DateTimeImmutable((string) $record->as_of))
+            ->modify('+1 microsecond')
+            ->format('Y-m-d H:i:s.uP');
+        $attributes['sealed_at'] = null;
+        $attributes['sealed_content_digest'] = null;
+        DB::table('quality_defect_flow_snapshots')->insert($attributes);
+        $rows = DB::table('quality_defect_flow_rows')
+            ->where('snapshot_id', $source->snapshot->id)
+            ->get()
+            ->map(static function (object $row) use ($historicalId): array {
+                $attributes = (array) $row;
+                unset($attributes['id']);
+                $attributes['snapshot_id'] = $historicalId;
+
+                return $attributes;
+            })
+            ->all();
+        DB::table('quality_defect_flow_rows')->insert($rows);
+        DB::table('quality_defect_flow_snapshots')->where('id', $historicalId)->update([
+            'sealed_at' => $record->sealed_at,
+            'output_hash' => DB::raw("reporting_persisted_rows_digest('quality_defect_flow_rows', id::text)"),
+            'sealed_content_digest' => DB::raw("reporting_persisted_rows_digest('quality_defect_flow_rows', id::text)"),
+        ]);
+        self::assertFalse(DB::table('report_snapshot_seals')
+            ->where('snapshot_kind', 'quality_defect_flow')
+            ->where('snapshot_id', $historicalId)
+            ->exists());
+
+        app(ReportSnapshotSealBackfill::class)->ensureCovered('quality_defect_flow');
+        $seal = app(ReportSnapshotSealStore::class)->get('quality_defect_flow', $historicalId);
+        self::assertSame((string) $record->source_hash, $seal->sealedPayloadHash->value);
+        self::assertSame('ready', DB::table('report_snapshot_seal_backfills')
+            ->where('snapshot_kind', 'quality_defect_flow')
+            ->value('status'));
+        self::assertSame(
+            DB::table('quality_defect_flow_snapshots')->whereNotNull('sealed_at')->count(),
+            DB::table('report_snapshot_seals')->where('snapshot_kind', 'quality_defect_flow')->count(),
+        );
+    }
+
     private function expectUntrustedReadyRun(ReportExecutionContext $context, string $runId): void
     {
-        try {
-            app(ReportRunStore::class)->get($context, $runId);
-            self::fail('Expected the READY run with an untrusted seal to fail closed.');
-        } catch (ReportContractException $exception) {
-            self::assertSame(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED, $exception->errorCode);
+        foreach ([
+            static fn () => app(ReportRunStore::class)->exportSource($context, $runId),
+            static fn () => app(GetReportRowsAction::class)->handle(
+                $context,
+                $runId,
+                new ReportRowsWindow(null, 1, new ReportWindowSort('cohort_date', ReportSortDirection::ASC)),
+            ),
+            static fn () => app(GetReportDrillDownAction::class)->handle(
+                $context,
+                $runId,
+                new ReportDrillDownRequest('untrusted-seal-must-fail-before-token', null, 1),
+            ),
+        ] as $operation) {
+            try {
+                $operation();
+                self::fail('Expected the READY run with an untrusted seal to fail closed.');
+            } catch (ReportContractException $exception) {
+                self::assertSame(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED, $exception->errorCode);
+            }
         }
     }
 
@@ -537,13 +605,35 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             ReportSnapshotSealVerifier::class,
             ReportSnapshotSealValidator::class,
             ReportSnapshotSealStore::class,
+            ReportSnapshotSealBackfill::class,
             CanonicalReportSnapshotSealer::class,
             ReportRunStore::class,
             ReportDefinitionBindingAssembler::class,
             QualityDefectFlowSnapshotMaterializer::class,
             QualityDefectFlowReportProvider::class,
+            GetReportRowsAction::class,
+            GetReportDrillDownAction::class,
         ] as $abstract) {
             app()->forgetInstance($abstract);
+        }
+    }
+
+    private function assertImmutableSealRecord(string $snapshotKind, string $snapshotId): void
+    {
+        self::assertInstanceOf(PDO::class, $this->schemaConnection);
+        self::assertIsString($this->schema);
+        $this->schemaConnection->exec('SET search_path TO '.$this->quotedIdentifier($this->schema));
+        foreach ([
+            'UPDATE report_snapshot_seals SET key_id = key_id WHERE snapshot_kind = ? AND snapshot_id = ?',
+            'DELETE FROM report_snapshot_seals WHERE snapshot_kind = ? AND snapshot_id = ?',
+        ] as $sql) {
+            try {
+                $statement = $this->schemaConnection->prepare($sql);
+                $statement->execute([$snapshotKind, $snapshotId]);
+                self::fail('Expected immutable report snapshot seal trigger rejection.');
+            } catch (PDOException $exception) {
+                self::assertSame('55000', $exception->getCode());
+            }
         }
     }
 

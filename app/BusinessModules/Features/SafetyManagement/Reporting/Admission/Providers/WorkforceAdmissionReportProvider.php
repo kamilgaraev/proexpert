@@ -24,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionSnapshot;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Services\WorkforceAdmissionSnapshotMaterializer;
 use DateTimeImmutable;
@@ -33,6 +34,7 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
     public function __construct(
         private WorkforceAdmissionSnapshotMaterializer $materializer,
         private ReportSnapshotSealStore $seals,
+        private ReportSnapshotSealBackfill $sealBackfill,
     ) {}
 
     public function materialize(
@@ -42,6 +44,7 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
     ): ReportSnapshotRef {
         $record = $this->materializer->materialize($context, $query);
         $progress->advance(100);
+        $this->sealBackfill->ensureCovered('workforce_admission');
 
         return new ReportSnapshotRef(
             kind: 'workforce_admission',

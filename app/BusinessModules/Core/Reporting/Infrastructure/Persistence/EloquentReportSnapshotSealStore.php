@@ -25,34 +25,43 @@ final readonly class EloquentReportSnapshotSealStore implements ReportSnapshotSe
         Sha256Hash $sourceHash,
         DateTimeImmutable $sealedAt,
     ): ReportSnapshotSeal {
-        $existing = DB::table('report_snapshot_seals')
-            ->where('snapshot_kind', $snapshotKind)
-            ->where('snapshot_id', $snapshotId)
-            ->lockForUpdate()
-            ->first();
-        if ($existing !== null) {
-            $persisted = $this->hydrate($existing);
-            if (! hash_equals($persisted->sealedPayloadHash->value, $sourceHash->value)
-                || $persisted->sealedAt->format('U.u') !== $sealedAt->format('U.u')) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        return DB::transaction(function () use ($snapshotKind, $snapshotId, $generatedAt, $sourceHash, $sealedAt): ReportSnapshotSeal {
+            if (DB::connection()->getDriverName() === 'pgsql') {
+                DB::select('select pg_advisory_xact_lock(hashtextextended(?, 0))', [
+                    'report-snapshot-seal:'.$snapshotKind.':'.$snapshotId,
+                ]);
+            }
+            $existing = DB::table('report_snapshot_seals')
+                ->where('snapshot_kind', $snapshotKind)
+                ->where('snapshot_id', $snapshotId)
+                ->lockForUpdate()
+                ->first();
+            if ($existing !== null) {
+                $persisted = $this->hydrate($existing);
+                if (! hash_equals($persisted->sealedPayloadHash->value, $sourceHash->value)
+                    || (new DateTimeImmutable((string) $existing->generated_at))->format('U.u') !== $generatedAt->format('U.u')
+                    || $persisted->sealedAt->format('U.u') !== $sealedAt->format('U.u')) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+                }
+
+                return $persisted;
             }
 
-            return $persisted;
-        }
+            $seal = $this->sealer->seal($snapshotId, $snapshotKind, $generatedAt, $sourceHash, $sealedAt);
+            DB::table('report_snapshot_seals')->insert([
+                'snapshot_kind' => $snapshotKind,
+                'snapshot_id' => $snapshotId,
+                'algorithm' => $seal->algorithm,
+                'key_id' => $seal->keyId,
+                'sealed_payload_hash' => $seal->sealedPayloadHash->value,
+                'signature' => $seal->signature,
+                'generated_at' => $generatedAt,
+                'sealed_at' => $seal->sealedAt,
+                'created_at' => $sealedAt,
+            ]);
 
-        $seal = $this->sealer->seal($snapshotId, $snapshotKind, $generatedAt, $sourceHash, $sealedAt);
-        DB::table('report_snapshot_seals')->insert([
-            'snapshot_kind' => $snapshotKind,
-            'snapshot_id' => $snapshotId,
-            'algorithm' => $seal->algorithm,
-            'key_id' => $seal->keyId,
-            'sealed_payload_hash' => $seal->sealedPayloadHash->value,
-            'signature' => $seal->signature,
-            'sealed_at' => $seal->sealedAt,
-            'created_at' => $sealedAt,
-        ]);
-
-        return $seal;
+            return $seal;
+        });
     }
 
     public function get(string $snapshotKind, string $snapshotId): ReportSnapshotSeal

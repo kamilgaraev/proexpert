@@ -24,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentSnapshot;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services\SafetyIncidentSnapshotMaterializer;
 use DateTimeImmutable;
@@ -33,6 +34,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
     public function __construct(
         private SafetyIncidentSnapshotMaterializer $materializer,
         private ReportSnapshotSealStore $seals,
+        private ReportSnapshotSealBackfill $sealBackfill,
     ) {}
 
     public function materialize(
@@ -42,6 +44,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
     ): ReportSnapshotRef {
         $record = $this->materializer->materialize($context, $query);
         $progress->advance(100);
+        $this->sealBackfill->ensureCovered('safety_incident_actions');
 
         return new ReportSnapshotRef(
             kind: 'safety_incident_actions',
