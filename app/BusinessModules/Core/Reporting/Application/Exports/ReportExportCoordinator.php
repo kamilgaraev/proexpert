@@ -15,9 +15,9 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
@@ -34,7 +34,7 @@ final readonly class ReportExportCoordinator
         private ReportRunStore $runs,
         private ReportExportStore $exports,
         private ReportDefinitionRegistry $definitions,
-        private ReportDefinitionBindingAssembler $bindings,
+        private ReportDefinitionBindingMap $bindings,
         private CurrentReportScopeAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
         private ReportExportRendererRegistry $renderers,
@@ -79,7 +79,7 @@ final readonly class ReportExportCoordinator
     {
         $published = $this->definitions->published($source->query->definition->code);
         $definition = $published->definition;
-        $binding = $this->bindings->assemble($this->definitions)->get($definition->code);
+        $binding = $this->bindings->get($definition->code);
         if (! hash_equals($definition->definitionHash->value, $source->query->definition->definitionHash->value)
             || ! hash_equals($definition->definitionHash->value, $source->run->definitionHash->value)
             || ! hash_equals($definition->contractVersion, $source->contractVersion)

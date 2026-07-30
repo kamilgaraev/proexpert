@@ -22,10 +22,10 @@ use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRunt
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
@@ -54,7 +54,7 @@ final readonly class ReportExportExecutionService
         private ReportExportStore $exports,
         private ReportRunStore $runs,
         private ReportDefinitionRegistry $definitions,
-        private ReportDefinitionBindingAssembler $bindings,
+        private ReportDefinitionBindingMap $bindings,
         private ReportRowChunkReader $rows,
         private ReportExportRendererRegistry $renderers,
         private FileService $files,
@@ -104,9 +104,7 @@ final readonly class ReportExportExecutionService
             $this->assertSourceIdentity($export, $source, $claimedAt);
 
             $published = $this->definitions->published($reportCode);
-            $binding = $this->bindings
-                ->assemble($this->definitions)
-                ->get($reportCode);
+            $binding = $this->bindings->get($reportCode);
             $this->assertBindingIdentity($published, $source, $binding);
             Log::info('report_export_execution_started', [
                 'export_id' => $exportId,

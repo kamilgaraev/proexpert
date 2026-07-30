@@ -52,9 +52,12 @@ final class CatalogBindingTestFactory
     public static function evidence(
         ReportDefinition $definition,
         ReportDefinitionBinding $binding,
+        Sha256Hash $fixtureHash,
         bool $passed = true,
         array $componentHashes = [],
-        ?Sha256Hash $fixtureHash = null,
+        ?string $code = null,
+        ?Sha256Hash $definitionHash = null,
+        ?string $contractVersion = null,
     ): ReportDefinitionConformanceEvidence {
         if ($componentHashes === []) {
             foreach ([
@@ -80,11 +83,11 @@ final class CatalogBindingTestFactory
             : 'formula.identity.failed';
 
         return new ReportDefinitionConformanceEvidence(
-            $definition->code,
-            $definition->definitionHash,
-            $definition->contractVersion,
+            $code ?? $definition->code,
+            $definitionHash ?? $definition->definitionHash,
+            $contractVersion ?? $definition->contractVersion,
             $definition->sourceSchemaVersion,
-            $fixtureHash ?? new Sha256Hash(hash('sha256', $definition->code)),
+            $fixtureHash,
             new ReportSourceConformanceEvidence(
                 new Sha256Hash(str_repeat('1', 64)),
                 'snapshot',
@@ -113,9 +116,18 @@ final class RecordingReportConformanceEvidenceRepository implements ReportConfor
 {
     public array $gets = [];
 
-    public function __construct(
-        private ReportDefinitionConformanceEvidence $evidence,
-    ) {}
+    private array $evidence = [];
+
+    public function __construct(ReportDefinitionConformanceEvidence|array $evidence)
+    {
+        $items = is_array($evidence) ? $evidence : [$evidence];
+        foreach ($items as $key => $item) {
+            if (! $item instanceof ReportDefinitionConformanceEvidence) {
+                throw new LogicException('test_evidence_invalid');
+            }
+            $this->evidence[is_string($key) ? $key : $item->code] = $item;
+        }
+    }
 
     public function get(
         string $code,
@@ -124,12 +136,13 @@ final class RecordingReportConformanceEvidenceRepository implements ReportConfor
     ): ReportDefinitionConformanceEvidence {
         $this->gets[] = [$code, $definitionHash, $fixtureHash];
 
-        return $this->evidence;
+        return $this->evidence[$code]
+            ?? throw new LogicException('test_evidence_not_found');
     }
 
     public function put(ReportDefinitionConformanceEvidence $evidence): void
     {
-        $this->evidence = $evidence;
+        $this->evidence[$evidence->code] = $evidence;
     }
 }
 

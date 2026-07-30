@@ -15,8 +15,8 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportProgressWritePolicy;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotIdentityViolationReason;
@@ -62,7 +62,7 @@ final class MaterializeReportRunJob implements ShouldQueue
         ReportRunExecutionContextRehydrator $contexts,
         ReportRunStore $runs,
         ReportDefinitionRegistry $definitions,
-        ReportDefinitionBindingAssembler $bindings,
+        ReportDefinitionBindingMap $bindings,
         CanonicalReportSourceHashBuilder $sourceHashes,
         ReportProgressWritePolicy $progressPolicy,
         ReportExecutionClock $clock,
@@ -90,7 +90,7 @@ final class MaterializeReportRunJob implements ShouldQueue
             );
             $query = $runs->queryForRun($context, $this->runId);
             $published = $definitions->published($run->reportCode);
-            $binding = $bindings->assemble($definitions)->get($run->reportCode);
+            $binding = $bindings->get($run->reportCode);
             if (
                 $published->definitionHash->value !== $run->definitionHash->value
                 || $query->definition->definitionHash->value !== $run->definitionHash->value

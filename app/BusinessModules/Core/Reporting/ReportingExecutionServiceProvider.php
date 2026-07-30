@@ -423,7 +423,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 $app->make(ReportExportStore::class),
                 $app->make(ReportRunStore::class),
                 $app->make(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class),
-                $app->make(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler::class),
+                $app->make(\App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap::class),
                 $app->make(\App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader::class),
                 $app->make(ReportExportRendererRegistry::class),
                 $app->make(FileService::class),

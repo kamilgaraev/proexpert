@@ -102,20 +102,113 @@ final class ImmutableBindingAssemblerTest extends TestCase
         );
     }
 
-    public function test_success_freezes_registration_and_returns_same_map(): void
+    public function test_success_freezes_registration_and_subsequent_assembly(): void
     {
         $published = (new ReportDefinitionBuilder)->code('published_report')->published();
         $assembler = $this->assemblerWithCodes([$published->code]);
         $registry = $this->registry([$published]);
-        $first = $assembler->assemble($registry);
+        $map = $assembler->assemble($registry);
 
-        self::assertSame($first, $assembler->assemble($registry));
-        $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('binding_registration_closed');
-        $assembler->register(CatalogBindingTestFactory::binding($published->payload()));
+        self::assertSame($published->code, $map->get($published->code)->code);
+        try {
+            $assembler->register(CatalogBindingTestFactory::binding($published->payload()));
+            self::fail('Frozen assembler accepted registration.');
+        } catch (LogicException $exception) {
+            self::assertSame('binding_registration_closed', $exception->getMessage());
+        }
+        try {
+            $assembler->assemble($registry);
+            self::fail('Frozen assembler accepted second assembly.');
+        } catch (LogicException $exception) {
+            self::assertSame('binding_assembly_closed', $exception->getMessage());
+        }
     }
 
-    public function test_runtime_checks_identity_readiness_and_release_exact_28(): void
+    public function test_each_runtime_identity_and_readiness_failure_is_independent(): void
+    {
+        $published = (new ReportDefinitionBuilder)->code('published_report')->published();
+        $cases = [
+            'code' => [
+                CatalogBindingTestFactory::binding($published->payload(), code: 'different_report'),
+                'published_binding_incompatible',
+            ],
+            'hash' => [
+                CatalogBindingTestFactory::binding(
+                    $published->payload(),
+                    definitionHash: new Sha256Hash(str_repeat('b', 64)),
+                ),
+                'published_binding_incompatible',
+            ],
+            'version' => [
+                CatalogBindingTestFactory::binding(
+                    $published->payload(),
+                    contractVersion: '2.0.0',
+                ),
+                'published_binding_incompatible',
+            ],
+            'readiness' => [
+                CatalogBindingTestFactory::binding(
+                    $published->payload(),
+                    new FakeReportReadinessProbe(false),
+                ),
+                'published_binding_not_ready',
+            ],
+        ];
+
+        foreach ($cases as $case => [$binding, $message]) {
+            try {
+                (new ReportBindingCompatibilityChecker)->runtime($published, $binding);
+                self::fail("Runtime mismatch {$case} was accepted.");
+            } catch (LogicException $exception) {
+                self::assertSame($message, $exception->getMessage(), $case);
+            }
+        }
+    }
+
+    public function test_compatibility_and_readiness_failures_leave_registration_open(): void
+    {
+        $published = (new ReportDefinitionBuilder)->code('published_report')->published();
+        $cases = [
+            [
+                CatalogBindingTestFactory::binding(
+                    $published->payload(),
+                    definitionHash: new Sha256Hash(str_repeat('b', 64)),
+                ),
+                'published_binding_incompatible',
+            ],
+            [
+                CatalogBindingTestFactory::binding(
+                    $published->payload(),
+                    contractVersion: '2.0.0',
+                ),
+                'published_binding_incompatible',
+            ],
+            [
+                CatalogBindingTestFactory::binding(
+                    $published->payload(),
+                    new FakeReportReadinessProbe(false),
+                ),
+                'published_binding_not_ready',
+            ],
+        ];
+
+        foreach ($cases as $index => [$binding, $expectedMessage]) {
+            $assembler = $this->assembler();
+            $assembler->register($binding);
+            try {
+                $assembler->assemble($this->registry([$published]));
+                self::fail('Incompatible binding was accepted.');
+            } catch (LogicException $exception) {
+                self::assertSame($expectedMessage, $exception->getMessage());
+                $extra = (new ReportDefinitionBuilder)
+                    ->code('extra_report_'.($index + 1))
+                    ->published();
+                $assembler->register(CatalogBindingTestFactory::binding($extra->payload()));
+            }
+        }
+    }
+
+    public function test_runtime_accepts_release_exact_28_with_ready_bindings(): void
     {
         $definitions = [];
         $assembler = $this->assembler();
@@ -132,16 +225,6 @@ final class ImmutableBindingAssemblerTest extends TestCase
         }
 
         self::assertCount(28, $assembler->assemble($this->registry($definitions))->all());
-
-        $notReady = (new ReportDefinitionBuilder)->code('not_ready_report')->published();
-        $closed = $this->assembler();
-        $closed->register(CatalogBindingTestFactory::binding(
-            $notReady->payload(),
-            new FakeReportReadinessProbe(false),
-        ));
-        $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('published_binding_not_ready');
-        $closed->assemble($this->registry([$notReady]));
     }
 
     private function assembler(): ImmutableReportDefinitionBindingAssembler

@@ -14,7 +14,6 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
@@ -54,15 +53,18 @@ final class ReportReadHandlersTest extends TestCase
     private const RUN_ID = '01J00000000000000000000000';
 
     private DateTimeImmutable $now;
+
     private FakeReportExecutionClock $clock;
+
     private ReportExecutionContext $context;
+
     private ReportWindowSort $sort;
 
     protected function setUp(): void
     {
         $this->now = new DateTimeImmutable('2030-01-01T00:00:00+00:00');
         $this->clock = new FakeReportExecutionClock($this->now);
-        $this->context = (new ReportExecutionContextBuilder())->build();
+        $this->context = (new ReportExecutionContextBuilder)->build();
         $this->sort = new ReportWindowSort('name', ReportSortDirection::ASC);
     }
 
@@ -191,7 +193,7 @@ final class ReportReadHandlersTest extends TestCase
                 $fixture,
                 'row-1',
                 'name',
-                snapshot: (new ReportRunBuilder())
+                snapshot: (new ReportRunBuilder)
                     ->sourceHash(new Sha256Hash(str_repeat('d', 64)))
                     ->ready()
                     ->resultMetadata
@@ -225,7 +227,7 @@ final class ReportReadHandlersTest extends TestCase
     public function test_rows_reject_expired_status_before_authorization_or_provider_call(): void
     {
         $fixture = $this->fixture();
-        $expired = (new ReportRunBuilder())
+        $expired = (new ReportRunBuilder)
             ->id(self::RUN_ID)
             ->status(ReportRunStatus::EXPIRED)
             ->createdAt($this->now->modify('-2 hours'))
@@ -316,7 +318,7 @@ final class ReportReadHandlersTest extends TestCase
         ?ReportPermissionPolicy $permissions = null,
         array $rows = [['row_key' => 'row-1', 'name' => 'Строка']],
     ): array {
-        $definition = (new ReportDefinitionBuilder())
+        $definition = (new ReportDefinitionBuilder)
             ->columns($columns)
             ->permissionPolicy($permissions ?? new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []))
             ->outputClassification($classification ?? new ReportOutputClassification(
@@ -368,10 +370,7 @@ final class ReportReadHandlersTest extends TestCase
             null,
         );
         $registry = $this->createMock(ReportDefinitionRegistry::class);
-        $assembler = $this->createMock(ReportDefinitionBindingAssembler::class);
-        $assembler->method('assemble')->with($registry)->willReturn(
-            new ReportDefinitionBindingMap([$definition->code => $binding]),
-        );
+        $bindings = new ReportDefinitionBindingMap([$definition->code => $binding]);
         $store = $this->createMock(ReportRunStore::class);
 
         return compact(
@@ -383,14 +382,14 @@ final class ReportReadHandlersTest extends TestCase
             'drillResult',
             'drillDown',
             'registry',
-            'assembler',
+            'bindings',
             'store',
         );
     }
 
     private function readyRun(ReportQuery $query, DateTimeImmutable $expiresAt): ReportRun
     {
-        return (new ReportRunBuilder())
+        return (new ReportRunBuilder)
             ->id(self::RUN_ID)
             ->reportCode($query->definition->code)
             ->definitionHash($query->definition->definitionHash)
@@ -433,9 +432,9 @@ final class ReportReadHandlersTest extends TestCase
         return new GetReportRowsHandler(
             $fixture['store'],
             $fixture['registry'],
-            $fixture['assembler'],
+            $fixture['bindings'],
             $authorizer,
-            new ReportExecutionContextFactory(),
+            new ReportExecutionContextFactory,
             new SignedReportCursorCodec(
                 ['cursor-v1' => str_repeat('a', 64)],
                 'cursor-v1',
@@ -453,9 +452,9 @@ final class ReportReadHandlersTest extends TestCase
         return new GetReportDrillDownHandler(
             $fixture['store'],
             $fixture['registry'],
-            $fixture['assembler'],
+            $fixture['bindings'],
             $authorizer,
-            new ReportExecutionContextFactory(),
+            new ReportExecutionContextFactory,
             $this->codec(),
             $this->clock,
         );

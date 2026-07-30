@@ -13,9 +13,9 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -31,7 +31,7 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
     public function __construct(
         private ReportRunStore $runs,
         private ReportDefinitionRegistry $definitions,
-        private ReportDefinitionBindingAssembler $bindings,
+        private ReportDefinitionBindingMap $bindings,
         private CurrentReportScopeAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
         private SignedReportCursorCodec $cursors,
@@ -115,7 +115,7 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
 
     private function binding(ReportRun $run, ReportQuery $query): ReportDefinitionBinding
     {
-        $binding = $this->bindings->assemble($this->definitions)->get($run->reportCode);
+        $binding = $this->bindings->get($run->reportCode);
         if (! hash_equals($binding->definitionHash->value, $query->definition->definitionHash->value)
             || ! hash_equals($binding->contractVersion, $query->definition->contractVersion)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);

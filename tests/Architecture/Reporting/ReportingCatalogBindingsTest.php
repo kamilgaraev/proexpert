@@ -56,13 +56,17 @@ final class ReportingCatalogBindingsTest extends TestCase
 
         $first = $app->make(ReportDefinitionBindingMap::class);
         $second = $app->make(ReportDefinitionBindingMap::class);
-        $assemblerMap = $app
-            ->make(ReportDefinitionBindingAssembler::class)
-            ->assemble($app->make(ReportDefinitionRegistry::class));
 
         self::assertSame([], $first->all());
         self::assertSame($first, $second);
-        self::assertSame($first, $assemblerMap);
+        try {
+            $app
+                ->make(ReportDefinitionBindingAssembler::class)
+                ->assemble($app->make(ReportDefinitionRegistry::class));
+            self::fail('Container singleton map rebuilt through frozen assembler.');
+        } catch (\LogicException $exception) {
+            self::assertSame('binding_assembly_closed', $exception->getMessage());
+        }
     }
 
     private function emptyRegistry(): ReportDefinitionRegistry

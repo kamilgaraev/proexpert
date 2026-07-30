@@ -16,8 +16,6 @@ final class ImmutableReportDefinitionBindingAssembler implements ReportDefinitio
 
     private bool $frozen = false;
 
-    private ?ReportDefinitionBindingMap $assembled = null;
-
     public function __construct(
         private ReportBindingCompatibilityChecker $compatibility,
         private ReportCodeSetComparator $codes,
@@ -35,8 +33,8 @@ final class ImmutableReportDefinitionBindingAssembler implements ReportDefinitio
     public function assemble(
         ReportDefinitionRegistry $registry,
     ): ReportDefinitionBindingMap {
-        if ($this->assembled !== null) {
-            return $this->assembled;
+        if ($this->frozen) {
+            throw new LogicException('binding_assembly_closed');
         }
 
         $publishedCodes = $this->codes->validate(
@@ -62,10 +60,8 @@ final class ImmutableReportDefinitionBindingAssembler implements ReportDefinitio
             $resolved[$code] = $binding;
         }
 
-        $map = new ReportDefinitionBindingMap($resolved);
-        $this->assembled = $map;
         $this->frozen = true;
 
-        return $map;
+        return new ReportDefinitionBindingMap($resolved);
     }
 }

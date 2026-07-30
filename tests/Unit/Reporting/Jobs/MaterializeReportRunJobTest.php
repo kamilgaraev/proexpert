@@ -14,7 +14,6 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSour
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportProgressWritePolicy;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
@@ -95,8 +94,7 @@ final class MaterializeReportRunJobTest extends TestCase
         $runs->expects(self::never())->method('claimMaterialization');
         $definitions = $this->createMock(ReportDefinitionRegistry::class);
         $definitions->expects(self::never())->method('published');
-        $bindings = $this->createMock(ReportDefinitionBindingAssembler::class);
-        $bindings->expects(self::never())->method('assemble');
+        $bindings = new ReportDefinitionBindingMap([]);
         $job = new MaterializeReportRunJob($run->id);
         $envelope = $this->createMock(Job::class);
         $envelope->method('uuid')->willReturn('0195e44b-a9e7-7f12-a8af-51f2d284d3ef');
@@ -134,8 +132,7 @@ final class MaterializeReportRunJobTest extends TestCase
         $runs->expects(self::never())->method('get');
         $definitions = $this->createMock(ReportDefinitionRegistry::class);
         $definitions->expects(self::never())->method('published');
-        $bindings = $this->createMock(ReportDefinitionBindingAssembler::class);
-        $bindings->expects(self::never())->method('assemble');
+        $bindings = new ReportDefinitionBindingMap([]);
         $job = new MaterializeReportRunJob($runId);
         $envelope = $this->createMock(Job::class);
         $envelope->method('uuid')->willReturn('0195e44b-a9e7-7f12-a8af-51f2d284d3ef');
@@ -172,7 +169,7 @@ final class MaterializeReportRunJobTest extends TestCase
             $contexts,
             $this->createMock(ReportRunStore::class),
             $this->createMock(ReportDefinitionRegistry::class),
-            $this->createMock(ReportDefinitionBindingAssembler::class),
+            new ReportDefinitionBindingMap([]),
             new CanonicalReportSourceHashBuilder,
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
@@ -204,7 +201,7 @@ final class MaterializeReportRunJobTest extends TestCase
                 $contexts,
                 $this->createMock(ReportRunStore::class),
                 $this->createMock(ReportDefinitionRegistry::class),
-                $this->createMock(ReportDefinitionBindingAssembler::class),
+                new ReportDefinitionBindingMap([]),
                 new CanonicalReportSourceHashBuilder,
                 new ReportProgressWritePolicy,
                 new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
@@ -256,8 +253,7 @@ final class MaterializeReportRunJobTest extends TestCase
         );
         $registry = $this->createMock(ReportDefinitionRegistry::class);
         $registry->expects(self::once())->method('published')->with($definition->code)->willReturn((new ReportDefinitionBuilder)->published());
-        $assembler = $this->createMock(ReportDefinitionBindingAssembler::class);
-        $assembler->expects(self::once())->method('assemble')->with($registry)->willReturn(new ReportDefinitionBindingMap([$definition->code => $binding]));
+        $bindings = new ReportDefinitionBindingMap([$definition->code => $binding]);
         $run = (new ReportRunBuilder)->reportCode($definition->code)->status(ReportRunStatus::MATERIALIZING)->queued();
         $contexts = $this->createMock(ReportRunExecutionContextRehydrator::class);
         $contexts->method('forRun')->willReturn($context);
@@ -292,7 +288,7 @@ final class MaterializeReportRunJobTest extends TestCase
             $contexts,
             $runs,
             $registry,
-            $assembler,
+            $bindings,
             new CanonicalReportSourceHashBuilder,
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
@@ -335,7 +331,7 @@ final class MaterializeReportRunJobTest extends TestCase
             $contexts,
             $runs,
             $definitions,
-            $this->createMock(ReportDefinitionBindingAssembler::class),
+            new ReportDefinitionBindingMap([]),
             new CanonicalReportSourceHashBuilder,
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
@@ -376,10 +372,7 @@ final class MaterializeReportRunJobTest extends TestCase
         $runs->expects(self::once())->method('queryForRun')->willReturn($query);
         $registry = $this->createMock(ReportDefinitionRegistry::class);
         $registry->expects(self::once())->method('published')->willReturn((new ReportDefinitionBuilder)->published());
-        $assembler = $this->createMock(ReportDefinitionBindingAssembler::class);
-        $assembler->expects(self::once())->method('assemble')->willReturn(
-            new ReportDefinitionBindingMap([$definition->code => $binding]),
-        );
+        $bindings = new ReportDefinitionBindingMap([$definition->code => $binding]);
         $attempts = $this->createMock(ReportRunAttemptLifecycleStore::class);
         $attempts->expects(self::once())->method('claimOrRenew')->willReturn(true);
         $attempts->expects(self::never())->method('failLeased');
@@ -395,7 +388,7 @@ final class MaterializeReportRunJobTest extends TestCase
                 $contexts,
                 $runs,
                 $registry,
-                $assembler,
+                $bindings,
                 new CanonicalReportSourceHashBuilder,
                 new ReportProgressWritePolicy,
                 new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
@@ -430,7 +423,7 @@ final class MaterializeReportRunJobTest extends TestCase
             $contexts,
             $this->createMock(ReportRunStore::class),
             $this->createMock(ReportDefinitionRegistry::class),
-            $this->createMock(ReportDefinitionBindingAssembler::class),
+            new ReportDefinitionBindingMap([]),
             new CanonicalReportSourceHashBuilder,
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
@@ -666,10 +659,7 @@ final class MaterializeReportRunJobTest extends TestCase
         $runs->method('sealReady')->willReturn($run);
         $registry = $this->createMock(ReportDefinitionRegistry::class);
         $registry->method('published')->willReturn((new ReportDefinitionBuilder)->published());
-        $assembler = $this->createMock(ReportDefinitionBindingAssembler::class);
-        $assembler->method('assemble')->willReturn(
-            new ReportDefinitionBindingMap([$definition->code => $binding]),
-        );
+        $bindings = new ReportDefinitionBindingMap([$definition->code => $binding]);
         $attempts = $this->createMock(ReportRunAttemptLifecycleStore::class);
         $attempts->method('claimOrRenew')->willReturn(true);
         $telemetry = $this->createMock(ReportExecutionTelemetry::class);
@@ -685,7 +675,7 @@ final class MaterializeReportRunJobTest extends TestCase
                 $contexts,
                 $runs,
                 $registry,
-                $assembler,
+                $bindings,
                 new CanonicalReportSourceHashBuilder,
                 new ReportProgressWritePolicy,
                 new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),

@@ -111,3 +111,49 @@ Plan 1b продолжает напрямую использовать точн�
 Открытых замечаний по Task 4 implementation нет.
 
 Локальный runtime проверок — PHP 8.3.7; целевая версия проекта — PHP 8.2.
+
+## Review round 1
+
+Замечания Task 18 закрыты в отдельном fix-коммите поверх первоначальной реализации.
+
+- `GetReportRowsHandler`, `GetReportDrillDownHandler`, `ReportExportCoordinator`,
+  `ReportExportExecutionService` и `MaterializeReportRunJob` напрямую получают
+  `ReportDefinitionBindingMap`; повторная runtime assembly удалена.
+- Единственная identity map принадлежит singleton-binding контейнера. Успешный
+  assembler является one-shot: последующие `register()` и `assemble()` закрыты.
+  Любая ошибка exact-set, compatibility или readiness оставляет регистрацию открытой.
+- Производный `sha256(code)` удалён. Candidate validation требует
+  `ReportConformanceFixtureHashRegistry`, который возвращает hash фактического
+  `ReportConformanceFixture`; отсутствие fixture закрывает публикацию до evidence lookup.
+- Negative matrix независимо проверяет binding code/hash/version, evidence
+  code/hash/contract/fixture/pass, каждый из трёх provider hashes и runtime
+  code/hash/version/readiness.
+- Добавлен tracked forward-only amendment
+  `docs/reports/contracts/plan-1a-task18-order-amendment.md`: candidate result сохраняет
+  `candidateCodes()` order, published map сохраняет manifest `publishedCodes()` order;
+  публичные сигнатуры DTO и существующие evidence artifacts не переписываются.
+- Поведенческий container test регистрирует Contracts → Execution → Catalog, собирает
+  точный singleton map и реально выполняет run, rows, drill-down и export. Падающий
+  candidate spy остаётся с нулём обращений.
+
+### Дополнительный manifest
+
+- `app/BusinessModules/Core/Reporting/Domain/Contracts/ReportConformanceFixtureHashRegistry.php`
+- `app/BusinessModules/Core/Reporting/Application/Catalog/ImmutableReportConformanceFixtureHashRegistry.php`
+- `docs/reports/contracts/plan-1a-task18-order-amendment.md`
+- `tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php`
+- direct-map изменения в rows/drill/export/run consumers и их затронутых тестах.
+
+### Финальные проверки review round 1
+
+- Единый DB-less gate Task 4 + Plan 1a order contract + read consumers:
+  `OK (58 tests, 273 assertions)`.
+- PHPStan для 11 изменённых production-файлов: `[OK] No errors`,
+  `--memory-limit=1G`.
+- Pint `--dirty`: `20 files`, style исправлен; исполняемое поведение не менялось.
+- `git diff --check`: замечаний нет.
+- Расширенный диагностический запуск с существующими job suites выявил их
+  самостоятельную test-bootstrap проблему: `A facade root has not been set` при
+  обращении к Laravel `Log`. Direct-map сигнатуры job/export execution отдельно
+  покрыты контрактным тестом и PHPStan; production-обход для тестовой проблемы не добавлялся.
+- DB, миграции, build, browser, SSH и production commands не запускались.

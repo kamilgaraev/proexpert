@@ -20,6 +20,7 @@ final class ReportBindingCompatibilityChecker
         CandidateReportDefinition $candidate,
         ReportDefinitionBinding $binding,
         ReportDefinitionConformanceEvidence $evidence,
+        Sha256Hash $fixtureHash,
     ): ReportCandidateValidationItem {
         $definition = $candidate->payload();
         $failures = $this->identityFailures($definition, $binding);
@@ -33,10 +34,7 @@ final class ReportBindingCompatibilityChecker
         if (! hash_equals($definition->contractVersion, $evidence->contractVersion)) {
             $failures[] = 'EVIDENCE_CONTRACT_VERSION_MISMATCH';
         }
-        if (! hash_equals(
-            hash('sha256', $definition->code),
-            $evidence->fixtureHash->value,
-        )) {
+        if (! hash_equals($fixtureHash->value, $evidence->fixtureHash->value)) {
             $failures[] = 'EVIDENCE_FIXTURE_HASH_MISMATCH';
         }
         if (! $evidence->passed()) {

@@ -25,7 +25,6 @@ use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportExecution
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
@@ -303,7 +302,7 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
             $exports,
             $this->createMock(ReportRunStore::class),
             $this->createMock(ReportDefinitionRegistry::class),
-            $this->createMock(ReportDefinitionBindingAssembler::class),
+            new ReportDefinitionBindingMap([]),
             new ReportRowChunkReader,
             (new ReflectionClass(ReportExportRendererRegistry::class))
                 ->newInstanceWithoutConstructor(),
@@ -333,10 +332,9 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
         $runs->method('exportSource')->willReturn($fixture['source']);
         $definitions = $this->createMock(ReportDefinitionRegistry::class);
         $definitions->method('published')->willReturn($fixture['published']);
-        $bindings = $this->createMock(ReportDefinitionBindingAssembler::class);
-        $bindings->method('assemble')->willReturn(new ReportDefinitionBindingMap([
+        $bindings = new ReportDefinitionBindingMap([
             'report' => $fixture['binding'],
-        ]));
+        ]);
         $subjects = $this->createMock(ReportAuthorizationSubjectReader::class);
         $subjects->method('export')->willReturn($fixture['subject']);
         $xlsx = (new ReflectionClass(XlsxReportExportRenderer::class))

@@ -6,10 +6,10 @@ namespace App\BusinessModules\Core\Reporting\Application\Catalog;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportConformanceEvidenceRepository;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportConformanceFixtureHashRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCandidateValidationResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use InvalidArgumentException;
 use LogicException;
 
@@ -17,6 +17,7 @@ final class StrictReportDefinitionCandidateValidator implements ReportDefinition
 {
     public function __construct(
         private ReportConformanceEvidenceRepository $evidence,
+        private ReportConformanceFixtureHashRegistry $fixtures,
         private ReportBindingCompatibilityChecker $compatibility,
         private ReportCodeSetComparator $codes,
     ) {}
@@ -54,23 +55,20 @@ final class StrictReportDefinitionCandidateValidator implements ReportDefinition
             if (! hash_equals($code, $candidate->code)) {
                 throw new LogicException('candidate_registry_identity_mismatch');
             }
+            $fixtureHash = $this->fixtures->fixtureHash($code);
             $proof = $this->evidence->get(
                 $code,
                 $candidate->definitionHash,
-                $this->fixtureHashFor($code),
+                $fixtureHash,
             );
             $items[] = $this->compatibility->candidate(
                 $candidate,
                 $byCode[$code],
                 $proof,
+                $fixtureHash,
             );
         }
 
         return new ReportCandidateValidationResult($items);
-    }
-
-    private function fixtureHashFor(string $code): Sha256Hash
-    {
-        return new Sha256Hash(hash('sha256', $code));
     }
 }
