@@ -66,6 +66,23 @@ final readonly class SupplyLifecycleEventRecorder
         );
     }
 
+    public function returned(
+        PurchaseReceiptLine $line,
+        string $quantity,
+        string $reasonCode,
+        CarbonImmutable $occurredAt,
+        string $idempotencyKey,
+    ): SupplyLifecycleEvent {
+        return $this->recordLineEvent(
+            $line,
+            'returned',
+            '-'.ltrim($quantity, '+-'),
+            $occurredAt,
+            $reasonCode,
+            idempotencyKey: $idempotencyKey,
+        );
+    }
+
     public function record(
         PurchaseOrderPromiseVersion $promise,
         string $eventType,
@@ -175,6 +192,7 @@ final readonly class SupplyLifecycleEventRecorder
         ?string $reasonCode = null,
         ?int $reversedEventId = null,
         ?int $sourceVersion = null,
+        ?string $idempotencyKey = null,
     ): SupplyLifecycleEvent {
         $item = $line->purchaseOrderItem;
         $promise = PurchaseOrderPromiseVersion::query()
@@ -199,7 +217,7 @@ final readonly class SupplyLifecycleEventRecorder
             $sourceVersion,
             $quantity,
             $occurredAt,
-            'purchase_receipt_line:'.$line->getKey().':'.$sourceVersion.':'.$eventType,
+            $idempotencyKey ?? 'purchase_receipt_line:'.$line->getKey().':'.$sourceVersion.':'.$eventType,
             $reasonCode,
             $reversedEventId,
             evidence: ['purchase_receipt_id' => (int) $line->purchase_receipt_id],

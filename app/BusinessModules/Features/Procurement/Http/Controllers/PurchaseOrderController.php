@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
-use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\CancelPurchaseOrderRequest;
+use App\BusinessModules\Features\Procurement\Http\Requests\ReturnPurchaseReceiptLineRequest;
+use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\ProcurementAuditLogResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseContractResource;
@@ -432,6 +433,36 @@ class PurchaseOrderController extends Controller
 
             return AdminResponse::error(
                 trans_message('procurement.purchase_orders.receipt_line_reverse_error'),
+                500,
+            );
+        }
+    }
+
+    public function returnReceiptLine(
+        ReturnPurchaseReceiptLineRequest $request,
+        int $id,
+        int $line,
+    ): JsonResponse {
+        try {
+            $order = $this->service->returnReceiptLine(
+                (int) $request->attributes->get('current_organization_id'),
+                $id,
+                $line,
+                (string) $request->validated('quantity'),
+                (string) $request->validated('reason_code'),
+                (string) $request->validated('idempotency_key'),
+                (int) $request->user()->getAuthIdentifier(),
+            );
+
+            return AdminResponse::success(
+                new PurchaseOrderResource($order),
+                trans_message('procurement.purchase_orders.receipt_line_returned'),
+            );
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
+        } catch (\Throwable) {
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.receipt_line_return_error'),
                 500,
             );
         }

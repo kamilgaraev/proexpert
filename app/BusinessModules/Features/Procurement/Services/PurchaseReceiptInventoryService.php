@@ -93,4 +93,77 @@ final readonly class PurchaseReceiptInventoryService
 
         return $movement;
     }
+
+    public function returnQuantity(
+        PurchaseReceiptLine $line,
+        string $quantity,
+        string $reasonCode,
+        int $actorId,
+        CarbonImmutable $occurredAt,
+    ): WarehouseMovement {
+        $requested = BigDecimal::of($quantity);
+        $lot = PurchaseReceiptInventoryLot::query()
+            ->where('organization_id', $line->purchaseReceipt->organization_id)
+            ->where('purchase_receipt_line_id', $line->id)
+            ->lockForUpdate()
+            ->first();
+        if (! $lot instanceof PurchaseReceiptInventoryLot || ! $requested->isPositive()) {
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_inventory_lot_required'));
+        }
+        $remaining = BigDecimal::of((string) $lot->original_quantity)
+            ->minus((string) $lot->reversed_quantity);
+        if ($requested->isGreaterThan($remaining)) {
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_return_quantity_invalid'));
+        }
+        $balance = WarehouseBalance::query()
+            ->where('organization_id', $lot->organization_id)
+            ->whereKey($lot->warehouse_balance_id)
+            ->where('batch_number', 'purchase-receipt-line:'.$line->id)
+            ->lockForUpdate()
+            ->first();
+        if (! $balance instanceof WarehouseBalance
+            || BigDecimal::of((string) $balance->available_quantity)->isLessThan($requested)) {
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_inventory_lot_unavailable'));
+        }
+        $sourceMovement = WarehouseMovement::query()
+            ->where('organization_id', $lot->organization_id)
+            ->whereKey($lot->receipt_warehouse_movement_id)
+            ->lockForUpdate()
+            ->firstOrFail();
+        if ((int) $balance->material_id !== (int) $line->purchaseOrderItem->material_id
+            || (int) $balance->warehouse_id !== (int) $line->purchaseReceipt->warehouse_id) {
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_inventory_lot_invalid'));
+        }
+        $balance->available_quantity = (string) BigDecimal::of((string) $balance->available_quantity)
+            ->minus($requested);
+        $balance->last_movement_at = $occurredAt;
+        $balance->save();
+        $movement = WarehouseMovement::query()->create([
+            'organization_id' => $lot->organization_id,
+            'warehouse_id' => $balance->warehouse_id,
+            'cell_id' => $balance->cell_id,
+            'material_id' => $balance->material_id,
+            'movement_type' => 'write_off',
+            'quantity' => (string) $requested,
+            'price' => $balance->unit_price,
+            'project_id' => $sourceMovement->project_id,
+            'user_id' => $actorId,
+            'document_number' => $sourceMovement->document_number,
+            'reason' => $reasonCode,
+            'operation_category' => 'procurement_receipt_return',
+            'metadata' => [
+                'returned_purchase_receipt_line_id' => (int) $line->id,
+                'receipt_movement_id' => (int) $sourceMovement->id,
+            ],
+            'movement_date' => $occurredAt,
+        ]);
+        $this->inventoryEvents->record($movement, 'issue', null);
+        $lot->forceFill([
+            'reversed_quantity' => (string) BigDecimal::of((string) $lot->reversed_quantity)->plus($requested),
+        ])->save();
+        Cache::forget("warehouse_stock_{$lot->organization_id}");
+        Cache::forget("warehouse_low_stock_{$lot->organization_id}");
+
+        return $movement;
+    }
 }

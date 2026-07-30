@@ -20,9 +20,9 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementP
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Queries\ProcurementCycleFilteredUniverse;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
+use App\Support\Reporting\OwnerSnapshotFirstWriter;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
-use App\Support\Reporting\OwnerSnapshotFirstWriter;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -156,10 +156,30 @@ final readonly class ProcurementCycleSnapshotMaterializer
             ->keys()
             ->map(static fn (mixed $id): int => (int) $id)
             ->all();
+        $ownerLineByItem = DB::table('sent_purchase_order_line_owners')
+            ->where('organization_id', $organizationId)
+            ->where('effective_from', '<=', $query->asOf)
+            ->whereIn('purchase_order_item_id', $promises->pluck('purchase_order_item_id'))
+            ->pluck('purchase_request_line_id', 'purchase_order_item_id');
+        $incompleteRequestLineIds = $promises
+            ->groupBy(static fn (PurchaseOrderPromiseVersion $promise): int => (int) (
+                $ownerLineByItem[$promise->purchase_order_item_id] ?? 0
+            ))
+            ->filter(static function ($linePromises, int $lineId) use ($netByItem): bool {
+                return $lineId < 1 || $linePromises->contains(
+                    static fn (PurchaseOrderPromiseVersion $promise): bool => $netByItem
+                        ->get($promise->purchase_order_item_id, BigDecimal::zero())
+                        ->isLessThan((string) $promise->ordered_quantity),
+                );
+            })
+            ->keys()
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
         $incompletePurchaseOrderIds = array_values(array_unique($incompletePurchaseOrderIds));
         $events = $events->reject(
             static fn (ProcurementProcessEvent $event): bool => $event->event_code === 'fully_received'
-                && ($event->purchase_order_id === null
+                && (in_array((int) $event->purchase_request_line_id, $incompleteRequestLineIds, true)
+                    || $event->purchase_order_id === null
                     || in_array((int) $event->purchase_order_id, $incompletePurchaseOrderIds, true)),
         )->values();
         $sourceHash = $this->sourceHashes->make(

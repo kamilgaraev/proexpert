@@ -15,6 +15,24 @@ use PHPUnit\Framework\TestCase;
 
 final class SupplyReportingBehaviorContractTest extends TestCase
 {
+    public function test_supplier_return_workflow_is_wired_to_inventory_and_reporting(): void
+    {
+        $root = dirname(__DIR__, 4).DIRECTORY_SEPARATOR;
+        $service = file_get_contents($root.'app/BusinessModules/Features/Procurement/Services/PurchaseOrderService.php');
+        $inventory = file_get_contents($root.'app/BusinessModules/Features/Procurement/Services/PurchaseReceiptInventoryService.php');
+        $lifecycle = file_get_contents($root.'app/BusinessModules/Features/Procurement/Reporting/Supply/Services/SupplyLifecycleEventRecorder.php');
+        $controller = file_get_contents($root.'app/BusinessModules/Features/Procurement/Http/Controllers/PurchaseOrderController.php');
+        $routes = file_get_contents($root.'app/BusinessModules/Features/Procurement/routes.php');
+
+        self::assertStringContainsString('public function returnReceiptLine(', $service);
+        self::assertStringContainsString('DB::transaction(', $service);
+        self::assertStringContainsString('returnQuantity(', $inventory);
+        self::assertStringContainsString("'operation_category' => 'procurement_receipt_return'", $inventory);
+        self::assertStringContainsString("'returned'", $lifecycle);
+        self::assertStringContainsString('ReturnPurchaseReceiptLineRequest', $controller);
+        self::assertStringContainsString("receipt-lines/{line}/return", $routes);
+    }
+
     public function test_historical_inventory_projection_requires_pinned_unit_identity(): void
     {
         self::assertNull(HistoricalInventoryMovementEvidence::fromMetadata([

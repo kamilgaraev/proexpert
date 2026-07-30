@@ -526,6 +526,76 @@ class PurchaseOrderService
         }, 3);
     }
 
+    public function returnReceiptLine(
+        int $organizationId,
+        int $purchaseOrderId,
+        int $lineId,
+        string $quantity,
+        string $reasonCode,
+        string $idempotencyKey,
+        int $actorId,
+    ): PurchaseOrder {
+        return DB::transaction(function () use (
+            $organizationId,
+            $purchaseOrderId,
+            $lineId,
+            $quantity,
+            $reasonCode,
+            $idempotencyKey,
+            $actorId,
+        ): PurchaseOrder {
+            $line = PurchaseReceiptLine::query()
+                ->with(['purchaseReceipt.purchaseOrder', 'purchaseOrderItem', 'inventoryLot'])
+                ->whereKey($lineId)
+                ->whereHas('purchaseReceipt', static fn ($query) => $query
+                    ->where('organization_id', $organizationId)
+                    ->where('purchase_order_id', $purchaseOrderId))
+                ->lockForUpdate()
+                ->first();
+            if (! $line instanceof PurchaseReceiptLine) {
+                throw new \DomainException(trans_message('procurement.purchase_orders.receipt_line_not_found'));
+            }
+            $metadata = is_array($line->metadata) ? $line->metadata : [];
+            $returns = is_array($metadata['reporting_return_events'] ?? null)
+                ? $metadata['reporting_return_events']
+                : [];
+            foreach ($returns as $return) {
+                if (($return['idempotency_key'] ?? null) === $idempotencyKey) {
+                    return $line->purchaseReceipt->purchaseOrder->fresh(['items.receiptLines', 'receipts.lines']);
+                }
+            }
+            $occurredAt = CarbonImmutable::now('UTC');
+            $movement = $this->receiptInventory->returnQuantity(
+                $line,
+                $quantity,
+                $reasonCode,
+                $actorId,
+                $occurredAt,
+            );
+            $event = $this->reportingLifecycle->receiptReturned(
+                $line->fresh(['purchaseReceipt', 'purchaseOrderItem', 'inventoryLot']),
+                $quantity,
+                $reasonCode,
+                $occurredAt,
+                $idempotencyKey,
+            );
+            $returns[] = [
+                'event_type' => 'returned',
+                'occurred_at' => $occurredAt->format(DATE_ATOM),
+                'quantity' => $quantity,
+                'reason_code' => $reasonCode,
+                'idempotency_key' => $idempotencyKey,
+                'warehouse_movement_id' => (int) $movement->id,
+                'supply_lifecycle_event_id' => (int) $event->id,
+            ];
+            $line->forceFill(['metadata' => array_merge($metadata, [
+                'reporting_return_events' => $returns,
+            ])])->save();
+
+            return $line->purchaseReceipt->purchaseOrder->fresh(['items.receiptLines', 'receipts.lines']);
+        }, 3);
+    }
+
     public function createContractFromOrder(PurchaseOrder $order): ContractDossierCreationResult
     {
         return app(PurchaseContractService::class)->createDossierFromOrder($order);
