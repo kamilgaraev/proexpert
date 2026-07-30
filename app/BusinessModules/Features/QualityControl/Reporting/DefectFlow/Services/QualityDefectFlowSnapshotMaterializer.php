@@ -54,9 +54,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $asOf,
             $query,
         );
-        if ($ownerTransitionCount !== null) {
-            $analysis['gaps'] += max(0, $ownerTransitionCount - $events->count());
-        }
+        $analysis['gaps'] += max(0, $ownerTransitionCount - $events->count());
         $policyIds = collect($policies)->pluck('id')->map(static fn (mixed $id): int => (int) $id)->unique()->sort()->values()->all();
         $inputHash = hash('sha256', CanonicalJson::encode([
             'event_hashes' => $events->pluck('event_hash')->all(),
@@ -322,7 +320,6 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         $lastStatus = [];
         $lastOccurredAt = [];
         $openingState = [];
-        $periodState = [];
         $created = 0;
         $reopened = 0;
         $closed = 0;
@@ -373,13 +370,11 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
             if ($occurredAt < $periodFrom) {
                 $openingState[$defectId] = ! $isClosed;
-                $periodState[$defectId] = ! $isClosed;
                 continue;
             }
             if ($occurredAt > $periodTo) {
                 continue;
             }
-            $periodState[$defectId] = ! $isClosed;
 
             $createdFlag = $event->from_status === null;
             $created += $createdFlag ? 1 : 0;
@@ -412,7 +407,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
         $opening = count(array_filter($openingState));
         $closing = $this->formula->rollForward($opening, $created, $reopened, $closed);
-        $actualClosing = count(array_filter($periodState));
+        $actualClosing = count(array_filter($state));
         if ($closing !== $actualClosing) {
             $gaps += abs($closing - $actualClosing);
         }
@@ -445,7 +440,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $lastRowByDefect[$row['quality_defect_id']] = $index;
         }
         foreach ($lastRowByDefect as $defectId => $index) {
-            $rows[$index]['closing_flag'] = $periodState[$defectId] ?? false;
+            $rows[$index]['closing_flag'] = $state[$defectId] ?? false;
             $rows[$index]['opening_flag'] = $openingState[$defectId] ?? false;
         }
 
@@ -482,18 +477,54 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         array $projectIds,
         CarbonImmutable $asOf,
         ReportQuery $query,
-    ): ?int {
-        foreach (['contractor_id', 'schedule_task_id', 'task_id', 'severity', 'status', 'cohort_from', 'cohort_to'] as $filter) {
-            if ($this->filterValues($query->filters->values[$filter] ?? null) !== []) {
-                return null;
-            }
-        }
+    ): int {
         $builder = DB::table('quality_defect_status_history as history')
             ->join('quality_defects as defect', 'defect.id', '=', 'history.quality_defect_id')
             ->where('history.organization_id', $organizationId)
             ->where('history.changed_at', '<=', $asOf);
         if ($projectIds !== []) {
             $builder->whereIn('defect.project_id', $projectIds);
+        }
+        foreach ([
+            'contractor_id' => 'defect.contractor_id',
+            'schedule_task_id' => 'defect.schedule_task_id',
+            'task_id' => 'defect.schedule_task_id',
+            'severity' => 'defect.severity',
+        ] as $filter => $column) {
+            $values = $this->filterValues($query->filters->values[$filter] ?? null);
+            if ($values !== []) {
+                $builder->whereIn($column, $values);
+            }
+        }
+        $statuses = $this->filterValues($query->filters->values['status'] ?? null);
+        if ($statuses !== []) {
+            $placeholders = implode(',', array_fill(0, count($statuses), '?'));
+            $builder->whereRaw(
+                '(SELECT latest.to_status FROM quality_defect_status_history latest'
+                .' WHERE latest.organization_id = history.organization_id'
+                .' AND latest.quality_defect_id = history.quality_defect_id'
+                .' AND latest.changed_at <= ? ORDER BY latest.changed_at DESC, latest.id DESC LIMIT 1)'
+                ." IN ($placeholders)",
+                [$asOf, ...$statuses],
+            );
+        }
+        $cohortFrom = $this->filterValues($query->filters->values['cohort_from'] ?? null);
+        $cohortTo = $this->filterValues($query->filters->values['cohort_to'] ?? null);
+        if ($cohortFrom !== []) {
+            $builder->whereRaw(
+                '(SELECT MIN(first_history.changed_at) FROM quality_defect_status_history first_history'
+                .' WHERE first_history.organization_id = history.organization_id'
+                .' AND first_history.quality_defect_id = history.quality_defect_id) >= ?',
+                [(string) $cohortFrom[0]],
+            );
+        }
+        if ($cohortTo !== []) {
+            $builder->whereRaw(
+                '(SELECT MIN(first_history.changed_at) FROM quality_defect_status_history first_history'
+                .' WHERE first_history.organization_id = history.organization_id'
+                .' AND first_history.quality_defect_id = history.quality_defect_id) <= ?',
+                [(string) $cohortTo[0]],
+            );
         }
 
         return $builder->count();

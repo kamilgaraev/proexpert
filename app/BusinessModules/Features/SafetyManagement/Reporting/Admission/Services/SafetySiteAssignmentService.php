@@ -12,7 +12,7 @@ use DomainException;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
-final readonly class SafetySiteAssignmentService
+class SafetySiteAssignmentService
 {
     private const MAPPING_SOURCE = 'workforce_employee_assignments';
 
@@ -86,6 +86,7 @@ final readonly class SafetySiteAssignmentService
             $overlap = SafetySiteWorkforceAssignment::query()
                 ->where('organization_id', $organizationId)
                 ->where('workforce_assignment_id', $workforceAssignmentId)
+                ->where('safety_site_id', $siteId)
                 ->whereDate('valid_from', '<=', $validTo ?? '9999-12-31')
                 ->where(static function ($query) use ($validFrom): void {
                     $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $validFrom);
@@ -109,6 +110,47 @@ final readonly class SafetySiteAssignmentService
             return SafetySiteWorkforceAssignment::query()->create($payload + [
                 'source_hash' => hash('sha256', CanonicalJson::encode($payload)),
             ]);
+        });
+    }
+
+    public function assignMany(
+        int $organizationId,
+        int $projectId,
+        array $siteIds,
+        int $workforceAssignmentId,
+        int $employeeId,
+        string $validFrom,
+        ?string $validTo,
+    ): array {
+        $normalizedSiteIds = array_values(array_unique(array_map('intval', $siteIds)));
+        if ($normalizedSiteIds === [] || in_array(0, $normalizedSiteIds, true)) {
+            throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
+        }
+
+        return DB::transaction(function () use (
+            $organizationId,
+            $projectId,
+            $normalizedSiteIds,
+            $workforceAssignmentId,
+            $employeeId,
+            $validFrom,
+            $validTo,
+        ): array {
+            $mappings = [];
+            foreach ($normalizedSiteIds as $siteId) {
+                $mappings[] = $this->assign(
+                    $organizationId,
+                    $projectId,
+                    $siteId,
+                    $workforceAssignmentId,
+                    $employeeId,
+                    $validFrom,
+                    $validTo,
+                    self::MAPPING_SOURCE,
+                );
+            }
+
+            return $mappings;
         });
     }
 

@@ -81,6 +81,34 @@ final readonly class SafetyIncidentBackfill
         ];
     }
 
+    public function synchronize(int $organizationId, int $limit = 500): array
+    {
+        $cursor = ['incident_id' => 0, 'violation_id' => 0, 'action_id' => 0];
+        $totals = ['source_count' => 0, 'projected_count' => 0, 'gap_count' => 0, 'unknown_count' => 0];
+        do {
+            $batch = $this->nextBatch($organizationId, $cursor, $limit);
+            $collections = [
+                'incident_id' => $batch['incidents'],
+                'violation_id' => $batch['violations'],
+                'action_id' => $batch['actions'],
+            ];
+            if (collect($collections)->every(static fn (Collection $items): bool => $items->isEmpty())) {
+                break;
+            }
+            $result = $this->apply($batch);
+            foreach (array_keys($totals) as $key) {
+                $totals[$key] += (int) $result[$key];
+            }
+            foreach ($collections as $key => $items) {
+                if ($items->isNotEmpty()) {
+                    $cursor[$key] = (int) $items->max('id');
+                }
+            }
+        } while (true);
+
+        return $totals;
+    }
+
     private function incident(SafetyIncident $incident): array
     {
         $events = $this->historicallyStable($incident, $incident->occurred_at)

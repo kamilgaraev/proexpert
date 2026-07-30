@@ -12,6 +12,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DTO\SafetyTransitionFact;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyExposureBackfill;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyIncidentBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentRow;
@@ -27,11 +29,17 @@ use Throwable;
 
 final readonly class SafetyIncidentSnapshotMaterializer
 {
-    public function __construct(private SafetyIncidentFormula $formula) {}
+    public function __construct(
+        private SafetyIncidentFormula $formula,
+        private SafetyIncidentBackfill $incidentBackfill,
+        private SafetyExposureBackfill $exposureBackfill,
+    ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
     {
         $organizationId = $context->scope->organizationId;
+        $this->incidentBackfill->synchronize($organizationId);
+        $this->exposureBackfill->synchronize($organizationId);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
         $events = $this->events(
@@ -67,13 +75,11 @@ final readonly class SafetyIncidentSnapshotMaterializer
         );
         $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies, $sites);
         $ownerSubjectCount = $this->ownerSubjectCount($organizationId, $context->scope->projectIds, $asOf, $query);
-        if ($ownerSubjectCount !== null) {
-            $projectedSubjectCount = $events
-                ->map(static fn (SafetyTransitionEvent $event): string => $event->subject_type.':'.$event->subject_id)
-                ->unique()
-                ->count();
-            $analysis['gaps'] += max(0, $ownerSubjectCount - $projectedSubjectCount);
-        }
+        $projectedSubjectCount = $events
+            ->map(static fn (SafetyTransitionEvent $event): string => $event->subject_type.':'.$event->subject_id)
+            ->unique()
+            ->count();
+        $analysis['gaps'] += max(0, $ownerSubjectCount - $projectedSubjectCount);
         $coverage = $this->exposureCoverage(
             $organizationId,
             $context->scope->projectIds,
@@ -393,7 +399,6 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $lastOccurredAt = [];
         $states = [];
         $openingState = [];
-        $periodState = [];
         $gaps = 0;
         $unknowns = 0;
         $incidentSubjects = [];
@@ -463,13 +468,11 @@ final readonly class SafetyIncidentSnapshotMaterializer
             }
             if ($occurredAt < $periodFrom) {
                 $openingState[$key] = ! $closureVerified;
-                $periodState[$key] = ! $closureVerified;
                 continue;
             }
             if ($occurredAt > $periodTo) {
                 continue;
             }
-            $periodState[$key] = ! $closureVerified;
 
             $created = $event->from_status === null;
             if ($created && $event->subject_type === 'incident') {
@@ -535,7 +538,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $lastRow[$row['subject_type'].':'.$row['subject_id']] = $index;
         }
         foreach ($lastRow as $key => $index) {
-            $rows[$index]['closing_flag'] = $periodState[$key] ?? false;
+            $rows[$index]['closing_flag'] = $state[$key] ?? false;
             $rows[$index]['opening_flag'] = $openingState[$key] ?? false;
         }
 
@@ -549,7 +552,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             'action_overdue_count' => $actionOverdue,
             'action_closed_on_time_count' => $actionClosedOnTime,
             'opening_backlog_count' => count(array_filter($openingState)),
-            'closing_backlog_count' => count(array_filter($periodState)),
+            'closing_backlog_count' => count(array_filter($state)),
         ];
     }
 
@@ -616,19 +619,90 @@ final readonly class SafetyIncidentSnapshotMaterializer
         array $projectIds,
         CarbonImmutable $asOf,
         ReportQuery $query,
-    ): ?int {
-        foreach (['safety_site_id', 'site_id', 'contractor_id', 'subject_type', 'category', 'severity', 'owner_user_id', 'status', 'due_from', 'due_to'] as $filter) {
-            if ($this->filterValues($query->filters->values[$filter] ?? null) !== []) {
-                return null;
-            }
-        }
+    ): int {
+        $subjectTypes = $this->filterValues($query->filters->values['subject_type'] ?? null);
         $count = 0;
-        foreach (['safety_incidents', 'safety_violations', 'safety_corrective_actions'] as $table) {
+        foreach ([
+            'incident' => ['table' => 'safety_incidents', 'category' => 'incident_type'],
+            'violation' => ['table' => 'safety_violations', 'category' => null],
+            'corrective_action' => ['table' => 'safety_corrective_actions', 'category' => 'source_type'],
+        ] as $subjectType => $source) {
+            if ($subjectTypes !== [] && ! in_array($subjectType, $subjectTypes, true)) {
+                continue;
+            }
+            $table = $source['table'];
             $builder = DB::table($table)
                 ->where('organization_id', $organizationId)
                 ->where('created_at', '<=', $asOf);
             if ($projectIds !== []) {
                 $builder->whereIn('project_id', $projectIds);
+            }
+            $siteIds = $this->filterValues(
+                $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null,
+            );
+            $contractorIds = $this->filterValues($query->filters->values['contractor_id'] ?? null);
+            if ($siteIds !== [] || $contractorIds !== []) {
+                $builder->whereExists(function ($subquery) use (
+                    $table,
+                    $subjectType,
+                    $organizationId,
+                    $asOf,
+                    $siteIds,
+                    $contractorIds,
+                ): void {
+                    $subquery->selectRaw('1')
+                        ->from('safety_transition_events as scoped_event')
+                        ->whereColumn('scoped_event.subject_id', $table.'.id')
+                        ->where('scoped_event.organization_id', $organizationId)
+                        ->where('scoped_event.subject_type', $subjectType)
+                        ->where('scoped_event.occurred_at', '<=', $asOf);
+                    if ($siteIds !== []) {
+                        $subquery->whereIn('scoped_event.safety_site_id', $siteIds);
+                    }
+                    if ($contractorIds !== []) {
+                        $subquery->whereIn('scoped_event.contractor_id', $contractorIds);
+                    }
+                });
+            }
+            foreach ([
+                'severity' => 'severity',
+                'owner_user_id' => 'assigned_to_user_id',
+            ] as $filter => $column) {
+                $values = $this->filterValues($query->filters->values[$filter] ?? null);
+                if ($values !== []) {
+                    $builder->whereIn($column, $values);
+                }
+            }
+            $statuses = $this->filterValues($query->filters->values['status'] ?? null);
+            if ($statuses !== []) {
+                $placeholders = implode(',', array_fill(0, count($statuses), '?'));
+                $builder->whereRaw(
+                    '(SELECT latest.to_status FROM safety_transition_events latest'
+                    .' WHERE latest.organization_id = '.$table.'.organization_id'
+                    .' AND latest.subject_type = ? AND latest.subject_id = '.$table.'.id'
+                    .' AND latest.occurred_at <= ? ORDER BY latest.occurred_at DESC, latest.event_version DESC LIMIT 1)'
+                    ." IN ($placeholders)",
+                    [$subjectType, $asOf, ...$statuses],
+                );
+            }
+            $categories = $this->filterValues($query->filters->values['category'] ?? null);
+            if ($categories !== []) {
+                $source['category'] === null
+                    ? $builder->whereRaw('1 = 0')
+                    : $builder->whereIn($source['category'], $categories);
+            }
+            if ($subjectType !== 'incident') {
+                $dueFrom = $this->filterValues($query->filters->values['due_from'] ?? null);
+                $dueTo = $this->filterValues($query->filters->values['due_to'] ?? null);
+                if ($dueFrom !== []) {
+                    $builder->whereDate('due_date', '>=', (string) $dueFrom[0]);
+                }
+                if ($dueTo !== []) {
+                    $builder->whereDate('due_date', '<=', (string) $dueTo[0]);
+                }
+            } elseif (($query->filters->values['due_from'] ?? null) !== null
+                || ($query->filters->values['due_to'] ?? null) !== null) {
+                $builder->whereRaw('1 = 0');
             }
             $count += $builder->count();
         }

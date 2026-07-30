@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceRequirementResult;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DTO\AdmissionRequirementState;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Backfill\WorkforceAdmissionBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionRow;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionSnapshot;
@@ -34,11 +35,13 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
     public function __construct(
         private SafetyComplianceService $compliance,
         private WorkforceAdmissionFormula $formula,
+        private WorkforceAdmissionBackfill $assignmentBackfill,
     ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
     {
         $organizationId = $context->scope->organizationId;
+        $this->assignmentBackfill->synchronize($organizationId);
         $asOf = CarbonImmutable::instance($query->asOf);
         $date = $asOf->startOfDay();
         $assignments = $this->assignments(
@@ -50,7 +53,14 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             $query,
         );
         $projection = $this->projection($organizationId, $assignments, $date, $asOf, $query);
-        $ownerSourceCount = $this->ownerSourceCount($organizationId, $date, $asOf, $query);
+        $ownerSourceCount = $this->ownerSourceCount(
+            $organizationId,
+            $context->scope->projectIds,
+            $context->scope->resources,
+            $date,
+            $asOf,
+            $query,
+        );
         $mappingGapCount = max(0, $ownerSourceCount - $assignments->count());
         $projection['gap_count'] += $mappingGapCount;
         $projection['eligible_count'] += $mappingGapCount;
@@ -227,33 +237,69 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
 
     private function ownerSourceCount(
         int $organizationId,
+        array $scopeProjectIds,
+        array $scopeResources,
         CarbonImmutable $date,
         CarbonImmutable $asOf,
         ReportQuery $query,
     ): int {
-        $builder = DB::table('workforce_employee_assignments')
-            ->where('organization_id', $organizationId)
-            ->whereNotNull('project_id')
-            ->where('created_at', '<=', $asOf)
-            ->whereDate('valid_from', '<=', $date->toDateString())
+        $builder = DB::table('workforce_employee_assignments as owner')
+            ->leftJoin('safety_site_workforce_assignments as mapping', function ($join) use ($date, $asOf): void {
+                $join->on('mapping.organization_id', '=', 'owner.organization_id')
+                    ->on('mapping.workforce_assignment_id', '=', 'owner.id')
+                    ->where('mapping.created_at', '<=', $asOf)
+                    ->whereDate('mapping.valid_from', '<=', $date->toDateString())
+                    ->where(static function ($query) use ($date): void {
+                        $query->whereNull('mapping.valid_to')->orWhereDate('mapping.valid_to', '>=', $date->toDateString());
+                    });
+            })
+            ->where('owner.organization_id', $organizationId)
+            ->whereNotNull('owner.project_id')
+            ->where('owner.created_at', '<=', $asOf)
+            ->whereDate('owner.valid_from', '<=', $date->toDateString())
             ->where(static function ($builder) use ($date): void {
-                $builder->whereNull('valid_to')->orWhereDate('valid_to', '>=', $date->toDateString());
+                $builder->whereNull('owner.valid_to')->orWhereDate('owner.valid_to', '>=', $date->toDateString());
             })
             ->where(static function ($builder) use ($asOf): void {
-                $builder->whereNull('deleted_at')->orWhere('deleted_at', '>', $asOf);
+                $builder->whereNull('owner.deleted_at')->orWhere('owner.deleted_at', '>', $asOf);
             });
+        if ($scopeProjectIds !== []) {
+            $builder->whereIn('owner.project_id', $scopeProjectIds);
+        }
         foreach ([
-            'project_id' => $query->filters->values['project_id'] ?? null,
-            'employee_id' => $query->filters->values['employee_id'] ?? null,
-            'id' => $query->filters->values['workforce_assignment_id'] ?? null,
+            'owner.project_id' => $query->filters->values['project_id'] ?? null,
+            'owner.employee_id' => $query->filters->values['employee_id'] ?? null,
+            'owner.id' => $query->filters->values['workforce_assignment_id'] ?? null,
+            'mapping.safety_site_id' => $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null,
         ] as $column => $filter) {
             $values = $this->filterValues($filter);
             if ($values !== []) {
                 $builder->whereIn($column, $values);
             }
         }
+        if ($scopeResources !== []) {
+            $builder->where(function ($builder) use ($scopeResources): void {
+                foreach ($scopeResources as $resource) {
+                    if (! $resource instanceof ReportScopedResource) {
+                        continue;
+                    }
+                    $builder->orWhere(function ($builder) use ($resource): void {
+                        match ($resource->kind) {
+                            'project' => $builder->where('owner.project_id', $resource->id),
+                            'safety_site' => $builder->where('mapping.safety_site_id', $resource->id),
+                            'workforce_assignment' => $builder->where('owner.id', $resource->id),
+                            'workforce_employee' => $builder->where('owner.employee_id', $resource->id),
+                            default => $builder->whereRaw('1 = 0'),
+                        };
+                        if ($resource->projectId !== null) {
+                            $builder->where('owner.project_id', $resource->projectId);
+                        }
+                    });
+                }
+            });
+        }
 
-        return $builder->count();
+        return $builder->distinct()->count('owner.id');
     }
 
     private function projection(
@@ -322,14 +368,6 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 ...$this->requirementStates($policy, $results),
                 ...$this->lifecycleStates($lifecycleFlags),
             ];
-            $metric = $this->formula->evaluate(
-                (int) $assignment->workforce_assignment_id,
-                (int) $assignment->employee_id,
-                (int) $assignment->safety_site_id,
-                $date->toDateString(),
-                $states,
-            );
-            $includedStates = [];
             foreach ($states as $state) {
                 $evidenceHashes[] = hash('sha256', CanonicalJson::encode([
                     'assignment_id' => (int) $assignment->workforce_assignment_id,
@@ -339,8 +377,45 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'status' => $state->status,
                     'valid_until' => $state->validUntil?->format('Y-m-d'),
                 ]));
+            }
+            $includedStates = array_values(array_filter(
+                $states,
+                fn (AdmissionRequirementState $state): bool => $this->stateMatchesFilters($state, $query),
+            ));
+            if ($includedStates === []) {
+                continue;
+            }
+            $metric = $this->formula->evaluate(
+                (int) $assignment->workforce_assignment_id,
+                (int) $assignment->employee_id,
+                (int) $assignment->safety_site_id,
+                $date->toDateString(),
+                $includedStates,
+            );
+            $blockedFilter = $this->filterValues($query->filters->values['blocked'] ?? null);
+            if ($blockedFilter !== []) {
+                $includedStates = array_values(array_filter(
+                    $includedStates,
+                    static fn (AdmissionRequirementState $state): bool => in_array(
+                        in_array($state->code, $metric->blockerCodes, true),
+                        $blockedFilter,
+                        true,
+                    ),
+                ));
+                if ($includedStates === []) {
+                    continue;
+                }
+                $metric = $this->formula->evaluate(
+                    (int) $assignment->workforce_assignment_id,
+                    (int) $assignment->employee_id,
+                    (int) $assignment->safety_site_id,
+                    $date->toDateString(),
+                    $includedStates,
+                );
+            }
+            foreach ($includedStates as $state) {
                 $blocked = in_array($state->code, $metric->blockerCodes, true);
-                $row = [
+                $rows[] = [
                     'project_id' => (int) $assignment->project_id,
                     'safety_site_id' => (int) $assignment->safety_site_id,
                     'workforce_assignment_id' => (int) $assignment->workforce_assignment_id,
@@ -368,13 +443,6 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     ] : null,
                     'blocker_codes' => $blocked ? [$state->code] : [],
                 ];
-                if ($this->rowMatchesFilters($row, $query)) {
-                    $rows[] = $row;
-                    $includedStates[] = $state;
-                }
-            }
-            if ($includedStates === []) {
-                continue;
             }
             $metrics[] = $metric;
             $includedCodes = array_map(
@@ -599,18 +667,17 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         }, $flags);
     }
 
-    private function rowMatchesFilters(array $row, ReportQuery $query): bool
+    private function stateMatchesFilters(AdmissionRequirementState $state, ReportQuery $query): bool
     {
         foreach ([
-            'requirement_code' => 'requirement_code',
-            'requirement_type' => 'requirement_type',
-            'status' => 'status',
-            'mandatory' => 'mandatory',
-            'blocked' => 'blocked',
-            'verified' => 'verified',
-        ] as $filter => $field) {
+            'requirement_code' => $state->code,
+            'requirement_type' => $state->type,
+            'status' => $state->status,
+            'mandatory' => $state->mandatory,
+            'verified' => $state->verified,
+        ] as $filter => $value) {
             $values = $this->filterValues($query->filters->values[$filter] ?? null);
-            if ($values !== [] && ! in_array($row[$field], $values, true)) {
+            if ($values !== [] && ! in_array($value, $values, true)) {
                 return false;
             }
         }

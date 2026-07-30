@@ -50,7 +50,11 @@ final readonly class WorkforceAdmissionBackfill
             $siteIds = DB::table('safety_sites')
                 ->where('organization_id', $assignment->organization_id)
                 ->where('project_id', $assignment->project_id)
-                ->where('is_active', true)
+                ->whereDate('active_from', '<=', (string) $assignment->valid_from)
+                ->where(static function ($query) use ($assignment): void {
+                    $query->whereNull('active_until')
+                        ->orWhereDate('active_until', '>=', (string) $assignment->valid_from);
+                })
                 ->orderBy('id')
                 ->pluck('id');
             if ($siteIds->count() !== 1) {
@@ -100,5 +104,24 @@ final readonly class WorkforceAdmissionBackfill
             'input_hash' => hash('sha256', implode('', $inputHashes)),
             'output_hash' => hash('sha256', implode('', $outputHashes)),
         ];
+    }
+
+    public function synchronize(int $organizationId, int $limit = 500): array
+    {
+        $afterId = 0;
+        $totals = ['source_count' => 0, 'projected_count' => 0, 'gap_count' => 0];
+        do {
+            $batch = $this->nextBatch($organizationId, $afterId, $limit);
+            if ($batch->isEmpty()) {
+                break;
+            }
+            $result = $this->apply($batch);
+            foreach (array_keys($totals) as $key) {
+                $totals[$key] += (int) $result[$key];
+            }
+            $afterId = (int) $batch->max('id');
+        } while ($batch->count() === min(max($limit, 1), 500));
+
+        return $totals;
     }
 }

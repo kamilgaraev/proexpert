@@ -27,7 +27,10 @@ final readonly class SafetyExposureProjector
             ->whereKey($siteId)
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
-            ->where('is_active', true)
+            ->whereDate('active_from', '<=', $date->format('Y-m-d'))
+            ->where(static function ($query) use ($date): void {
+                $query->whereNull('active_until')->orWhereDate('active_until', '>=', $date->format('Y-m-d'));
+            })
             ->exists();
         if (! $siteExists || preg_match('/^(0|[1-9][0-9]*)(?:\.[0-9]{1,4})?$/D', $exposureHours) !== 1 || $personShifts < 0) {
             throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
