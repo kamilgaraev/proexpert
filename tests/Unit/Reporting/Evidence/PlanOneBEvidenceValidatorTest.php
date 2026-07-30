@@ -23,7 +23,7 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
         self::assertTrue($this->schemaAccepts($document));
         $this->validator($document)->validate($document);
         self::assertSame(
-            '25bfec46be0e26874a24cd765d2f5035f4164001a2cbbf842cd49cedf012da6a',
+            '76c90f053b34a418d1023262e0a83d22edde20e05244ce7b7c087fb59eee6a26',
             hash('sha256', CanonicalJson::encode($document)),
         );
     }

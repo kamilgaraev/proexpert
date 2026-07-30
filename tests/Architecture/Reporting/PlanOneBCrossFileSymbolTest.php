@@ -7,6 +7,7 @@ namespace Tests\Architecture\Reporting;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneACompletionRef;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceBuilder;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceValidator;
+use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBGateArtifactRecorder;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -20,6 +21,8 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
     {
         $validate = new ReflectionMethod(PlanOneBEvidenceValidator::class, 'validate');
         $build = new ReflectionMethod(PlanOneBEvidenceBuilder::class, 'build');
+        $recordPhpUnit = new ReflectionMethod(PlanOneBGateArtifactRecorder::class, 'recordPhpUnit');
+        $recordStaticAnalysis = new ReflectionMethod(PlanOneBGateArtifactRecorder::class, 'recordStaticAnalysis');
 
         $this->assertMethod($validate, ['document:array'], 'void');
         $this->assertMethod(
@@ -28,6 +31,25 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
                 'planOneA:'.PlanOneACompletionRef::class,
                 'checks:array',
                 'generatedAt:'.DateTimeImmutable::class,
+            ],
+            'array',
+        );
+        $this->assertMethod(
+            $recordPhpUnit,
+            [
+                'gateId:string',
+                'processResult:array',
+                'resultArtifactPath:string',
+                'measurementArtifactPath:string',
+                'repositoryRevision:string',
+            ],
+            'array',
+        );
+        $this->assertMethod(
+            $recordStaticAnalysis,
+            [
+                'resultArtifactPath:string',
+                'repositoryRevision:string',
             ],
             'array',
         );
@@ -71,27 +93,22 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
         $fixture = $this->decode($this->root().'/tests/Fixtures/Reporting/plan-1b-completion.valid.json');
 
         foreach ($fixture['gates'] as $gate) {
+            $definition = PlanOneBGateArtifactRecorder::definition($gate['id']);
+            self::assertSame($definition['command'], $gate['command']);
+            self::assertFileExists($this->root().'/scripts/reporting/run-plan-1b-gate.php');
+            foreach ($definition['producer']['test_paths'] as $path) {
+                self::assertFileExists($this->root().'/'.$path);
+                self::assertStringContainsString($path, $gate['command']);
+            }
             if ($gate['id'] === 'static_analysis') {
-                self::assertSame(
-                    'php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php'
-                    .' && php vendor/bin/phpstan analyse --configuration=phpstan.neon.dist'
-                    .' app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php'
-                    .' app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php',
+                self::assertStringContainsString('--error-format=json', $gate['command']);
+                self::assertStringContainsString('--no-progress', $gate['command']);
+            } else {
+                self::assertStringEndsWith(
+                    '--no-coverage --log-junit '.$definition['producer']['result_artifact_path'],
                     $gate['command'],
                 );
-
-                continue;
             }
-            self::assertMatchesRegularExpression(
-                '/^php vendor\/bin\/phpunit (tests\/[A-Za-z0-9_\/]+Test\.php) --no-coverage$/D',
-                $gate['command'],
-            );
-            preg_match(
-                '/^php vendor\/bin\/phpunit (tests\/[A-Za-z0-9_\/]+Test\.php) --no-coverage$/D',
-                $gate['command'],
-                $matches,
-            );
-            self::assertFileExists($this->root().'/'.$matches[1]);
         }
     }
 
@@ -106,8 +123,20 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
         self::assertSame(0, $tracked->getExitCode(), $tracked->getErrorOutput());
 
         $plan = (string) file_get_contents($path);
+        self::assertStringContainsString(
+            'Plans 2 and 3 implement only Plan 1a provider ports and supply candidate bindings to Plan 1c',
+            $plan,
+        );
+        self::assertStringContainsString(
+            'Plan 1c supplies the published registry/map and owns every publication transition',
+            $plan,
+        );
+        self::assertStringContainsString(
+            'Plan 4 owns evidence verification and deployment rollout only',
+            $plan,
+        );
         preg_match_all('/^- Create:\s*(.+)$/m', $plan, $entries);
-        self::assertCount(255, $entries[1]);
+        self::assertCount(258, $entries[1]);
 
         $createdPaths = [];
         foreach ($entries[1] as $entry) {
@@ -116,8 +145,8 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
             array_push($createdPaths, ...$paths[1]);
         }
 
-        self::assertCount(259, $createdPaths);
-        self::assertCount(259, array_unique($createdPaths));
+        self::assertCount(262, $createdPaths);
+        self::assertCount(262, array_unique($createdPaths));
 
         $fixture = $this->decode($this->root().'/tests/Fixtures/Reporting/plan-1b-completion.valid.json');
         $createdSymbols = array_map(
@@ -143,7 +172,10 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
             ),
         );
         foreach ($method->getParameters() as $parameter) {
-            self::assertFalse($parameter->allowsNull());
+            self::assertSame(
+                $parameter->getName() === 'measurementArtifactPath',
+                $parameter->allowsNull(),
+            );
             self::assertFalse($parameter->isOptional());
         }
     }

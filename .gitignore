@@ -74,3 +74,4 @@ rr.exe
 /build/reports/plan-1a-ci-malformed.json
 /build/reports/plan-1a-completion.json
 /build/reports/plan-1b-completion.json
+/build/reports/gates/

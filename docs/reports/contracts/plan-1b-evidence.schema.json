@@ -1,209 +1,1946 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:most:reporting:plan-1b-evidence:v1",
-  "description": "Structural completion-evidence contract. Repository, Plan 1a, artifact digest and flattened-performance bindings are enforced by the PHP runtime validator.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "plan_id", "evidence_scope", "status", "generated_at", "plan_1a_reference", "repository_revision", "gates", "ownership", "performance_measurements", "unresolved_risks", "handoff"],
-  "properties": {
-    "schema_version": {"const": "1.0.0"},
-    "plan_id": {"const": "1b"},
-    "evidence_scope": {"enum": ["fixture", "ci"]},
-    "status": {"const": "passed"},
-    "generated_at": {"$ref": "#/$defs/timestamp"},
-    "plan_1a_reference": {"$ref": "#/$defs/planOneAReference"},
-    "repository_revision": {"$ref": "#/$defs/sha1"},
-    "gates": {
-      "type": "array",
-      "minItems": 28,
-      "maxItems": 28,
-      "prefixItems": [
-        {"$ref": "#/$defs/plan1a_handoff"},
-        {"$ref": "#/$defs/ownership_boundary"},
-        {"$ref": "#/$defs/run_state_machine"},
-        {"$ref": "#/$defs/run_idempotency"},
-        {"$ref": "#/$defs/snapshot_identity"},
-        {"$ref": "#/$defs/snapshot_seal_trust"},
-        {"$ref": "#/$defs/typed_data_classification"},
-        {"$ref": "#/$defs/rows_cursor_drill_parity"},
-        {"$ref": "#/$defs/row_stream_shape"},
-        {"$ref": "#/$defs/export_state_machine"},
-        {"$ref": "#/$defs/export_idempotency"},
-        {"$ref": "#/$defs/dispatch_outbox_atomicity"},
-        {"$ref": "#/$defs/dispatch_lease_recovery"},
-        {"$ref": "#/$defs/dispatch_dead_letter"},
-        {"$ref": "#/$defs/audit_outbox_delivery"},
-        {"$ref": "#/$defs/current_async_authorization"},
-        {"$ref": "#/$defs/execution_attempt_leases"},
-        {"$ref": "#/$defs/renderer_parity"},
-        {"$ref": "#/$defs/pdf_renderer_budget"},
-        {"$ref": "#/$defs/streaming_budget"},
-        {"$ref": "#/$defs/file_service_call_graph"},
-        {"$ref": "#/$defs/s3_version_race"},
-        {"$ref": "#/$defs/audit_fail_closed"},
-        {"$ref": "#/$defs/retention_exact_version"},
-        {"$ref": "#/$defs/action_bindings"},
-        {"$ref": "#/$defs/error_retryability"},
-        {"$ref": "#/$defs/run_export_observability"},
-        {"$ref": "#/$defs/static_analysis"}
-      ],
-      "items": false
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:most:reporting:plan-1b-evidence:v1",
+    "description": "Structural completion-evidence contract. Repository, Plan 1a, artifact digest and flattened-performance bindings are enforced by the PHP runtime validator.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema_version",
+        "plan_id",
+        "evidence_scope",
+        "status",
+        "generated_at",
+        "plan_1a_reference",
+        "repository_revision",
+        "gates",
+        "ownership",
+        "performance_measurements",
+        "unresolved_risks",
+        "handoff"
+    ],
+    "properties": {
+        "schema_version": {
+            "const": "1.0.0"
+        },
+        "plan_id": {
+            "const": "1b"
+        },
+        "evidence_scope": {
+            "enum": [
+                "fixture",
+                "ci"
+            ]
+        },
+        "status": {
+            "const": "passed"
+        },
+        "generated_at": {
+            "$ref": "#/$defs/timestamp"
+        },
+        "plan_1a_reference": {
+            "$ref": "#/$defs/planOneAReference"
+        },
+        "repository_revision": {
+            "$ref": "#/$defs/sha1"
+        },
+        "gates": {
+            "type": "array",
+            "minItems": 28,
+            "maxItems": 28,
+            "prefixItems": [
+                {
+                    "$ref": "#/$defs/plan1a_handoff"
+                },
+                {
+                    "$ref": "#/$defs/ownership_boundary"
+                },
+                {
+                    "$ref": "#/$defs/run_state_machine"
+                },
+                {
+                    "$ref": "#/$defs/run_idempotency"
+                },
+                {
+                    "$ref": "#/$defs/snapshot_identity"
+                },
+                {
+                    "$ref": "#/$defs/snapshot_seal_trust"
+                },
+                {
+                    "$ref": "#/$defs/typed_data_classification"
+                },
+                {
+                    "$ref": "#/$defs/rows_cursor_drill_parity"
+                },
+                {
+                    "$ref": "#/$defs/row_stream_shape"
+                },
+                {
+                    "$ref": "#/$defs/export_state_machine"
+                },
+                {
+                    "$ref": "#/$defs/export_idempotency"
+                },
+                {
+                    "$ref": "#/$defs/dispatch_outbox_atomicity"
+                },
+                {
+                    "$ref": "#/$defs/dispatch_lease_recovery"
+                },
+                {
+                    "$ref": "#/$defs/dispatch_dead_letter"
+                },
+                {
+                    "$ref": "#/$defs/audit_outbox_delivery"
+                },
+                {
+                    "$ref": "#/$defs/current_async_authorization"
+                },
+                {
+                    "$ref": "#/$defs/execution_attempt_leases"
+                },
+                {
+                    "$ref": "#/$defs/renderer_parity"
+                },
+                {
+                    "$ref": "#/$defs/pdf_renderer_budget"
+                },
+                {
+                    "$ref": "#/$defs/streaming_budget"
+                },
+                {
+                    "$ref": "#/$defs/file_service_call_graph"
+                },
+                {
+                    "$ref": "#/$defs/s3_version_race"
+                },
+                {
+                    "$ref": "#/$defs/audit_fail_closed"
+                },
+                {
+                    "$ref": "#/$defs/retention_exact_version"
+                },
+                {
+                    "$ref": "#/$defs/action_bindings"
+                },
+                {
+                    "$ref": "#/$defs/error_retryability"
+                },
+                {
+                    "$ref": "#/$defs/run_export_observability"
+                },
+                {
+                    "$ref": "#/$defs/static_analysis"
+                }
+            ],
+            "items": false
+        },
+        "ownership": {
+            "$ref": "#/$defs/ownership"
+        },
+        "performance_measurements": {
+            "$ref": "#/$defs/performanceMeasurements"
+        },
+        "unresolved_risks": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "pattern": "^(?!.*(?:[Ss][Uu][Bb][Ss][Cc][Rr][Ii][Pp][Tt][Ii][Oo][Nn]|[Tt][Ee][Ll][Ee][Mm][Ee][Tt][Rr][Yy]))\\S(?:.*\\S)?$"
+            }
+        },
+        "handoff": {
+            "$ref": "#/$defs/handoff"
+        }
     },
-    "ownership": {"$ref": "#/$defs/ownership"},
-    "performance_measurements": {"$ref": "#/$defs/performanceMeasurements"},
-    "unresolved_risks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^(?!.*(?:[Ss][Uu][Bb][Ss][Cc][Rr][Ii][Pp][Tt][Ii][Oo][Nn]|[Tt][Ee][Ll][Ee][Mm][Ee][Tt][Rr][Yy]))\\S(?:.*\\S)?$"}},
-    "handoff": {"$ref": "#/$defs/handoff"}
-  },
-  "$defs": {
-    "sha1": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
-    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-    "timestamp": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
-    "planOneAReference": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["lock_sha256", "evidence_sha256", "generated_at", "status"],
-      "properties": {
-        "lock_sha256": {"$ref": "#/$defs/sha256"},
-        "evidence_sha256": {"$ref": "#/$defs/sha256"},
-        "generated_at": {"$ref": "#/$defs/timestamp"},
-        "status": {"const": "passed"}
-      }
-    },
-    "result": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["exit_code", "tests", "assertions", "required_checks"],
-      "properties": {
-        "exit_code": {"const": 0},
-        "tests": {"type": "integer", "minimum": 0},
-        "assertions": {"type": "integer", "minimum": 0},
-        "required_checks": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}}
-      }
-    },
-    "artifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "type", "sha256", "repository_revision"],
-      "properties": {
-        "id": {"type": "string", "pattern": "^plan1b\\.gate\\.[a-z0-9_]+$"},
-        "type": {"enum": ["contract_json", "architecture_json", "unit_json", "postgresql_json", "cryptographic_json", "authorization_json", "queue_json", "parity_json", "performance_json", "s3_json", "observability_json", "phpstan_json"]},
-        "sha256": {"$ref": "#/$defs/sha256"},
-        "repository_revision": {"$ref": "#/$defs/sha1"}
-      }
-    },
-    "measurement": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "value", "unit", "limit", "status"],
-      "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-        "value": {"type": "integer", "minimum": 0},
-        "unit": {"enum": ["rows", "pages", "bytes", "milliseconds"]},
-        "limit": {"type": "integer", "minimum": 1},
-        "status": {"const": "passed"}
-      }
-    },
-    "gate": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "status", "command", "result", "duration_ms", "artifacts", "measurements"],
-      "properties": {
-        "id": {"type": "string"},
-        "status": {"const": "passed"},
-        "command": {"type": "string", "minLength": 1},
-        "result": {"$ref": "#/$defs/result"},
-        "duration_ms": {"type": "integer", "minimum": 0},
-        "artifacts": {"type": "array", "minItems": 1, "maxItems": 1, "prefixItems": [{"$ref": "#/$defs/artifact"}], "items": false},
-        "measurements": {"type": "array"}
-      }
-    },
-    "noMeasurements": {"type": "array", "maxItems": 0},
-    "pdfMeasurements": {
-      "type": "array",
-      "minItems": 5,
-      "prefixItems": [
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_detail_rows"}, "unit": {"const": "rows"}, "limit": {"const": 5000}, "value": {"maximum": 5000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_pages"}, "unit": {"const": "pages"}, "limit": {"const": 20}, "value": {"maximum": 20}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_html_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 2000000}, "value": {"maximum": 2000000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_output_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 2000000}, "value": {"maximum": 2000000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_memory_delta_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 134217728}, "value": {"maximum": 134217728}}}]}
-      ],
-      "items": false
-    },
-    "streamingMeasurements": {
-      "type": "array",
-      "minItems": 3,
-      "prefixItems": [
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_chunk_rows"}, "unit": {"const": "rows"}, "limit": {"const": 5000}, "value": {"maximum": 5000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_peak_memory_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 134217728}, "value": {"maximum": 134217728}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_artifact_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 524288000}, "value": {"maximum": 524288000}}}]}
-      ],
-      "items": false
-    },
-    "performanceMeasurements": {
-      "type": "array",
-      "minItems": 8,
-      "prefixItems": [
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_detail_rows"}, "unit": {"const": "rows"}, "limit": {"const": 5000}, "value": {"maximum": 5000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_pages"}, "unit": {"const": "pages"}, "limit": {"const": 20}, "value": {"maximum": 20}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_html_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 2000000}, "value": {"maximum": 2000000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_output_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 2000000}, "value": {"maximum": 2000000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_memory_delta_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 134217728}, "value": {"maximum": 134217728}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_chunk_rows"}, "unit": {"const": "rows"}, "limit": {"const": 5000}, "value": {"maximum": 5000}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_peak_memory_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 134217728}, "value": {"maximum": 134217728}}}]},
-        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_artifact_bytes"}, "unit": {"const": "bytes"}, "limit": {"const": 524288000}, "value": {"maximum": 524288000}}}]}
-      ],
-      "items": false
-    },
-    "plan1a_handoff": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "plan1a_handoff"}, "command": {"const": "php vendor/bin/phpunit tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["immutable_history", "forward_only_lineage", "exact_ownership_manifest", "strict_clean_preflight", "fresh_runner_counts", "verify_existing_no_write"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.plan1a_handoff"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "ownership_boundary": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "ownership_boundary"}, "command": {"const": "php vendor/bin/phpunit tests/Architecture/Reporting/PlanOneBOwnershipBoundaryTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["plan1a_symbol_intersection_empty", "plans_2_3_candidate_only", "plan1c_publication_owner", "plan4_rollout_owner"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.ownership_boundary"}, "type": {"const": "architecture_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "run_state_machine": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "run_state_machine"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["six_state_transition_matrix", "audit_precedes_ready"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.run_state_machine"}, "type": {"const": "unit_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "run_idempotency": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "run_idempotency"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["same_org_cross_actor_reuse", "changed_body_conflict", "other_org_independence", "retry_key_replay"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.run_idempotency"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "snapshot_identity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "snapshot_identity"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Execution/CanonicalReportSourceHashBuilderTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["validator_equalities", "decimal_grammar_negative_zero", "source_projection_sort", "duplicate_identity", "no_input_mutation", "expired_status_only", "expired_data_fail_closed"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.snapshot_identity"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "snapshot_seal_trust": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "snapshot_seal_trust"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Execution/TrustedReportSnapshotSealVerifierTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["typed_structural_reasons", "official_seal_mapping", "closed_public_key_map", "sodium_detached_verification", "trust_case_matrix", "signed_field_mutations", "payload_binding"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.snapshot_seal_trust"}, "type": {"const": "cryptographic_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "typed_data_classification": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "typed_data_classification"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["sensitive_access_typed", "audit_access_typed", "heuristics_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.typed_data_classification"}, "type": {"const": "authorization_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "rows_cursor_drill_parity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "rows_cursor_drill_parity"}, "command": {"const": "php vendor/bin/phpunit tests/Contract/Reporting/ReportRowsParityContractTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["rows_cursor_identity", "drill_down_identity", "summary_semantic_parity"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.rows_cursor_drill_parity"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "row_stream_shape": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "row_stream_shape"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Rows/ReportRowChunkReaderTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["one_row_envelope", "bounded_internal_chunks", "nested_shape_rejected", "identity_drift_rejected"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.row_stream_shape"}, "type": {"const": "unit_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "export_state_machine": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "export_state_machine"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["seven_state_transition_matrix", "retry_parent_ready_unexpired", "retry_denial_before_side_effects"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.export_state_machine"}, "type": {"const": "unit_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "export_idempotency": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "export_idempotency"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["same_org_cross_actor_reuse", "changed_body_conflict", "other_org_independence", "retry_key_replay", "parent_run_fence"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.export_idempotency"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "dispatch_outbox_atomicity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "dispatch_outbox_atomicity"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["closed_named_schemas", "aggregate_transport_rollback", "unique_event_keys", "closed_subjects"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.dispatch_outbox_atomicity"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "dispatch_lease_recovery": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "dispatch_lease_recovery"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["skip_locked_claims", "lease_fencing_reclaim", "deterministic_backoff", "publication_redelivery"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.dispatch_lease_recovery"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "dispatch_dead_letter": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "dispatch_dead_letter"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["run_attempt_12_atomic_failure", "export_attempt_12_atomic_failure", "pre_table_branch_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.dispatch_dead_letter"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "audit_outbox_delivery": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "audit_outbox_delivery"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["id_only_mapping", "transactional_intent", "append_ack_order", "append_replay", "lease_fenced_backoff", "attempt_12_dead_letter", "critical_alerting"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.audit_outbox_delivery"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "current_async_authorization": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "current_async_authorization"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["typed_scope_cutover", "exact_resource_decisions", "repeatable_read_snapshot", "state_operation_matrix", "revocation_before_side_effects", "request_globals_bypassed", "authority_cache_bypassed", "atomic_cutover_rollback"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.current_async_authorization"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "execution_attempt_leases": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "execution_attempt_leases"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["runtime_inequalities", "authority_free_claim", "same_token_renewal", "token_fencing", "leased_failure", "watchdog_requeue", "job_failed_aba_fence"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.execution_attempt_leases"}, "type": {"const": "queue_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "renderer_parity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "renderer_parity"}, "command": {"const": "php vendor/bin/phpunit tests/Contract/Reporting/ReportExportParityContractTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["csv_semantic_identity", "xlsx_semantic_identity", "pdf_semantic_identity"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.renderer_parity"}, "type": {"const": "parity_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "pdf_renderer_budget": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "pdf_renderer_budget"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["locked_dependency_versions", "definition_budget_registry", "row_boundary_5000", "page_html_pdf_memory_limits", "safe_failure_mapping", "retry_cleanup"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.pdf_renderer_budget"}, "type": {"const": "performance_json"}}}]}, "measurements": {"$ref": "#/$defs/pdfMeasurements"}}},
-    "streaming_budget": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "streaming_budget"}, "command": {"const": "php vendor/bin/phpunit tests/Performance/Reporting/ReportExportStreamingBudgetTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["bounded_chunks", "bounded_peak_memory", "bounded_artifact_bytes"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.streaming_budget"}, "type": {"const": "performance_json"}}}]}, "measurements": {"$ref": "#/$defs/streamingMeasurements"}}},
-    "file_service_call_graph": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "file_service_call_graph"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["multipart_create", "multipart_upload_part", "multipart_complete", "multipart_abort", "exact_version_head", "temporary_link", "exact_version_delete"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.file_service_call_graph"}, "type": {"const": "architecture_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "s3_version_race": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "s3_version_race"}, "command": {"const": "php vendor/bin/phpunit tests/Integration/Reporting/Exports/S3ReportArtifactIntegrationTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["conditional_race_winner", "loser_abort_once", "post_completion_identity", "metadata_drift_fail_closed"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.s3_version_race"}, "type": {"const": "s3_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "audit_fail_closed": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "audit_fail_closed"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["ready_transition_rollback", "terminal_transition_rollback", "remote_io_outside_transaction"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.audit_fail_closed"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "retention_exact_version": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "retention_exact_version"}, "command": {"const": "php vendor/bin/phpunit tests/Feature/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["exact_version_inventory", "lease_fenced_delete", "historical_identity_retained", "replay_idempotency"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.retention_exact_version"}, "type": {"const": "s3_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "action_bindings": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "action_bindings"}, "command": {"const": "php vendor/bin/phpunit tests/Architecture/Reporting/ReportingExecutionBindingsTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["one_handler_per_action", "thin_controllers", "catalog_publication_unbound"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.action_bindings"}, "type": {"const": "architecture_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "error_retryability": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "error_retryability"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Errors/ReportExecutionErrorMappingTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["status_mapping", "retryability_mapping", "technical_message_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.error_retryability"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "run_export_observability": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "run_export_observability"}, "command": {"const": "php vendor/bin/phpunit tests/Unit/Reporting/Evidence/PlanOneBEvidenceValidatorTest.php --no-coverage"}, "result": {"properties": {"required_checks": {"const": ["bounded_run_families", "bounded_export_families", "non_run_export_family_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.run_export_observability"}, "type": {"const": "observability_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "static_analysis": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "static_analysis"}, "command": {"const": "php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php && php vendor/bin/phpstan analyse --configuration=phpstan.neon.dist app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php"}, "result": {"properties": {"required_checks": {"const": ["changed_php_syntax", "changed_php_phpstan"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.static_analysis"}, "type": {"const": "phpstan_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
-    "ownership": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["plan_1a_symbols", "plan_1b_symbols", "external_plan_owners"],
-      "properties": {
-        "plan_1a_symbols": {"const": ["CandidateReportDefinition", "CreateReportExportData", "CreateReportRunData", "PublishedReportDefinition", "ReportCursor", "ReportDataProvider", "ReportDefinition", "ReportDefinitionBinding", "ReportDefinitionBindingMap", "ReportDownloadLink", "ReportDrillDownProvider", "ReportExport", "ReportPage", "ReportQuery", "ReportRowQuery", "ReportRun"]},
-        "plan_1b_symbols": {"const": ["PlanOneACompletionRef", "PlanOneACompletionVerifier", "PlanOneBEvidenceBuilder", "PlanOneBEvidenceValidator", "PlanOneBGateArtifactRecorder"]},
-        "external_plan_owners": {"const": ["plan_1c_publication_registry", "plan_2_candidate_provider_bindings", "plan_3_candidate_provider_bindings", "plan_4_evidence_verification_rollout"]}
-      }
-    },
-    "handoff": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["plans_2_and_3", "plan_1c", "plan_4", "artifact_path", "digest_algorithm"],
-      "properties": {
-        "plans_2_and_3": {"const": "plan_1a_provider_ports_candidate_bindings_only"},
-        "plan_1c": {"const": "published_registry_map_and_all_publication_transitions"},
-        "plan_4": {"const": "evidence_verification_and_deployment_rollout_only"},
-        "artifact_path": {"const": "build/reports/plan-1b-completion.json"},
-        "digest_algorithm": {"const": "sha256"}
-      }
+    "$defs": {
+        "sha1": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+        },
+        "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "planOneAReference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "lock_sha256",
+                "evidence_sha256",
+                "generated_at",
+                "status"
+            ],
+            "properties": {
+                "lock_sha256": {
+                    "$ref": "#/$defs/sha256"
+                },
+                "evidence_sha256": {
+                    "$ref": "#/$defs/sha256"
+                },
+                "generated_at": {
+                    "$ref": "#/$defs/timestamp"
+                },
+                "status": {
+                    "const": "passed"
+                }
+            }
+        },
+        "result": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "exit_code",
+                "tests",
+                "assertions",
+                "required_checks"
+            ],
+            "properties": {
+                "exit_code": {
+                    "const": 0
+                },
+                "tests": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "assertions": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "required_checks": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                    }
+                }
+            }
+        },
+        "artifact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "id",
+                "type",
+                "sha256",
+                "repository_revision"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "pattern": "^plan1b\\.gate\\.[a-z0-9_]+$"
+                },
+                "type": {
+                    "enum": [
+                        "contract_json",
+                        "architecture_json",
+                        "unit_json",
+                        "postgresql_json",
+                        "cryptographic_json",
+                        "authorization_json",
+                        "queue_json",
+                        "parity_json",
+                        "performance_json",
+                        "s3_json",
+                        "observability_json",
+                        "phpstan_json"
+                    ]
+                },
+                "sha256": {
+                    "$ref": "#/$defs/sha256"
+                },
+                "repository_revision": {
+                    "$ref": "#/$defs/sha1"
+                }
+            }
+        },
+        "measurement": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "id",
+                "value",
+                "unit",
+                "limit",
+                "status"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "value": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "unit": {
+                    "enum": [
+                        "rows",
+                        "pages",
+                        "bytes",
+                        "milliseconds"
+                    ]
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "status": {
+                    "const": "passed"
+                }
+            }
+        },
+        "gate": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "id",
+                "status",
+                "command",
+                "result",
+                "duration_ms",
+                "artifacts",
+                "measurements"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "const": "passed"
+                },
+                "command": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "result": {
+                    "$ref": "#/$defs/result"
+                },
+                "duration_ms": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "artifacts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "prefixItems": [
+                        {
+                            "$ref": "#/$defs/artifact"
+                        }
+                    ],
+                    "items": false
+                },
+                "measurements": {
+                    "type": "array"
+                }
+            }
+        },
+        "noMeasurements": {
+            "type": "array",
+            "maxItems": 0
+        },
+        "pdfMeasurements": {
+            "type": "array",
+            "minItems": 5,
+            "prefixItems": [
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_detail_rows"
+                                },
+                                "unit": {
+                                    "const": "rows"
+                                },
+                                "limit": {
+                                    "const": 5000
+                                },
+                                "value": {
+                                    "maximum": 5000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_pages"
+                                },
+                                "unit": {
+                                    "const": "pages"
+                                },
+                                "limit": {
+                                    "const": 20
+                                },
+                                "value": {
+                                    "maximum": 20
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_html_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 2000000
+                                },
+                                "value": {
+                                    "maximum": 2000000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_output_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 2000000
+                                },
+                                "value": {
+                                    "maximum": 2000000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_memory_delta_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 134217728
+                                },
+                                "value": {
+                                    "maximum": 134217728
+                                }
+                            }
+                        }
+                    ]
+                }
+            ],
+            "items": false
+        },
+        "streamingMeasurements": {
+            "type": "array",
+            "minItems": 3,
+            "prefixItems": [
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "stream_chunk_rows"
+                                },
+                                "unit": {
+                                    "const": "rows"
+                                },
+                                "limit": {
+                                    "const": 5000
+                                },
+                                "value": {
+                                    "maximum": 5000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "stream_peak_memory_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 134217728
+                                },
+                                "value": {
+                                    "maximum": 134217728
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "stream_artifact_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 524288000
+                                },
+                                "value": {
+                                    "maximum": 524288000
+                                }
+                            }
+                        }
+                    ]
+                }
+            ],
+            "items": false
+        },
+        "performanceMeasurements": {
+            "type": "array",
+            "minItems": 8,
+            "prefixItems": [
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_detail_rows"
+                                },
+                                "unit": {
+                                    "const": "rows"
+                                },
+                                "limit": {
+                                    "const": 5000
+                                },
+                                "value": {
+                                    "maximum": 5000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_pages"
+                                },
+                                "unit": {
+                                    "const": "pages"
+                                },
+                                "limit": {
+                                    "const": 20
+                                },
+                                "value": {
+                                    "maximum": 20
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_html_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 2000000
+                                },
+                                "value": {
+                                    "maximum": 2000000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_output_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 2000000
+                                },
+                                "value": {
+                                    "maximum": 2000000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "pdf_memory_delta_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 134217728
+                                },
+                                "value": {
+                                    "maximum": 134217728
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "stream_chunk_rows"
+                                },
+                                "unit": {
+                                    "const": "rows"
+                                },
+                                "limit": {
+                                    "const": 5000
+                                },
+                                "value": {
+                                    "maximum": 5000
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "stream_peak_memory_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 134217728
+                                },
+                                "value": {
+                                    "maximum": 134217728
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/measurement"
+                        },
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "stream_artifact_bytes"
+                                },
+                                "unit": {
+                                    "const": "bytes"
+                                },
+                                "limit": {
+                                    "const": 524288000
+                                },
+                                "value": {
+                                    "maximum": 524288000
+                                }
+                            }
+                        }
+                    ]
+                }
+            ],
+            "items": false
+        },
+        "plan1a_handoff": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "plan1a_handoff"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Evidence/PlanOneACompletionVerifierTest.php tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php --no-coverage --log-junit build/reports/gates/results/plan1a_handoff.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "immutable_history",
+                                "forward_only_lineage",
+                                "exact_ownership_manifest",
+                                "strict_clean_preflight",
+                                "fresh_runner_counts",
+                                "verify_existing_no_write"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.plan1a_handoff"
+                                },
+                                "type": {
+                                    "const": "contract_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "ownership_boundary": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "ownership_boundary"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Architecture/Reporting/PlanOneBOwnershipBoundaryTest.php tests/Architecture/Reporting/PlanOneBCrossFileSymbolTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php tests/Architecture/Reporting/ReportingExecutionBindingsTest.php --no-coverage --log-junit build/reports/gates/results/ownership_boundary.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "plan1a_symbol_intersection_empty",
+                                "plans_2_3_candidate_only",
+                                "plan1c_publication_owner",
+                                "plan4_rollout_owner"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.ownership_boundary"
+                                },
+                                "type": {
+                                    "const": "architecture_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "run_state_machine": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "run_state_machine"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Execution/ReportRunAttemptFinalizerTest.php tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php --no-coverage --log-junit build/reports/gates/results/run_state_machine.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "six_state_transition_matrix",
+                                "audit_precedes_ready"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.run_state_machine"
+                                },
+                                "type": {
+                                    "const": "unit_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "run_idempotency": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "run_idempotency"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Unit/Reporting/Actions/ReportRunHandlersTest.php --no-coverage --log-junit build/reports/gates/results/run_idempotency.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "same_org_cross_actor_reuse",
+                                "changed_body_conflict",
+                                "other_org_independence",
+                                "retry_key_replay"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.run_idempotency"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "snapshot_identity": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "snapshot_identity"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Execution/CanonicalReportSourceHashBuilderTest.php tests/Unit/Reporting/Execution/ReportSnapshotSealValidatorTest.php tests/Unit/Reporting/Actions/ReportRunHandlersTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php --no-coverage --log-junit build/reports/gates/results/snapshot_identity.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "validator_equalities",
+                                "decimal_grammar_negative_zero",
+                                "source_projection_sort",
+                                "duplicate_identity",
+                                "no_input_mutation",
+                                "expired_status_only",
+                                "expired_data_fail_closed"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.snapshot_identity"
+                                },
+                                "type": {
+                                    "const": "contract_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "snapshot_seal_trust": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "snapshot_seal_trust"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Execution/ReportSnapshotSealValidatorTest.php tests/Unit/Reporting/Execution/TrustedReportSnapshotSealVerifierTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php --no-coverage --log-junit build/reports/gates/results/snapshot_seal_trust.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "typed_structural_reasons",
+                                "official_seal_mapping",
+                                "closed_public_key_map",
+                                "sodium_detached_verification",
+                                "trust_case_matrix",
+                                "signed_field_mutations",
+                                "payload_binding"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.snapshot_seal_trust"
+                                },
+                                "type": {
+                                    "const": "cryptographic_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "typed_data_classification": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "typed_data_classification"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php --no-coverage --log-junit build/reports/gates/results/typed_data_classification.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "sensitive_access_typed",
+                                "audit_access_typed",
+                                "heuristics_absent"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.typed_data_classification"
+                                },
+                                "type": {
+                                    "const": "authorization_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "rows_cursor_drill_parity": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "rows_cursor_drill_parity"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Contract/Reporting/ReportRowsParityContractTest.php tests/Contract/Reporting/ReportExportParityContractTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php tests/Unit/Reporting/Cursors/SignedReportCursorCodecTest.php --no-coverage --log-junit build/reports/gates/results/rows_cursor_drill_parity.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "rows_cursor_identity",
+                                "drill_down_identity",
+                                "summary_semantic_parity"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.rows_cursor_drill_parity"
+                                },
+                                "type": {
+                                    "const": "contract_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "row_stream_shape": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "row_stream_shape"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Rows/ReportRowChunkReaderTest.php --no-coverage --log-junit build/reports/gates/results/row_stream_shape.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "one_row_envelope",
+                                "bounded_internal_chunks",
+                                "nested_shape_rejected",
+                                "identity_drift_rejected"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.row_stream_shape"
+                                },
+                                "type": {
+                                    "const": "unit_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "export_state_machine": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "export_state_machine"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Actions/ReportExportHandlersTest.php tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php --no-coverage --log-junit build/reports/gates/results/export_state_machine.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "seven_state_transition_matrix",
+                                "retry_parent_ready_unexpired",
+                                "retry_denial_before_side_effects"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.export_state_machine"
+                                },
+                                "type": {
+                                    "const": "unit_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "export_idempotency": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "export_idempotency"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php tests/Unit/Reporting/Actions/ReportExportHandlersTest.php --no-coverage --log-junit build/reports/gates/results/export_idempotency.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "same_org_cross_actor_reuse",
+                                "changed_body_conflict",
+                                "other_org_independence",
+                                "retry_key_replay",
+                                "parent_run_fence"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.export_idempotency"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "dispatch_outbox_atomicity": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "dispatch_outbox_atomicity"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportAuditIntentContractTest.php tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php --no-coverage --log-junit build/reports/gates/results/dispatch_outbox_atomicity.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "closed_named_schemas",
+                                "aggregate_transport_rollback",
+                                "unique_event_keys",
+                                "closed_subjects"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.dispatch_outbox_atomicity"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "dispatch_lease_recovery": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "dispatch_lease_recovery"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportDispatchBackoffPolicyTest.php tests/Unit/Reporting/Dispatch/ReportDispatchIntentPublisherTest.php tests/Unit/Reporting/Dispatch/ReportDispatchIntentReconcilerTest.php tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php --no-coverage --log-junit build/reports/gates/results/dispatch_lease_recovery.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "skip_locked_claims",
+                                "lease_fencing_reclaim",
+                                "deterministic_backoff",
+                                "publication_redelivery"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.dispatch_lease_recovery"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "dispatch_dead_letter": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "dispatch_dead_letter"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportDispatchIntentPublisherTest.php tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/dispatch_dead_letter.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "run_attempt_12_atomic_failure",
+                                "export_attempt_12_atomic_failure",
+                                "pre_table_branch_absent"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.dispatch_dead_letter"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "audit_outbox_delivery": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "audit_outbox_delivery"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Dispatch/ReportAuditIntentContractTest.php tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php tests/Integration/Reporting/Audit/CoreReportAuditIntentConsumerTest.php tests/Unit/Reporting/Audit/AppendReportAuditEventJobTest.php tests/Unit/Reporting/Audit/ReportAuditOutboxSchedulerTest.php tests/Architecture/Reporting/ReportingExecutionBindingsTest.php --no-coverage --log-junit build/reports/gates/results/audit_outbox_delivery.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "id_only_mapping",
+                                "transactional_intent",
+                                "append_ack_order",
+                                "append_replay",
+                                "lease_fenced_backoff",
+                                "attempt_12_dead_letter",
+                                "critical_alerting"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.audit_outbox_delivery"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "current_async_authorization": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "current_async_authorization"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Execution/CurrentReportAuthorizationTargetTest.php tests/Unit/Reporting/Access/ReportAuthorizationSubjectTest.php tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php tests/Unit/Reporting/Access/CurrentReportPermissionDecisionTest.php tests/Unit/Reporting/Access/ReportScopedResourceAccessDecisionTest.php tests/Unit/Reporting/Access/ReportScopedResourceAuthorizerContractTest.php tests/Unit/Reporting/Access/ReportHttpAuthorizationOrchestratorTest.php tests/Unit/Reporting/Access/LaravelReportHttpAuthorizationTargetResolverTest.php tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorTest.php tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorBehaviorTest.php tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorRaceTest.php tests/Feature/Reporting/Execution/LaravelCurrentReportScopeAuthorizerTest.php tests/Feature/Reporting/Execution/LaravelCurrentReportScopeAuthorizationRaceTest.php tests/Feature/Reporting/Persistence/ReportTypedResourceScopeCutoverMigrationTest.php tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php tests/Architecture/Reporting/ReportAuthorizationSubjectReaderOwnershipTest.php tests/Feature/Reporting/Persistence/EloquentReportAuthorizationSubjectReaderTest.php tests/Feature/Reporting/Persistence/EloquentReportRunAsyncContextSeedReaderTest.php tests/Feature/Reporting/Persistence/EloquentReportExportAsyncContextSeedReaderTest.php tests/Unit/Reporting/Execution/LaravelReportRunExecutionContextRehydratorTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php tests/Feature/Reporting/Persistence/EloquentReportExportAuthorizationPostgresTest.php --no-coverage --log-junit build/reports/gates/results/current_async_authorization.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "typed_scope_cutover",
+                                "exact_resource_decisions",
+                                "repeatable_read_snapshot",
+                                "state_operation_matrix",
+                                "revocation_before_side_effects",
+                                "request_globals_bypassed",
+                                "authority_cache_bypassed",
+                                "atomic_cutover_rollback"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.current_async_authorization"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "execution_attempt_leases": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "execution_attempt_leases"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php tests/Architecture/Reporting/ReportingExecutionBindingsTest.php tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php tests/Unit/Reporting/Execution/ReportRunLeaseRecoveryStoreContractTest.php tests/Unit/Reporting/Execution/ReportRunAttemptFinalizerTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Feature/Reporting/Persistence/EloquentReportRunLeaseRecoveryStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportRunAttemptLifecycleStoreTest.php tests/Unit/Reporting/Execution/ReportExportLeaseRecoveryStoreContractTest.php tests/Unit/Reporting/Exports/ReportExportAttemptFinalizerTest.php tests/Unit/Reporting/Exports/FinalizeFailedReportExportAttemptTest.php tests/Unit/Reporting/Jobs/GenerateReportExportJobTest.php tests/Feature/Reporting/Persistence/EloquentReportExportLeaseRecoveryStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportExportAttemptLifecycleStoreTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/execution_attempt_leases.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "runtime_inequalities",
+                                "authority_free_claim",
+                                "same_token_renewal",
+                                "token_fencing",
+                                "leased_failure",
+                                "watchdog_requeue",
+                                "job_failed_aba_fence"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.execution_attempt_leases"
+                                },
+                                "type": {
+                                    "const": "queue_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "renderer_parity": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "renderer_parity"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Contract/Reporting/ReportExportParityContractTest.php tests/Unit/Reporting/Exports/CsvReportExportRendererTest.php tests/Unit/Reporting/Exports/XlsxReportExportRendererTest.php tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php tests/Unit/Reporting/Exports/ReportExportRendererRegistryTest.php --no-coverage --log-junit build/reports/gates/results/renderer_parity.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "csv_semantic_identity",
+                                "xlsx_semantic_identity",
+                                "pdf_semantic_identity"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.renderer_parity"
+                                },
+                                "type": {
+                                    "const": "parity_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "pdf_renderer_budget": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "pdf_renderer_budget"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Evidence/PlanOneBGateArtifactRecorderTest.php tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php tests/Unit/Reporting/Exports/ReportExportRendererRegistryTest.php tests/Performance/Reporting/ReportExportStreamingBudgetTest.php tests/Unit/Reporting/Jobs/GenerateReportExportJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php tests/Unit/Reporting/Exports/ReconcileCompletedReportArtifactsTest.php tests/Unit/Reporting/Exports/FinalizeFailedReportExportAttemptTest.php --no-coverage --log-junit build/reports/gates/results/pdf_renderer_budget.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "locked_dependency_versions",
+                                "definition_budget_registry",
+                                "row_boundary_5000",
+                                "page_html_pdf_memory_limits",
+                                "safe_failure_mapping",
+                                "retry_cleanup"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.pdf_renderer_budget"
+                                },
+                                "type": {
+                                    "const": "performance_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/pdfMeasurements"
+                }
+            }
+        },
+        "streaming_budget": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "streaming_budget"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Performance/Reporting/ReportExportStreamingBudgetTest.php tests/Unit/Reporting/Exports/CsvReportExportRendererTest.php tests/Unit/Reporting/Exports/XlsxReportExportRendererTest.php tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/streaming_budget.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "bounded_chunks",
+                                "bounded_peak_memory",
+                                "bounded_artifact_bytes"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.streaming_budget"
+                                },
+                                "type": {
+                                    "const": "performance_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/streamingMeasurements"
+                }
+            }
+        },
+        "file_service_call_graph": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "file_service_call_graph"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Services/Storage/FileServiceMultipartTest.php tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php tests/Feature/Reporting/Actions/ReportDownloadLinkHandlerTest.php tests/Unit/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php --no-coverage --log-junit build/reports/gates/results/file_service_call_graph.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "multipart_create",
+                                "multipart_upload_part",
+                                "multipart_complete",
+                                "multipart_abort",
+                                "exact_version_head",
+                                "temporary_link",
+                                "exact_version_delete"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.file_service_call_graph"
+                                },
+                                "type": {
+                                    "const": "architecture_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "s3_version_race": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "s3_version_race"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Integration/Reporting/Exports/S3ReportArtifactIntegrationTest.php tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php tests/Unit/Reporting/Exports/ReconcileCompletedReportArtifactsTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/s3_version_race.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "conditional_race_winner",
+                                "loser_abort_once",
+                                "post_completion_identity",
+                                "metadata_drift_fail_closed"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.s3_version_race"
+                                },
+                                "type": {
+                                    "const": "s3_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "audit_fail_closed": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "audit_fail_closed"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php tests/Integration/Reporting/Jobs/GenerateReportExportJobIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/audit_fail_closed.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "ready_transition_rollback",
+                                "terminal_transition_rollback",
+                                "remote_io_outside_transaction"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.audit_fail_closed"
+                                },
+                                "type": {
+                                    "const": "postgresql_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "retention_exact_version": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "retention_exact_version"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Exports/ReconcileCompletedReportArtifactsTest.php tests/Unit/Reporting/Retention/ExpireReportsServiceTest.php tests/Unit/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php tests/Feature/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php tests/Integration/Reporting/Exports/S3ReportArtifactIntegrationTest.php --no-coverage --log-junit build/reports/gates/results/retention_exact_version.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "exact_version_inventory",
+                                "lease_fenced_delete",
+                                "historical_identity_retained",
+                                "replay_idempotency"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.retention_exact_version"
+                                },
+                                "type": {
+                                    "const": "s3_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "action_bindings": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "action_bindings"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Architecture/Reporting/ReportingExecutionBindingsTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Unit/Reporting/Actions/ReportRunHandlersTest.php tests/Unit/Reporting/Actions/ReportExportHandlersTest.php tests/Unit/Reporting/Actions/ReportReadHandlersTest.php --no-coverage --log-junit build/reports/gates/results/action_bindings.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "one_handler_per_action",
+                                "thin_controllers",
+                                "catalog_publication_unbound"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.action_bindings"
+                                },
+                                "type": {
+                                    "const": "architecture_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "error_retryability": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "error_retryability"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Errors/ReportExecutionErrorMappingTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php --no-coverage --log-junit build/reports/gates/results/error_retryability.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "status_mapping",
+                                "retryability_mapping",
+                                "technical_message_absent"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.error_retryability"
+                                },
+                                "type": {
+                                    "const": "contract_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "run_export_observability": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "run_export_observability"
+                },
+                "command": {
+                    "const": "php vendor/bin/phpunit tests/Unit/Reporting/Telemetry/ReportExecutionTelemetryTest.php --no-coverage --log-junit build/reports/gates/results/run_export_observability.junit.xml"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "bounded_run_families",
+                                "bounded_export_families",
+                                "non_run_export_family_absent"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.run_export_observability"
+                                },
+                                "type": {
+                                    "const": "observability_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "static_analysis": {
+            "$ref": "#/$defs/gate",
+            "properties": {
+                "id": {
+                    "const": "static_analysis"
+                },
+                "command": {
+                    "const": "php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php && php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php && php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBGateArtifactRecorder.php && php -l scripts/reporting/run-plan-1b-gate.php && php -d memory_limit=1G vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --error-format=json --no-progress app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBGateArtifactRecorder.php scripts/reporting/run-plan-1b-gate.php"
+                },
+                "result": {
+                    "properties": {
+                        "required_checks": {
+                            "const": [
+                                "changed_php_syntax",
+                                "changed_php_phpstan"
+                            ]
+                        }
+                    }
+                },
+                "artifacts": {
+                    "prefixItems": [
+                        {
+                            "properties": {
+                                "id": {
+                                    "const": "plan1b.gate.static_analysis"
+                                },
+                                "type": {
+                                    "const": "phpstan_json"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "measurements": {
+                    "$ref": "#/$defs/noMeasurements"
+                }
+            }
+        },
+        "ownership": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "plan_1a_symbols",
+                "plan_1b_symbols",
+                "external_plan_owners"
+            ],
+            "properties": {
+                "plan_1a_symbols": {
+                    "const": [
+                        "CandidateReportDefinition",
+                        "CreateReportExportData",
+                        "CreateReportRunData",
+                        "PublishedReportDefinition",
+                        "ReportCursor",
+                        "ReportDataProvider",
+                        "ReportDefinition",
+                        "ReportDefinitionBinding",
+                        "ReportDefinitionBindingMap",
+                        "ReportDownloadLink",
+                        "ReportDrillDownProvider",
+                        "ReportExport",
+                        "ReportPage",
+                        "ReportQuery",
+                        "ReportRowQuery",
+                        "ReportRun"
+                    ]
+                },
+                "plan_1b_symbols": {
+                    "const": [
+                        "PlanOneACompletionRef",
+                        "PlanOneACompletionVerifier",
+                        "PlanOneBEvidenceBuilder",
+                        "PlanOneBEvidenceValidator",
+                        "PlanOneBGateArtifactRecorder"
+                    ]
+                },
+                "external_plan_owners": {
+                    "const": [
+                        "plan_1c_publication_registry",
+                        "plan_2_candidate_provider_bindings",
+                        "plan_3_candidate_provider_bindings",
+                        "plan_4_evidence_verification_rollout"
+                    ]
+                }
+            }
+        },
+        "handoff": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "plans_2_and_3",
+                "plan_1c",
+                "plan_4",
+                "artifact_path",
+                "digest_algorithm"
+            ],
+            "properties": {
+                "plans_2_and_3": {
+                    "const": "plan_1a_provider_ports_candidate_bindings_only"
+                },
+                "plan_1c": {
+                    "const": "published_registry_map_and_all_publication_transitions"
+                },
+                "plan_4": {
+                    "const": "evidence_verification_and_deployment_rollout_only"
+                },
+                "artifact_path": {
+                    "const": "build/reports/plan-1b-completion.json"
+                },
+                "digest_algorithm": {
+                    "const": "sha256"
+                }
+            }
+        }
     }
-  }
 }

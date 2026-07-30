@@ -10,8 +10,12 @@ use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceVali
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBGateArtifactRecorder;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
+use DOMDocument;
+use FilesystemIterator;
 use Opis\JsonSchema\Validator as JsonSchemaValidator;
 use PHPUnit\Framework\TestCase;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use Symfony\Component\Process\Process;
 
 final class PlanOneBEndToEndContractTest extends TestCase
@@ -33,50 +37,43 @@ final class PlanOneBEndToEndContractTest extends TestCase
             $gateDirectory = $directory.'/build/reports/gates';
             self::assertTrue(mkdir($gateDirectory, 0777, true));
             $gateArtifacts = [];
+            $recorder = new PlanOneBGateArtifactRecorder($directory);
             foreach ($fixture['gates'] as $gate) {
                 $gatePath = $gateDirectory.'/'.$gate['id'].'.json';
-                $isStaticAnalysis = $gate['id'] === 'static_analysis';
-                $testPath = $isStaticAnalysis
-                    ? 'phpstan.neon.dist'
-                    : substr($gate['command'], strlen('php vendor/bin/phpunit '), -strlen(' --no-coverage'));
-                $stdout = json_encode([
-                    'tests' => $gate['result']['tests'],
-                    'assertions' => $gate['result']['assertions'],
-                    'cases' => array_map(
-                        static fn (string $check): array => [
-                            'id' => $check,
-                            'status' => 'passed',
-                            'tests' => 1,
-                            'assertions' => 1,
+                $definition = PlanOneBGateArtifactRecorder::definition($gate['id']);
+                foreach ($definition['producer']['test_paths'] as $path) {
+                    $this->writeFile($directory.'/'.$path, "<?php\n");
+                }
+                $resultPath = $directory.'/'.$definition['producer']['result_artifact_path'];
+                if ($gate['id'] === 'static_analysis') {
+                    $this->writeStaticResult($resultPath, $definition);
+                    $envelope = $recorder->recordStaticAnalysis(
+                        $resultPath,
+                        $fixture['repository_revision'],
+                    );
+                } else {
+                    $this->writeJunit($resultPath, $directory, $definition['producer']['test_paths']);
+                    $envelope = $recorder->recordPhpUnit(
+                        $gate['id'],
+                        [
+                            'command' => $definition['command'],
+                            'exit_code' => 0,
+                            'started_at' => '2026-07-30T11:59:59Z',
+                            'finished_at' => '2026-07-30T12:00:00Z',
+                            'duration_ms' => $gate['duration_ms'],
+                            'stdout' => "PHPUnit 11.5.0\nOK\n",
+                            'stderr' => '',
                         ],
-                        $gate['result']['required_checks'],
-                    ),
-                ], JSON_THROW_ON_ERROR);
-                $envelope = (new PlanOneBGateArtifactRecorder)->record(
-                    [
-                        'artifact_id' => $gate['artifacts'][0]['id'],
-                        'artifact_type' => $gate['artifacts'][0]['type'],
-                        'producer' => [
-                            'id' => $isStaticAnalysis ? 'static-analysis' : 'phpunit-11',
-                            'test_path' => $testPath,
-                            'artifact_path' => 'build/reports/gates/'.$gate['id'].'.json',
-                        ],
-                        'gate_id' => $gate['id'],
-                        'command' => $gate['command'],
-                        'required_checks' => $gate['result']['required_checks'],
-                        'measurements' => $gate['measurements'],
-                    ],
-                    [
-                        'command' => $gate['command'],
-                        'exit_code' => 0,
-                        'started_at' => '2026-07-30T11:59:59Z',
-                        'finished_at' => '2026-07-30T12:00:00Z',
-                        'duration_ms' => $gate['duration_ms'],
-                        'stdout' => $stdout,
-                        'stderr' => '',
-                    ],
-                    $fixture['repository_revision'],
-                );
+                        $resultPath,
+                        $this->writeMeasurementResult(
+                            $directory,
+                            $definition,
+                            $gate['measurements'],
+                            $fixture['repository_revision'],
+                        ),
+                        $fixture['repository_revision'],
+                    );
+                }
                 $bytes = CanonicalJson::encode($envelope)."\n";
                 file_put_contents($gatePath, $bytes);
                 $gateArtifacts[] = [
@@ -104,18 +101,7 @@ final class PlanOneBEndToEndContractTest extends TestCase
                 self::assertSame($gateArtifacts[$index]['sha256'], $gate['artifacts'][0]['sha256']);
             }
         } finally {
-            foreach (glob($directory.'/build/reports/gates/*') ?: [] as $path) {
-                if (is_file($path)) {
-                    unlink($path);
-                }
-            }
-            if (is_file($artifact)) {
-                unlink($artifact);
-            }
-            rmdir($directory.'/build/reports/gates');
-            rmdir($directory.'/build/reports');
-            rmdir($directory.'/build');
-            rmdir($directory);
+            $this->removeDirectory($directory);
         }
     }
 
@@ -164,6 +150,127 @@ final class PlanOneBEndToEndContractTest extends TestCase
         );
 
         self::assertTrue($result->isValid(), $result->error()?->message() ?? 'JSON Schema validation failed');
+    }
+
+    private function writeJunit(string $path, string $root, array $suitePaths): void
+    {
+        $document = new DOMDocument('1.0', 'UTF-8');
+        $suites = $document->createElement('testsuites');
+        $document->appendChild($suites);
+        foreach ($suitePaths as $index => $suitePath) {
+            $suite = $document->createElement('testsuite');
+            $suite->setAttribute('name', 'Suite'.($index + 1));
+            $suite->setAttribute('file', str_replace('/', DIRECTORY_SEPARATOR, $root.'/'.$suitePath));
+            $suite->setAttribute('tests', '1');
+            $suite->setAttribute('assertions', '1');
+            $suite->setAttribute('errors', '0');
+            $suite->setAttribute('failures', '0');
+            $suite->setAttribute('skipped', '0');
+            $testCase = $document->createElement('testcase');
+            $testCase->setAttribute('name', 'test_machine_result');
+            $testCase->setAttribute('assertions', '1');
+            $suite->appendChild($testCase);
+            $suites->appendChild($suite);
+        }
+        $this->writeFile($path, (string) $document->saveXML());
+    }
+
+    private function writeStaticResult(string $path, array $definition): void
+    {
+        $process = static fn (string $command): array => [
+            'command' => $command,
+            'exit_code' => 0,
+            'started_at' => '2026-07-30T11:59:59Z',
+            'finished_at' => '2026-07-30T12:00:00Z',
+            'duration_ms' => 1,
+            'stdout' => '',
+            'stderr' => '',
+        ];
+        $syntax = [];
+        foreach ($definition['producer']['test_paths'] as $file) {
+            $result = $process('php -l '.$file);
+            $result['path'] = $file;
+            $result['stdout'] = 'No syntax errors detected in '.$file;
+            $syntax[] = $result;
+        }
+        $phpstan = $process($definition['static_phpstan_command']);
+        $phpstan['stdout'] = '{"totals":{"errors":0,"file_errors":0},"files":{},"errors":[]}';
+        $this->writeFile($path, json_encode([
+            'schema_version' => '1.0.0',
+            'command' => $definition['command'],
+            'started_at' => '2026-07-30T11:59:59Z',
+            'finished_at' => '2026-07-30T12:00:00Z',
+            'duration_ms' => 4,
+            'syntax' => $syntax,
+            'phpstan' => $phpstan,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    private function writeMeasurementResult(
+        string $root,
+        array $definition,
+        array $measurements,
+        string $revision,
+    ): ?string {
+        $relativePath = $definition['producer']['measurement_artifact_path'];
+        if ($relativePath === null) {
+            self::assertSame([], $measurements);
+
+            return null;
+        }
+        self::assertIsString($relativePath);
+        self::assertIsString($definition['producer']['measurement_command']);
+        $path = $root.'/'.$relativePath;
+        $nonce = str_repeat('a', 64);
+        $rawBytes = CanonicalJson::encode([
+            'gate_id' => $definition['gate_id'],
+            'repository_revision' => $revision,
+            'nonce' => $nonce,
+            'measurements' => $measurements,
+        ])."\n";
+        $this->writeFile($path, CanonicalJson::encode([
+            'schema_version' => '1.0.0',
+            'gate_id' => $definition['gate_id'],
+            'repository_revision' => $revision,
+            'nonce' => $nonce,
+            'raw_measurements_sha256' => hash('sha256', $rawBytes),
+            'process' => [
+                'command' => $definition['producer']['measurement_command'],
+                'exit_code' => 0,
+                'started_at' => '2026-07-30T11:59:59Z',
+                'finished_at' => '2026-07-30T12:00:00Z',
+                'duration_ms' => 1,
+                'stdout' => "PHPUnit 11.5.0\nOK\n",
+                'stderr' => '',
+            ],
+            'measurements' => $measurements,
+        ])."\n");
+
+        return $path;
+    }
+
+    private function writeFile(string $path, string $bytes): void
+    {
+        $directory = dirname($path);
+        if (! is_dir($directory)) {
+            mkdir($directory, 0777, true);
+        }
+        file_put_contents($path, $bytes);
+    }
+
+    private function removeDirectory(string $directory): void
+    {
+        if (! is_dir($directory)) {
+            return;
+        }
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($iterator as $item) {
+            $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+        }
+        rmdir($directory);
     }
 
     private function reference(array $fixture): PlanOneACompletionRef
