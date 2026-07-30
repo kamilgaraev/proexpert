@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportProgressWritePolicy;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
@@ -66,10 +67,11 @@ final class MaterializeReportRunJob implements ShouldQueue
         ReportProgressWritePolicy $progressPolicy,
         ReportExecutionClock $clock,
         ReportExecutionTelemetry $telemetry,
+        ReportExecutionRuntimeConfiguration $runtime,
     ): void {
         $leaseToken = $this->envelopeUuid();
         $claimedAt = $clock->now();
-        $leaseExpiresAt = $claimedAt->modify('+960 seconds');
+        $leaseExpiresAt = $claimedAt->modify("+{$runtime->executionLeaseSeconds} seconds");
         if (! $attempts->claimOrRenew($this->runId, $leaseToken, $leaseExpiresAt, $claimedAt)) {
             return;
         }
@@ -120,7 +122,7 @@ final class MaterializeReportRunJob implements ShouldQueue
                     $this->runId,
                     $leaseToken,
                     $progress,
-                    $afterMaterialization->modify('+960 seconds'),
+                    $afterMaterialization->modify("+{$runtime->executionLeaseSeconds} seconds"),
                     $afterMaterialization,
                 );
             }

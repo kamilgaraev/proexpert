@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAud
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntent;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntentLease;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\AppendReportAuditEventJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\CoreReportAuditIntentConsumer;
@@ -50,41 +51,16 @@ final class AppendReportAuditEventJobTest extends TestCase
     {
         Carbon::setTestNow(Carbon::parse('2026-07-30T10:00:00.123456Z'));
         $store = new JobAuditIntentStore(null);
-        $consumer = (new \ReflectionClass(CoreReportAuditIntentConsumer::class))->newInstanceWithoutConstructor();
+        $recorder = (new \ReflectionClass(\App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder::class))
+            ->newInstanceWithoutConstructor();
+        $consumer = new CoreReportAuditIntentConsumer($recorder, $this->runtime());
         $job = $this->jobWithEnvelope('00000000-0000-4000-8000-000000000001');
 
-        $job->handle($consumer, $store);
+        $job->handle($consumer, $store, $this->runtime());
 
         self::assertSame(1, $store->claimCalls);
         self::assertSame(0, $store->loadCalls);
         self::assertSame(0, $store->acknowledgeCalls);
-    }
-
-    public function test_failed_delivery_uses_the_same_lease_token_and_exact_backoff(): void
-    {
-        Carbon::setTestNow(Carbon::parse('2026-07-30T10:00:00.999999Z'));
-        $token = '00000000-0000-4000-8000-000000000003';
-        $intent = $this->intent(3);
-        $store = new JobAuditIntentStore(new ReportAuditIntentLease(
-            self::INTENT_ID,
-            $token,
-            new DateTimeImmutable('2026-07-30T10:01:00Z'),
-            3,
-        ), $intent);
-        $container = new Container;
-        $container->instance(ReportAuditIntentStore::class, $store);
-        Container::setInstance($container);
-        $job = $this->jobWithEnvelope($token);
-
-        $job->failed(new \RuntimeException('Core unavailable'));
-
-        self::assertCount(1, $store->failures);
-        self::assertSame($token, $store->failures[0]['lease_token']);
-        self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $store->failures[0]['error_code']);
-        self::assertSame(
-            '2026-07-30T10:01:00.000000Z',
-            $store->failures[0]['next_attempt_at']->format('Y-m-d\TH:i:s.u\Z'),
-        );
     }
 
     public function test_handle_records_failure_before_the_queue_exception_escapes(): void
@@ -100,11 +76,13 @@ final class AppendReportAuditEventJobTest extends TestCase
             ),
             $this->intent(3, 'report.unknown'),
         );
-        $consumer = (new \ReflectionClass(CoreReportAuditIntentConsumer::class))->newInstanceWithoutConstructor();
+        $recorder = (new \ReflectionClass(\App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder::class))
+            ->newInstanceWithoutConstructor();
+        $consumer = new CoreReportAuditIntentConsumer($recorder, $this->runtime());
         $job = $this->jobWithEnvelope($token);
 
         try {
-            $job->handle($consumer, $store);
+            $job->handle($consumer, $store, $this->runtime());
             self::fail('Invalid Core audit event was accepted.');
         } catch (InvalidArgumentException $exception) {
             self::assertSame('report_core_audit_intent_invalid', $exception->getMessage());
@@ -119,13 +97,8 @@ final class AppendReportAuditEventJobTest extends TestCase
             $store->failures[0]['next_attempt_at']->format('Y-m-d\TH:i:s.u\Z'),
         );
 
-        $container = new Container;
-        $container->instance(ReportAuditIntentStore::class, $store);
-        Container::setInstance($container);
-        $job->failed($exception);
-
         self::assertCount(1, $store->failures);
-        self::assertSame(2, $store->loadCalls);
+        self::assertSame(1, $store->loadCalls);
     }
 
     public function test_constructor_rejects_every_non_ulid_identifier(): void
@@ -182,6 +155,20 @@ final class AppendReportAuditEventJobTest extends TestCase
             $attempt,
             new DateTimeImmutable('2026-07-30T09:00:00Z'),
             new DateTimeImmutable('2026-07-30T09:00:00Z'),
+        );
+    }
+
+    private function runtime(): ReportExecutionRuntimeConfiguration
+    {
+        return new ReportExecutionRuntimeConfiguration(
+            100,
+            60,
+            12,
+            100,
+            300,
+            12,
+            960,
+            100,
         );
     }
 }

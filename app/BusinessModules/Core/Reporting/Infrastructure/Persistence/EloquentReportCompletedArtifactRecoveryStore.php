@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportCompletedArtifactRecoveryStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
@@ -20,7 +21,8 @@ final readonly class EloquentReportCompletedArtifactRecoveryStore implements Rep
 {
     public function __construct(
         private ReportExportHydrator $hydrator,
-        private int $pollAfterMs = 1000,
+        private int $pollAfterMs,
+        private ReportExecutionRuntimeConfiguration $runtime,
     ) {}
 
     public function claimExpiredUpload(
@@ -33,7 +35,7 @@ final readonly class EloquentReportCompletedArtifactRecoveryStore implements Rep
         if (
             ! Str::isUuid($newLeaseToken)
             || $newLeaseToken !== strtolower($newLeaseToken)
-            || $newLeaseExpiresAt != $occurredAt->modify('+960 seconds')
+            || $newLeaseExpiresAt != $occurredAt->modify("+{$this->runtime->executionLeaseSeconds} seconds")
         ) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_REQUEST_INVALID,

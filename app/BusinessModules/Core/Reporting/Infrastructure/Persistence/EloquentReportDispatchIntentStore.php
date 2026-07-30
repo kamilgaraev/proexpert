@@ -6,11 +6,13 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionTelemetry;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntent;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchLease;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchTopic;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -31,7 +33,11 @@ use LogicException;
 
 final class EloquentReportDispatchIntentStore implements ReportDispatchIntentStore
 {
-    public function __construct(private readonly ReportTransitionAudit $audit) {}
+    public function __construct(
+        private readonly ReportTransitionAudit $audit,
+        private readonly ReportExecutionTelemetry $telemetry,
+        private readonly ReportExecutionRuntimeConfiguration $runtime,
+    ) {}
 
     public function addRunIntent(string $runId, int $organizationId, string $eventKey, DateTimeImmutable $occurredAt): void
     {
@@ -53,7 +59,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
         return DB::transaction(function () use ($limit, $now, $leasedUntil, $leaseToken): array {
             $records = ReportDispatchIntentRecord::query()
                 ->where('status', 'pending')
-                ->where('attempt_count', '<', 12)
+                ->where('attempt_count', '<', $this->runtime->dispatchMaxAttempts)
                 ->where('available_at', '<=', $this->timestamp($now))
                 ->orderBy('available_at')
                 ->orderBy('id')
@@ -114,7 +120,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                 return;
             }
 
-            if ((int) $record->attempt_count === 12) {
+            if ((int) $record->attempt_count === $this->runtime->dispatchMaxAttempts) {
                 if (
                     $record->aggregate_type === ReportDispatchAggregate::EXPORT->value
                     && $record->topic === ReportDispatchTopic::GENERATE_EXPORT->value
@@ -128,7 +134,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                     ->whereKey($record->id)
                     ->where('status', 'leased')
                     ->where('lease_token', $leaseToken)
-                    ->where('attempt_count', 12)
+                    ->where('attempt_count', $this->runtime->dispatchMaxAttempts)
                     ->update([
                         'status' => 'dead_letter',
                         'lease_token' => null,
@@ -177,7 +183,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                 ->get();
             $reclaimed = 0;
             foreach ($records as $record) {
-                $terminal = (int) $record->attempt_count === 12;
+                $terminal = (int) $record->attempt_count === $this->runtime->dispatchMaxAttempts;
                 if (
                     $terminal
                     && $record->aggregate_type === ReportDispatchAggregate::EXPORT->value
@@ -185,6 +191,18 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                 ) {
                     if ($this->failQueuedExport($record, ReportErrorCode::REPORT_DEPENDENCY_FAILED, $occurredAt, true)) {
                         $reclaimed++;
+                        $this->telemetry->dispatchIntent(
+                            ReportDispatchAggregate::EXPORT->value,
+                            ReportDispatchTopic::GENERATE_EXPORT->value,
+                            'dead_letter',
+                            max(
+                                0.0,
+                                (float) (
+                                    $occurredAt->format('U.u')
+                                    - $this->instant($record->occurred_at)->format('U.u')
+                                ),
+                            ),
+                        );
                     }
 
                     continue;
@@ -208,6 +226,18 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                     continue;
                 }
                 $reclaimed++;
+                $this->telemetry->dispatchIntent(
+                    (string) $record->aggregate_type,
+                    (string) $record->topic,
+                    $terminal ? 'dead_letter' : 'reclaimed',
+                    max(
+                        0.0,
+                        (float) (
+                            $occurredAt->format('U.u')
+                            - $this->instant($record->occurred_at)->format('U.u')
+                        ),
+                    ),
+                );
                 if (
                     $terminal
                     && $record->aggregate_type === ReportDispatchAggregate::RUN->value
@@ -264,7 +294,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
     {
         if ($intent->aggregate_type !== ReportDispatchAggregate::EXPORT->value
             || $intent->topic !== ReportDispatchTopic::GENERATE_EXPORT->value
-            || (int) $intent->attempt_count !== 12) {
+            || (int) $intent->attempt_count !== $this->runtime->dispatchMaxAttempts) {
             return false;
         }
 
@@ -281,7 +311,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
             ->whereKey($intent->id)
             ->where('status', 'leased')
             ->where('lease_token', $intent->lease_token)
-            ->where('attempt_count', 12);
+            ->where('attempt_count', $this->runtime->dispatchMaxAttempts);
         if ($requiresExpiredLease) {
             $intentQuery->where('lease_expires_at', '<=', $this->timestamp($occurredAt));
         }

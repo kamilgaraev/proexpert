@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\Telemetry;
 require_once dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/Infrastructure/Telemetry/LaravelReportExecutionTelemetry.php';
 
 use App\BusinessModules\Core\Reporting\Infrastructure\Telemetry\LaravelReportExecutionTelemetry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Telemetry\ReportExecutionAlertWindow;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 
@@ -23,7 +24,11 @@ final class ReportExecutionTelemetryTest extends TestCase
                 $this->records[] = [$level, $message, $context];
             }
         };
-        $telemetry = new LaravelReportExecutionTelemetry($logger);
+        $telemetry = new LaravelReportExecutionTelemetry(
+            $logger,
+            [],
+            new ReportExecutionAlertWindow,
+        );
 
         $telemetry->runTransition('cash_flow', 'ready');
         $telemetry->runDuration('cash_flow', 'ready', 1.25);
@@ -68,7 +73,11 @@ final class ReportExecutionTelemetryTest extends TestCase
         {
             public function log($level, string|\Stringable $message, array $context = []): void {}
         };
-        $telemetry = new LaravelReportExecutionTelemetry($logger);
+        $telemetry = new LaravelReportExecutionTelemetry(
+            $logger,
+            [],
+            new ReportExecutionAlertWindow,
+        );
 
         $this->expectException(\InvalidArgumentException::class);
         $telemetry->runTransition('cash_flow', 'ready:01J123456789012345678901234');
@@ -93,7 +102,7 @@ final class ReportExecutionTelemetryTest extends TestCase
             'execution_error_ratio' => 0.05,
             'duration_regression_ratio' => 1.25,
             'storage_abort_ratio' => 0.01,
-        ]);
+        ], new ReportExecutionAlertWindow);
 
         $telemetry->runTransition('cash_flow', 'failed');
         $telemetry->exportTransition('cash_flow', 'pdf', 'failed');
@@ -125,5 +134,59 @@ final class ReportExecutionTelemetryTest extends TestCase
         self::assertNotEmpty($alerts);
         self::assertContains('oldest_pending', array_column(array_column($alerts, 2), 'signal'));
         self::assertContains('audit_dead_letter', array_column(array_column($alerts, 2), 'signal'));
+    }
+
+    public function test_sustained_thresholds_emit_fail_hard_alerts(): void
+    {
+        $logger = new class extends AbstractLogger
+        {
+            public array $records = [];
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                $this->records[] = [$level, $message, $context];
+            }
+        };
+        $telemetry = new LaravelReportExecutionTelemetry($logger, [
+            'oldest_pending_seconds' => 300,
+            'audit_dead_letters' => 0,
+            'dispatch_failure_ratio' => 0.05,
+            'lease_reclaims' => 3,
+            'execution_error_ratio' => 0.05,
+            'duration_regression_ratio' => 1.25,
+            'storage_abort_ratio' => 0.01,
+        ], new ReportExecutionAlertWindow);
+
+        for ($index = 0; $index < 20; $index++) {
+            $telemetry->dispatchIntent('run', 'materialize_run', 'retry', 1.0);
+            $telemetry->executionAttempt('run', 'REPORT_INTERNAL_ERROR');
+            $telemetry->exportTransition('cash_flow', 'xlsx', 'ready');
+            $telemetry->multipartAbort('cash_flow', 'xlsx');
+        }
+        for ($index = 0; $index < 5; $index++) {
+            $telemetry->runDuration('cash_flow', 'ready', 1.0);
+        }
+        $telemetry->runDuration('cash_flow', 'ready', 2.0);
+        for ($index = 0; $index < 3; $index++) {
+            $telemetry->executionLeaseReclaimed('run');
+        }
+
+        $signals = array_column(array_column(array_values(array_filter(
+            $logger->records,
+            static fn (array $record): bool => $record[1] === 'reports.alert',
+        )), 2), 'signal');
+
+        foreach ([
+            'dispatch_failure',
+            'execution_error_ratio',
+            'storage_abort_ratio',
+            'duration_regression',
+            'lease_reclaims',
+        ] as $signal) {
+            self::assertContains($signal, $signals);
+        }
+        self::assertSame(1, count(array_filter($signals, static fn (string $signal): bool => $signal === 'dispatch_failure')));
+        self::assertSame(1, count(array_filter($signals, static fn (string $signal): bool => $signal === 'execution_error_ratio')));
+        self::assertSame(1, count(array_filter($signals, static fn (string $signal): bool => $signal === 'storage_abort_ratio')));
     }
 }

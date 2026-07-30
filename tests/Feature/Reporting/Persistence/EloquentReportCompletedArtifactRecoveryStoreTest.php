@@ -62,6 +62,8 @@ final class EloquentReportCompletedArtifactRecoveryStoreTest extends TestCase
         $newToken = '0195e44b-a9e7-7f12-a8af-51f2d284d300';
         $store = new EloquentReportCompletedArtifactRecoveryStore(
             new ReportExportHydrator,
+            1000,
+            \Tests\Support\Reporting\ReportRuntimeFixture::configuration(),
         );
         $intents = new CompletedArtifactDispatchIntentStore;
         $watchdog = new EloquentReportExportLeaseRecoveryStore($intents);
@@ -131,6 +133,8 @@ final class EloquentReportCompletedArtifactRecoveryStoreTest extends TestCase
             ->build();
         $store = new EloquentReportCompletedArtifactRecoveryStore(
             new ReportExportHydrator,
+            1000,
+            \Tests\Support\Reporting\ReportRuntimeFixture::configuration(),
         );
 
         try {

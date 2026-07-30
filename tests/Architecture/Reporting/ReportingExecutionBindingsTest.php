@@ -205,6 +205,23 @@ final class ReportingExecutionBindingsTest extends TestCase
         self::assertInstanceOf(ReportExportRendererRegistry::class, $this->app->make(ReportExportRendererRegistry::class));
     }
 
+    public function test_boot_forces_the_closed_authorization_graph_and_rejects_bypass_bindings(): void
+    {
+        $source = file_get_contents((new ReflectionClass(
+            ReportingExecutionServiceProvider::class,
+        ))->getFileName());
+        self::assertIsString($source);
+        foreach ([
+            'validateArchitectureBindings()',
+            'ReportAuthorizationSubjectReader::class => EloquentReportAuthorizationSubjectReader::class',
+            '$this->boundConcrete($contract) !== $expected',
+            '$this->app->make(LaravelReportScopedResourceAuthorizerRegistry::class)',
+            '$this->app->make(ReportHttpAuthorizationOrchestrator::class)',
+        ] as $required) {
+            self::assertStringContainsString($required, $source);
+        }
+    }
+
     public function test_runtime_drivers_are_registered_and_closed_schedules_are_present(): void
     {
         $providerSource = file_get_contents((new ReflectionClass(ReportingExecutionServiceProvider::class))->getFileName());
@@ -229,8 +246,8 @@ final class ReportingExecutionBindingsTest extends TestCase
         foreach ([
             "Schedule::command('reports:dispatch-intents:reconcile')",
             "Schedule::command('reports:audit-intents:deliver')",
-            "Schedule::command('reports:runs:reconcile-execution-leases --limit=100')",
-            "Schedule::command('reports:exports:reconcile-execution-leases --limit=100')",
+            "Schedule::command('reports:runs:reconcile-execution-leases')",
+            "Schedule::command('reports:exports:reconcile-execution-leases')",
         ] as $schedule) {
             self::assertStringContainsString($schedule, $consoleRoutes);
         }
@@ -302,6 +319,102 @@ final class ReportingExecutionBindingsTest extends TestCase
         self::assertStringContainsString('private int $deleteGraceSeconds', $service);
         self::assertStringNotContainsString('private const LEASE_SECONDS', $service);
         self::assertStringNotContainsString('private const DELETE_GRACE_SECONDS', $service);
+    }
+
+    public function test_all_runtime_lease_and_attempt_values_are_injected_from_one_configuration(): void
+    {
+        $runtime = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Application/Execution/ReportExecutionRuntimeConfiguration.php',
+        ));
+        $runJob = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Jobs/MaterializeReportRunJob.php',
+        ));
+        $export = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Application/Exports/ReportExportExecutionService.php',
+        ));
+        $auditJob = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Audit/AppendReportAuditEventJob.php',
+        ));
+        $auditStore = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportAuditIntentStore.php',
+        ));
+
+        foreach ([$runtime, $runJob, $export, $auditJob, $auditStore] as $source) {
+            self::assertIsString($source);
+        }
+        self::assertStringContainsString('ReportExecutionRuntimeConfiguration', $runJob);
+        self::assertStringContainsString('ReportExecutionRuntimeConfiguration', $export);
+        self::assertStringContainsString('ReportExecutionRuntimeConfiguration', $auditJob);
+        self::assertStringContainsString('ReportExecutionRuntimeConfiguration', $auditStore);
+        self::assertStringNotContainsString('+960 seconds', $runJob);
+        self::assertStringNotContainsString('private const LEASE_SECONDS', $export);
+        self::assertStringNotContainsString('+60 seconds', $auditJob);
+        self::assertStringNotContainsString('app(', $auditJob);
+        self::assertStringContainsString('$auditLeaseSeconds <= 120', $runtime);
+
+        foreach ([
+            'Application/Dispatch/ReportDispatchBackoffPolicy.php',
+            'Infrastructure/Audit/CoreReportAuditIntentConsumer.php',
+            'Infrastructure/Persistence/EloquentReportExportStore.php',
+            'Infrastructure/Persistence/EloquentReportCompletedArtifactRecoveryStore.php',
+        ] as $relativePath) {
+            $consumer = file_get_contents(base_path(
+                'app/BusinessModules/Core/Reporting/'.$relativePath,
+            ));
+            self::assertIsString($consumer);
+            self::assertStringNotContainsString(
+                'ReportExecutionRuntimeConfiguration::canonical()',
+                $consumer,
+            );
+        }
+    }
+
+    public function test_audit_delivery_reclaims_expired_leases_before_dispatching_due_ids(): void
+    {
+        $source = file_get_contents(base_path(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Console/DeliverReportAuditIntentsCommand.php',
+        ));
+        self::assertIsString($source);
+        $reclaim = strpos($source, '->reclaimExpired(');
+        $dispatch = strpos($source, '->dispatchDue(');
+        self::assertIsInt($reclaim);
+        self::assertIsInt($dispatch);
+        self::assertLessThan($dispatch, $reclaim);
+    }
+
+    public function test_runtime_layers_have_no_model_or_service_locator_escape_hatches(): void
+    {
+        foreach ([
+            'Infrastructure/Jobs',
+            'Infrastructure/Listeners',
+            'Infrastructure/Audit',
+            'Application/Execution',
+            'Application/Exports',
+        ] as $relative) {
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(
+                base_path("app/BusinessModules/Core/Reporting/{$relative}"),
+            ));
+            foreach ($iterator as $file) {
+                if (! $file->isFile() || $file->getExtension() !== 'php') {
+                    continue;
+                }
+                $source = file_get_contents($file->getPathname());
+                self::assertIsString($source);
+                foreach ([
+                    'ReportRunRecord',
+                    'ReportExportRecord',
+                    'ReportDispatchIntentRecord',
+                    'ReportAuditIntentRecord',
+                    'app(',
+                ] as $forbidden) {
+                    self::assertStringNotContainsString(
+                        $forbidden,
+                        $source,
+                        "Runtime escape hatch {$forbidden} in {$file->getPathname()}",
+                    );
+                }
+            }
+        }
     }
 
     public function test_audit_dispatch_uses_the_serviced_reports_queue(): void

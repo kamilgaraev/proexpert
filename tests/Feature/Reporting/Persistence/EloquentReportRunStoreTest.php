@@ -46,9 +46,10 @@ use PHPUnit\Framework\Attributes\Group;
 use ReflectionClass;
 use Tests\Support\Reporting\FakeReportExecutionClock;
 use Tests\Support\Reporting\FakeReportTransitionAudit;
+use Tests\Support\Reporting\PostgresProcessRaceHarness;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
-use Tests\Support\Reporting\PostgresProcessRaceHarness;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 use Tests\TestCase;
 
 #[Group('postgresql')]
@@ -1441,7 +1442,11 @@ final class EloquentReportRunStoreTest extends TestCase
             new FakeReportExecutionClock($now ?? new DateTimeImmutable('2026-07-26T00:00:00.111111Z')),
             $audit,
             new ReportRunHydrator,
-            new EloquentReportDispatchIntentStore($audit),
+            new EloquentReportDispatchIntentStore(
+                $audit,
+                ReportRuntimeFixture::telemetry(),
+                ReportRuntimeFixture::configuration(),
+            ),
             3600,
             1250,
         );

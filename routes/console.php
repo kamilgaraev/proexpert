@@ -17,12 +17,12 @@ Schedule::command('reports:dispatch-intents:reconcile')
     ->withoutOverlapping(5)
     ->onOneServer();
 
-Schedule::command('reports:runs:reconcile-execution-leases --limit=100')
+Schedule::command('reports:runs:reconcile-execution-leases')
     ->everyMinute()
     ->withoutOverlapping(5)
     ->onOneServer();
 
-Schedule::command('reports:exports:reconcile-execution-leases --limit=100')
+Schedule::command('reports:exports:reconcile-execution-leases')
     ->everyMinute()
     ->withoutOverlapping(5)
     ->onOneServer();

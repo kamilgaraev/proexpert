@@ -18,6 +18,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use LogicException;
 use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 use Tests\TestCase;
 
 #[Group('postgresql')]
@@ -522,7 +523,12 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
     private function store(): EloquentReportDispatchIntentStore
     {
         return new EloquentReportDispatchIntentStore(
-            new OutboxReportTransitionAudit(new EloquentReportAuditIntentStore),
+            new OutboxReportTransitionAudit(new EloquentReportAuditIntentStore(
+                ReportRuntimeFixture::telemetry(),
+                ReportRuntimeFixture::configuration(),
+            )),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
     }
 

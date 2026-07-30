@@ -10,6 +10,7 @@ use DateTimeZone;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 
 final class ReportDispatchBackoffPolicyTest extends TestCase
 {
@@ -18,7 +19,8 @@ final class ReportDispatchBackoffPolicyTest extends TestCase
     {
         $occurredAt = new DateTimeImmutable('2026-07-28T12:00:00.987654+03:00');
 
-        $next = (new ReportDispatchBackoffPolicy())->nextAttemptAt($attempt, $occurredAt);
+        $next = (new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()))
+            ->nextAttemptAt($attempt, $occurredAt);
 
         self::assertSame(
             (new DateTimeImmutable('2026-07-28T09:00:00.000000Z'))
@@ -41,7 +43,7 @@ final class ReportDispatchBackoffPolicyTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
 
-        (new ReportDispatchBackoffPolicy())->nextAttemptAt(
+        (new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()))->nextAttemptAt(
             $attempt,
             new DateTimeImmutable('2026-07-28T00:00:00Z', new DateTimeZone('UTC')),
         );

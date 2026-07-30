@@ -150,6 +150,7 @@ final class EloquentReportExportStoreTest extends TestCase
             },
             3600,
             1000,
+            \Tests\Support\Reporting\ReportRuntimeFixture::configuration(),
         );
     }
 

@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggreg
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
@@ -45,8 +46,6 @@ use Throwable;
 
 final readonly class ReportExportExecutionService
 {
-    private const LEASE_SECONDS = 960;
-
     private const MULTIPART_PART_SIZE = 5_242_880;
 
     public function __construct(
@@ -65,6 +64,7 @@ final readonly class ReportExportExecutionService
         private ReportAuthorizationSubjectReader $subjects,
         private CurrentReportExactManyAuthorizer $authorizer,
         private ReportExecutionContextFactory $contextFactory,
+        private ReportExecutionRuntimeConfiguration $runtime,
         private int $chunkSize = 1000,
     ) {
         if ($chunkSize < 1 || $chunkSize > 5000) {
@@ -79,7 +79,7 @@ final readonly class ReportExportExecutionService
         if (! $this->attempts->claimOrRenew(
             $exportId,
             $leaseToken,
-            $claimedAt->modify('+'.self::LEASE_SECONDS.' seconds'),
+            $claimedAt->modify("+{$this->runtime->executionLeaseSeconds} seconds"),
             $claimedAt,
         )) {
             return;
@@ -182,7 +182,7 @@ final readonly class ReportExportExecutionService
                     $context,
                     $exportId,
                     $leaseToken,
-                    $transitionAt->modify('+'.self::LEASE_SECONDS.' seconds'),
+                    $transitionAt->modify("+{$this->runtime->executionLeaseSeconds} seconds"),
                     $transitionAt,
                 );
                 $this->telemetry->exportTransition(
@@ -224,7 +224,7 @@ final readonly class ReportExportExecutionService
                     $context,
                     $exportId,
                     $leaseToken,
-                    $uploadingAt->modify('+'.self::LEASE_SECONDS.' seconds'),
+                    $uploadingAt->modify("+{$this->runtime->executionLeaseSeconds} seconds"),
                     $uploadingAt,
                 );
                 $this->telemetry->exportTransition(

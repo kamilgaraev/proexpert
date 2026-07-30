@@ -25,7 +25,8 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
 
     public function __construct(
         private LoggerInterface $logger,
-        private array $alertThresholds = [],
+        private array $alertThresholds,
+        private ReportExecutionAlertWindow $alerts,
     ) {}
 
     public function runTransition(string $reportCode, string $status): void
@@ -36,6 +37,9 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
         $this->metric('reports_run_total', 1, $labels);
         if ($status === 'failed') {
             $this->metric('reports_run_failed_total', 1, $labels);
+        }
+        if (in_array($status, ['ready', 'failed'], true)) {
+            $this->executionRatio('run', $status === 'failed');
         }
     }
 
@@ -48,7 +52,7 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             $this->nonNegative($seconds),
             ['report_code' => $reportCode, 'status' => $status, 'duration_bucket' => $this->durationBucket($seconds)],
         );
-        $this->alertSignal('duration_observation', [
+        $this->durationAlert("run:{$reportCode}:{$status}", $seconds, [
             'report_code' => $reportCode,
             'status' => $status,
             'duration_seconds' => $seconds,
@@ -63,6 +67,12 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
         $this->metric('reports_export_total', 1, $labels);
         if ($status === 'failed') {
             $this->metric('reports_export_failed_total', 1, $labels);
+        }
+        if (in_array($status, ['ready', 'failed'], true)) {
+            $this->executionRatio('export', $status === 'failed');
+        }
+        if ($status === 'ready') {
+            $this->storageRatio($reportCode, $format, false);
         }
     }
 
@@ -79,7 +89,7 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
                 'duration_bucket' => $this->durationBucket($seconds),
             ],
         );
-        $this->alertSignal('duration_observation', [
+        $this->durationAlert("export:{$reportCode}:{$format}:{$status}", $seconds, [
             'report_code' => $reportCode,
             'format' => $format,
             'status' => $status,
@@ -109,11 +119,7 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             1,
             ['report_code' => $reportCode, 'format' => $format],
         );
-        $this->alertSignal('storage_abort', [
-            'report_code' => $reportCode,
-            'format' => $format,
-            'ratio_threshold' => $this->alertThresholds['storage_abort_ratio'] ?? null,
-        ]);
+        $this->storageRatio($reportCode, $format, true);
     }
 
     public function dispatchIntent(string $intentType, string $topic, string $outcome, float $ageSeconds): void
@@ -136,15 +142,23 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
         );
         if (in_array($outcome, ['retry', 'failed'], true)) {
             $this->metric('reports_dispatch_publish_failed_total', 1, $labels);
+        }
+        $dispatchThreshold = $this->alertThresholds['dispatch_failure_ratio'] ?? null;
+        if (
+            is_float($dispatchThreshold)
+            && $this->alerts->ratioExceeded(
+                "dispatch:{$intentType}:{$topic}",
+                in_array($outcome, ['retry', 'failed', 'dead_letter'], true),
+                $dispatchThreshold,
+            )
+        ) {
             $this->alertSignal('dispatch_failure', $labels + [
-                'ratio_threshold' => $this->alertThresholds['dispatch_failure_ratio'] ?? null,
-            ]);
+                'ratio_threshold' => $dispatchThreshold,
+            ], true);
         }
         if ($outcome === 'reclaimed') {
             $this->metric('reports_dispatch_lease_reclaimed_total', 1, $labels);
-            $this->alertSignal('dispatch_lease_reclaimed', $labels + [
-                'count_threshold' => $this->alertThresholds['lease_reclaims'] ?? null,
-            ]);
+            $this->reclaimAlert("dispatch:{$intentType}:{$topic}", $labels);
         }
         if ($outcome === 'dead_letter') {
             $this->metric('reports_dispatch_dead_letter_total', 1, $labels);
@@ -170,12 +184,7 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             1,
             ['intent_type' => $intentType, 'error_code' => $errorCode, 'queue_class' => 'reports'],
         );
-        $this->alertSignal('execution_error', [
-            'intent_type' => $intentType,
-            'error_code' => $errorCode,
-            'queue_class' => 'reports',
-            'ratio_threshold' => $this->alertThresholds['execution_error_ratio'] ?? null,
-        ]);
+        $this->executionRatio($intentType, true, $errorCode);
     }
 
     public function executionLeaseReclaimed(string $intentType): void
@@ -186,10 +195,9 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
             1,
             ['intent_type' => $intentType, 'queue_class' => 'reports'],
         );
-        $this->alertSignal('execution_lease_reclaimed', [
+        $this->reclaimAlert("execution:{$intentType}", [
             'intent_type' => $intentType,
             'queue_class' => 'reports',
-            'count_threshold' => $this->alertThresholds['lease_reclaims'] ?? null,
         ]);
     }
 
@@ -237,6 +245,81 @@ final readonly class LaravelReportExecutionTelemetry implements ReportExecutionT
         }
 
         $this->logger->info('reports.alert_input', $context);
+    }
+
+    private function reclaimAlert(string $key, array $context): void
+    {
+        $threshold = $this->alertThresholds['lease_reclaims'] ?? null;
+        if (
+            is_int($threshold)
+            && $this->alerts->countReached($key, $threshold)
+        ) {
+            $this->alertSignal('lease_reclaims', $context + [
+                'count_threshold' => $threshold,
+            ], true);
+        }
+    }
+
+    private function executionRatio(
+        string $intentType,
+        bool $failed,
+        ?string $errorCode = null,
+    ): void {
+        $threshold = $this->alertThresholds['execution_error_ratio'] ?? null;
+        if (
+            is_float($threshold)
+            && $this->alerts->ratioExceeded(
+                "execution:{$intentType}",
+                $failed,
+                $threshold,
+            )
+        ) {
+            $this->alertSignal('execution_error_ratio', [
+                'intent_type' => $intentType,
+                'error_code' => $errorCode,
+                'queue_class' => 'reports',
+                'ratio_threshold' => $threshold,
+            ], true);
+        }
+    }
+
+    private function durationAlert(
+        string $key,
+        float $seconds,
+        array $context,
+    ): void {
+        $threshold = $this->alertThresholds['duration_regression_ratio'] ?? null;
+        if (
+            is_float($threshold)
+            && $this->alerts->durationRegressed($key, $seconds, $threshold)
+        ) {
+            $this->alertSignal('duration_regression', $context + [
+                'duration_seconds' => $seconds,
+                'regression_ratio_threshold' => $threshold,
+            ], true);
+        }
+    }
+
+    private function storageRatio(
+        string $reportCode,
+        string $format,
+        bool $aborted,
+    ): void {
+        $threshold = $this->alertThresholds['storage_abort_ratio'] ?? null;
+        if (
+            is_float($threshold)
+            && $this->alerts->ratioExceeded(
+                "storage:{$reportCode}:{$format}",
+                $aborted,
+                $threshold,
+            )
+        ) {
+            $this->alertSignal('storage_abort_ratio', [
+                'report_code' => $reportCode,
+                'format' => $format,
+                'ratio_threshold' => $threshold,
+            ], true);
+        }
     }
 
     private function assertExportDimensions(string $reportCode, string $format, string $status): void

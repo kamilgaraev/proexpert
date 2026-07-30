@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAud
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntent;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchBackoffPolicy;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -16,7 +17,6 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use LogicException;
 use Throwable;
 
 final class AppendReportAuditEventJob implements ShouldQueue
@@ -45,6 +45,8 @@ final class AppendReportAuditEventJob implements ShouldQueue
     public function handle(
         CoreReportAuditIntentConsumer $consumer,
         ReportAuditIntentStore $store,
+        ReportExecutionRuntimeConfiguration $runtime,
+        ?ReportDispatchBackoffPolicy $backoff = null,
     ): void {
         $leaseToken = $this->envelopeUuid();
         $claimedAt = $this->now();
@@ -52,7 +54,7 @@ final class AppendReportAuditEventJob implements ShouldQueue
             $this->intentId,
             $leaseToken,
             $claimedAt,
-            $claimedAt->modify('+60 seconds'),
+            $claimedAt->modify("+{$runtime->auditLeaseSeconds} seconds"),
         );
         if ($lease === null) {
             return;
@@ -71,7 +73,13 @@ final class AppendReportAuditEventJob implements ShouldQueue
             $store->acknowledge($this->intentId, $leaseToken, $this->now());
         } catch (Throwable $throwable) {
             try {
-                $this->recordFailure($store, $intent, $leaseToken);
+                $this->recordFailure(
+                    $store,
+                    $intent,
+                    $leaseToken,
+                    $runtime,
+                    $backoff ?? new ReportDispatchBackoffPolicy($runtime),
+                );
             } catch (Throwable $failure) {
                 $this->logFailureRecordingError($failure);
             }
@@ -80,28 +88,12 @@ final class AppendReportAuditEventJob implements ShouldQueue
         }
     }
 
-    public function failed(?Throwable $throwable): void
-    {
-        $leaseToken = $this->nullableEnvelopeUuid();
-        if ($leaseToken === null) {
-            return;
-        }
-
-        try {
-            $store = app(ReportAuditIntentStore::class);
-            $intent = $store->loadLeased($this->intentId, $leaseToken);
-            $this->recordFailure($store, $intent, $leaseToken);
-        } catch (LogicException) {
-            return;
-        } catch (Throwable $failure) {
-            $this->logFailureRecordingError($failure);
-        }
-    }
-
     private function recordFailure(
         ReportAuditIntentStore $store,
         ReportAuditIntent $intent,
         string $leaseToken,
+        ReportExecutionRuntimeConfiguration $runtime,
+        ReportDispatchBackoffPolicy $backoff,
     ): void {
         $occurredAt = $this->now();
         $store->failDelivery(
@@ -109,12 +101,12 @@ final class AppendReportAuditEventJob implements ShouldQueue
             $leaseToken,
             ReportErrorCode::REPORT_DEPENDENCY_FAILED,
             $occurredAt,
-            (new ReportDispatchBackoffPolicy)->nextAttemptAt(
+            $backoff->nextAttemptAt(
                 $intent->attemptCount,
                 $occurredAt,
             ),
         );
-        if ($intent->attemptCount === 12) {
+        if ($intent->attemptCount === $runtime->auditMaxAttempts) {
             Log::critical('report_audit_delivery_dead_lettered', [
                 'intent_id' => $this->intentId,
             ]);

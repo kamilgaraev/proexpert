@@ -11,13 +11,14 @@ use DateTimeImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 
 final class CoreReportAuditIntentConsumerTest extends TestCase
 {
     public function test_rejects_unknown_event_and_subject_members_before_core_io(): void
     {
         $recorder = (new ReflectionClass(ImmutableAuditRecorder::class))->newInstanceWithoutConstructor();
-        $consumer = new CoreReportAuditIntentConsumer($recorder);
+        $consumer = new CoreReportAuditIntentConsumer($recorder, ReportRuntimeFixture::configuration());
 
         $this->assertRejectedBeforeCoreIo(
             $consumer,
@@ -90,7 +91,8 @@ final class CoreReportAuditIntentConsumerTest extends TestCase
 
     public function test_closed_ready_payload_contains_hashes_versions_count_and_no_rows(): void
     {
-        $consumer = (new ReflectionClass(CoreReportAuditIntentConsumer::class))->newInstanceWithoutConstructor();
+        $recorder = (new ReflectionClass(ImmutableAuditRecorder::class))->newInstanceWithoutConstructor();
+        $consumer = new CoreReportAuditIntentConsumer($recorder, ReportRuntimeFixture::configuration());
         $method = new \ReflectionMethod($consumer, 'eventData');
         $data = $method->invoke($consumer, $this->intent('report.run.ready', $this->readySubject()));
 
@@ -106,7 +108,8 @@ final class CoreReportAuditIntentConsumerTest extends TestCase
 
     public function test_long_exact_version_event_key_has_bounded_stable_core_identity(): void
     {
-        $consumer = (new ReflectionClass(CoreReportAuditIntentConsumer::class))->newInstanceWithoutConstructor();
+        $recorder = (new ReflectionClass(ImmutableAuditRecorder::class))->newInstanceWithoutConstructor();
+        $consumer = new CoreReportAuditIntentConsumer($recorder, ReportRuntimeFixture::configuration());
         $method = new \ReflectionMethod($consumer, 'eventData');
         $versionId = str_repeat('v', 255);
         $eventKey = 'reports:export:01J00000000000000000000002:artifact-deleted:'.$versionId;

@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRea
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
@@ -43,6 +44,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
         private readonly ReportDispatchIntentStore $dispatchIntents,
         private readonly int $exportTtlSeconds,
         private readonly int $pollAfterMs,
+        private readonly ReportExecutionRuntimeConfiguration $runtime,
     ) {
         if ($exportTtlSeconds < 3600 || $exportTtlSeconds > 2592000 || $pollAfterMs < 250 || $pollAfterMs > 30000) {
             throw new InvalidArgumentException('report_export_store_configuration_invalid');
@@ -400,8 +402,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
     private function assertParentIdentity(
         ReportExportRecord $record,
         ?ReportRunRecord $run = null,
-    ): void
-    {
+    ): void {
         $run ??= ReportRunRecord::query()
             ->whereKey($record->run_id)
             ->where('organization_id', $record->organization_id)
@@ -538,7 +539,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
     }
 
     /**
-     * @param list<string> $selectedColumns
+     * @param  list<string>  $selectedColumns
      * @return list<ReportOperation>
      */
     private function requiredOperations(
@@ -646,7 +647,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
 
     private function assertLeaseInput(string $token, DateTimeImmutable $expiresAt, DateTimeImmutable $occurredAt): void
     {
-        if (! Str::isUuid($token) || $expiresAt != $occurredAt->modify('+960 seconds')) {
+        if (! Str::isUuid($token) || $expiresAt != $occurredAt->modify("+{$this->runtime->executionLeaseSeconds} seconds")) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
     }
@@ -656,7 +657,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
         $expiresAt = $record->execution_lease_expires_at;
         $heartbeatAt = $record->execution_heartbeat_at;
 
-        return is_string($record->execution_lease_token) && hash_equals($record->execution_lease_token, $token) && $expiresAt instanceof DateTimeInterface && $heartbeatAt instanceof DateTimeInterface && DateTimeImmutable::createFromInterface($expiresAt) > $occurredAt && DateTimeImmutable::createFromInterface($expiresAt) == DateTimeImmutable::createFromInterface($heartbeatAt)->modify('+960 seconds');
+        return is_string($record->execution_lease_token) && hash_equals($record->execution_lease_token, $token) && $expiresAt instanceof DateTimeInterface && $heartbeatAt instanceof DateTimeInterface && DateTimeImmutable::createFromInterface($expiresAt) > $occurredAt && DateTimeImmutable::createFromInterface($expiresAt) == DateTimeImmutable::createFromInterface($heartbeatAt)->modify("+{$this->runtime->executionLeaseSeconds} seconds");
     }
 
     private function timestamp(DateTimeImmutable $value): string

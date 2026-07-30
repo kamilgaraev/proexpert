@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggreg
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactVersionInventory;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportExecutionService;
@@ -42,7 +43,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
@@ -314,6 +314,7 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
             $this->createMock(ReportAuthorizationSubjectReader::class),
             $this->createMock(CurrentReportExactManyAuthorizer::class),
             new ReportExecutionContextFactory,
+            $this->runtime(),
         );
     }
 
@@ -363,6 +364,21 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
             $subjects,
             $authorizer,
             new ReportExecutionContextFactory,
+            $this->runtime(),
+        );
+    }
+
+    private function runtime(): ReportExecutionRuntimeConfiguration
+    {
+        return new ReportExecutionRuntimeConfiguration(
+            100,
+            60,
+            12,
+            100,
+            300,
+            12,
+            960,
+            100,
         );
     }
 
@@ -593,7 +609,7 @@ final class RecordingExecutionExportStore implements ReportExportStore
         DateTimeImmutable $leaseExpiresAt,
         DateTimeImmutable $occurredAt,
     ): ReportExport {
-        ++$this->startRenderingCount;
+        $this->startRenderingCount++;
         $this->status = ReportExportStatus::RUNNING;
 
         return $this->current();
@@ -606,7 +622,7 @@ final class RecordingExecutionExportStore implements ReportExportStore
         DateTimeImmutable $leaseExpiresAt,
         DateTimeImmutable $occurredAt,
     ): ReportExport {
-        ++$this->startUploadingCount;
+        $this->startUploadingCount++;
         $this->status = ReportExportStatus::UPLOADING;
 
         return $this->current();
@@ -620,10 +636,10 @@ final class RecordingExecutionExportStore implements ReportExportStore
         int $rowCount,
         DateTimeImmutable $occurredAt,
     ): ReportExport {
-        ++$this->sealCount;
+        $this->sealCount++;
         $this->sealedArtifact = $artifact;
         if ($this->sealFailures > 0) {
-            --$this->sealFailures;
+            $this->sealFailures--;
             throw new RuntimeException('audit unavailable');
         }
         $this->status = ReportExportStatus::READY;
@@ -714,7 +730,7 @@ final class RecordingExportAttemptStore implements ReportExportAttemptLifecycleS
         DateTimeImmutable $leaseExpiresAt,
         DateTimeImmutable $occurredAt,
     ): bool {
-        ++$this->claims;
+        $this->claims++;
 
         return in_array(
             $this->exports->status,
@@ -755,7 +771,7 @@ final class RecordingExportFileService extends FileService
         int $partSizeBytes,
         array $metadata,
     ): MultipartUpload {
-        ++$this->startCount;
+        $this->startCount++;
         $this->parts = [];
 
         return new MultipartUpload(
@@ -790,7 +806,7 @@ final class RecordingExportFileService extends FileService
         array $orderedParts,
         array $conditions,
     ): StoredFile {
-        ++$this->completeCount;
+        $this->completeCount++;
         ksort($this->parts);
         $bytes = implode('', $this->parts);
         $checksum = hash('sha256', $bytes);
@@ -841,7 +857,7 @@ final class RecordingExportFileService extends FileService
 
     public function abortMultipart(MultipartUpload $upload): void
     {
-        ++$this->abortCount;
+        $this->abortCount++;
     }
 }
 
@@ -866,7 +882,7 @@ final class CountingExportAuthorizer implements CurrentReportExactManyAuthorizer
         ReportScope $requestedScope,
         array $targets,
     ): array {
-        ++$this->calls;
+        $this->calls++;
 
         return array_map(
             fn ($target): CurrentReportAuthorization => new CurrentReportAuthorization(
@@ -924,7 +940,7 @@ final class RecordingExportTelemetry implements ReportExecutionTelemetry
 
     public function exportArtifact(string $reportCode, string $format, int $rows, int $bytes): void
     {
-        ++$this->artifacts;
+        $this->artifacts++;
     }
 
     public function multipartAbort(string $reportCode, string $format): void {}

@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use RuntimeException;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 use Tests\TestCase;
 
 #[Group('postgresql')]
@@ -105,6 +106,8 @@ final class EloquentReportRunLeaseRecoveryStoreTest extends TestCase
         $this->insertMaterializingRun($expiry);
         $store = new EloquentReportRunLeaseRecoveryStore(new EloquentReportDispatchIntentStore(
             $this->createMock(ReportTransitionAudit::class),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         ));
 
         $oldLease = $store->due(1, $occurredAt)[0];
@@ -176,6 +179,8 @@ final class EloquentReportRunLeaseRecoveryStoreTest extends TestCase
         $this->insertMaterializingRun($at);
         $recovery = new EloquentReportRunLeaseRecoveryStore(new EloquentReportDispatchIntentStore(
             $this->createMock(ReportTransitionAudit::class),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         ));
         $lifecycle = new EloquentReportRunAttemptLifecycleStore;
         $runId = '01J00000000000000000000001';
@@ -233,6 +238,8 @@ final class EloquentReportRunLeaseRecoveryStoreTest extends TestCase
         $this->insertMaterializingRun($expiry);
         $recovery = new EloquentReportRunLeaseRecoveryStore(new EloquentReportDispatchIntentStore(
             $this->createMock(ReportTransitionAudit::class),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         ));
         $candidate = $recovery->due(1, $expiry)[0];
         $lifecycle = new EloquentReportRunAttemptLifecycleStore;

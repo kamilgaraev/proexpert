@@ -7,19 +7,20 @@ namespace Tests\Unit\Reporting\Dispatch;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportMaterializationDispatcher;
-use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchBackoffPolicy;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchBackoffPolicy;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntent;
-use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchLease;
-use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchTopic;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentPublisher;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentReconciler;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchLease;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchTopic;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Infrastructure\Dispatch\LaravelReportDispatchIntentPublisher;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use LogicException;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 
 final class ReportDispatchIntentReconcilerTest extends TestCase
 {
@@ -27,15 +28,16 @@ final class ReportDispatchIntentReconcilerTest extends TestCase
     {
         $trace = [];
         $store = new ReconcilerStore($trace, true);
-        $runs = new ReconcilerRunDispatcher();
+        $runs = new ReconcilerRunDispatcher;
         $publisher = new ReportDispatchIntentPublisher(
             $store,
             new LaravelReportDispatchIntentPublisher(
                 $runs,
-                new ReconcilerExportDispatcher(),
+                new ReconcilerExportDispatcher,
             ),
-            new ReportDispatchBackoffPolicy(),
-            30,
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
 
         $summary = (new ReportDispatchIntentReconciler($store, $publisher))
@@ -62,11 +64,12 @@ final class ReportDispatchIntentReconcilerTest extends TestCase
         $publisher = new ReportDispatchIntentPublisher(
             $store,
             new LaravelReportDispatchIntentPublisher(
-                new ReconcilerRunDispatcher(),
-                new ReconcilerExportDispatcher(),
+                new ReconcilerRunDispatcher,
+                new ReconcilerExportDispatcher,
             ),
-            new ReportDispatchBackoffPolicy(),
-            30,
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
         $reconciler = new ReportDispatchIntentReconciler($store, $publisher);
 
@@ -138,7 +141,7 @@ final class ReconcilerStore implements ReportDispatchIntentStore
     public function markPublished(string $intentId, string $leaseToken, DateTimeImmutable $occurredAt): void
     {
         $id = array_search($intentId, self::IDS, true);
-        if (!is_string($id)) {
+        if (! is_string($id)) {
             throw new LogicException('unexpected intent');
         }
         $this->states[$id] = 'published';

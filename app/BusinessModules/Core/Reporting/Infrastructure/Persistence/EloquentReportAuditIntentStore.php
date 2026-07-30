@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditIntentStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionTelemetry;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntent;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntentLease;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportAuditIntentRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -20,6 +22,11 @@ use LogicException;
 
 final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
 {
+    public function __construct(
+        private readonly ReportExecutionTelemetry $telemetry,
+        private readonly ReportExecutionRuntimeConfiguration $runtime,
+    ) {}
+
     public function add(string $eventKey, string $eventType, ReportExecutionContext $context, array $subject, DateTimeImmutable $occurredAt): void
     {
         if (DB::transactionLevel() < 1) {
@@ -64,7 +71,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
             $timestamp = $this->timestamp($now);
             $ids = ReportAuditIntentRecord::query()
                 ->where('status', 'pending')
-                ->where('attempt_count', '<', 12)
+                ->where('attempt_count', '<', $this->runtime->auditMaxAttempts)
                 ->where('available_at', '<=', $timestamp)
                 ->where(static function ($query) use ($timestamp): void {
                     $query->whereNull('dispatch_reserved_until')
@@ -111,7 +118,10 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                 ->where('available_at', '<=', $this->timestamp($now))
                 ->lockForUpdate()
                 ->first();
-            if (! $record instanceof ReportAuditIntentRecord || (int) $record->attempt_count >= 12) {
+            if (
+                ! $record instanceof ReportAuditIntentRecord
+                || (int) $record->attempt_count >= $this->runtime->auditMaxAttempts
+            ) {
                 return null;
             }
             $attempt = (int) $record->attempt_count + 1;
@@ -187,7 +197,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
             if (! $record instanceof ReportAuditIntentRecord) {
                 return;
             }
-            $terminal = (int) $record->attempt_count === 12;
+            $terminal = (int) $record->attempt_count === $this->runtime->auditMaxAttempts;
             ReportAuditIntentRecord::query()
                 ->whereKey($intentId)
                 ->where('status', 'leased')
@@ -202,6 +212,10 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                     'last_error_code' => $errorCode->value,
                     'updated_at' => $this->timestamp($occurredAt),
                 ]);
+            $this->telemetry->auditDeliveryFailure(
+                $errorCode->value,
+                $terminal ? 'dead_letter' : 'retry',
+            );
         });
     }
 
@@ -220,8 +234,8 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                 ->get();
             $reclaimed = 0;
             foreach ($records as $record) {
-                $terminal = (int) $record->attempt_count === 12;
-                $reclaimed += ReportAuditIntentRecord::query()
+                $terminal = (int) $record->attempt_count === $this->runtime->auditMaxAttempts;
+                $updated = ReportAuditIntentRecord::query()
                     ->whereKey($record->id)
                     ->where('status', 'leased')
                     ->where('lease_token', $record->lease_token)
@@ -236,6 +250,13 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                         'last_error_code' => $terminal ? ReportErrorCode::REPORT_DEPENDENCY_FAILED->value : $record->last_error_code,
                         'updated_at' => $this->timestamp($occurredAt),
                     ]);
+                $reclaimed += $updated;
+                if ($updated === 1) {
+                    $this->telemetry->auditDeliveryFailure(
+                        ReportErrorCode::REPORT_DEPENDENCY_FAILED->value,
+                        $terminal ? 'dead_letter' : 'retry',
+                    );
+                }
             }
 
             return $reclaimed;

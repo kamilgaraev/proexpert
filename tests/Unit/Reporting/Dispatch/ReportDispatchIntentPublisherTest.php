@@ -20,6 +20,7 @@ use InvalidArgumentException;
 use LogicException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 
 final class ReportDispatchIntentPublisherTest extends TestCase
 {
@@ -30,13 +31,14 @@ final class ReportDispatchIntentPublisherTest extends TestCase
             $this->lease('01J00000000000000000000001', ReportDispatchAggregate::RUN, ReportDispatchTopic::MATERIALIZE_RUN, 1),
             $this->lease('01J00000000000000000000002', ReportDispatchAggregate::EXPORT, ReportDispatchTopic::GENERATE_EXPORT, 2),
         ]);
-        $runs = new RecordingMaterializationDispatcher();
-        $exports = new RecordingExportDispatcher();
+        $runs = new RecordingMaterializationDispatcher;
+        $exports = new RecordingExportDispatcher;
         $publisher = new ReportDispatchIntentPublisher(
             $store,
             new LaravelReportDispatchIntentPublisher($runs, $exports),
-            new ReportDispatchBackoffPolicy(),
-            30,
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
 
         $summary = $publisher->publishBatch(20, $now);
@@ -63,9 +65,10 @@ final class ReportDispatchIntentPublisherTest extends TestCase
         $runs = new RecordingMaterializationDispatcher(true);
         $publisher = new ReportDispatchIntentPublisher(
             $store,
-            new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher()),
-            new ReportDispatchBackoffPolicy(),
-            30,
+            new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher),
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
 
         $summary = $publisher->publishBatch(1, $now);
@@ -88,10 +91,11 @@ final class ReportDispatchIntentPublisherTest extends TestCase
             $store,
             new LaravelReportDispatchIntentPublisher(
                 new RecordingMaterializationDispatcher(true),
-                new RecordingExportDispatcher(),
+                new RecordingExportDispatcher,
             ),
-            new ReportDispatchBackoffPolicy(),
-            30,
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
 
         $summary = $publisher->publishBatch(1, new DateTimeImmutable('2026-07-28T10:00:00Z'));
@@ -109,9 +113,10 @@ final class ReportDispatchIntentPublisherTest extends TestCase
             ]);
             $publisher = new ReportDispatchIntentPublisher(
                 $store,
-                new LaravelReportDispatchIntentPublisher(new RecordingMaterializationDispatcher(true), new RecordingExportDispatcher()),
-                new ReportDispatchBackoffPolicy(),
-                30,
+                new LaravelReportDispatchIntentPublisher(new RecordingMaterializationDispatcher(true), new RecordingExportDispatcher),
+                new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+                ReportRuntimeFixture::telemetry(),
+                ReportRuntimeFixture::configuration(),
             );
 
             $summary = $publisher->publishBatch(1, new DateTimeImmutable('2026-07-28T10:00:00Z'));
@@ -127,12 +132,13 @@ final class ReportDispatchIntentPublisherTest extends TestCase
         $store = new InMemoryDispatchIntentStore([
             $this->lease('01J00000000000000000000001', ReportDispatchAggregate::RUN, ReportDispatchTopic::MATERIALIZE_RUN, 1),
         ], false);
-        $runs = new RecordingMaterializationDispatcher();
+        $runs = new RecordingMaterializationDispatcher;
         $publisher = new ReportDispatchIntentPublisher(
             $store,
-            new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher()),
-            new ReportDispatchBackoffPolicy(),
-            30,
+            new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher),
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
 
         $summary = $publisher->publishBatch(1, new DateTimeImmutable('2026-07-28T10:00:00Z'));
@@ -154,12 +160,13 @@ final class ReportDispatchIntentPublisherTest extends TestCase
             ReportDispatchTopic::MATERIALIZE_RUN,
             1,
         )->intent);
-        $runs = new RecordingMaterializationDispatcher();
+        $runs = new RecordingMaterializationDispatcher;
         $publisher = new ReportDispatchIntentPublisher(
             $store,
-            new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher()),
-            new ReportDispatchBackoffPolicy(),
-            15,
+            new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher),
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
         $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
 
@@ -167,8 +174,8 @@ final class ReportDispatchIntentPublisherTest extends TestCase
         self::assertSame(1, $first->published);
         self::assertSame('leased', $store->status);
         self::assertSame(1, $store->attemptCount);
-        self::assertSame(1, $store->reclaimExpiredLeases(1, $now->modify('+16 seconds')));
-        $second = $publisher->publishBatch(1, $now->modify('+16 seconds'));
+        self::assertSame(1, $store->reclaimExpiredLeases(1, $now->modify('+61 seconds')));
+        $second = $publisher->publishBatch(1, $now->modify('+61 seconds'));
 
         self::assertSame(1, $second->published);
         self::assertSame('published', $store->status);
@@ -182,11 +189,12 @@ final class ReportDispatchIntentPublisherTest extends TestCase
         $publisher = new ReportDispatchIntentPublisher(
             $store,
             new LaravelReportDispatchIntentPublisher(
-                new RecordingMaterializationDispatcher(),
-                new RecordingExportDispatcher(),
+                new RecordingMaterializationDispatcher,
+                new RecordingExportDispatcher,
             ),
-            new ReportDispatchBackoffPolicy(),
-            30,
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
 
         $summary = $publisher->publishBatch(500, new DateTimeImmutable('2026-07-28T10:00:00Z'));
@@ -203,19 +211,20 @@ final class ReportDispatchIntentPublisherTest extends TestCase
 
     public function test_malformed_claim_fails_hard_before_transport_or_store_mutation(): void
     {
-        foreach ([42, new \stdClass(), $this->lease(
+        foreach ([42, new \stdClass, $this->lease(
             '01J00000000000000000000001',
             ReportDispatchAggregate::RUN,
             ReportDispatchTopic::MATERIALIZE_RUN,
             1,
         )->intent] as $malformed) {
             $store = new InMemoryDispatchIntentStore([$malformed]);
-            $runs = new RecordingMaterializationDispatcher();
+            $runs = new RecordingMaterializationDispatcher;
             $publisher = new ReportDispatchIntentPublisher(
                 $store,
-                new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher()),
-                new ReportDispatchBackoffPolicy(),
-                30,
+                new LaravelReportDispatchIntentPublisher($runs, new RecordingExportDispatcher),
+                new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+                ReportRuntimeFixture::telemetry(),
+                ReportRuntimeFixture::configuration(),
             );
 
             try {
@@ -231,8 +240,8 @@ final class ReportDispatchIntentPublisherTest extends TestCase
 
     public function test_transport_rejects_cross_topic_before_any_dispatch(): void
     {
-        $runs = new RecordingMaterializationDispatcher();
-        $exports = new RecordingExportDispatcher();
+        $runs = new RecordingMaterializationDispatcher;
+        $exports = new RecordingExportDispatcher;
         $transport = new LaravelReportDispatchIntentPublisher($runs, $exports);
         $intent = new ReportDispatchIntent(
             '01J00000000000000000000001',
@@ -259,20 +268,35 @@ final class ReportDispatchIntentPublisherTest extends TestCase
     {
         $store = new InMemoryDispatchIntentStore([]);
         $transport = new LaravelReportDispatchIntentPublisher(
-            new RecordingMaterializationDispatcher(),
-            new RecordingExportDispatcher(),
+            new RecordingMaterializationDispatcher,
+            new RecordingExportDispatcher,
         );
 
         foreach ([14, 301] as $leaseSeconds) {
             try {
-                new ReportDispatchIntentPublisher($store, $transport, new ReportDispatchBackoffPolicy(), $leaseSeconds);
+                new \App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration(
+                    100,
+                    $leaseSeconds,
+                    12,
+                    100,
+                    300,
+                    12,
+                    960,
+                    100,
+                );
                 self::fail('Invalid lease was accepted.');
             } catch (InvalidArgumentException) {
                 self::assertSame(0, $store->claimCalls);
             }
         }
 
-        $publisher = new ReportDispatchIntentPublisher($store, $transport, new ReportDispatchBackoffPolicy(), 15);
+        $publisher = new ReportDispatchIntentPublisher(
+            $store,
+            $transport,
+            new ReportDispatchBackoffPolicy(ReportRuntimeFixture::configuration()),
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
+        );
         foreach ([0, 501] as $limit) {
             try {
                 $publisher->publishBatch($limit, new DateTimeImmutable('2026-07-28T10:00:00Z'));
@@ -443,7 +467,7 @@ final class CrashRecoveryDispatchIntentStore implements ReportDispatchIntentStor
 
     public function reclaimExpiredLeases(int $limit, DateTimeImmutable $occurredAt): int
     {
-        if ($this->status !== 'leased' || !$this->leaseExpiresAt instanceof DateTimeImmutable || $this->leaseExpiresAt > $occurredAt) {
+        if ($this->status !== 'leased' || ! $this->leaseExpiresAt instanceof DateTimeImmutable || $this->leaseExpiresAt > $occurredAt) {
             return 0;
         }
         $this->status = 'pending';

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Audit;
 use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntent;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 
@@ -37,7 +38,10 @@ final readonly class CoreReportAuditIntentConsumer
         'transport', 'exception', 'exception_text',
     ];
 
-    public function __construct(private ImmutableAuditRecorder $recorder) {}
+    public function __construct(
+        private ImmutableAuditRecorder $recorder,
+        private ReportExecutionRuntimeConfiguration $runtime,
+    ) {}
 
     public function append(ReportAuditIntent $intent): void
     {
@@ -90,7 +94,7 @@ final readonly class CoreReportAuditIntentConsumer
             || $intent->organizationId < 1
             || $intent->actorId < 1
             || $intent->attemptCount < 1
-            || $intent->attemptCount > 12
+            || $intent->attemptCount > $this->runtime->auditMaxAttempts
             || ! isset(self::SUBJECT_KEYS[$intent->eventType])
             || array_is_list($intent->subject)
         ) {

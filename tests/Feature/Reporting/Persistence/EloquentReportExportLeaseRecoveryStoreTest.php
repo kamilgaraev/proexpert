@@ -28,6 +28,7 @@ use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 use Tests\TestCase;
 
 #[Group('postgresql')]
@@ -77,6 +78,8 @@ final class EloquentReportExportLeaseRecoveryStoreTest extends TestCase
             static function () use ($context, $newToken, $at): array {
                 $store = new EloquentReportCompletedArtifactRecoveryStore(
                     new ReportExportHydrator,
+                    1000,
+                    ReportRuntimeFixture::configuration(),
                 );
 
                 try {
@@ -375,6 +378,8 @@ final class EloquentReportExportLeaseRecoveryStoreTest extends TestCase
                     DateTimeImmutable $occurredAt,
                 ): void {}
             },
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
         );
     }
 

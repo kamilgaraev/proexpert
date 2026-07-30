@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use LogicException;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
+use Tests\Support\Reporting\ReportRuntimeFixture;
 use Tests\TestCase;
 
 #[Group('postgresql')]
@@ -74,7 +75,10 @@ final class EloquentReportAuditIntentStoreTest extends TestCase
 
     public function test_due_reservations_advance_beyond_a_permanently_unclaimed_head_batch(): void
     {
-        $store = new EloquentReportAuditIntentStore;
+        $store = new EloquentReportAuditIntentStore(
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
+        );
         $context = (new ReportExecutionContextBuilder)->build();
         $now = new DateTimeImmutable('2026-07-28T10:00:00.123456Z');
         $subject = [
@@ -108,7 +112,10 @@ final class EloquentReportAuditIntentStoreTest extends TestCase
 
     public function test_transaction_required_replay_lease_fencing_reclaim_and_dead_letter(): void
     {
-        $store = new EloquentReportAuditIntentStore;
+        $store = new EloquentReportAuditIntentStore(
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
+        );
         $context = (new ReportExecutionContextBuilder)->build();
         $now = new DateTimeImmutable('2026-07-28T10:00:00.123456Z');
         $subject = [
@@ -155,7 +162,10 @@ final class EloquentReportAuditIntentStoreTest extends TestCase
 
     public function test_reclaiming_expired_twelfth_lease_dead_letters_without_permanent_due_loop(): void
     {
-        $store = new EloquentReportAuditIntentStore;
+        $store = new EloquentReportAuditIntentStore(
+            ReportRuntimeFixture::telemetry(),
+            ReportRuntimeFixture::configuration(),
+        );
         $context = (new ReportExecutionContextBuilder)->build();
         $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
         $subject = [

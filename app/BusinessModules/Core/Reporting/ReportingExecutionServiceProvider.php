@@ -58,6 +58,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunActio
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchBackoffPolicy;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentPublisher;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentReconciler;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunAttemptFinalizer;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExecutionWatchdog;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReconcileCompletedReportArtifacts;
@@ -112,6 +113,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportExportD
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportMaterializationDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Infrastructure\Telemetry\LaravelReportExecutionTelemetry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Telemetry\ReportExecutionAlertWindow;
 use App\Services\Storage\FileService;
 use Aws\S3\S3Client;
 use Illuminate\Contracts\Container\Container;
@@ -132,6 +134,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->validatedConfiguration();
+        $this->validateArchitectureBindings();
 
         if ($this->app->runningInConsole()) {
             $this->commands([
@@ -148,6 +151,54 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $events = $this->app->make('events');
         $events->listen(JobFailed::class, FinalizeFailedReportRunAttempt::class);
         $events->listen(JobFailed::class, FinalizeFailedReportExportAttempt::class);
+    }
+
+    private function validateArchitectureBindings(): void
+    {
+        foreach ([
+            ReportAuthorizationSubjectReader::class => EloquentReportAuthorizationSubjectReader::class,
+            ReportHttpAuthorizationTargetResolver::class => LaravelReportHttpAuthorizationTargetResolver::class,
+            CurrentReportAbacEvaluator::class => LaravelCurrentReportAbacEvaluator::class,
+        ] as $contract => $expected) {
+            if ($this->boundConcrete($contract) !== $expected) {
+                throw new InvalidArgumentException(
+                    'reporting_execution_architecture_binding_invalid',
+                );
+            }
+        }
+
+        $this->app->make(LaravelReportScopedResourceAuthorizerRegistry::class);
+        $this->app->make(CurrentReportScopeAuthorizer::class);
+        $this->app->make(ReportExecutionRuntimeConfiguration::class);
+        if (
+            $this->app->bound('db')
+            && $this->app->bound(
+                \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class,
+            )
+        ) {
+            $this->app->make(ReportHttpAuthorizationOrchestrator::class);
+        }
+    }
+
+    private function boundConcrete(string $contract): ?string
+    {
+        $binding = $this->app->getBindings()[$contract] ?? null;
+        if (! is_array($binding)) {
+            return null;
+        }
+        $concrete = $binding['concrete'] ?? null;
+        if (is_string($concrete)) {
+            return $concrete;
+        }
+        if ($concrete instanceof \Closure) {
+            $captured = (new \ReflectionFunction($concrete))->getStaticVariables();
+
+            return is_string($captured['concrete'] ?? null)
+                ? $captured['concrete']
+                : null;
+        }
+
+        return null;
     }
 
     private function registerActions(): void
@@ -173,10 +224,12 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
     private function registerInfrastructure(): void
     {
         $this->app->singleton(ReportExecutionClock::class, SystemReportExecutionClock::class);
+        $this->app->singleton(ReportExecutionAlertWindow::class);
         $this->app->singleton(ReportExecutionTelemetry::class, function (Container $app): LaravelReportExecutionTelemetry {
             return new LaravelReportExecutionTelemetry(
                 $app->make(LoggerInterface::class),
                 $this->configArray('alerts'),
+                $app->make(ReportExecutionAlertWindow::class),
             );
         });
         $this->app->singleton(ReportAuditIntentStore::class, EloquentReportAuditIntentStore::class);
@@ -321,15 +374,28 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
 
     private function registerExecutionServices(): void
     {
+        $this->app->singleton(ReportExecutionRuntimeConfiguration::class, function (): ReportExecutionRuntimeConfiguration {
+            $dispatch = $this->configArray('dispatch');
+            $audit = $this->configArray('audit');
+            $execution = $this->configArray('execution');
+
+            return new ReportExecutionRuntimeConfiguration(
+                $dispatch['batch_size'],
+                $dispatch['lease_seconds'],
+                $dispatch['max_attempts'],
+                $audit['batch_size'],
+                $audit['lease_seconds'],
+                $audit['max_attempts'],
+                $execution['lease_seconds'],
+                $execution['watchdog_batch_size'],
+            );
+        });
         $this->app->when(PublishReportDispatchIntentsCommand::class)
             ->needs('$batchSize')
             ->give(fn (): int => $this->configArray('dispatch')['batch_size']);
         $this->app->when(ReconcileReportDispatchIntentsCommand::class)
             ->needs('$batchSize')
             ->give(fn (): int => $this->configArray('dispatch')['batch_size']);
-        $this->app->when(DeliverReportAuditIntentsCommand::class)
-            ->needs('$batchSize')
-            ->give(fn (): int => $this->configArray('audit')['batch_size']);
         $this->app->singleton(LaravelReportDispatchIntentPublisher::class);
         $this->app->singleton(ReportDispatchBackoffPolicy::class);
         $this->app->singleton(ReportDispatchIntentPublisher::class, function (Container $app): ReportDispatchIntentPublisher {
@@ -337,7 +403,8 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 $app->make(ReportDispatchIntentStore::class),
                 $app->make(LaravelReportDispatchIntentPublisher::class),
                 $app->make(ReportDispatchBackoffPolicy::class),
-                $this->configArray('dispatch')['lease_seconds'],
+                $app->make(ReportExecutionTelemetry::class),
+                $app->make(ReportExecutionRuntimeConfiguration::class),
             );
         });
         $this->app->singleton(ReportDispatchIntentReconciler::class);
@@ -366,6 +433,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 $app->make(ReportAuthorizationSubjectReader::class),
                 $app->make(CurrentReportExactManyAuthorizer::class),
                 $app->make(\App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory::class),
+                $app->make(ReportExecutionRuntimeConfiguration::class),
                 $this->configArray('exports')['chunk_size'],
             );
         });

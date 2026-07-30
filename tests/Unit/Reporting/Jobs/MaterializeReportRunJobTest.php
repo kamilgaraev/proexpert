@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRun
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportProgressWritePolicy;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
@@ -113,6 +114,7 @@ final class MaterializeReportRunJobTest extends TestCase
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
             $this->createMock(ReportExecutionTelemetry::class),
+            $this->runtime(),
         );
     }
 
@@ -149,6 +151,7 @@ final class MaterializeReportRunJobTest extends TestCase
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
             $this->createMock(ReportExecutionTelemetry::class),
+            $this->runtime(),
         );
     }
 
@@ -174,6 +177,7 @@ final class MaterializeReportRunJobTest extends TestCase
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
             $this->createMock(ReportExecutionTelemetry::class),
+            $this->runtime(),
         );
     }
 
@@ -205,6 +209,7 @@ final class MaterializeReportRunJobTest extends TestCase
                 new ReportProgressWritePolicy,
                 new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
                 $telemetry,
+                $this->runtime(),
             );
             self::fail('Unexpected throwable must escape as a retryable report failure.');
         } catch (ReportContractException $exception) {
@@ -292,6 +297,7 @@ final class MaterializeReportRunJobTest extends TestCase
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
             $this->createMock(ReportExecutionTelemetry::class),
+            $this->runtime(),
         );
 
         self::assertSame($context, $provider->calls[0][1]);
@@ -334,6 +340,7 @@ final class MaterializeReportRunJobTest extends TestCase
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
             $this->createMock(ReportExecutionTelemetry::class),
+            $this->runtime(),
         );
     }
 
@@ -393,6 +400,7 @@ final class MaterializeReportRunJobTest extends TestCase
                 new ReportProgressWritePolicy,
                 new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
                 $this->createMock(ReportExecutionTelemetry::class),
+                $this->runtime(),
             );
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_INTERNAL_ERROR, $exception->errorCode);
@@ -427,6 +435,7 @@ final class MaterializeReportRunJobTest extends TestCase
             new ReportProgressWritePolicy,
             new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
             $telemetry,
+            $this->runtime(),
         );
     }
 
@@ -681,6 +690,7 @@ final class MaterializeReportRunJobTest extends TestCase
                 new ReportProgressWritePolicy,
                 new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
                 $telemetry,
+                $this->runtime(),
             ],
             $attempts,
             $telemetry,
@@ -699,6 +709,20 @@ final class MaterializeReportRunJobTest extends TestCase
         )->willReturn(true);
 
         return $store;
+    }
+
+    private function runtime(): ReportExecutionRuntimeConfiguration
+    {
+        return new ReportExecutionRuntimeConfiguration(
+            100,
+            60,
+            12,
+            100,
+            300,
+            12,
+            960,
+            100,
+        );
     }
 
     #[DataProvider('identityViolationMappings')]
