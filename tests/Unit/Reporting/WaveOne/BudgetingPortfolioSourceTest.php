@@ -143,7 +143,7 @@ final class BudgetingPortfolioSourceTest extends TestCase
             '10.00',
             '10.00',
             'RUB',
-            1.0,
+            '1.0',
             'reserved',
             'budget_limit_reservation',
             'reservation-1',

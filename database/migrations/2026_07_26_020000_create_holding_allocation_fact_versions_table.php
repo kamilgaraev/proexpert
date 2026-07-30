@@ -40,6 +40,38 @@ SQL);
             .'FOR EACH ROW EXECUTE FUNCTION holding_contract_version_evidence_append_only()',
         );
 
+        Schema::create('holding_accepted_work_event_versions', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->string('event_key', 160)->unique();
+            $table->unsignedBigInteger('performance_act_id');
+            $table->unsignedBigInteger('contract_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->boolean('active');
+            $table->decimal('amount', 20, 2);
+            $table->string('status', 32);
+            $table->dateTimeTz('occurred_at');
+            $table->dateTimeTz('recorded_at');
+            $table->char('source_hash', 64);
+            $table->index(
+                ['organization_id', 'performance_act_id', 'id'],
+                'holding_accepted_work_event_lookup',
+            );
+        });
+        DB::statement(<<<'SQL'
+CREATE OR REPLACE FUNCTION holding_accepted_work_event_versions_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'holding accepted work event versions are append-only';
+END;
+$$ LANGUAGE plpgsql
+SQL);
+        DB::statement(
+            'CREATE TRIGGER holding_accepted_work_event_versions_append_only '
+            .'BEFORE UPDATE OR DELETE ON holding_accepted_work_event_versions '
+            .'FOR EACH ROW EXECUTE FUNCTION holding_accepted_work_event_versions_append_only()',
+        );
+
         Schema::create('holding_allocation_fact_versions', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -149,6 +181,12 @@ SQL);
         );
         DB::statement('DROP FUNCTION IF EXISTS holding_allocation_fact_versions_append_only()');
         Schema::dropIfExists('holding_allocation_fact_versions');
+        DB::statement(
+            'DROP TRIGGER IF EXISTS holding_accepted_work_event_versions_append_only '
+            .'ON holding_accepted_work_event_versions',
+        );
+        DB::statement('DROP FUNCTION IF EXISTS holding_accepted_work_event_versions_append_only()');
+        Schema::dropIfExists('holding_accepted_work_event_versions');
         DB::statement(
             'DROP TRIGGER IF EXISTS holding_contract_version_evidence_append_only '
             .'ON holding_contract_version_evidence',

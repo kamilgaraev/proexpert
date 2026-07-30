@@ -87,6 +87,7 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
         int $chunkSize,
     ): iterable {
         $this->assertRequest($context, $snapshot, $sort);
+        $this->materializer->snapshot($context, $snapshot);
         foreach ($this->ordered($this->base($context, $snapshot), $sort)->cursor() as $record) {
             yield $this->row($record);
         }
@@ -98,6 +99,7 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
         ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->assertSnapshot($context, $snapshot);
+        $this->materializer->snapshot($context, $snapshot);
         if (! in_array($input->cell->columnId, self::SORTS, true)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
         }
@@ -117,7 +119,7 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
         }
         foreach ($sourceRefs as $sourceRef) {
-            $identity = $sourceRef['type'].':'.$sourceRef['id'];
+            $identity = $this->authorizationIdentity($sourceRef);
             if (! isset($scoped[$identity])) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
@@ -129,8 +131,8 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
                 'snapshot_row_key' => $input->cell->rowKey,
             ];
             $links[] = new ReportResourceLink(
-                $sourceRef['type'],
-                'r'.$sourceRef['id'],
+                $this->resourceType($sourceRef),
+                'r'.$this->resourceId($sourceRef),
                 $this->routeName($sourceRef['type']),
                 $this->routeParams($sourceRef),
                 'available',
@@ -270,5 +272,22 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
                 ? $sourceRef['contract_id']
                 : $sourceRef['id']),
         ];
+    }
+
+    private function authorizationIdentity(array $sourceRef): string
+    {
+        return $this->resourceType($sourceRef).':'.$this->resourceId($sourceRef);
+    }
+
+    private function resourceType(array $sourceRef): string
+    {
+        return $sourceRef['type'] === 'contract_allocation' ? 'contract' : $sourceRef['type'];
+    }
+
+    private function resourceId(array $sourceRef): string
+    {
+        return (string) ($sourceRef['type'] === 'contract_allocation'
+            ? $sourceRef['contract_id']
+            : $sourceRef['id']);
     }
 }

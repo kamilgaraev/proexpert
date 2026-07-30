@@ -152,6 +152,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
     ): iterable {
         $this->assertIdentity($context, $snapshot);
         $this->assertSort($snapshot, $sort);
+        $this->snapshot($context, $snapshot);
         foreach ($this->orderedQuery($this->rowQuery($context, $snapshot), $sort)->cursor() as $record) {
             yield $this->row($snapshot, $record);
         }
@@ -163,6 +164,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
         ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->assertIdentity($context, $snapshot);
+        $this->snapshot($context, $snapshot);
         $allowedColumns = $snapshot->kind === BudgetingPortfolioProjectionService::HEALTH_CODE
             ? self::HEALTH_COLUMNS
             : self::LIQUIDITY_COLUMNS;

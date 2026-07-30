@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Waves23;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\HoldingPerformanceRowQuery;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceFormula;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceSnapshotMaterializer;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
@@ -15,6 +16,7 @@ use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastItem;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapScenarioAdjustment;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioProjectionService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\BudgetingPortfolioSnapshot;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionBackfill;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -136,5 +138,50 @@ final class PortfolioHardeningBehaviorTest extends TestCase
                 'contract_id' => '44',
             ]),
         );
+    }
+
+    #[Test]
+    public function allocation_drill_down_authorizes_the_routed_contract_target(): void
+    {
+        $query = new HoldingPerformanceRowQuery(
+            new HoldingPerformanceSnapshotMaterializer(new HoldingPerformanceFormula),
+        );
+        $method = new ReflectionMethod($query, 'authorizationIdentity');
+
+        self::assertSame(
+            'contract:44',
+            $method->invoke($query, [
+                'type' => 'contract_allocation',
+                'id' => '991',
+                'contract_id' => '44',
+            ]),
+        );
+    }
+
+    #[Test]
+    public function accepted_work_version_uses_immutable_event_id(): void
+    {
+        $producer = (new \ReflectionClass(AcceptedWorkHoldingFactProducer::class))
+            ->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod($producer, 'sourceVersion');
+
+        self::assertSame(875, $method->invoke($producer, 875));
+    }
+
+    #[Test]
+    public function liquidity_backfill_exposes_resumable_source_slices(): void
+    {
+        $reflection = new \ReflectionClass(PortfolioLiquiditySourceVersionBackfill::class);
+        $backfill = $reflection->newInstanceWithoutConstructor();
+
+        self::assertTrue($reflection->hasMethod('projectSourceSlice'));
+        self::assertSame([
+            'payment_document',
+            'payment_schedule',
+            'payment_transaction',
+            'budget_limit_reservation',
+            'budget_amount',
+            'opening_balance',
+        ], $backfill->supportedSourceTypes());
     }
 }

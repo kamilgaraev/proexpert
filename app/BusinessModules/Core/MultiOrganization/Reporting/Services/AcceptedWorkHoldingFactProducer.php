@@ -28,6 +28,7 @@ final readonly class AcceptedWorkHoldingFactProducer
         ContractPerformanceAct $act,
         ?DateTimeInterface $occurredAt = null,
         bool $active = true,
+        ?int $eventVersionId = null,
     ): ?HoldingAllocationFactVersion {
         if ($active && (! $act->is_approved
             || ! in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true))) {
@@ -42,7 +43,7 @@ final readonly class AcceptedWorkHoldingFactProducer
             ?? $act->approval_date
             ?? $act->signed_at
             ?? $act->updated_at;
-        $sourceVersion = $this->sourceVersion($act, $recognizedAt);
+        $sourceVersion = $this->sourceVersion($eventVersionId ?? 0);
         if (! $contract instanceof Contract || min($organizationId, $projectId, $sourceVersion) < 1) {
             return null;
         }
@@ -139,23 +140,13 @@ final readonly class AcceptedWorkHoldingFactProducer
         return $this->projector->persist($this->projector->project($source), $source);
     }
 
-    private function sourceVersion(ContractPerformanceAct $act, ?DateTimeInterface $occurredAt): int
+    private function sourceVersion(int $eventVersionId): int
     {
-        $candidates = array_values(array_filter([
-            $occurredAt,
-            $act->updated_at,
-            $act->created_at,
-        ], static fn (mixed $value): bool => $value instanceof DateTimeInterface));
-        usort(
-            $candidates,
-            static fn (DateTimeInterface $left, DateTimeInterface $right): int => $left <=> $right,
-        );
-        $versionAt = $candidates[array_key_last($candidates)] ?? null;
-        if ($versionAt instanceof DateTimeInterface) {
-            return (int) $versionAt->format('Uu');
+        if ($eventVersionId < 1) {
+            throw new InvalidArgumentException('accepted_work_event_version_missing');
         }
 
-        return (int) $act->getKey();
+        return $eventVersionId;
     }
 
     private function linkedEvidence(Contract $contract, int $projectId, DateTimeInterface $recognizedAt): array
@@ -178,6 +169,7 @@ final readonly class AcceptedWorkHoldingFactProducer
         $childAllocation = ContractProjectAllocation::withTrashed()
             ->where('contract_id', $contract->getKey())
             ->where('project_id', $projectId)
+            ->whereHas('history', static fn ($query) => $query->where('created_at', '<=', $recognizedAt))
             ->latest('id')
             ->first();
         if (! $parentAllocation instanceof ContractProjectAllocation

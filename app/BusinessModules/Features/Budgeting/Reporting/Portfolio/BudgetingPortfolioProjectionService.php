@@ -356,8 +356,7 @@ final readonly class BudgetingPortfolioProjectionService
     private function healthQuality(
         ProjectPortfolioProjectionResult $projection,
         array $qualityGaps = [],
-    ): ReportQuality
-    {
+    ): ReportQuality {
         $empty = $projection->rows === [];
         $gapCount = count($qualityGaps);
         $eligible = count($projection->rows) + $gapCount;
@@ -635,7 +634,9 @@ final readonly class BudgetingPortfolioProjectionService
             $calendar,
         );
         $rows = [];
-        $gaps = [];
+        $gaps = is_array($versionedSource['gaps'] ?? null)
+            ? array_values($versionedSource['gaps'])
+            : [];
         $sourcePayload = [
             'payment_calendar' => array_map(
                 static fn (PaymentCalendarItem $item): array => $item->toArray(),
@@ -643,6 +644,7 @@ final readonly class BudgetingPortfolioProjectionService
             ),
             'opening_balances' => [],
             'source_versions' => $versionedSource['versions'],
+            'source_gaps' => $gaps,
         ];
 
         foreach ($currencies as $currency) {

@@ -2,6 +2,7 @@
 
 namespace App\Observers;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
@@ -22,7 +23,9 @@ class ContractPerformanceActObserver
     {
         if ($act->is_approved
             && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true)) {
-            $this->acceptedWorkFacts->project($act, $act->approval_date ?? $act->created_at);
+            $occurredAt = $act->approval_date ?? $act->created_at ?? now();
+            $event = HoldingAcceptedWorkEventVersion::record($act, true, $occurredAt);
+            $this->acceptedWorkFacts->project($act, $occurredAt, true, (int) $event->getKey());
         }
 
         $this->recalculateContractTotal($act, 'created');
@@ -41,10 +44,15 @@ class ContractPerformanceActObserver
                     true,
                 );
             if ($active || $wasActive) {
+                $occurredAt = $active
+                    ? ($act->approval_date ?? $act->updated_at ?? now())
+                    : ($act->updated_at ?? now());
+                $event = HoldingAcceptedWorkEventVersion::record($act, $active, $occurredAt);
                 $this->acceptedWorkFacts->project(
                     $act,
-                    $active ? ($act->approval_date ?? $act->updated_at) : $act->updated_at,
+                    $occurredAt,
                     $active,
+                    (int) $event->getKey(),
                 );
             }
         }
@@ -66,7 +74,9 @@ class ContractPerformanceActObserver
                 [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED],
                 true,
             )) {
-            $this->acceptedWorkFacts->project($act, now(), false);
+            $occurredAt = now();
+            $event = HoldingAcceptedWorkEventVersion::record($act, false, $occurredAt);
+            $this->acceptedWorkFacts->project($act, $occurredAt, false, (int) $event->getKey());
         }
 
         $this->recalculateContractTotal($act, 'deleted');

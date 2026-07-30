@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Backfill;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\Listeners\ProjectHoldingAllocationFacts;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
@@ -81,7 +82,23 @@ final readonly class HoldingPerformanceBackfill
             ->get();
         $factIds = [];
         foreach ($acts as $act) {
-            $fact = $this->acceptedWorkFacts->project($act, $act->approval_date ?? $act->signed_at ?? $act->created_at);
+            $occurredAt = $act->approval_date ?? $act->signed_at ?? $act->created_at ?? now();
+            $event = HoldingAcceptedWorkEventVersion::record(
+                $act,
+                true,
+                $occurredAt,
+                'backfill:approved-act:'.$act->getKey().':'.hash('sha256', implode('|', [
+                    (string) $act->updated_at,
+                    (string) $act->status,
+                    (string) $act->amount,
+                ])),
+            );
+            $fact = $this->acceptedWorkFacts->project(
+                $act,
+                $occurredAt,
+                true,
+                (int) $event->getKey(),
+            );
             if ($fact !== null) {
                 $factIds[] = (int) $fact->getKey();
             }

@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapOpeningBalanceSnapshot;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceGap;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceVersion;
 use DateTimeInterface;
 
@@ -33,6 +34,21 @@ final readonly class PortfolioLiquidityAsOfSource
             ->whereIn('id', $latestIds)
             ->orderBy('id')
             ->get();
+        $gaps = PortfolioLiquiditySourceGap::query()
+            ->where('organization_id', $organizationId)
+            ->where('observed_at', '<=', $asOf)
+            ->where(static fn ($query) => $query
+                ->whereNull('resolved_at')
+                ->orWhere('resolved_at', '>', $asOf))
+            ->orderBy('id')
+            ->get()
+            ->map(static fn (PortfolioLiquiditySourceGap $gap): array => [
+                'code' => 'source_projection_gap',
+                'source_type' => (string) $gap->source_type,
+                'source_id' => (string) $gap->source_id,
+                'missing_fields' => is_array($gap->missing_fields) ? $gap->missing_fields : [],
+            ])
+            ->all();
         if ($versions->isEmpty()) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
         }
@@ -72,6 +88,7 @@ final readonly class PortfolioLiquidityAsOfSource
                 'effective_at' => $version->effective_at?->format(DateTimeInterface::ATOM),
                 'source_hash' => (string) $version->source_hash,
             ])->all(),
+            'gaps' => $gaps,
         ];
     }
 

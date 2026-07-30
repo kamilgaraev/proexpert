@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Models\BudgetAmount;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
 use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceGap;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceVersion;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
@@ -34,6 +35,13 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         }
         [$sourceType, $sourceId, $organizationId] = $identity;
         $item = $tombstone ? null : $this->calendarItem($source);
+        if (! $tombstone
+            && ! $source instanceof CashGapOpeningBalance
+            && ! $item instanceof PaymentCalendarItem) {
+            $this->recordGap($organizationId, $sourceType, $sourceId, ['canonical_calendar_item']);
+
+            return null;
+        }
         $payload = $tombstone ? null : $this->payload($source, $item);
         $effectiveAt = $item instanceof PaymentCalendarItem
             ? CarbonImmutable::parse($item->date)->startOfDay()
@@ -50,7 +58,7 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         ];
         $sourceHash = hash('sha256', CanonicalJson::encode($versionPayload));
 
-        return PortfolioLiquiditySourceVersion::query()->firstOrCreate(
+        $version = PortfolioLiquiditySourceVersion::query()->firstOrCreate(
             [
                 'organization_id' => $organizationId,
                 'source_type' => $sourceType,
@@ -66,6 +74,14 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
                 'source_hash' => $sourceHash,
             ],
         );
+        PortfolioLiquiditySourceGap::query()
+            ->where('organization_id', $organizationId)
+            ->where('source_type', $sourceType)
+            ->where('source_id', $sourceId)
+            ->whereNull('resolved_at')
+            ->update(['resolved_at' => now()]);
+
+        return $version;
     }
 
     private function loadOwnerRelations(Model $source): void
@@ -155,5 +171,28 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         };
 
         return $value ?? $source->getAttribute('created_at') ?? now();
+    }
+
+    private function recordGap(
+        int $organizationId,
+        string $sourceType,
+        string $sourceId,
+        array $missingFields,
+    ): void {
+        sort($missingFields, SORT_STRING);
+        $identity = [
+            'organization_id' => $organizationId,
+            'source_type' => $sourceType,
+            'source_id' => $sourceId,
+            'missing_fields' => array_values($missingFields),
+        ];
+
+        PortfolioLiquiditySourceGap::query()->firstOrCreate(
+            [
+                ...$identity,
+                'source_hash' => hash('sha256', CanonicalJson::encode($identity)),
+            ],
+            ['observed_at' => now(), 'resolved_at' => null],
+        );
     }
 }

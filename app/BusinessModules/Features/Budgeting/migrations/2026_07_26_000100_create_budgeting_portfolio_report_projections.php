@@ -53,6 +53,25 @@ SQL);
             );
         }
 
+        Schema::create('budgeting_portfolio_liquidity_source_gaps', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('source_type', 64);
+            $table->string('source_id', 128);
+            $table->jsonb('missing_fields');
+            $table->char('source_hash', 64);
+            $table->dateTimeTz('observed_at');
+            $table->dateTimeTz('resolved_at')->nullable();
+            $table->unique(
+                ['organization_id', 'source_type', 'source_id', 'source_hash'],
+                'budgeting_liquidity_source_gap_unique',
+            );
+            $table->index(
+                ['organization_id', 'resolved_at', 'id'],
+                'budgeting_liquidity_source_gap_readiness',
+            );
+        });
+
         Schema::create('budgeting_portfolio_report_snapshots', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->unsignedBigInteger('organization_id');
@@ -146,6 +165,7 @@ SQL);
         Schema::dropIfExists('budgeting_portfolio_liquidity_rows');
         Schema::dropIfExists('budgeting_project_portfolio_health_rows');
         Schema::dropIfExists('budgeting_portfolio_report_snapshots');
+        Schema::dropIfExists('budgeting_portfolio_liquidity_source_gaps');
         Schema::dropIfExists('budgeting_portfolio_liquidity_source_versions');
     }
 };
