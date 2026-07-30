@@ -75,6 +75,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             $query->asOf,
             $allowedWarehouseIds,
             $projects,
+            $query->filters,
             $pinnedEvents,
         );
         $eligible = $grains->count();

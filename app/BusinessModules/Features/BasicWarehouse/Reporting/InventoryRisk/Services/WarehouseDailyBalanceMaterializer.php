@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\W
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseDailyBalanceSnapshot;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -31,6 +32,7 @@ final readonly class WarehouseDailyBalanceMaterializer
         private OwnerSnapshotSourceHash $sourceHashes,
         private ReportSourceAccessPolicy $sourceAccess,
         private InventoryRiskGrainUniverse $grainUniverse,
+        private OwnerReportFilterApplier $filters,
     ) {}
 
     public function materialize(
@@ -50,8 +52,9 @@ final readonly class WarehouseDailyBalanceMaterializer
         ))->setTimezone(new DateTimeZone('UTC'));
         $eventCutoff = $query->asOf < $periodEnd ? $query->asOf : $periodEnd;
         $events = WarehouseInventoryEvent::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('occurred_at', '<=', $eventCutoff)
+            ->join('materials as balance_event_filter_material', 'balance_event_filter_material.id', '=', 'warehouse_inventory_events.material_id')
+            ->where('warehouse_inventory_events.organization_id', $context->scope->organizationId)
+            ->where('warehouse_inventory_events.occurred_at', '<=', $eventCutoff)
             ->when(
                 $allowedWarehouseIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
@@ -66,14 +69,24 @@ final readonly class WarehouseDailyBalanceMaterializer
                     $context->scope->projectIds,
                 ),
             )
-            ->orderBy('occurred_at')
-            ->orderBy('id')
+            ;
+        $this->applySourceFilters(
+            $events,
+            $query,
+            'warehouse_inventory_events',
+            'balance_event_filter_material',
+        );
+        $events = $events
+            ->select('warehouse_inventory_events.*')
+            ->orderBy('warehouse_inventory_events.occurred_at')
+            ->orderBy('warehouse_inventory_events.id')
             ->get();
         $grains = $this->grainUniverse->collect(
             $context->scope->organizationId,
             $eventCutoff,
             $allowedWarehouseIds,
             $context->scope->projectIds,
+            $query->filters,
             $events,
         );
         $planningSourceHashes = [
@@ -369,5 +382,29 @@ final readonly class WarehouseDailyBalanceMaterializer
         if ($context->scope->canonicalIdentity() !== $query->scope->canonicalIdentity()) {
             throw new DomainException('Report query scope does not match execution scope.');
         }
+    }
+
+    private function applySourceFilters(
+        Builder $builder,
+        ReportQuery $query,
+        string $table,
+        string $materialAlias,
+    ): void {
+        $this->filters->apply($builder, $this->filters->only($query->filters, [
+            'organization', 'organization_id', 'warehouse', 'warehouse_id', 'project', 'project_id',
+            'material', 'material_id', 'category', 'abc', 'xyz',
+        ]), [
+            'organization' => $table.'.organization_id',
+            'organization_id' => $table.'.organization_id',
+            'warehouse' => $table.'.warehouse_id',
+            'warehouse_id' => $table.'.warehouse_id',
+            'project' => $table.'.project_id',
+            'project_id' => $table.'.project_id',
+            'material' => $table.'.material_id',
+            'material_id' => $table.'.material_id',
+            'category' => $materialAlias.'.category',
+            'abc' => DB::raw($materialAlias.".additional_properties->>'abc_class'"),
+            'xyz' => DB::raw($materialAlias.".additional_properties->>'xyz_class'"),
+        ]);
     }
 }

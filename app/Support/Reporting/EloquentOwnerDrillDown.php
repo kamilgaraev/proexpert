@@ -8,6 +8,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use DateTimeImmutable;
+use DateTimeZone;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 
@@ -35,6 +37,9 @@ final readonly class EloquentOwnerDrillDown
         bool $requiresSensitive = false,
         ?string $rowSourceIdsColumn = null,
         ?string $sourceCutoffColumn = null,
+        ?string $rowDayColumn = null,
+        ?string $sourceOccurredAtColumn = null,
+        bool $allowEmptyPinnedSourceIds = false,
     ): ReportDrillDownResult {
         if ($context->scope->canonicalIdentity() !== $snapshot->scope->canonicalIdentity()) {
             throw new DomainException('Report scope does not match snapshot scope.');
@@ -86,10 +91,12 @@ final readonly class EloquentOwnerDrillDown
         }
         if ($rowSourceIdsColumn !== null) {
             $sourceIds = $row->getAttribute($rowSourceIdsColumn);
-            if (! is_array($sourceIds) || $sourceIds === []) {
+            if (! is_array($sourceIds) || ($sourceIds === [] && ! $allowEmptyPinnedSourceIds)) {
                 throw new DomainException('Report drill-down pinned source identities are invalid.');
             }
-            $query->whereIn('id', $sourceIds);
+            $sourceIds === []
+                ? $query->whereRaw('1 = 0')
+                : $query->whereIn('id', $sourceIds);
         }
         if ($sourceCutoffColumn !== null) {
             $cutoff = $snapshot->dimensions['as_of'] ?? null;
@@ -97,6 +104,26 @@ final readonly class EloquentOwnerDrillDown
                 throw new DomainException('Report drill-down cutoff is unavailable.');
             }
             $query->where($sourceCutoffColumn, '<=', $cutoff);
+        }
+        if ($rowDayColumn !== null || $sourceOccurredAtColumn !== null) {
+            if ($rowDayColumn === null || $sourceOccurredAtColumn === null) {
+                throw new DomainException('Report drill-down day identity is incomplete.');
+            }
+            $balanceDate = $row->getAttribute($rowDayColumn);
+            if ($balanceDate instanceof \DateTimeInterface) {
+                $balanceDate = $balanceDate->format('Y-m-d');
+            }
+            if (! is_string($balanceDate)) {
+                throw new DomainException('Report drill-down day identity is invalid.');
+            }
+            $dayStart = DateTimeImmutable::createFromFormat('!Y-m-d', $balanceDate, $snapshot->scope->timezone);
+            if ($dayStart === false || $dayStart->format('Y-m-d') !== $balanceDate) {
+                throw new DomainException('Report drill-down day identity is invalid.');
+            }
+            $dayEnd = $dayStart->modify('+1 day');
+            $query
+                ->where($sourceOccurredAtColumn, '>=', $dayStart->setTimezone(new DateTimeZone('UTC')))
+                ->where($sourceOccurredAtColumn, '<', $dayEnd->setTimezone(new DateTimeZone('UTC')));
         }
 
         if ($request->cursor !== null) {

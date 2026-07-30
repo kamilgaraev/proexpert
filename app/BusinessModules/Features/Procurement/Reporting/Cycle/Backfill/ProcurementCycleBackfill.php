@@ -49,6 +49,24 @@ final readonly class ProcurementCycleBackfill
         $gaps = 0;
         foreach ($lines as $line) {
             $request = $line->purchaseRequest;
+            $siteRequest = $request->siteRequest;
+            $this->events->captureOwnerExpectation(
+                $organizationId,
+                (int) $request->id,
+                (int) $line->id,
+                $request->created_at !== null
+                    ? CarbonImmutable::instance($request->created_at)
+                    : CarbonImmutable::instance($line->created_at),
+                [
+                    'project_id' => $siteRequest?->project_id,
+                    'requester_id' => $siteRequest?->user_id,
+                    'buyer_id' => $request->assigned_to,
+                    'material_id' => $line->material_id,
+                    'amount' => (string) $request->budget_amount,
+                    'currency' => $request->budget_currency,
+                    'priority' => $siteRequest?->priority?->value,
+                ],
+            );
             if ($request->created_at === null) {
                 $gaps++;
 

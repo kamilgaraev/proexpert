@@ -6,6 +6,7 @@ namespace Tests\Unit\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Backfill\HistoricalInventoryMovementEvidence;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DTO\InventoryRiskGrain;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\ReportingBalanceDay;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use DateTimeImmutable;
@@ -114,6 +115,50 @@ final class SupplyReportingBehaviorContractTest extends TestCase
         self::assertSame(
             '2026-07-30',
             ReportingBalanceDay::resolve($occurredAt, new DateTimeZone('UTC')),
+        );
+    }
+
+    public function test_daily_balance_drill_window_is_exact_in_report_timezone(): void
+    {
+        [$start, $end] = ReportingBalanceDay::utcWindow(
+            '2026-07-31',
+            new DateTimeZone('Europe/Moscow'),
+        );
+
+        self::assertSame('2026-07-30T21:00:00+00:00', $start->format(DATE_ATOM));
+        self::assertSame('2026-07-31T21:00:00+00:00', $end->format(DATE_ATOM));
+        self::assertSame(
+            '2026-07-31',
+            ReportingBalanceDay::resolve($start, new DateTimeZone('Europe/Moscow')),
+        );
+        self::assertSame(
+            '2026-07-31',
+            ReportingBalanceDay::resolve(
+                $end->modify('-1 microsecond'),
+                new DateTimeZone('Europe/Moscow'),
+            ),
+        );
+        self::assertSame(
+            '2026-08-01',
+            ReportingBalanceDay::resolve($end, new DateTimeZone('Europe/Moscow')),
+        );
+    }
+
+    public function test_inventory_grain_identity_pins_the_complete_unit_conversion_tuple(): void
+    {
+        $base = new InventoryRiskGrain(3, 7, 11, 'mass', 'kg', 'conversion-v1');
+
+        self::assertNotSame(
+            $base->key(),
+            (new InventoryRiskGrain(3, 7, 11, 'mass', 'g', 'conversion-v1'))->key(),
+        );
+        self::assertNotSame(
+            $base->key(),
+            (new InventoryRiskGrain(3, 7, 11, 'mass', 'kg', 'conversion-v2'))->key(),
+        );
+        self::assertNotSame(
+            $base->key(),
+            (new InventoryRiskGrain(3, 7, 11, 'volume', 'kg', 'conversion-v1'))->key(),
         );
     }
 }

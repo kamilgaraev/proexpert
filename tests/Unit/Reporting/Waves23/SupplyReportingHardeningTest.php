@@ -218,7 +218,8 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('$missingSent', $source);
         self::assertStringNotContainsString('->get([', $source);
         self::assertStringNotContainsString('->pluck(', $source);
-        self::assertStringContainsString('PurchaseOrderItem::query()', $source);
+        self::assertStringContainsString('PurchaseOrderPromiseVersion::query()', $source);
+        self::assertStringNotContainsString('PurchaseOrderItem::query()', $source);
         self::assertStringContainsString('$missingPromise', $source);
         self::assertStringContainsString('$eligible - $projected', $source);
         self::assertStringNotContainsString('min($projected, $sentItems)', $source);
@@ -401,11 +402,11 @@ final class SupplyReportingHardeningTest extends TestCase
             self::assertStringContainsString($immutableFilter, $materializer);
         }
         self::assertStringContainsString(
-            "'confirmed_event.occurred_at', '<=', \$query->asOf",
+            "status_confirm.occurred_at <= '{\$cutoff}'",
             $readiness,
         );
         self::assertStringContainsString(
-            "'cancelled_event.occurred_at', '<=', \$query->asOf",
+            "status_cancel.occurred_at <= '{\$cutoff}'",
             $readiness,
         );
         self::assertStringNotContainsString("owner_order.metadata->>'buyer_id'", $materializer);
@@ -498,6 +499,11 @@ final class SupplyReportingHardeningTest extends TestCase
             'BasicWarehouse/Reporting/InventoryRisk/DrillDown/InventoryRiskDrillDownProvider.php' => [
                 "rowSourceIdsColumn: 'inventory_event_ids'",
                 "sourceCutoffColumn: 'occurred_at'",
+                "'unit_dimension'",
+                "'unit_code'",
+                "'conversion_version'",
+                "rowDayColumn: 'balance_date'",
+                "sourceOccurredAtColumn: 'occurred_at'",
             ],
             'Procurement/Reporting/Award/Queries/SupplierAwardRowQuery.php' => [
                 "['decision_version']",
@@ -509,6 +515,43 @@ final class SupplyReportingHardeningTest extends TestCase
                 self::assertStringContainsString($contract, $source, $path);
             }
         }
+    }
+
+    public function test_inventory_planning_grains_share_report_filter_universe_with_events(): void
+    {
+        $universe = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/Reporting/InventoryRisk/Services/'
+            .'InventoryRiskGrainUniverse.php',
+        );
+        $balances = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/Reporting/InventoryRisk/Services/'
+            .'WarehouseDailyBalanceMaterializer.php',
+        );
+        $readiness = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/Reporting/InventoryRisk/Readiness/'
+            .'InventoryRiskReadinessProbe.php',
+        );
+
+        foreach ([
+            "'warehouse', 'warehouse_id'",
+            "'project', 'project_id'",
+            "'material', 'material_id'",
+            "'category', 'abc', 'xyz'",
+        ] as $filterGroup) {
+            self::assertStringContainsString($filterGroup, $universe);
+            self::assertStringContainsString($filterGroup, $balances);
+            self::assertStringContainsString($filterGroup, $readiness);
+        }
+        self::assertStringContainsString('$query->filters,', $balances);
+        self::assertStringContainsString('$query->filters,', $readiness);
+        self::assertStringContainsString(
+            'inventory_demand_filter_material',
+            $universe,
+        );
+        self::assertStringContainsString(
+            'inventory_policy_filter_material',
+            $universe,
+        );
     }
 
     public function test_award_recorder_validates_every_comparable_version_owner(): void
@@ -609,7 +652,7 @@ final class SupplyReportingHardeningTest extends TestCase
             self::assertStringContainsString($fence, $migration);
         }
         foreach ([
-            'missingOwnerLifecycle',
+            'missingPromise',
             'missingReceiptLifecycle',
             'missingReversalLifecycle',
         ] as $reconciliation) {

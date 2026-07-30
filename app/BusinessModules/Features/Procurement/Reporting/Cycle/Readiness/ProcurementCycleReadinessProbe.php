@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementP
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
+use Illuminate\Support\Facades\DB;
 
 final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionReadinessProbe
 {
@@ -40,7 +41,9 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
             'purchase_request_line',
         );
         $eligibleLineIds = $this->universe->query($context, $query);
-        $eligible = (clone $eligibleLineIds)->count('purchase_request_lines.id');
+        $eligible = DB::query()
+            ->fromSub(clone $eligibleLineIds, 'eligible_cycle_lines')
+            ->count();
         $events = ProcurementProcessEvent::query()
             ->where('organization_id', $context->scope->organizationId)
             ->whereIn('purchase_request_line_id', clone $eligibleLineIds)

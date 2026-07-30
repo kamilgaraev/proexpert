@@ -95,6 +95,22 @@ final readonly class ProcurementProcessEventRecorder
             'priority' => $owner->priority,
             'supplier_party_id' => $supplierPartyId,
         ]);
+        $this->captureOwnerExpectation(
+            $organizationId,
+            $purchaseRequestId,
+            $purchaseRequestLineId,
+            $occurredAt,
+            array_intersect_key($evidence, array_flip([
+                'project_id',
+                'requester_id',
+                'buyer_id',
+                'material_id',
+                'category',
+                'amount',
+                'currency',
+                'priority',
+            ])),
+        );
 
         $attributes = [
             'organization_id' => $organizationId,
@@ -135,8 +151,6 @@ final readonly class ProcurementProcessEventRecorder
                     throw new DomainException('Procurement process event idempotency conflict.');
                 }
 
-                $this->pinExpectation($existing);
-
                 return $existing;
             }
 
@@ -152,47 +166,54 @@ final readonly class ProcurementProcessEventRecorder
                 throw new DomainException('Procurement process events must be monotonic.');
             }
 
-            $created = ProcurementProcessEvent::query()->create($attributes);
-            $this->pinExpectation($created);
-
-            return $created;
+            return ProcurementProcessEvent::query()->create($attributes);
         }, 3);
     }
 
-    private function pinExpectation(ProcurementProcessEvent $event): void
-    {
-        $existing = ProcurementCycleOwnerExpectationVersion::query()
-            ->where('organization_id', $event->organization_id)
-            ->where('purchase_request_line_id', $event->purchase_request_line_id)
-            ->where('source_event_id', $event->source_event_id)
-            ->first();
-        if ($existing instanceof ProcurementCycleOwnerExpectationVersion) {
-            return;
-        }
-        $latest = ProcurementCycleOwnerExpectationVersion::query()
-            ->where('organization_id', $event->organization_id)
-            ->where('purchase_request_line_id', $event->purchase_request_line_id)
-            ->orderByDesc('expectation_version')
-            ->lockForUpdate()
-            ->first();
-        $version = $latest instanceof ProcurementCycleOwnerExpectationVersion
-            ? ((int) $latest->expectation_version) + 1
-            : 1;
-        $dimensions = is_array($event->evidence) ? $event->evidence : [];
-        ProcurementCycleOwnerExpectationVersion::query()->create([
-            'organization_id' => $event->organization_id,
-            'purchase_request_id' => $event->purchase_request_id,
-            'purchase_request_line_id' => $event->purchase_request_line_id,
-            'expectation_version' => $version,
+    public function captureOwnerExpectation(
+        int $organizationId,
+        int $purchaseRequestId,
+        int $purchaseRequestLineId,
+        DateTimeInterface $effectiveFrom,
+        array $dimensions,
+    ): ProcurementCycleOwnerExpectationVersion {
+        $sourceEventId = 'purchase_request_line:'.$purchaseRequestLineId.':owner';
+        $sourceHash = hash('sha256', CanonicalJson::encode([
             'dimensions' => $dimensions,
-            'effective_from' => $event->occurred_at,
-            'source_event_id' => $event->source_event_id,
-            'source_hash' => hash('sha256', CanonicalJson::encode([
+            'effective_from' => $effectiveFrom->format(DATE_ATOM),
+            'source_event_id' => $sourceEventId,
+        ]));
+
+        return DB::transaction(function () use (
+            $dimensions,
+            $effectiveFrom,
+            $organizationId,
+            $purchaseRequestId,
+            $purchaseRequestLineId,
+            $sourceEventId,
+            $sourceHash,
+        ): ProcurementCycleOwnerExpectationVersion {
+            $existing = ProcurementCycleOwnerExpectationVersion::query()
+                ->where('organization_id', $organizationId)
+                ->where('purchase_request_line_id', $purchaseRequestLineId)
+                ->where('source_event_id', $sourceEventId)
+                ->lockForUpdate()
+                ->first();
+            if ($existing instanceof ProcurementCycleOwnerExpectationVersion) {
+                return $existing;
+            }
+
+            return ProcurementCycleOwnerExpectationVersion::query()->create([
+                'organization_id' => $organizationId,
+                'purchase_request_id' => $purchaseRequestId,
+                'purchase_request_line_id' => $purchaseRequestLineId,
+                'expectation_version' => 1,
                 'dimensions' => $dimensions,
-                'effective_from' => $event->occurred_at->format(DATE_ATOM),
-                'source_event_id' => $event->source_event_id,
-            ])),
-        ]);
+                'effective_from' => $effectiveFrom,
+                'source_event_id' => $sourceEventId,
+                'source_hash' => $sourceHash,
+            ]);
+        }, 3);
     }
 
     private function canonical(array $attributes): array

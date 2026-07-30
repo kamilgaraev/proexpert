@@ -8,7 +8,6 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadines
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityPolicyVersion;
@@ -56,34 +55,21 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         $tolerance = $policy instanceof SupplyReliabilityPolicyVersion
             ? (string) $policy->quantity_tolerance
             : '0';
-        $ownerItems = PurchaseOrderItem::query()
-            ->join('purchase_orders as readiness_owner_order', 'readiness_owner_order.id', '=', 'purchase_order_items.purchase_order_id')
-            ->leftJoin('purchase_requests as readiness_owner_request', 'readiness_owner_request.id', '=', 'readiness_owner_order.purchase_request_id')
-            ->leftJoin('site_requests as readiness_owner_site_request', 'readiness_owner_site_request.id', '=', 'readiness_owner_request.site_request_id')
-            ->where('readiness_owner_order.organization_id', $context->scope->organizationId)
-            ->whereNotNull('readiness_owner_order.sent_at')
-            ->where('readiness_owner_order.sent_at', '<=', $query->asOf)
+        $promises = PurchaseOrderPromiseVersion::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('promise_version', 1)
+            ->where('effective_from', '<=', $query->asOf)
             ->when(
                 $allowedItemIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'purchase_order_items.id',
+                    'purchase_order_item_id',
                     $allowedItemIds,
                 ),
             )
             ->when(
                 $projects !== [],
-                static fn (Builder $builder): Builder => $builder->whereIn(
-                    'readiness_owner_site_request.project_id',
-                    $projects,
-                ),
+                static fn (Builder $builder): Builder => $builder->whereIn('project_id', $projects),
             );
-        $eligibleItemIds = (clone $ownerItems)->select('purchase_order_items.id');
-        $ownerEligible = (clone $ownerItems)->distinct()->count('purchase_order_items.id');
-        $promises = PurchaseOrderPromiseVersion::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('promise_version', 1)
-            ->where('effective_from', '<=', $query->asOf)
-            ->whereIn('purchase_order_item_id', $eligibleItemIds);
         $this->filters->apply($promises, $this->filters->only($query->filters, [
             'supplier', 'supplier_id', 'project', 'project_id', 'warehouse', 'warehouse_id',
             'material', 'material_id', 'buyer', 'priority', 'status', 'period', 'promised_month',
@@ -106,8 +92,11 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         ]);
         $eligiblePromiseIds = (clone $promises)->select('id');
         $projected = (clone $promises)->distinct()->count('purchase_order_item_id');
-        $eligible = $query->filters->values === [] ? $ownerEligible : $projected;
+        $eligible = $allowedItemIds !== null && $query->filters->values === []
+            ? count(array_unique($allowedItemIds))
+            : $projected;
         $missingPromise = max(0, $eligible - $projected);
+        $eligibleItemIds = (clone $promises)->select('purchase_order_item_id');
         $missingSent = (clone $promises)
             ->whereNotExists(function ($builder) use ($context, $query): void {
                 $builder->selectRaw('1')
@@ -124,57 +113,6 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     ->where('readiness_event.event_type', 'sent')
                     ->where('readiness_event.occurred_at', '<=', $query->asOf);
             })
-            ->count();
-        $missingOwnerLifecycle = DB::table('purchase_order_promise_versions as readiness_promise')
-            ->join('purchase_orders as readiness_order', 'readiness_order.id', '=', 'readiness_promise.purchase_order_id')
-            ->where('readiness_promise.organization_id', $context->scope->organizationId)
-            ->whereIn('readiness_promise.id', $eligiblePromiseIds)
-            ->where(function ($builder) use ($context, $query): void {
-                $builder
-                    ->where(function ($confirmed) use ($context, $query): void {
-                        $confirmed->whereNotNull('readiness_order.confirmed_at')
-                            ->where('readiness_order.confirmed_at', '<=', $query->asOf)
-                            ->whereNotExists(function ($event) use ($context, $query): void {
-                                $event->selectRaw('1')
-                                    ->from('supply_lifecycle_events as confirmed_event')
-                                    ->whereColumn(
-                                        'confirmed_event.promise_version_id',
-                                        'readiness_promise.id',
-                                    )
-                            ->where(
-                                'confirmed_event.organization_id',
-                                $context->scope->organizationId,
-                            )
-                                    ->where('confirmed_event.event_type', 'confirmed')
-                                    ->where('confirmed_event.occurred_at', '<=', $query->asOf);
-                            });
-                    })
-                    ->orWhere(function ($cancelled) use ($context, $query): void {
-                        $cancelled->whereNotNull('readiness_order.cancelled_at')
-                            ->where('readiness_order.cancelled_at', '<=', $query->asOf)
-                            ->whereNotExists(function ($event) use ($context, $query): void {
-                                $event->selectRaw('1')
-                                    ->from('supply_lifecycle_events as cancelled_event')
-                                    ->whereColumn(
-                                        'cancelled_event.promise_version_id',
-                                        'readiness_promise.id',
-                                    )
-                                    ->where(
-                                        'cancelled_event.organization_id',
-                                        $context->scope->organizationId,
-                                    )
-                                    ->where('cancelled_event.event_type', 'cancelled')
-                                    ->where('cancelled_event.occurred_at', '<=', $query->asOf);
-                            });
-                    });
-            })
-            ->count();
-        $invalidOwnerCancellation = DB::table('purchase_order_promise_versions as readiness_promise')
-            ->join('purchase_orders as readiness_order', 'readiness_order.id', '=', 'readiness_promise.purchase_order_id')
-            ->where('readiness_promise.organization_id', $context->scope->organizationId)
-            ->whereIn('readiness_promise.id', $eligiblePromiseIds)
-            ->where('readiness_order.status', 'cancelled')
-            ->whereNull('readiness_order.cancelled_at')
             ->count();
         $missingReceiptLifecycle = DB::table('purchase_receipt_lines as readiness_line')
             ->join(
@@ -243,8 +181,6 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             $projected,
             $missingPromise
                 + $missingSent
-                + $missingOwnerLifecycle
-                + $invalidOwnerCancellation
                 + $missingReceiptLifecycle
                 + $missingReversalLifecycle,
             $unknown,

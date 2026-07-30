@@ -27,6 +27,7 @@ use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use DateTimeImmutable;
+use DateTimeZone;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -221,7 +222,7 @@ final readonly class InventoryRiskSnapshotMaterializer
                     $metric = $this->formula->row(
                         $this->openingFact($balance),
                         $this->closingFact($balance),
-                        $this->movementFacts($balance, $events),
+                        $this->movementFacts($balance, $events, $query->scope->timezone),
                         $demand instanceof InventoryDemandSnapshot ? $this->demandFact($demand) : null,
                         $policy?->policy(),
                     );
@@ -274,14 +275,16 @@ final readonly class InventoryRiskSnapshotMaterializer
                     'demand_snapshot_id' => $demand?->getKey(),
                     'reorder_policy_version_id' => $policy?->getKey(),
                     'quality_warnings' => $warnings,
-                    'inventory_event_ids' => $events->filter(
-                        static fn (WarehouseInventoryEvent $event): bool =>
-                            (int) $event->warehouse_id === (int) $balance->warehouse_id
-                            && (int) $event->material_id === (int) $balance->material_id
-                            && ($event->project_id === null
-                                ? $balance->project_id === null
-                                : (int) $event->project_id === (int) $balance->project_id),
-                    )->pluck('id')->map(static fn (mixed $id): int => (int) $id)->values()->all(),
+                    'inventory_event_ids' => $events
+                        ->filter(fn (WarehouseInventoryEvent $event): bool => $this->sameGrainAndDate(
+                            $balance,
+                            $event,
+                            $query->scope->timezone,
+                        ))
+                        ->pluck('id')
+                        ->map(static fn (mixed $id): int => (int) $id)
+                        ->values()
+                        ->all(),
                 ];
             }
 
@@ -347,10 +350,18 @@ final readonly class InventoryRiskSnapshotMaterializer
         );
     }
 
-    private function movementFacts(WarehouseDailyBalanceRow $balance, Collection $events): array
+    private function movementFacts(
+        WarehouseDailyBalanceRow $balance,
+        Collection $events,
+        DateTimeZone $timezone,
+    ): array
     {
         return $events
-            ->filter(fn (WarehouseInventoryEvent $event): bool => $this->sameGrainAndDate($balance, $event))
+            ->filter(fn (WarehouseInventoryEvent $event): bool => $this->sameGrainAndDate(
+                $balance,
+                $event,
+                $timezone,
+            ))
             ->filter(static fn (WarehouseInventoryEvent $event): bool => ! in_array(
                 $event->event_type,
                 ['reservation', 'unreservation'],
@@ -381,6 +392,7 @@ final readonly class InventoryRiskSnapshotMaterializer
     private function sameGrainAndDate(
         WarehouseDailyBalanceRow $balance,
         WarehouseInventoryEvent $event,
+        DateTimeZone $timezone,
     ): bool {
         return (int) $event->warehouse_id === (int) $balance->warehouse_id
             && $event->project_id === $balance->project_id
@@ -388,7 +400,8 @@ final readonly class InventoryRiskSnapshotMaterializer
             && $event->unit_dimension === $balance->unit_dimension
             && $event->unit_code === $balance->unit_code
             && $event->conversion_version === $balance->conversion_version
-            && $event->occurred_at->format('Y-m-d') === $balance->balance_date->format('Y-m-d');
+            && ReportingBalanceDay::resolve($event->occurred_at, $timezone)
+                === $balance->balance_date->format('Y-m-d');
     }
 
     private function openingFact(WarehouseDailyBalanceRow $balance): InventoryBalanceFact
@@ -518,4 +531,5 @@ final readonly class InventoryRiskSnapshotMaterializer
             throw new DomainException('Report query scope does not match execution scope.');
         }
     }
+
 }

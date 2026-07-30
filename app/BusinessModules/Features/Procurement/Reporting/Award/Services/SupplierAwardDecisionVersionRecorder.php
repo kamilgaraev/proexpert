@@ -69,6 +69,8 @@ final readonly class SupplierAwardDecisionVersionRecorder
             || ($projectId !== null && (int) $requestOwner->project_id !== $projectId)) {
             throw new DomainException('Supplier award request owner is invalid.');
         }
+        $authoritativePurchaseRequestId = (int) $requestOwner->purchase_request_id;
+        $authoritativeProjectId = (int) $requestOwner->project_id;
         $versions = SupplierProposalVersion::query()
             ->whereIn('id', $comparableProposalVersionIds)
             ->get()
@@ -88,7 +90,11 @@ final readonly class SupplierAwardDecisionVersionRecorder
                     hash('sha256', CanonicalJson::encode($version->dimension_snapshot)),
                     $version->dimension_hash,
                 )
-                || (int) ($version->dimension_snapshot['supplier_party_id'] ?? 0) !== (int) $version->supplier_party_id) {
+                || (int) ($version->dimension_snapshot['supplier_party_id'] ?? 0) !== (int) $version->supplier_party_id
+                || (int) ($version->dimension_snapshot['purchase_request_id'] ?? $authoritativePurchaseRequestId)
+                    !== $authoritativePurchaseRequestId
+                || (int) ($version->dimension_snapshot['project_id'] ?? $authoritativeProjectId)
+                    !== $authoritativeProjectId) {
                 throw new DomainException('Comparable proposal version lacks immutable award ownership.');
             }
         }
@@ -98,7 +104,8 @@ final readonly class SupplierAwardDecisionVersionRecorder
         }
         $proposalDimensions = $selectedVersion->dimension_snapshot;
         $dimensionSnapshot = [
-            'project_id' => $projectId,
+            'project_id' => $authoritativeProjectId,
+            'purchase_request_id' => $authoritativePurchaseRequestId,
             'supplier_party_id' => (int) $selectedVersion->supplier_party_id,
             'currency' => $proposalDimensions['currency'] ?? null,
             'lines' => $proposalDimensions['lines'] ?? [],
@@ -110,8 +117,8 @@ final readonly class SupplierAwardDecisionVersionRecorder
             'organization_id' => $organizationId,
             'decision_id' => $decisionId,
             'decision_version' => $decisionVersion,
-            'purchase_request_id' => $purchaseRequestId,
-            'project_id' => $projectId,
+            'purchase_request_id' => $authoritativePurchaseRequestId,
+            'project_id' => $authoritativeProjectId,
             'selected_supplier_party_id' => (int) $selectedVersion->supplier_party_id,
             'dimension_snapshot' => $dimensionSnapshot,
             'dimension_hash' => $dimensionHash,
