@@ -74,12 +74,7 @@ final class YamlReportManifestLoader
         }
 
         try {
-            $documentObject = json_decode(
-                json_encode($document, JSON_THROW_ON_ERROR),
-                false,
-                512,
-                JSON_THROW_ON_ERROR,
-            );
+            $documentObject = $this->toObjectGraph($document);
             $schema = json_decode($schemaBytes, false, 512, JSON_THROW_ON_ERROR);
         } catch (JsonException $exception) {
             throw new RuntimeException('report_manifest_json_conversion_invalid', 0, $exception);
@@ -91,6 +86,24 @@ final class YamlReportManifestLoader
         $this->schemas->assertValid($documentObject, $schema, $schemaId);
 
         return ['document' => $document, 'hash' => $hash];
+    }
+
+    private function toObjectGraph(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (array_is_list($value)) {
+            return array_map(fn (mixed $item): mixed => $this->toObjectGraph($item), $value);
+        }
+
+        $object = new \stdClass;
+        foreach ($value as $key => $item) {
+            $object->{(string) $key} = $this->toObjectGraph($item);
+        }
+
+        return $object;
     }
 
     private function permissionSlugs(array $document): array

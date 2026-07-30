@@ -33,6 +33,8 @@ final class YamlReportManifestLoaderTest extends TestCase
         self::assertSame('project_portfolio_health', $manifest->definitions[0]['code']);
         self::assertSame('portfolio', $manifest->definitions[0]['catalog_group']);
         self::assertSame('candidate', $manifest->definitions[0]['readiness']['publication']);
+        self::assertIsFloat($manifest->definitions[0]['filters'][0]['weight']);
+        self::assertSame(1.0, $manifest->definitions[0]['filters'][0]['weight']);
         self::assertSame('holding_performance', $manifest->definitions[1]['code']);
         self::assertSame('published', $manifest->definitions[1]['readiness']['publication']);
         self::assertSame('accepted_production_progress', $manifest->definitions[7]['code']);
@@ -207,6 +209,85 @@ final class YamlReportManifestLoaderTest extends TestCase
         );
     }
 
+    public function test_permission_catalog_rejects_same_namespace_unknown_permission(): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('report_permission_unknown_or_untranslated');
+
+        (new ReportPermissionCatalog)->assertKnownAndTranslated(['budgeting.nonexistent.view']);
+    }
+
+    public function test_permission_catalog_rejects_known_permission_without_exact_translation(): void
+    {
+        [$root, $roles, $modules, $translations] = $this->permissionSources(
+            ['finance.report.view'],
+            [],
+        );
+
+        try {
+            $this->expectException(LogicException::class);
+            $this->expectExceptionMessage('report_permission_unknown_or_untranslated');
+            (new ReportPermissionCatalog($roles, $modules, $translations))
+                ->assertKnownAndTranslated(['finance.report.view']);
+        } finally {
+            $this->removeDirectory($root);
+        }
+    }
+
+    public function test_permission_catalog_accepts_explicit_wildcard_with_exact_translation(): void
+    {
+        [$root, $roles, $modules, $translations] = $this->permissionSources(
+            ['reports.*'],
+            ['reports.future.view' => 'Просмотр будущего отчёта'],
+        );
+
+        try {
+            self::expectNotToPerformAssertions();
+            (new ReportPermissionCatalog($roles, $modules, $translations))
+                ->assertKnownAndTranslated(['reports.future.view']);
+        } finally {
+            $this->removeDirectory($root);
+        }
+    }
+
+    public function test_permission_catalog_ignores_permission_like_strings_outside_permission_collections(): void
+    {
+        [$root, $roles, $modules, $translations] = $this->permissionSources(
+            [],
+            ['finance.report.view' => 'Просмотр финансового отчёта'],
+        );
+        file_put_contents(
+            $modules.'/module.json',
+            json_encode(['description' => 'finance.report.view', 'permissions' => []], JSON_THROW_ON_ERROR),
+        );
+
+        try {
+            $this->expectException(LogicException::class);
+            $this->expectExceptionMessage('report_permission_unknown_or_untranslated');
+            (new ReportPermissionCatalog($roles, $modules, $translations))
+                ->assertKnownAndTranslated(['finance.report.view']);
+        } finally {
+            $this->removeDirectory($root);
+        }
+    }
+
+    public function test_loader_object_conversion_preserves_nested_float_and_list_map_semantics(): void
+    {
+        $method = new \ReflectionMethod(YamlReportManifestLoader::class, 'toObjectGraph');
+        $converted = $method->invoke($this->loader(), [
+            'nested' => ['ratio' => 1.0],
+            'list' => [['value' => 1.0]],
+        ]);
+
+        self::assertIsObject($converted);
+        self::assertIsObject($converted->nested);
+        self::assertIsFloat($converted->nested->ratio);
+        self::assertSame(1.0, $converted->nested->ratio);
+        self::assertIsArray($converted->list);
+        self::assertIsObject($converted->list[0]);
+        self::assertIsFloat($converted->list[0]->value);
+    }
+
     private function loader(): YamlReportManifestLoader
     {
         return new YamlReportManifestLoader(
@@ -239,5 +320,41 @@ final class YamlReportManifestLoaderTest extends TestCase
         }
 
         return $path;
+    }
+
+    private function permissionSources(array $permissions, array $values): array
+    {
+        $root = sys_get_temp_dir().'/report-permissions-'.bin2hex(random_bytes(8));
+        $roles = $root.'/roles';
+        $modules = $root.'/modules';
+        $translations = $root.'/permissions.php';
+        if (! mkdir($roles, 0777, true) || ! mkdir($modules, 0777, true)) {
+            throw new RuntimeException('report_test_fixture_write_failed');
+        }
+
+        $role = json_encode(['system_permissions' => $permissions], JSON_THROW_ON_ERROR);
+        $translationSource = "<?php\nreturn ".var_export([
+            'values' => $values,
+            'subjects' => [],
+            'actions' => [],
+        ], true).";\n";
+        if (file_put_contents($roles.'/role.json', $role) === false
+            || file_put_contents($translations, $translationSource) === false) {
+            throw new RuntimeException('report_test_fixture_write_failed');
+        }
+
+        return [$root, $roles, $modules, $translations];
+    }
+
+    private function removeDirectory(string $path): void
+    {
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($path, \RecursiveDirectoryIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($iterator as $item) {
+            $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+        }
+        rmdir($path);
     }
 }

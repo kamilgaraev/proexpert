@@ -22,7 +22,9 @@ final class ReportPermissionCatalog
         $root = dirname(__DIR__, 6);
         $this->knownPermissions = $this->loadKnownPermissions(
             $roleDefinitionsPath ?? $root.'/config/RoleDefinitions',
-            $moduleSourcesPath ?? $root.'/app/BusinessModules',
+            $moduleSourcesPath === null
+                ? [$root.'/app/BusinessModules', $root.'/config/ModuleList']
+                : [$moduleSourcesPath],
         );
         $this->translations = $this->loadTranslations(
             $translationsPath ?? $root.'/lang/ru/permissions.php',
@@ -45,7 +47,7 @@ final class ReportPermissionCatalog
         }
     }
 
-    private function loadKnownPermissions(string $rolesPath, string $modulesPath): array
+    private function loadKnownPermissions(string $rolesPath, array $modulePaths): array
     {
         $permissions = [];
         $this->collectFiles($rolesPath, static fn (string $path): bool => str_ends_with($path, '.json'), function (string $path) use (&$permissions): void {
@@ -59,26 +61,37 @@ final class ReportPermissionCatalog
                 throw new RuntimeException('report_permission_source_invalid');
             }
 
-            $this->collectPermissionStrings($decoded, $permissions);
+            $this->collectNamedPermissionCollections(
+                $decoded,
+                ['system_permissions', 'module_permissions'],
+                $permissions,
+            );
         });
 
-        $this->collectFiles($modulesPath, static fn (string $path): bool => str_ends_with($path, 'Module.php'), function (string $path) use (&$permissions): void {
-            $bytes = @file_get_contents($path);
-            if ($bytes === false) {
-                throw new RuntimeException('report_permission_source_unreadable');
-            }
+        foreach ($modulePaths as $modulesPath) {
+            $this->collectFiles(
+                $modulesPath,
+                static fn (string $path): bool => str_ends_with($path, 'Module.php') || str_ends_with($path, '.json'),
+                function (string $path) use (&$permissions): void {
+                    $bytes = @file_get_contents($path);
+                    if ($bytes === false) {
+                        throw new RuntimeException('report_permission_source_unreadable');
+                    }
 
-            foreach (token_get_all($bytes) as $token) {
-                if (! is_array($token) || $token[0] !== T_CONSTANT_ENCAPSED_STRING) {
-                    continue;
-                }
+                    if (str_ends_with($path, '.json')) {
+                        $decoded = json_decode($bytes, true);
+                        if (! is_array($decoded)) {
+                            throw new RuntimeException('report_permission_source_invalid');
+                        }
+                        $this->collectNamedPermissionCollections($decoded, ['permissions'], $permissions);
 
-                $value = $this->decodePhpString($token[1]);
-                if ($this->isPermissionSourceValue($value)) {
-                    $permissions[$value] = true;
+                        return;
+                    }
+
+                    $this->collectPhpPermissionMethod($bytes, $permissions);
                 }
-            }
-        });
+            );
+        }
 
         return $permissions;
     }
@@ -133,6 +146,78 @@ final class ReportPermissionCatalog
         }
     }
 
+    private function collectNamedPermissionCollections(
+        mixed $value,
+        array $collectionNames,
+        array &$permissions,
+    ): void {
+        if (! is_array($value)) {
+            return;
+        }
+
+        foreach ($value as $key => $item) {
+            if (is_string($key) && in_array($key, $collectionNames, true)) {
+                $this->collectPermissionStrings($item, $permissions);
+
+                continue;
+            }
+
+            $this->collectNamedPermissionCollections($item, $collectionNames, $permissions);
+        }
+    }
+
+    private function collectPhpPermissionMethod(string $source, array &$permissions): void
+    {
+        $waitingForName = false;
+        $waitingForBody = false;
+        $inBody = false;
+        $depth = 0;
+
+        foreach (token_get_all($source) as $token) {
+            if (is_array($token)) {
+                if ($token[0] === T_FUNCTION) {
+                    $waitingForName = true;
+
+                    continue;
+                }
+
+                if ($waitingForName && $token[0] === T_STRING) {
+                    $waitingForBody = $token[1] === 'getPermissions';
+                    $waitingForName = false;
+
+                    continue;
+                }
+
+                if ($inBody && $token[0] === T_CONSTANT_ENCAPSED_STRING) {
+                    $value = $this->decodePhpString($token[1]);
+                    if ($this->isPermissionSourceValue($value)) {
+                        $permissions[$value] = true;
+                    }
+                }
+
+                continue;
+            }
+
+            if ($waitingForBody && $token === '{') {
+                $waitingForBody = false;
+                $inBody = true;
+                $depth = 1;
+
+                continue;
+            }
+
+            if (! $inBody) {
+                continue;
+            }
+
+            if ($token === '{') {
+                $depth++;
+            } elseif ($token === '}' && --$depth === 0) {
+                $inBody = false;
+            }
+        }
+    }
+
     private function isPermissionSourceValue(string $value): bool
     {
         return preg_match('/^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9_*][a-z0-9_-]*)+$/D', $value) === 1;
@@ -144,15 +229,9 @@ final class ReportPermissionCatalog
             return true;
         }
 
-        $namespace = strstr($permissionSlug, '.', true);
         foreach ($this->knownPermissions as $known => $_) {
             if (str_ends_with($known, '.*')
                 && str_starts_with($permissionSlug, substr($known, 0, -1))) {
-                return true;
-            }
-
-            if ($namespace !== false
-                && ($known === $namespace || str_starts_with($known, $namespace.'.'))) {
                 return true;
             }
         }
@@ -189,22 +268,10 @@ final class ReportPermissionCatalog
                 return true;
             }
 
-            if ($this->isRussianLabel($actions[$action] ?? null, $action)) {
-                return true;
-            }
-
-            $lastSegment = str_contains($action, '.')
-                ? substr($action, strrpos($action, '.') + 1)
-                : $action;
-
-            return $this->isRussianLabel($actions[$lastSegment] ?? null, $lastSegment);
+            return $this->isRussianLabel($actions[$action] ?? null, $action);
         }
 
-        $lastSegment = str_contains($permissionSlug, '.')
-            ? substr($permissionSlug, strrpos($permissionSlug, '.') + 1)
-            : $permissionSlug;
-
-        return $this->isRussianLabel($actions[$lastSegment] ?? null, $lastSegment);
+        return false;
     }
 
     private function isRussianLabel(mixed $label, string $technicalKey): bool

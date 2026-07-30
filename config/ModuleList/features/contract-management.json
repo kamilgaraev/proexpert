@@ -24,6 +24,8 @@
     "contracts.delete",
     "contracts.archive",
     "contracts.analytics",
+    "contracts.management_report.view",
+    "contracts.management_report.export",
     "contracts.completed_works.view",
     "contracts.performance_acts.view",
     "contracts.performance_acts.create",

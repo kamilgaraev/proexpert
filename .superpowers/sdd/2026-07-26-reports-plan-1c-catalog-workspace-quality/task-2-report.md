@@ -101,3 +101,47 @@ GREEN:
 Открытых замечаний по Task 2 implementation нет.
 
 Локальный runtime проверок — PHP 8.3.7; целевая версия проекта — PHP 8.2.
+
+## Independent review round 1
+
+Статус: `FIXED`.
+
+Устранены два блокирующих замечания.
+
+### Permission catalog fail-closed
+
+- удалено признание permission по совпадению namespace;
+- удалён перевод по последнему segment action;
+- known permission определяется только exact slug или явно объявленным wildcard;
+- из RoleDefinitions читаются только `system_permissions` и `module_permissions`;
+- из module manifests читаются только коллекции `permissions`;
+- из PHP module classes читаются только литералы тела `getPermissions()`;
+- перевод принимается только из exact `permissions.values` либо как exact subject и полный action suffix;
+- недостающие management permissions зарегистрированы в профильных ModuleList manifests и customer owner RoleDefinition;
+- для недостающих прав добавлены точные русские значения в `lang/ru/permissions.php`.
+
+Добавлены regressions:
+
+- same-namespace unknown permission отклоняется;
+- известное право без точного перевода отклоняется;
+- explicit wildcard с точным переводом принимается.
+- permission-like строки вне named permission collections игнорируются.
+
+### Value-preserving object conversion
+
+JSON round-trip заменён рекурсивным array→object converter:
+
+- associative maps становятся `stdClass`;
+- lists остаются lists;
+- nested maps внутри lists становятся objects;
+- float `1.0` сохраняет тип и значение.
+
+Добавлен nested `1.0` regression с проверкой list/map semantics.
+
+### Проверки после round 1
+
+- amended two-file PHPUnit gate: `OK (29 tests, 118 assertions)`;
+- PHPStan changed production: `[OK] No errors`, `--memory-limit=1G`;
+- Pint changed PHP files: PASS;
+- все permissions production management manifest подтверждены exact/wildcard source и точным русским переводом;
+- DB, auth, migrations, build, browser и Task 17 не запускались.
