@@ -123,5 +123,14 @@
       "created_at": "2026-01-01T00:00:00+00:00",
       "updated_at": "2026-01-01T00:01:00+00:00"
     }
+  },
+  "catalog_generated": {
+    "success": true,
+    "message": null,
+    "data": {
+      "contract_version": "1.0.0",
+      "manifest_sha256": "b6b44eac45e211acda9465c1d29f569403eddc1af9cf72d45c4da8f663263b07",
+      "definitions": []
+    }
   }
 }

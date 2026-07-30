@@ -1,0 +1,14 @@
+{
+    "contract_version": "1.0.0",
+    "groups": {
+        "portfolio": "Портфель",
+        "projects": "Проекты",
+        "finance": "Финансы",
+        "procurement_warehouse": "Закупки и склад",
+        "team": "Команда",
+        "quality_safety": "Качество и безопасность",
+        "partners_customers": "Партнёры и заказчики"
+    },
+    "titles": [],
+    "permissions": []
+}

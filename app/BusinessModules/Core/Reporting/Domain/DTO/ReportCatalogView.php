@@ -14,14 +14,16 @@ final readonly class ReportCatalogView
         public Sha256Hash $manifestSha256,
         public array $definitions,
     ) {
-        if ($contractVersion !== '1.0.0' || $definitions === [] || !array_is_list($definitions)) {
+        if ($contractVersion !== '1.0.0' || $definitions === [] || ! array_is_list($definitions)) {
             throw new InvalidArgumentException('report_catalog_view_invalid');
         }
 
         $codes = [];
         $hashes = [];
         foreach ($definitions as $definition) {
-            if (!$definition instanceof ReportDefinition || isset($codes[$definition->code]) || isset($hashes[$definition->definitionHash->value])) {
+            if ((! $definition instanceof ReportDefinition && ! $definition instanceof ReportCatalogDefinitionView)
+                || isset($codes[$definition->code])
+                || isset($hashes[$definition->definitionHash->value])) {
                 throw new InvalidArgumentException('report_catalog_view_invalid');
             }
             $codes[$definition->code] = true;
