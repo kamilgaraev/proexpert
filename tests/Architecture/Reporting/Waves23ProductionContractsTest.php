@@ -166,7 +166,10 @@ final class Waves23ProductionContractsTest extends TestCase
         );
 
         self::assertStringContainsString('->groupBy(static fn (ProductionAcceptanceEvent $event)', $lifecycle);
-        self::assertStringContainsString("\$latest->event_type !== 'reversed'", $lifecycle);
+        self::assertStringContainsString(
+            '(string) $latest->event_type !== (string) $candidate[\'event_type\']',
+            $lifecycle,
+        );
         self::assertStringContainsString('$this->completeness->inspect(', $readiness);
         self::assertStringNotContainsString('$eventKeys->has($key)', $readiness);
     }
@@ -186,14 +189,20 @@ final class Waves23ProductionContractsTest extends TestCase
             'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
             .'AcceptedProductionSnapshotMaterializer.php',
         );
+        $universe = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        );
 
-        self::assertStringContainsString("where('signed_at', '<=', \$asOf)", $lifecycle);
-        self::assertStringContainsString("where('approval_date', '<=', \$asOf)", $lifecycle);
-        self::assertStringNotContainsString("whereNull('signed_at')", $lifecycle);
-        self::assertStringContainsString('rejected_at', $lifecycle);
+        self::assertStringContainsString('ProductionAcceptanceOwnerVersion::query()', $universe);
+        self::assertStringContainsString("where('effective_at', '<=', \$query->asOf)", $universe);
+        self::assertStringContainsString('owner_later.effective_at <= ?', $universe);
+        self::assertStringContainsString(
+            'owner_later.effective_at > production_acceptance_owner_versions.effective_at',
+            $universe,
+        );
         self::assertStringContainsString('accepted_production_owner_history_unproven', $lifecycle);
-        self::assertStringNotContainsString("where('is_approved'", $lifecycle);
-        self::assertStringNotContainsString("orWhereIn('status'", $lifecycle);
+        self::assertStringNotContainsString('ContractPerformanceAct::query()', $lifecycle);
         self::assertStringContainsString('$this->completeness->inspect(', $readiness);
         self::assertStringContainsString('$this->completeness->assertComplete(', $materializer);
     }

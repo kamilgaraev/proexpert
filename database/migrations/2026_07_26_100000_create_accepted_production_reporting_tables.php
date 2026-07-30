@@ -11,6 +11,36 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::create('production_acceptance_owner_versions', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('contract_id');
+            $table->unsignedBigInteger('performance_act_id');
+            $table->unsignedInteger('version');
+            $table->string('event_type', 16);
+            $table->timestampTz('effective_at');
+            $table->string('source_event_id', 64);
+            $table->char('source_hash', 64);
+            $table->jsonb('members');
+            $table->unique(
+                ['organization_id', 'performance_act_id', 'version'],
+                'production_acceptance_owner_version_unique',
+            );
+            $table->unique(
+                ['organization_id', 'source_event_id'],
+                'production_acceptance_owner_source_unique',
+            );
+            $table->index(
+                ['organization_id', 'project_id', 'effective_at', 'performance_act_id', 'version'],
+                'production_acceptance_owner_as_of',
+            );
+        });
+        DB::statement(
+            "ALTER TABLE production_acceptance_owner_versions ADD CONSTRAINT production_acceptance_owner_event_check
+            CHECK (event_type IN ('accepted', 'reversed') AND jsonb_typeof(members) = 'array')"
+        );
+
         Schema::create('production_acceptance_events', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -84,6 +114,10 @@ CREATE TRIGGER production_acceptance_events_append_only
 BEFORE UPDATE OR DELETE ON production_acceptance_events
 FOR EACH ROW
 EXECUTE FUNCTION production_acceptance_event_immutable_guard();
+CREATE TRIGGER production_acceptance_owner_versions_append_only
+BEFORE UPDATE OR DELETE ON production_acceptance_owner_versions
+FOR EACH ROW
+EXECUTE FUNCTION production_acceptance_event_immutable_guard();
 SQL);
 
         Schema::create('accepted_production_snapshots', function (Blueprint $table): void {
@@ -137,6 +171,7 @@ SQL);
         Schema::dropIfExists('accepted_production_rows');
         Schema::dropIfExists('accepted_production_snapshots');
         Schema::dropIfExists('production_acceptance_events');
+        Schema::dropIfExists('production_acceptance_owner_versions');
         DB::statement('DROP FUNCTION IF EXISTS production_acceptance_event_immutable_guard()');
     }
 };

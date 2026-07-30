@@ -51,6 +51,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         $events = $universe['events'];
         $this->completeness->assertComplete($scope, $query->asOf, $events, $universe);
         $watermark = (int) ($events->max('id') ?? 0);
+        $ownerWatermark = (int) collect($universe['candidates'])->max('owner_version_id');
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'event_watermark' => $watermark,
             'events' => $events->map(static fn (ProductionAcceptanceEvent $event): array => [
@@ -67,6 +68,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 'source_line_type' => (string) $event->source_line_type,
                 'transition_version' => (int) $event->transition_version,
             ])->all(),
+            'owner_candidates' => $universe['candidates'],
         ])));
         $existing = AcceptedProductionSnapshot::query()
             ->where('organization_id', $scope->organizationId)
@@ -77,9 +79,29 @@ final readonly class AcceptedProductionSnapshotMaterializer
             return $this->reference($scope, $query, $existing);
         }
 
+        $candidates = collect($universe['candidates'])->keyBy(static fn (array $candidate): string => implode(':', [
+            (int) $candidate['performance_act_id'],
+            (string) $candidate['source_line_type'],
+            (int) $candidate['source_line_id'],
+        ]));
         $facts = $events
             ->groupBy(fn (ProductionAcceptanceEvent $event): string => $this->grain->key($event))
-            ->map(fn (Collection $lineEvents): array => $this->fact($lineEvents))
+            ->map(function (Collection $lineEvents) use ($candidates): array {
+                $event = $lineEvents->first();
+                if (! $event instanceof ProductionAcceptanceEvent) {
+                    throw new InvalidArgumentException('accepted_production_event_group_invalid');
+                }
+                $candidate = $candidates->get(implode(':', [
+                    (int) $event->performance_act_id,
+                    (string) $event->source_line_type,
+                    (int) $event->source_line_id,
+                ]));
+                if (! is_array($candidate)) {
+                    throw new InvalidArgumentException('accepted_production_owner_candidate_missing');
+                }
+
+                return $this->fact($lineEvents, $candidate);
+            })
             ->values();
 
         try {
@@ -88,6 +110,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 $query,
                 $sourceHash,
                 $watermark,
+                $ownerWatermark,
                 $facts,
             ): ReportSnapshotRef {
                 $snapshotId = (string) Str::ulid();
@@ -117,7 +140,10 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'source_hash' => $sourceHash->value,
                     'generated_at' => now(),
                     'stale_at' => now()->addMinutes(15),
-                    'watermarks' => ['acceptance_events' => 'event_'.$watermark],
+                    'watermarks' => [
+                        'acceptance_events' => 'event_'.$watermark,
+                        'acceptance_owners' => 'owner_'.$ownerWatermark,
+                    ],
                     'totals' => $totals,
                     'source_refs' => $sourceRefs,
                     'row_schema' => $this->rowSchema(),
@@ -130,6 +156,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     $payload = [
                         'project_id' => (int) $event->project_id,
                         'performance_act_id' => (int) $event->performance_act_id,
+                        'owner_version_id' => (int) $item['owner']['owner_version_id'],
                         'source_line_type' => (string) $event->source_line_type,
                         'source_line_id' => (int) $event->source_line_id,
                         'event_status' => (string) $event->event_type,
@@ -178,6 +205,12 @@ final readonly class AcceptedProductionSnapshotMaterializer
                                 'id' => (int) $event->performance_act_id,
                                 'project_id' => (int) $event->project_id,
                             ],
+                            [
+                                'type' => 'production_acceptance_owner_version',
+                                'id' => (int) $item['owner']['owner_version_id'],
+                                'project_id' => (int) $event->project_id,
+                                'source_hash' => (string) $item['owner']['owner_source_hash'],
+                            ],
                             ...($event->work_id === null ? [] : [[
                                 'type' => 'completed_work',
                                 'id' => (int) $event->work_id,
@@ -209,7 +242,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         }
     }
 
-    private function fact(Collection $events): array
+    private function fact(Collection $events, array $owner): array
     {
         $first = $events->first();
         $last = $events->last();
@@ -241,6 +274,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         return [
             'event' => $last,
             'event_ids' => $events->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+            'owner' => $owner,
             'fact' => new ProductionAcceptanceFact(
                 plannedQuantity: $this->decimal($this->scaled((string) $first->planned_quantity)),
                 reportedQuantity: $this->decimal($this->scaled((string) $first->reported_quantity)),

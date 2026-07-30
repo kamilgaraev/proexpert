@@ -25,8 +25,8 @@ final readonly class ProductionAcceptanceEventRecorder
         private ProductionAcceptanceEventIdentity $identity,
         private ApprovedAcceptanceRateResolver $rates,
         private ProductionAcceptanceReversalSource $reversals,
-    ) {
-    }
+        private ProductionAcceptanceOwnerVersionWriter $ownerVersions,
+    ) {}
 
     public function recordTransition(
         ContractPerformanceAct $act,
@@ -68,6 +68,7 @@ final readonly class ProductionAcceptanceEventRecorder
         }
 
         return DB::transaction(function () use ($act, $eventType, $occurredAt, $actorId): ProductionAcceptanceTransitioned {
+            $this->ownerVersions->record($act, $eventType, $occurredAt);
             $eventIds = [];
             if ($act->lines->isNotEmpty()) {
                 foreach ($act->lines as $line) {
@@ -108,7 +109,7 @@ final readonly class ProductionAcceptanceEventRecorder
             throw new InvalidArgumentException('production_acceptance_scope_mismatch');
         }
         $pivot = $work->pivot;
-        if (!$pivot instanceof PerformanceActCompletedWork) {
+        if (! $pivot instanceof PerformanceActCompletedWork) {
             throw new InvalidArgumentException('production_acceptance_pivot_unavailable');
         }
 
@@ -253,7 +254,7 @@ final readonly class ProductionAcceptanceEventRecorder
             $zone = $reversal['zone'];
             $contractorId = $reversal['contractor_id'];
         }
-        if (!$approvedRate instanceof ApprovedAcceptanceRate) {
+        if (! $approvedRate instanceof ApprovedAcceptanceRate) {
             throw new InvalidArgumentException('production_acceptance_rate_unavailable');
         }
         $version = $latestEvent === null ? 1 : (int) $latestEvent->transition_version + 1;
@@ -289,7 +290,7 @@ final readonly class ProductionAcceptanceEventRecorder
             ->where('event_type', $eventType)
             ->first();
         if ($existing !== null) {
-            if (!hash_equals((string) $existing->source_hash, $sourceHash)) {
+            if (! hash_equals((string) $existing->source_hash, $sourceHash)) {
                 throw new InvalidArgumentException('production_acceptance_event_immutable');
             }
 
@@ -347,7 +348,7 @@ final readonly class ProductionAcceptanceEventRecorder
             if ($concurrent === null) {
                 throw $exception;
             }
-            if (!hash_equals((string) $concurrent->source_hash, $sourceHash)) {
+            if (! hash_equals((string) $concurrent->source_hash, $sourceHash)) {
                 throw new InvalidArgumentException('production_acceptance_event_immutable');
             }
 

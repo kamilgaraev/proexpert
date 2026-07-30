@@ -53,11 +53,47 @@ final class ProductionResourceBoundaryTest extends TestCase
 
         self::assertStringContainsString('$this->universe->resolve($context->scope, $query)', $readiness);
         self::assertStringContainsString('$this->universe->resolve($scope, $query)', $materializer);
-        self::assertStringContainsString("'act_line_ids' => \$actLineIds", $universe);
-        self::assertStringContainsString("'work_ids' => \$workIds", $universe);
+        self::assertStringContainsString('ProductionAcceptanceOwnerVersion::query()', $universe);
+        self::assertStringContainsString('$ownerQuery->lazyById(500)', $universe);
+        self::assertStringContainsString('$eventQuery->lazyById(500)', $universe);
+        self::assertLessThan(
+            strpos($universe, '$eventQuery = ProductionAcceptanceEvent::query()'),
+            strpos($universe, '$ownerQuery = ProductionAcceptanceOwnerVersion::query()'),
+        );
         self::assertStringContainsString('$this->completeness->inspect(', $readiness);
         self::assertStringContainsString('$this->completeness->assertComplete(', $materializer);
         self::assertStringNotContainsString('$completeEvents = ProductionAcceptanceEvent::query()', $materializer);
+    }
+
+    #[Test]
+    public function accepted_production_owner_membership_is_versioned_and_append_only(): void
+    {
+        $migration = $this->source(
+            'database/migrations/2026_07_26_100000_create_accepted_production_reporting_tables.php',
+        );
+        $writer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'ProductionAcceptanceOwnerVersionWriter.php',
+        );
+        $recorder = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'ProductionAcceptanceEventRecorder.php',
+        );
+
+        self::assertStringContainsString(
+            "Schema::create('production_acceptance_owner_versions'",
+            $migration,
+        );
+        self::assertStringContainsString('production_acceptance_owner_versions_append_only', $migration);
+        self::assertStringContainsString("->where('effective_at', '<=', \$query->asOf)", $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        ));
+        self::assertStringContainsString('pg_advisory_xact_lock', $writer);
+        self::assertLessThan(
+            strpos($recorder, '$eventIds = [];'),
+            strpos($recorder, '$this->ownerVersions->record('),
+        );
     }
 
     #[Test]

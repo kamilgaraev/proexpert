@@ -43,33 +43,63 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
     ): ReportSourceReadiness {
         $universe = $this->universe->resolve($context->scope, $query);
         $events = $universe['events'];
-        $eligible = $events->map(static fn (ProductionAcceptanceEvent $event): array => [
-            'event_id' => (int) $event->id,
-            'source_hash' => (string) $event->source_hash,
-        ])->all();
-        $projected = $events
-            ->filter(static fn (ProductionAcceptanceEvent $event): bool => $event->approved_rate_minor !== null
-                && preg_match('/^[A-Z]{3}$/D', (string) $event->currency) === 1
-                && trim((string) $event->currency_source) !== '')
-            ->map(static fn (ProductionAcceptanceEvent $event): array => [
+        $latestEvents = $events
+            ->groupBy(static fn (ProductionAcceptanceEvent $event): string => implode(':', [
+                (int) $event->performance_act_id,
+                (string) $event->source_line_type,
+                (int) $event->source_line_id,
+            ]))
+            ->map(static fn ($lineEvents): ?ProductionAcceptanceEvent => $lineEvents->last());
+        $eligible = array_map(static fn (array $candidate): array => [
+            'owner_source_hash' => (string) $candidate['owner_source_hash'],
+            'owner_version_id' => (int) $candidate['owner_version_id'],
+            'performance_act_id' => (int) $candidate['performance_act_id'],
+            'source_line_id' => (int) $candidate['source_line_id'],
+            'source_line_type' => (string) $candidate['source_line_type'],
+        ], $universe['candidates']);
+        foreach ($universe['orphan_events'] as $orphan) {
+            $eligible[] = [
+                'event_id' => (int) $orphan['event_id'],
+                'kind' => 'owner_version_missing',
+                'performance_act_id' => (int) $orphan['performance_act_id'],
+            ];
+        }
+        $projected = [];
+        foreach ($universe['candidates'] as $candidate) {
+            $event = $latestEvents->get(implode(':', [
+                (int) $candidate['performance_act_id'],
+                (string) $candidate['source_line_type'],
+                (int) $candidate['source_line_id'],
+            ]));
+            if (! $event instanceof ProductionAcceptanceEvent
+                || (string) $event->event_type !== (string) $candidate['event_type']
+                || $event->approved_rate_minor === null
+                || preg_match('/^[A-Z]{3}$/D', (string) $event->currency) !== 1
+                || trim((string) $event->currency_source) === ''
+            ) {
+                continue;
+            }
+            $projected[] = [
                 'event_id' => (int) $event->id,
+                'owner_source_hash' => (string) $candidate['owner_source_hash'],
                 'source_hash' => (string) $event->source_hash,
-            ])
-            ->values()
-            ->all();
+            ];
+        }
         $gapCount = count($eligible) - count($projected);
 
-        foreach ($this->completeness->inspect(
+        $this->completeness->inspect(
             $context->scope,
             $query->asOf,
             $events,
             $universe,
-        ) as $gap) {
-            $eligible[] = $gap;
-            $gapCount++;
-        }
+        );
 
-        $watermark = 'event:'.(int) ($events->max('id') ?? 0);
+        $watermark = implode(':', [
+            'owner',
+            (int) collect($universe['candidates'])->max('owner_version_id'),
+            'event',
+            (int) ($events->max('id') ?? 0),
+        ]);
 
         return $this->readiness->make($eligible, $projected, $gapCount, 0, $watermark);
     }
