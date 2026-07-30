@@ -166,6 +166,7 @@ conformance с пересчитанным digest.
 - `tests/Fixtures/Reporting/Manifest/management.invalid-group.yaml`
 - `tests/Fixtures/Reporting/Manifest/management.invalid-readiness.yaml`
 - `tests/Fixtures/Reporting/Manifest/management.unknown-permission.yaml`
+- `tests/Fixtures/Reporting/Manifest/management.valid.yaml`
 - `tests/Support/Reporting/Publication/ReportCandidateValidationFixtureBuilder.php`
 - `tests/Unit/Reporting/Publication/ReportDefinitionVersionPolicyTest.php`
 - `tests/Unit/Reporting/Publication/ReportManifestPromotionServiceTest.php`
@@ -175,7 +176,7 @@ conformance с пересчитанным digest.
 
 ## Проверки
 
-- Exact Task 5 PHPUnit + script gate:
+- Исходный exact Task 5 PHPUnit + script gate до review round 1/2:
   `OK (26 tests, 214 assertions)`, `promotion-check: PASS`.
 - Task 3 repin schema regression:
   `OK (4 tests, 14 assertions)`.
@@ -238,6 +239,11 @@ conformance с пересчитанным digest.
 - Combined targeted Task 19 gate: `OK (28 tests, 231 assertions)`.
 - Changed PHP scope: PHPStan без ошибок; Pint `--test` успешно пройден для 6 изменённых PHP-файлов.
 
+- Актуальный точный состав Task 19 test gate: 29 тестов и 247 assertions.
+  Значение составлено из выполненного round 2 gate `OK (28 tests, 231 assertions)`
+  и новой изолированной regression `OK (1 test, 16 assertions)`; полный gate
+  повторно не запускался.
+
 ## Финализация review round 3
 
 - После verified new ledger и удаления backup журнал считается cleanup-only
@@ -246,9 +252,8 @@ conformance с пересчитанным digest.
   при отказе cleanup; следующий append валидирует и удаляет journal без
   дублирования события или потери истории: `OK (1 test, 16 assertions)`.
 - Минимальная совместимая crash-recovery regression: `OK (1 test, 12 assertions)`.
-- Точный состав Task 19 test gate теперь содержит 29 тестов и 247 assertions;
-  полный gate повторно не запускался, так как исполняемый охват round 2 не
-  менялся за пределами новой изолированной регрессии.
+- Полный Task 19 gate повторно не запускался: актуальный состав и способ его
+  вычисления зафиксированы в разделе «Проверки».
 
 ## Concerns
 
