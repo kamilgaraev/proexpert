@@ -7,17 +7,17 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Supply\Backfill;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
-use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SentPurchaseOrderLineOwnerRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder;
 use App\Support\Reporting\OwnerBackfillBatch;
 use Carbon\CarbonImmutable;
 use DomainException;
-use Throwable;
 use Illuminate\Support\Facades\DB;
+use Throwable;
 
 final readonly class SupplyReliabilityBackfill
 {
@@ -34,7 +34,11 @@ final readonly class SupplyReliabilityBackfill
         $limit = min(self::MAX_SLICE, max(1, $limit));
         $watermark = $this->watermark($organizationId);
         $items = PurchaseOrderItem::query()
-            ->with(['purchaseOrder.purchaseRequest.siteRequest', 'receiptLines.purchaseReceipt'])
+            ->with([
+                'purchaseOrder.purchaseRequest.siteRequest',
+                'receiptLines.purchaseReceipt',
+                'receiptLines.returns',
+            ])
             ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
             ->where('purchase_orders.organization_id', $organizationId)
             ->whereNotNull('purchase_orders.sent_at')
@@ -212,6 +216,17 @@ final readonly class SupplyReliabilityBackfill
                         $gaps++;
 
                         continue;
+                    }
+                    foreach ($line->returns as $return) {
+                        $corrections[] = [
+                            'event_type' => 'returned',
+                            'occurred_at' => $return->occurred_at->format(DATE_ATOM),
+                            'quantity' => (string) $return->quantity,
+                            'source_type' => (string) $return->source_type,
+                            'source_id' => (int) $return->source_id,
+                            'source_version' => (int) $return->source_version,
+                            'reason_code' => (string) $return->reason_code,
+                        ];
                     }
                     foreach ($corrections as $correction) {
                         if (! is_array($correction)

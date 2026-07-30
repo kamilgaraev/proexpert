@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
@@ -12,11 +13,13 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptReturn;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Models\Supplier;
 use App\Models\User;
+use Brick\Math\BigDecimal;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -544,6 +547,10 @@ class PurchaseOrderService
             $idempotencyKey,
             $actorId,
         ): PurchaseOrder {
+            DB::selectOne(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, ?))',
+                ['purchase-receipt-return:'.$idempotencyKey, $organizationId],
+            );
             $line = PurchaseReceiptLine::query()
                 ->with(['purchaseReceipt.purchaseOrder', 'purchaseOrderItem', 'inventoryLot'])
                 ->whereKey($lineId)
@@ -555,14 +562,26 @@ class PurchaseOrderService
             if (! $line instanceof PurchaseReceiptLine) {
                 throw new \DomainException(trans_message('procurement.purchase_orders.receipt_line_not_found'));
             }
-            $metadata = is_array($line->metadata) ? $line->metadata : [];
-            $returns = is_array($metadata['reporting_return_events'] ?? null)
-                ? $metadata['reporting_return_events']
-                : [];
-            foreach ($returns as $return) {
-                if (($return['idempotency_key'] ?? null) === $idempotencyKey) {
+            $payloadFingerprint = hash('sha256', CanonicalJson::encode([
+                'actor_id' => $actorId,
+                'organization_id' => $organizationId,
+                'purchase_order_id' => $purchaseOrderId,
+                'purchase_receipt_line_id' => $lineId,
+                'quantity' => (string) BigDecimal::of($quantity),
+                'reason_code' => $reasonCode,
+            ]));
+            $existing = PurchaseReceiptReturn::query()
+                ->where('organization_id', $organizationId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->lockForUpdate()
+                ->first();
+            if ($existing instanceof PurchaseReceiptReturn) {
+                if (hash_equals((string) $existing->payload_fingerprint, $payloadFingerprint)) {
                     return $line->purchaseReceipt->purchaseOrder->fresh(['items.receiptLines', 'receipts.lines']);
                 }
+                throw new \DomainException(
+                    trans_message('procurement.purchase_orders.receipt_return_idempotency_conflict')
+                );
             }
             $occurredAt = CarbonImmutable::now('UTC');
             $movement = $this->receiptInventory->returnQuantity(
@@ -574,23 +593,27 @@ class PurchaseOrderService
             );
             $event = $this->reportingLifecycle->receiptReturned(
                 $line->fresh(['purchaseReceipt', 'purchaseOrderItem', 'inventoryLot']),
+                (int) $movement->id,
                 $quantity,
                 $reasonCode,
                 $occurredAt,
                 $idempotencyKey,
             );
-            $returns[] = [
-                'event_type' => 'returned',
-                'occurred_at' => $occurredAt->format(DATE_ATOM),
-                'quantity' => $quantity,
-                'reason_code' => $reasonCode,
-                'idempotency_key' => $idempotencyKey,
+            PurchaseReceiptReturn::query()->create([
+                'organization_id' => $organizationId,
+                'purchase_receipt_line_id' => (int) $line->id,
                 'warehouse_movement_id' => (int) $movement->id,
                 'supply_lifecycle_event_id' => (int) $event->id,
-            ];
-            $line->forceFill(['metadata' => array_merge($metadata, [
-                'reporting_return_events' => $returns,
-            ])])->save();
+                'source_type' => 'warehouse_movement',
+                'source_id' => (int) $movement->id,
+                'source_version' => (int) data_get($line->metadata, 'reporting_source_version', 1),
+                'quantity' => $quantity,
+                'reason_code' => $reasonCode,
+                'actor_id' => $actorId,
+                'occurred_at' => $occurredAt,
+                'idempotency_key' => $idempotencyKey,
+                'payload_fingerprint' => $payloadFingerprint,
+            ]);
 
             return $line->purchaseReceipt->purchaseOrder->fresh(['items.receiptLines', 'receipts.lines']);
         }, 3);

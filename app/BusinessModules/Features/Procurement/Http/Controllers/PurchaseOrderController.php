@@ -460,7 +460,14 @@ class PurchaseOrderController extends Controller
             );
         } catch (\DomainException) {
             return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
-        } catch (\Throwable) {
+        } catch (\Throwable $exception) {
+            Log::error('procurement.purchase_orders.return_receipt_line.error', [
+                'purchase_order_id' => $id,
+                'purchase_receipt_line_id' => $line,
+                'user_id' => $request->user()?->getAuthIdentifier(),
+                'exception_class' => $exception::class,
+            ]);
+
             return AdminResponse::error(
                 trans_message('procurement.purchase_orders.receipt_line_return_error'),
                 500,

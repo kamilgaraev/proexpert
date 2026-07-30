@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Models;
 
+use Brick\Math\BigDecimal;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use LogicException;
@@ -28,6 +29,7 @@ final class PurchaseReceiptInventoryLot extends Model
         'receipt_warehouse_movement_id',
         'original_quantity',
         'reversed_quantity',
+        'returned_quantity',
         'unit_dimension',
         'unit_code',
         'conversion_version',
@@ -36,6 +38,7 @@ final class PurchaseReceiptInventoryLot extends Model
     protected $casts = [
         'original_quantity' => 'decimal:6',
         'reversed_quantity' => 'decimal:6',
+        'returned_quantity' => 'decimal:6',
     ];
 
     protected static function booted(): void
@@ -56,6 +59,13 @@ final class PurchaseReceiptInventoryLot extends Model
                 && ! in_array($next, [$original, (string) $lot->original_quantity], true)
             ) {
                 throw new LogicException('Receipt inventory reversal must be exact.');
+            }
+            $returned = BigDecimal::of((string) $lot->returned_quantity);
+            $originalReturned = BigDecimal::of((string) $lot->getOriginal('returned_quantity'));
+            $availableForReturn = BigDecimal::of((string) $lot->original_quantity)
+                ->minus((string) $lot->reversed_quantity);
+            if ($returned->isLessThan($originalReturned) || $returned->isGreaterThan($availableForReturn)) {
+                throw new LogicException('Receipt inventory returned quantity must be cumulative.');
             }
         });
     }

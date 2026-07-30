@@ -207,6 +207,7 @@ return [
         'receipt_line_returned' => 'Возврат поставщику проведен, складской остаток скорректирован.',
         'receipt_return_quantity_invalid' => 'Количество возврата превышает доступный остаток партии.',
         'receipt_line_return_error' => 'Не удалось провести возврат поставщику.',
+        'receipt_return_idempotency_conflict' => 'Повторный запрос возврата содержит другие данные.',
         'receipt_line_already_reversed' => 'Приемка этой позиции уже отменена.',
         'receipt_line_reversal_conflict' => 'Приемка этой позиции уже отменена другим запросом.',
         'receipt_inventory_lot_required' => 'Для позиции приемки не найден связанный складской остаток.',

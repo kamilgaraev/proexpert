@@ -111,7 +111,8 @@ final readonly class PurchaseReceiptInventoryService
             throw new DomainException(trans_message('procurement.purchase_orders.receipt_inventory_lot_required'));
         }
         $remaining = BigDecimal::of((string) $lot->original_quantity)
-            ->minus((string) $lot->reversed_quantity);
+            ->minus((string) $lot->reversed_quantity)
+            ->minus((string) $lot->returned_quantity);
         if ($requested->isGreaterThan($remaining)) {
             throw new DomainException(trans_message('procurement.purchase_orders.receipt_return_quantity_invalid'));
         }
@@ -138,6 +139,8 @@ final readonly class PurchaseReceiptInventoryService
             ->minus($requested);
         $balance->last_movement_at = $occurredAt;
         $balance->save();
+        $sourceMetadata = is_array($sourceMovement->metadata) ? $sourceMovement->metadata : [];
+        unset($sourceMetadata['reporting_opening_basis']);
         $movement = WarehouseMovement::query()->create([
             'organization_id' => $lot->organization_id,
             'warehouse_id' => $balance->warehouse_id,
@@ -151,15 +154,17 @@ final readonly class PurchaseReceiptInventoryService
             'document_number' => $sourceMovement->document_number,
             'reason' => $reasonCode,
             'operation_category' => 'procurement_receipt_return',
-            'metadata' => [
+            'metadata' => array_merge($sourceMetadata, [
                 'returned_purchase_receipt_line_id' => (int) $line->id,
                 'receipt_movement_id' => (int) $sourceMovement->id,
-            ],
+                'reporting_inventory_project_id' => $sourceMetadata['reporting_inventory_project_id']
+                    ?? ($sourceMovement->project_id === null ? null : (int) $sourceMovement->project_id),
+            ]),
             'movement_date' => $occurredAt,
         ]);
         $this->inventoryEvents->record($movement, 'issue', null);
         $lot->forceFill([
-            'reversed_quantity' => (string) BigDecimal::of((string) $lot->reversed_quantity)->plus($requested),
+            'returned_quantity' => (string) BigDecimal::of((string) $lot->returned_quantity)->plus($requested),
         ])->save();
         Cache::forget("warehouse_stock_{$lot->organization_id}");
         Cache::forget("warehouse_low_stock_{$lot->organization_id}");

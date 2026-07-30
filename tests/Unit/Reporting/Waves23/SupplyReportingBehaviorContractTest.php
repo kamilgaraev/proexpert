@@ -23,6 +23,10 @@ final class SupplyReportingBehaviorContractTest extends TestCase
         $lifecycle = file_get_contents($root.'app/BusinessModules/Features/Procurement/Reporting/Supply/Services/SupplyLifecycleEventRecorder.php');
         $controller = file_get_contents($root.'app/BusinessModules/Features/Procurement/Http/Controllers/PurchaseOrderController.php');
         $routes = file_get_contents($root.'app/BusinessModules/Features/Procurement/routes.php');
+        $request = file_get_contents($root.'app/BusinessModules/Features/Procurement/Http/Requests/ReturnPurchaseReceiptLineRequest.php');
+        $returnModel = file_get_contents($root.'app/BusinessModules/Features/Procurement/Models/PurchaseReceiptReturn.php');
+        $migration = file_get_contents($root.'app/BusinessModules/Features/Procurement/migrations/2026_07_26_120000_create_supply_reliability_reporting_tables.php');
+        $readiness = file_get_contents($root.'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/SupplyReliabilityReadinessProbe.php');
 
         self::assertStringContainsString('public function returnReceiptLine(', $service);
         self::assertStringContainsString('DB::transaction(', $service);
@@ -30,7 +34,19 @@ final class SupplyReportingBehaviorContractTest extends TestCase
         self::assertStringContainsString("'operation_category' => 'procurement_receipt_return'", $inventory);
         self::assertStringContainsString("'returned'", $lifecycle);
         self::assertStringContainsString('ReturnPurchaseReceiptLineRequest', $controller);
-        self::assertStringContainsString("receipt-lines/{line}/return", $routes);
+        self::assertStringContainsString('receipt-lines/{line}/return', $routes);
+        self::assertStringContainsString('AuthorizationService::class', $request);
+        self::assertStringContainsString("'procurement.purchase_orders.receive'", $request);
+        self::assertStringContainsString('payload_fingerprint', $service);
+        self::assertStringContainsString('pg_advisory_xact_lock', $service);
+        self::assertStringContainsString('PurchaseReceiptReturn::query()->create', $service);
+        self::assertStringContainsString('returned_quantity', $inventory);
+        self::assertStringContainsString('reporting_inventory_project_id', $inventory);
+        self::assertStringContainsString('static function (): never', $returnModel);
+        self::assertStringContainsString('most_purchase_receipt_return_identity_v1', $migration);
+        self::assertStringContainsString('reversed_quantity + returned_quantity <= original_quantity', $migration);
+        self::assertStringContainsString('missingReturnLifecycle', $readiness);
+        self::assertStringContainsString('missingOrderLifecycle', $readiness);
     }
 
     public function test_historical_inventory_projection_requires_pinned_unit_identity(): void

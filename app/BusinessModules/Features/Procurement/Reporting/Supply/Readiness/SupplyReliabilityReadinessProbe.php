@@ -9,7 +9,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
-use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityPolicyVersion;
@@ -185,6 +184,64 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     ->where('reversed_event.event_type', 'receipt_reversed');
             })
             ->count();
+        $missingReturnLifecycle = DB::table('purchase_receipt_returns as readiness_return')
+            ->join(
+                'purchase_receipt_lines as readiness_return_line',
+                'readiness_return_line.id',
+                '=',
+                'readiness_return.purchase_receipt_line_id',
+            )
+            ->join(
+                'purchase_order_promise_versions as readiness_return_promise',
+                'readiness_return_promise.purchase_order_item_id',
+                '=',
+                'readiness_return_line.purchase_order_item_id',
+            )
+            ->where('readiness_return.organization_id', $context->scope->organizationId)
+            ->whereIn('readiness_return_promise.id', $eligiblePromiseIds)
+            ->where('readiness_return.occurred_at', '<=', $query->asOf)
+            ->where(static fn ($builder) => $builder
+                ->whereNull('readiness_return.supply_lifecycle_event_id')
+                ->orWhereNotExists(static function ($event): void {
+                    $event->selectRaw('1')
+                        ->from('supply_lifecycle_events as returned_event')
+                        ->whereColumn('returned_event.id', 'readiness_return.supply_lifecycle_event_id')
+                        ->whereColumn('returned_event.source_type', 'readiness_return.source_type')
+                        ->whereColumn('returned_event.source_id', 'readiness_return.source_id')
+                        ->whereColumn('returned_event.source_version', 'readiness_return.source_version')
+                        ->where('returned_event.event_type', 'returned');
+                }))
+            ->count();
+        $missingOrderLifecycle = (clone $promises)
+            ->join(
+                'purchase_orders as readiness_order',
+                'readiness_order.id',
+                '=',
+                'sent_purchase_order_line_owners.purchase_order_id',
+            )
+            ->whereNotNull('owner_promise.id')
+            ->where(static function ($builder) use ($query): void {
+                $builder
+                    ->where(static fn ($confirmed) => $confirmed
+                        ->whereNotNull('readiness_order.confirmed_at')
+                        ->where('readiness_order.confirmed_at', '<=', $query->asOf)
+                        ->whereNotExists(static function ($event): void {
+                            $event->selectRaw('1')
+                                ->from('supply_lifecycle_events as confirmed_event')
+                                ->whereColumn('confirmed_event.promise_version_id', 'owner_promise.id')
+                                ->where('confirmed_event.event_type', 'confirmed');
+                        }))
+                    ->orWhere(static fn ($cancelled) => $cancelled
+                        ->whereNotNull('readiness_order.cancelled_at')
+                        ->where('readiness_order.cancelled_at', '<=', $query->asOf)
+                        ->whereNotExists(static function ($event): void {
+                            $event->selectRaw('1')
+                                ->from('supply_lifecycle_events as cancelled_event')
+                                ->whereColumn('cancelled_event.promise_version_id', 'owner_promise.id')
+                                ->where('cancelled_event.event_type', 'cancelled');
+                        }));
+            })
+            ->count();
         $unknown = (clone $promises)
             ->where(function ($builder): void {
                 $builder->whereIn('sent_purchase_order_line_owners.unit_dimension', ['', 'unknown'])
@@ -211,6 +268,8 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                 + $missingSent
                 + $missingReceiptLifecycle
                 + $missingReversalLifecycle
+                + $missingReturnLifecycle
+                + $missingOrderLifecycle
                 + $incompleteBackfill,
             $unknown,
             (clone $promises)->where('sent_purchase_order_line_owners.source_version', '<', 1)->count()
@@ -224,26 +283,25 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
     private function statusExpression(
         ReportQuery $query,
         string $tolerance,
-    ): \Illuminate\Contracts\Database\Query\Expression
-    {
+    ): \Illuminate\Contracts\Database\Query\Expression {
         $cutoff = $query->asOf->format(DATE_ATOM);
 
         return DB::raw(
-            "(CASE "
-            ."WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_cancel "
-            ."WHERE status_cancel.promise_version_id = owner_promise.id "
+            '(CASE '
+            .'WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_cancel '
+            .'WHERE status_cancel.promise_version_id = owner_promise.id '
             ."AND status_cancel.event_type = 'cancelled' AND status_cancel.occurred_at <= '{$cutoff}') "
             ."THEN 'cancelled' "
-            ."WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty "
-            ."WHERE status_qty.promise_version_id = owner_promise.id "
+            .'WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty '
+            .'WHERE status_qty.promise_version_id = owner_promise.id '
             ."AND status_qty.occurred_at <= '{$cutoff}'), 0) >= "
             ."(owner_promise.ordered_quantity - {$tolerance}) "
             ."THEN 'delivered' "
-            ."WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty "
-            ."WHERE status_qty.promise_version_id = owner_promise.id "
+            .'WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty '
+            .'WHERE status_qty.promise_version_id = owner_promise.id '
             ."AND status_qty.occurred_at <= '{$cutoff}'), 0) > 0 THEN 'partially_delivered' "
-            ."WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_confirm "
-            ."WHERE status_confirm.promise_version_id = owner_promise.id "
+            .'WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_confirm '
+            .'WHERE status_confirm.promise_version_id = owner_promise.id '
             ."AND status_confirm.event_type = 'confirmed' AND status_confirm.occurred_at <= '{$cutoff}') "
             ."THEN 'confirmed' ELSE 'sent' END)",
         );
@@ -252,17 +310,16 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
     private function delayExpression(
         ReportQuery $query,
         string $tolerance,
-    ): \Illuminate\Contracts\Database\Query\Expression
-    {
+    ): \Illuminate\Contracts\Database\Query\Expression {
         $cutoff = $query->asOf->format(DATE_ATOM);
-        $receipt = "(SELECT MIN(delay_event.occurred_at) FROM supply_lifecycle_events delay_event "
-            ."WHERE delay_event.promise_version_id = owner_promise.id "
+        $receipt = '(SELECT MIN(delay_event.occurred_at) FROM supply_lifecycle_events delay_event '
+            .'WHERE delay_event.promise_version_id = owner_promise.id '
             ."AND delay_event.occurred_at <= '{$cutoff}' "
-            ."AND (SELECT COALESCE(SUM(delay_running.signed_quantity), 0) "
-            ."FROM supply_lifecycle_events delay_running "
-            ."WHERE delay_running.promise_version_id = owner_promise.id "
-            ."AND (delay_running.occurred_at < delay_event.occurred_at "
-            ."OR (delay_running.occurred_at = delay_event.occurred_at AND delay_running.id <= delay_event.id))) "
+            .'AND (SELECT COALESCE(SUM(delay_running.signed_quantity), 0) '
+            .'FROM supply_lifecycle_events delay_running '
+            .'WHERE delay_running.promise_version_id = owner_promise.id '
+            .'AND (delay_running.occurred_at < delay_event.occurred_at '
+            .'OR (delay_running.occurred_at = delay_event.occurred_at AND delay_running.id <= delay_event.id))) '
             .">= (owner_promise.ordered_quantity - {$tolerance}))";
 
         return DB::raw(

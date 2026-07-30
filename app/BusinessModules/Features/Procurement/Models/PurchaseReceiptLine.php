@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use LogicException;
 
@@ -74,5 +75,10 @@ class PurchaseReceiptLine extends Model
     public function inventoryLot(): HasOne
     {
         return $this->hasOne(PurchaseReceiptInventoryLot::class, 'purchase_receipt_line_id');
+    }
+
+    public function returns(): HasMany
+    {
+        return $this->hasMany(PurchaseReceiptReturn::class, 'purchase_receipt_line_id');
     }
 }

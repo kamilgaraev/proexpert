@@ -68,18 +68,40 @@ final readonly class SupplyLifecycleEventRecorder
 
     public function returned(
         PurchaseReceiptLine $line,
+        int $warehouseMovementId,
         string $quantity,
         string $reasonCode,
         CarbonImmutable $occurredAt,
         string $idempotencyKey,
     ): SupplyLifecycleEvent {
-        return $this->recordLineEvent(
-            $line,
+        $metadata = is_array($line->metadata) ? $line->metadata : [];
+        $sourceVersion = $metadata['reporting_source_version'] ?? null;
+        if (! is_int($sourceVersion) || $sourceVersion < 1 || $warehouseMovementId < 1) {
+            throw new DomainException('Receipt return source identity is required.');
+        }
+        $promise = PurchaseOrderPromiseVersion::query()
+            ->where('organization_id', $this->organizationId($line))
+            ->where('purchase_order_item_id', $line->purchaseOrderItem->getKey())
+            ->where('promise_version', 1)
+            ->first();
+        if (! $promise instanceof PurchaseOrderPromiseVersion) {
+            throw new DomainException('Original purchase order promise is required before return.');
+        }
+
+        return $this->record(
+            $promise,
             'returned',
+            'warehouse_movement',
+            $warehouseMovementId,
+            $sourceVersion,
             '-'.ltrim($quantity, '+-'),
             $occurredAt,
+            $idempotencyKey,
             $reasonCode,
-            idempotencyKey: $idempotencyKey,
+            evidence: [
+                'purchase_receipt_id' => (int) $line->purchase_receipt_id,
+                'purchase_receipt_line_id' => (int) $line->id,
+            ],
         );
     }
 

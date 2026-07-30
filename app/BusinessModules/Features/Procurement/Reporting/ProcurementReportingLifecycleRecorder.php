@@ -347,6 +347,7 @@ final readonly class ProcurementReportingLifecycleRecorder
 
     public function receiptReturned(
         PurchaseReceiptLine $line,
+        int $warehouseMovementId,
         string $quantity,
         string $reasonCode,
         CarbonImmutable $occurredAt,
@@ -354,6 +355,7 @@ final readonly class ProcurementReportingLifecycleRecorder
     ): SupplyLifecycleEvent {
         return $this->supplyEvents->returned(
             $line,
+            $warehouseMovementId,
             $quantity,
             $reasonCode,
             $occurredAt,
