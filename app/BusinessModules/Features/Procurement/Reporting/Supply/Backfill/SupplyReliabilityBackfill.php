@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SentPurchaseOrderLineOwnerRecorder;
@@ -16,6 +17,7 @@ use App\Support\Reporting\OwnerBackfillBatch;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Throwable;
+use Illuminate\Support\Facades\DB;
 
 final readonly class SupplyReliabilityBackfill
 {
@@ -30,12 +32,14 @@ final readonly class SupplyReliabilityBackfill
     public function backfillSlice(int $organizationId, int $cursor, int $limit = self::MAX_SLICE): OwnerBackfillBatch
     {
         $limit = min(self::MAX_SLICE, max(1, $limit));
+        $watermark = $this->watermark($organizationId);
         $items = PurchaseOrderItem::query()
             ->with(['purchaseOrder.purchaseRequest.siteRequest', 'receiptLines.purchaseReceipt'])
             ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
             ->where('purchase_orders.organization_id', $organizationId)
             ->whereNotNull('purchase_orders.sent_at')
             ->where('purchase_order_items.id', '>', $cursor)
+            ->where('purchase_order_items.id', '<=', $watermark->target_item_id)
             ->select('purchase_order_items.*')
             ->orderBy('purchase_order_items.id')
             ->limit($limit)
@@ -262,6 +266,11 @@ final readonly class SupplyReliabilityBackfill
             }
         }
         $nextCursor = $items->isEmpty() ? $cursor : (int) $items->last()->id;
+        $done = $nextCursor >= (int) $watermark->target_item_id || $items->count() < $limit;
+        $watermark->forceFill([
+            'completed_item_id' => max((int) $watermark->completed_item_id, $nextCursor),
+            'completed_at' => $done ? now() : null,
+        ])->save();
         $output = SupplyLifecycleEvent::query()
             ->where('organization_id', $organizationId)
             ->whereIn('id', $projected)
@@ -283,9 +292,37 @@ final readonly class SupplyReliabilityBackfill
             count($projected) + count($projectedOwnerIds),
             $gaps,
             $nextCursor,
-            $items->count() < $limit,
+            $done,
             hash('sha256', CanonicalJson::encode($input)),
             hash('sha256', CanonicalJson::encode($output)),
         );
+    }
+
+    private function watermark(int $organizationId): SupplyReliabilityBackfillWatermark
+    {
+        return DB::transaction(function () use ($organizationId): SupplyReliabilityBackfillWatermark {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select('SELECT pg_advisory_xact_lock(?, ?)', [$organizationId, 17]);
+            }
+            $existing = SupplyReliabilityBackfillWatermark::query()->find($organizationId);
+            if ($existing instanceof SupplyReliabilityBackfillWatermark) {
+                return $existing;
+            }
+            $target = PurchaseOrderItem::query()
+                ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
+                ->where('purchase_orders.organization_id', $organizationId)
+                ->whereNotNull('purchase_orders.sent_at')
+                ->selectRaw('COALESCE(MAX(purchase_order_items.id), 0) AS target_item_id')
+                ->selectRaw('MAX(purchase_orders.sent_at) AS target_sent_at')
+                ->first();
+
+            return SupplyReliabilityBackfillWatermark::query()->create([
+                'organization_id' => $organizationId,
+                'target_item_id' => (int) ($target?->target_item_id ?? 0),
+                'completed_item_id' => 0,
+                'target_sent_at' => $target?->target_sent_at,
+                'completed_at' => null,
+            ]);
+        }, 3);
     }
 }

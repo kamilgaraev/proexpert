@@ -87,14 +87,27 @@ final readonly class SentPurchaseOrderLineOwnerRecorder
         $attributes['source_hash'] = hash('sha256', CanonicalJson::encode($canonical));
 
         return DB::transaction(function () use ($attributes): SentPurchaseOrderLineOwner {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select(
+                    'SELECT pg_advisory_xact_lock(?, ?)',
+                    [
+                        (int) $attributes['organization_id'],
+                        (int) $attributes['purchase_order_item_id'],
+                    ],
+                );
+            }
             $existing = SentPurchaseOrderLineOwner::query()
                 ->where('organization_id', $attributes['organization_id'])
                 ->where('purchase_order_item_id', $attributes['purchase_order_item_id'])
                 ->where('source_version', $attributes['source_version'])
-                ->lockForUpdate()
                 ->first();
             if ($existing instanceof SentPurchaseOrderLineOwner) {
-                if (! hash_equals((string) $existing->source_hash, $attributes['source_hash'])) {
+                $persisted = $existing->only(array_keys($attributes));
+                $persisted['effective_from'] = $existing->effective_from->utc()->format(DATE_ATOM);
+                $expected = $attributes;
+                $expected['effective_from'] = $attributes['effective_from']->format(DATE_ATOM);
+                if ($persisted !== $expected
+                    || ! hash_equals((string) $existing->source_hash, $attributes['source_hash'])) {
                     throw new DomainException('Sent purchase order line owner identity conflict.');
                 }
 

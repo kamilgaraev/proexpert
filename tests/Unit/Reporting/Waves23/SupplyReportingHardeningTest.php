@@ -218,11 +218,49 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('$missingSent', $source);
         self::assertStringNotContainsString('->get([', $source);
         self::assertStringNotContainsString('->pluck(', $source);
-        self::assertStringContainsString('SentPurchaseOrderLineOwner::query()', $source);
-        self::assertStringNotContainsString('PurchaseOrderItem::query()', $source);
+        self::assertStringContainsString('PurchaseOrderItem::query()', $source);
+        self::assertStringContainsString("'authoritative_order.sent_at'", $source);
+        self::assertStringContainsString('$missingOwner', $source);
+        self::assertStringContainsString('$incompleteBackfill', $source);
+        self::assertStringContainsString('SupplyReliabilityBackfillWatermark::query()', $source);
         self::assertStringContainsString('$missingPromise', $source);
-        self::assertStringContainsString('$eligible - $projected', $source);
+        self::assertStringContainsString('$eligible - $owned', $source);
+        self::assertStringContainsString('$owned - $projected', $source);
         self::assertStringNotContainsString('min($projected, $sentItems)', $source);
+    }
+
+    public function test_sent_owner_first_writer_is_serialized_and_compares_the_complete_identity(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Services/'
+            .'SentPurchaseOrderLineOwnerRecorder.php',
+        );
+
+        self::assertStringContainsString('pg_advisory_xact_lock', $source);
+        self::assertStringContainsString('$existing->only(array_keys($attributes))', $source);
+        self::assertStringContainsString('$persisted !== $expected', $source);
+        self::assertStringContainsString('hash_equals(', $source);
+        self::assertStringNotContainsString('->lockForUpdate()', $source);
+    }
+
+    public function test_supply_backfill_has_an_org_scoped_fixed_target_watermark(): void
+    {
+        $backfill = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Backfill/'
+            .'SupplyReliabilityBackfill.php',
+        );
+        $migration = $this->source(
+            'app/BusinessModules/Features/Procurement/migrations/'
+            .'2026_07_26_120000_create_supply_reliability_reporting_tables.php',
+        );
+
+        self::assertStringContainsString('supply_reliability_backfill_watermarks', $migration);
+        self::assertStringContainsString("'organization_id'", $migration);
+        self::assertStringContainsString("'target_item_id'", $migration);
+        self::assertStringContainsString("'completed_item_id'", $migration);
+        self::assertStringContainsString("'purchase_order_items.id', '<=', \$watermark->target_item_id", $backfill);
+        self::assertStringContainsString("'completed_item_id' => max(", $backfill);
+        self::assertStringContainsString('pg_advisory_xact_lock', $backfill);
     }
 
     public function test_owner_materializers_filter_sources_before_hashing_and_serialize_first_writer(): void

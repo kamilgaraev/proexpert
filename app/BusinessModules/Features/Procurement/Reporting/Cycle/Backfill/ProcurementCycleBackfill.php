@@ -26,6 +26,7 @@ final readonly class ProcurementCycleBackfill
         'order_sent' => 5,
         'first_receipt' => 6,
         'fully_received' => 7,
+        'cancelled' => 8,
     ];
 
     public function __construct(private ProcurementProcessEventRecorder $events) {}
@@ -49,7 +50,13 @@ final readonly class ProcurementCycleBackfill
         $gaps = 0;
         foreach ($lines as $line) {
             $request = $line->purchaseRequest;
-            $siteRequest = $request->siteRequest;
+            $lineMetadata = is_array($line->metadata) ? $line->metadata : [];
+            $capturedOwner = is_array($lineMetadata['reporting_owner_dimensions'] ?? null)
+                ? $lineMetadata['reporting_owner_dimensions']
+                : [];
+            if ($capturedOwner === []) {
+                $gaps++;
+            }
             $this->events->captureOwnerExpectation(
                 $organizationId,
                 (int) $request->id,
@@ -58,13 +65,14 @@ final readonly class ProcurementCycleBackfill
                     ? CarbonImmutable::instance($request->created_at)
                     : CarbonImmutable::instance($line->created_at),
                 [
-                    'project_id' => $siteRequest?->project_id,
-                    'requester_id' => $siteRequest?->user_id,
-                    'buyer_id' => $request->assigned_to,
-                    'material_id' => $line->material_id,
-                    'amount' => (string) $request->budget_amount,
-                    'currency' => $request->budget_currency,
-                    'priority' => $siteRequest?->priority?->value,
+                    'project_id' => $capturedOwner['project_id'] ?? null,
+                    'requester_id' => $capturedOwner['requester_id'] ?? null,
+                    'buyer_id' => $capturedOwner['buyer_id'] ?? null,
+                    'material_id' => $capturedOwner['material_id'] ?? null,
+                    'amount' => $capturedOwner['amount'] ?? null,
+                    'currency' => $capturedOwner['currency'] ?? null,
+                    'priority' => $capturedOwner['priority'] ?? null,
+                    'dimension_status' => $capturedOwner === [] ? 'unknown' : 'captured',
                 ],
             );
             if ($request->created_at === null) {
@@ -295,8 +303,11 @@ final readonly class ProcurementCycleBackfill
                 'item.quantity',
                 'item.metadata',
                 'purchase_order.sent_at',
+                'purchase_order.metadata as purchase_order_metadata',
             ]);
         $requestLineByOrderItem = [];
+        $orderedByLine = [];
+        $cancellationByLine = [];
         $seen = [];
         foreach ($orderItems as $item) {
             $lineId = $this->requestLineId((string) $item->metadata, $requestLineBySupplierLine);
@@ -304,6 +315,23 @@ final readonly class ProcurementCycleBackfill
                 continue;
             }
             $requestLineByOrderItem[(int) $item->id] = $lineId;
+            $orderedByLine[$lineId] = ($orderedByLine[$lineId] ?? BigDecimal::zero())
+                ->plus((string) $item->quantity);
+            $orderMetadata = json_decode((string) $item->purchase_order_metadata, true);
+            $cancelledAt = is_array($orderMetadata)
+                ? ($orderMetadata['reporting_cancelled_at'] ?? null)
+                : null;
+            if (is_string($cancelledAt) && trim($cancelledAt) !== '') {
+                $candidate = CarbonImmutable::parse($cancelledAt);
+                if (! isset($cancellationByLine[$lineId])
+                    || $candidate->lessThan($cancellationByLine[$lineId]['occurred_at'])) {
+                    $cancellationByLine[$lineId] = [
+                        'occurred_at' => $candidate,
+                        'purchase_order_id' => (int) $item->purchase_order_id,
+                        'source_id' => (int) $item->id,
+                    ];
+                }
+            }
             if (isset($seen[$lineId])) {
                 continue;
             }
@@ -314,6 +342,15 @@ final readonly class ProcurementCycleBackfill
                 (string) $item->sent_at,
                 'purchase_order_item:'.$item->id.':sent',
                 purchaseOrderId: (int) $item->purchase_order_id,
+            );
+        }
+        foreach ($cancellationByLine as $lineId => $cancellation) {
+            $facts[$lineId][] = $this->fact(
+                'cancelled',
+                'cancelled',
+                $cancellation['occurred_at']->toIso8601String(),
+                'purchase_order_item:'.$cancellation['source_id'].':cancelled',
+                purchaseOrderId: $cancellation['purchase_order_id'],
             );
         }
         $receiptLines = DB::table('purchase_receipt_lines as line')
@@ -333,18 +370,19 @@ final readonly class ProcurementCycleBackfill
             ->where('receipt.status', 'posted')
             ->whereNull('receipt.deleted_at')
             ->whereNull('purchase_order.deleted_at')
-            ->orderBy('receipt.receipt_date')
+            ->whereNotNull(DB::raw("line.metadata->>'reporting_posted_at'"))
+            ->orderByRaw("line.metadata->>'reporting_posted_at'")
             ->orderBy('line.id')
             ->get([
                 'line.id',
                 'line.purchase_receipt_id',
                 'line.purchase_order_item_id',
                 'line.quantity_received',
+                'line.metadata as receipt_line_metadata',
                 'item.purchase_order_id',
                 'item.quantity as ordered_quantity',
                 'item.metadata',
                 'receipt.received_by_user_id',
-                'receipt.receipt_date',
             ]);
         $receivedByItem = [];
         $firstReceiptByLine = [];
@@ -359,25 +397,41 @@ final readonly class ProcurementCycleBackfill
             $received = ($receivedByItem[$itemId] ?? BigDecimal::zero())
                 ->plus((string) $receiptLine->quantity_received);
             $receivedByItem[$itemId] = $received;
+            $receiptMetadata = json_decode((string) $receiptLine->receipt_line_metadata, true);
+            $postedAt = is_array($receiptMetadata)
+                ? ($receiptMetadata['reporting_posted_at'] ?? null)
+                : null;
+            if (! is_string($postedAt) || trim($postedAt) === '') {
+                continue;
+            }
             if (! isset($firstReceiptByLine[$lineId])) {
                 $firstReceiptByLine[$lineId] = true;
                 $facts[$lineId][] = $this->fact(
                     'first_receipt',
                     'receipt',
-                    CarbonImmutable::parse((string) $receiptLine->receipt_date)->endOfDay()->toIso8601String(),
+                    CarbonImmutable::parse($postedAt)->toIso8601String(),
                     'purchase_receipt_line:'.$receiptLine->id.':first_receipt',
                     $receiptLine->received_by_user_id === null ? null : (int) $receiptLine->received_by_user_id,
                     purchaseOrderId: (int) $receiptLine->purchase_order_id,
                     purchaseReceiptId: (int) $receiptLine->purchase_receipt_id,
                 );
             }
+            $lineReceived = collect($requestLineByOrderItem)
+                ->filter(static fn (int $ownerLineId): bool => $ownerLineId === $lineId)
+                ->keys()
+                ->reduce(
+                    static fn (BigDecimal $total, int $ownerItemId): BigDecimal => $total
+                        ->plus((string) ($receivedByItem[$ownerItemId] ?? '0')),
+                    BigDecimal::zero(),
+                );
             if (! isset($fullReceiptByLine[$lineId])
-                && $received->isGreaterThanOrEqualTo((string) $receiptLine->ordered_quantity)) {
+                && isset($orderedByLine[$lineId])
+                && $lineReceived->isGreaterThanOrEqualTo($orderedByLine[$lineId])) {
                 $fullReceiptByLine[$lineId] = true;
                 $facts[$lineId][] = $this->fact(
                     'fully_received',
                     'receipt',
-                    CarbonImmutable::parse((string) $receiptLine->receipt_date)->endOfDay()->toIso8601String(),
+                    CarbonImmutable::parse($postedAt)->toIso8601String(),
                     'purchase_receipt_line:'.$receiptLine->id.':fully_received',
                     $receiptLine->received_by_user_id === null ? null : (int) $receiptLine->received_by_user_id,
                     purchaseOrderId: (int) $receiptLine->purchase_order_id,

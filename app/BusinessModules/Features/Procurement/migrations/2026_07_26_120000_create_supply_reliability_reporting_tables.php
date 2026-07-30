@@ -140,6 +140,15 @@ return new class extends Migration
             $table->foreign('purchase_order_item_id')->references('id')->on('purchase_order_items')->restrictOnDelete();
         });
 
+        Schema::create('supply_reliability_backfill_watermarks', function (Blueprint $table): void {
+            $table->unsignedBigInteger('organization_id')->primary();
+            $table->unsignedBigInteger('target_item_id');
+            $table->unsignedBigInteger('completed_item_id')->default(0);
+            $table->timestampTz('target_sent_at')->nullable();
+            $table->timestampTz('completed_at')->nullable();
+            $table->timestampsTz();
+        });
+
         Schema::create('supply_lifecycle_events', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -323,6 +332,7 @@ return new class extends Migration
         Schema::dropIfExists('supply_lifecycle_events');
         Schema::dropIfExists('purchase_order_promise_versions');
         Schema::dropIfExists('sent_purchase_order_line_owners');
+        Schema::dropIfExists('supply_reliability_backfill_watermarks');
         Schema::dropIfExists('purchase_receipt_inventory_lots');
         Schema::table('purchase_receipt_lines', function (Blueprint $table): void {
             $table->dropForeign(['reversed_by_user_id']);

@@ -14,6 +14,10 @@ final class SupplyReliabilityPostgresTest extends Waves23PostgresTestCase
             'purchase_order_promise_versions',
             'purchase_order_promise_versions_append_only',
         );
+        $this->assertTriggerExists(
+            'sent_purchase_order_line_owners',
+            'sent_purchase_order_line_owners_append_only',
+        );
         $this->assertTriggerExists('supply_lifecycle_events', 'supply_lifecycle_events_append_only');
         self::assertSame('boolean', $this->column('supply_reliability_rows', 'stable_in_full')->data_type);
         self::assertNotNull($this->column('supply_reliability_rows', 'quantity_otif_denominator'));
@@ -34,5 +38,12 @@ final class SupplyReliabilityPostgresTest extends Waves23PostgresTestCase
         self::assertTrue(DB::table('pg_constraint')
             ->where('conname', 'supply_promise_source_version_unique')
             ->exists());
+        self::assertSame(
+            'bigint',
+            $this->column('supply_reliability_backfill_watermarks', 'target_item_id')->data_type,
+        );
+        self::assertNotNull(
+            $this->column('supply_reliability_backfill_watermarks', 'completed_item_id'),
+        );
     }
 }

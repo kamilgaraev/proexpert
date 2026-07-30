@@ -422,8 +422,8 @@ final readonly class ProcurementReportingLifecycleRecorder
         int $purchaseRequestLineId,
         CarbonImmutable $asOf,
     ): bool {
-        $aggregate = DB::table('sent_purchase_order_line_owners as sent_owner')
-            ->join('purchase_order_promise_versions as sent_promise', function ($join): void {
+        $lineTotals = DB::table('sent_purchase_order_line_owners as sent_owner')
+            ->leftJoin('purchase_order_promise_versions as sent_promise', function ($join): void {
                 $join->on(
                     'sent_promise.purchase_order_item_id',
                     '=',
@@ -437,12 +437,23 @@ final readonly class ProcurementReportingLifecycleRecorder
             ->where('sent_owner.organization_id', $organizationId)
             ->where('sent_owner.purchase_request_line_id', $purchaseRequestLineId)
             ->selectRaw(
-                'COUNT(DISTINCT sent_owner.purchase_order_item_id) AS owner_count, '
-                .'COUNT(DISTINCT sent_promise.purchase_order_item_id) AS promise_count, '
-                .'COALESCE(SUM(DISTINCT sent_promise.ordered_quantity), 0) AS ordered_quantity, '
+                'sent_owner.purchase_order_item_id, sent_promise.id AS promise_id, '
+                .'sent_promise.ordered_quantity, '
                 ."COALESCE(SUM(CASE WHEN sent_event.event_type IN "
                 ."('received','receipt_reversed','returned') THEN sent_event.signed_quantity ELSE 0 END), 0) "
                 .'AS received_quantity',
+            )
+            ->groupBy(
+                'sent_owner.purchase_order_item_id',
+                'sent_promise.id',
+                'sent_promise.ordered_quantity',
+            );
+        $aggregate = DB::query()
+            ->fromSub($lineTotals, 'sent_line_totals')
+            ->selectRaw(
+                'COUNT(*) AS owner_count, COUNT(promise_id) AS promise_count, '
+                .'COALESCE(SUM(ordered_quantity), 0) AS ordered_quantity, '
+                .'COALESCE(SUM(received_quantity), 0) AS received_quantity',
             )
             ->first();
 
