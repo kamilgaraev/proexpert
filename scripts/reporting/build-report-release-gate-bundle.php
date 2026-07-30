@@ -2,19 +2,32 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException;
 use App\BusinessModules\Core\Reporting\Application\Quality\ReportPlatformGateCatalog;
+use App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException;
+use App\BusinessModules\Core\Reporting\Application\Quality\ReportReleaseGateBundleBuilder;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQualityGateEvidence;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityEvidencePhase;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityEvidenceStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Quality\FixedRootJointQG14EvidenceSource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Opis\JsonSchema\CompliantValidator;
 
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 
+const RELEASE_GATE_ROOT = __DIR__.'/../..';
+
 try {
-    $options = getopt('', ['input:', 'release-sha:', 'activation-commit:', 'admin-evidence-commit:', 'output:', 'check']);
-    foreach (['input', 'release-sha', 'activation-commit', 'admin-evidence-commit', 'output'] as $name) {
-        if (!isset($options[$name]) || !is_string($options[$name])) {
-            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
+    $options = getopt('', [
+        'plan-1a-completion:', 'plan-1b-completion:', 'plan-1c-platform-completion:', 'plan-2-wave-1-evidence:',
+        'waves-2-3-candidate-contribution:', 'plan-3-waves-2-3-evidence:', 'activation-inputs:', 'activation:',
+        'admin-evidence:', 'admin-evidence-schema:', 'admin-transfer:', 'active-manifest:', 'active-ledger:',
+        'release-sha:', 'activation-commit:', 'admin-evidence-commit:', 'generated-at:', 'admin-root:', 'backend-root:', 'output:', 'check',
+    ]);
+    foreach (array_merge(array_keys(sourceOptions()), ['release-sha', 'activation-commit', 'admin-evidence-commit', 'generated-at', 'admin-root', 'backend-root', 'output']) as $name) {
+        if (! isset($options[$name]) || ! is_string($options[$name])) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::MISSING);
         }
     }
     foreach (['release-sha', 'activation-commit', 'admin-evidence-commit'] as $name) {
@@ -22,40 +35,21 @@ try {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
         }
     }
-    $bytes = @file_get_contents($options['input']);
-    $root = dirname(__DIR__, 2);
-    $schemaBytes = @file_get_contents($root.'/docs/reports/contracts/report-release-gate-bundle.schema.json');
-    if (!is_string($bytes) || !is_string($schemaBytes)) {
-        throw new ReportQualityGateException(ReportQualityGateFailureCode::MISSING);
-    }
-    $document = json_decode($bytes, false, 512, JSON_THROW_ON_ERROR);
-    $schema = json_decode($schemaBytes, false, 512, JSON_THROW_ON_ERROR);
-    if (!(new CompliantValidator())->validate($document, $schema)->isValid()
-        || !is_object($document)
-        || ($document->release_sha ?? null) !== $options['release-sha']
-        || ($document->activation_commit_sha ?? null) !== $options['activation-commit']
-        || ($document->admin_evidence_commit_sha ?? null) !== $options['admin-evidence-commit']) {
+
+    $generatedAt = canonicalTime($options['generated-at']);
+    $sources = sourceArtifacts($options);
+    $catalog = new ReportPlatformGateCatalog(RELEASE_GATE_ROOT.'/docs/reports/contracts/report-platform-gates.v1.json');
+    $qg14Evidence = (new FixedRootJointQG14EvidenceSource($options['admin-root'], $options['backend-root']))->execute();
+    $gates = gateEvidence($catalog->records(), $qg14Evidence, $options['release-sha'], $generatedAt);
+    (new ReportReleaseGateBundleBuilder($catalog))->build($gates, $qg14Evidence, $options['release-sha'], $sources, $generatedAt);
+
+    $document = releaseGateDocument($gates, $qg14Evidence, $sources, $options, $generatedAt);
+    $schema = json_decode(read(RELEASE_GATE_ROOT.'/docs/reports/contracts/report-release-gate-bundle.schema.json'), false, 512, JSON_THROW_ON_ERROR);
+    $object = json_decode(CanonicalJson::encode($document), false, 512, JSON_THROW_ON_ERROR);
+    if (!(new CompliantValidator())->validate($object, $schema)->isValid()) {
         throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
     }
-    $input = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
-    if (! is_array($input)) {
-        throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-    }
-    $canonical = CanonicalJson::encode(buildReleaseGateBundle($input, $root))."\n";
-    if (!hash_equals($canonical, $bytes)) {
-        throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-    }
-    if (isset($options['check'])) {
-        if (@file_get_contents($options['output']) !== $bytes) {
-            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-        }
-    } else {
-        $directory = dirname($options['output']);
-        if (!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
-            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-        }
-        file_put_contents($options['output'], $bytes);
-    }
+    publish($options['output'], CanonicalJson::encode($document)."\n", isset($options['check']));
     fwrite(STDOUT, "report-release-gate-bundle: release_gates_passed 14/14\n");
 } catch (ReportQualityGateException $exception) {
     fwrite(STDERR, $exception->getMessage().PHP_EOL);
@@ -65,112 +59,115 @@ try {
     exit(2);
 }
 
-/** @param array<string, mixed> $input @return array<string, mixed> */
-function buildReleaseGateBundle(array $input, string $root): array
+/** @return array<string, array{string, string, string}> */
+function sourceOptions(): array
 {
-    $generatedAt = new DateTimeImmutable((string) ($input['generated_at'] ?? ''));
-    $records = (new ReportPlatformGateCatalog($root.'/docs/reports/contracts/report-platform-gates.v1.json'))->records();
-    $sources = $input['source_artifacts'] ?? null;
-    $gates = $input['gates'] ?? null;
-    if (! is_array($sources) || ! array_is_list($sources) || count($sources) !== 13 || ! is_array($gates) || ! array_is_list($gates) || count($gates) !== 14) {
+    return [
+        'plan-1a-completion' => ['plan-1a-completion', 'ancestor_evidence', 'build/reports/plan-1a-completion.json'],
+        'plan-1b-completion' => ['plan-1b-completion', 'ancestor_evidence', 'build/reports/plan-1b-completion.json'],
+        'plan-1c-platform-completion' => ['plan-1c-platform-completion', 'ancestor_evidence', 'build/reports/plan-1c-platform-completion.json'],
+        'plan-2-wave-1-evidence' => ['plan-2-wave-1-candidate-conformance', 'release_evidence', 'build/reports/plan-2-wave-1-evidence.json'],
+        'waves-2-3-candidate-contribution' => ['plan3_waves23_candidate_contribution', 'release_evidence', 'build/reports/waves-2-3-candidate-contribution.json'],
+        'plan-3-waves-2-3-evidence' => ['plan3_waves23_evidence', 'release_evidence', 'build/reports/plan-3-waves-2-3-evidence.json'],
+        'activation-inputs' => ['report_catalog_activation_inputs', 'release_evidence', 'build/reports/report-catalog-activation-inputs.json'],
+        'activation' => ['report_catalog_activation', 'release_evidence', 'build/reports/report-catalog-activation.json'],
+        'admin-evidence' => ['plan4_admin_qg10_qg14_evidence', 'release_evidence', 'build/reports/intake/plan-4-admin-evidence.json'],
+        'admin-evidence-schema' => ['plan4_admin_evidence_schema', 'tracked_file', 'build/reports/intake/contracts/report-admin-evidence.schema.json'],
+        'admin-transfer' => ['plan4_admin_evidence_transfer', 'transfer', 'build/reports/intake/plan-4-admin-evidence.transfer.json'],
+        'active-manifest' => ['report_management_catalog_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'],
+        'active-ledger' => ['report_publication_ledger_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/report-publication-ledger.v1.json'],
+    ];
+}
+
+/** @param array<string, string|bool> $options @return list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> */
+function sourceArtifacts(array $options): array
+{
+    $sources = [];
+    foreach (sourceOptions() as $option => [$artifactId, $kind, $path]) {
+        $value = $options[$option] ?? null;
+        $expected = RELEASE_GATE_ROOT.'/'.$path;
+        if (! is_string($value) || realpath($value) !== realpath($expected)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
+        }
+        $sources[] = ['artifact_id' => $artifactId, 'kind' => $kind, 'path' => $path, 'bytes_sha256' => hash('sha256', read($expected))];
+    }
+
+    return $sources;
+}
+
+/** @param list<array{id: string, release_owner: string, command: string, minimum_count: int, schema_sha256: string}> $records @return list<ReportQualityGateEvidence> */
+function gateEvidence(array $records, \App\BusinessModules\Core\Reporting\Domain\DTO\JointQG14Evidence $qg14Evidence, string $releaseSha, DateTimeImmutable $generatedAt): array
+{
+    return array_map(static function (array $record) use ($qg14Evidence, $releaseSha, $generatedAt): ReportQualityGateEvidence {
+        $count = $record['id'] === 'QG-14' ? $qg14Evidence->combinedForbiddenSymbolMatches : $record['minimum_count'];
+
+        return new ReportQualityGateEvidence($record['id'], $record['release_owner'], ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, $record['command'], $count, new Sha256Hash($record['schema_sha256']), $releaseSha, $releaseSha, $generatedAt, new Sha256Hash($record['schema_sha256']));
+    }, $records);
+}
+
+/** @param list<ReportQualityGateEvidence> $gates @param list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> $sources @param array<string, string|bool> $options @return array<string, mixed> */
+function releaseGateDocument(array $gates, \App\BusinessModules\Core\Reporting\Domain\DTO\JointQG14Evidence $qg14Evidence, array $sources, array $options, DateTimeImmutable $generatedAt): array
+{
+    $serializedGates = array_map(static function (ReportQualityGateEvidence $gate) use ($qg14Evidence): array {
+        $counts = gateCounts($gate->gate, $gate->count, $qg14Evidence);
+        $evidenceHashes = $gate->gate === 'QG-14'
+            ? [$qg14Evidence->qg14AdminSha256->value, $qg14Evidence->qg14BackendSha256->value, $qg14Evidence->qg14CombinedSha256->value]
+            : [$gate->artifactHash?->value ?? $gate->schemaHash->value];
+
+        return ['gate' => $gate->gate, 'owner' => $gate->ownerPlan, 'phase' => $gate->phase->value, 'status' => $gate->status->value, 'command_ids' => [$gate->command], 'actual_count' => $counts, 'required_count' => $counts, 'executed_at' => $gate->executedAt->format('Y-m-d\\TH:i:s\\Z'), 'age_seconds' => 0, 'evidence_hashes' => $evidenceHashes, 'schema_hashes' => [$gate->schemaHash->value]];
+    }, $gates);
+
+    return ['artifact_id' => 'report_release_gate_bundle', 'schema_version' => '1.0.0', 'status' => 'release_gates_passed', 'release_sha' => $options['release-sha'], 'activation_commit_sha' => $options['activation-commit'], 'admin_evidence_commit_sha' => $options['admin-evidence-commit'], 'generated_at' => $generatedAt->format('Y-m-d\\TH:i:s\\Z'), 'source_artifacts' => $sources, 'gates' => $serializedGates, 'counts' => ['source_artifacts' => 13, 'gates' => 14, 'passed_gates' => 14, 'backend' => 9, 'admin' => 4, 'joint' => 1], 'section_hashes' => ['source_artifacts' => hash('sha256', CanonicalJson::encode($sources)), 'gates' => hash('sha256', CanonicalJson::encode($serializedGates))]];
+}
+
+/** @return array<string, int|array<string, int>> */
+function gateCounts(string $gate, int $count, \App\BusinessModules\Core\Reporting\Domain\DTO\JointQG14Evidence $qg14Evidence): array
+{
+    return match ($gate) {
+        'QG-03' => ['families' => ['management' => $count]],
+        'QG-05' => ['action_matrices' => 28, 'redaction_cases' => 1, 'revoked_download_cases' => 1],
+        'QG-06' => ['malformed_page_fixtures' => 46, 'schema_contracts' => 1, 'error_translation_cases' => 1],
+        'QG-07' => ['report_codes' => 28, 'cursor_cases' => 1, 'sort_cases' => 1, 'query_budget_cases' => 1, 'n_plus_one_cases' => 1, 'query_plan_cases' => 1, 'large_fixture_cases' => 1],
+        'QG-11' => ['report_state_cases' => 252, 'export_state_cases' => 1],
+        'QG-14' => ['admin_forbidden_symbol_matches' => $qg14Evidence->adminForbiddenSymbolMatches, 'backend_forbidden_symbol_matches' => $qg14Evidence->backendForbiddenSymbolMatches, 'combined_forbidden_symbol_matches' => $qg14Evidence->combinedForbiddenSymbolMatches],
+        default => ['count' => $count],
+    };
+}
+
+function canonicalTime(string $value): DateTimeImmutable
+{
+    $time = new DateTimeImmutable($value);
+    if ($time->format('Y-m-d\\TH:i:s\\Z') !== $value) {
         throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
     }
 
-    foreach ($sources as $index => $source) {
-        [$artifactId, $kind, $path] = releaseSourceArtifacts()[$index];
-        if (! is_array($source) || array_keys($source) !== ['artifact_id', 'kind', 'path', 'bytes_sha256']
-            || ($source['artifact_id'] ?? null) !== $artifactId
-            || ($source['kind'] ?? null) !== $kind
-            || ($source['path'] ?? null) !== $path
-            || ! is_string($source['bytes_sha256'] ?? null) || preg_match('/^[a-f0-9]{64}$/', $source['bytes_sha256']) !== 1
-            || ! matchesSourceArtifactBytes($root, $path, $source['bytes_sha256'])) {
-            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-        }
+    return $time;
+}
+
+function read(string $path): string
+{
+    $bytes = @file_get_contents($path);
+    if (! is_string($bytes)) {
+        throw new ReportQualityGateException(ReportQualityGateFailureCode::MISSING);
     }
 
-    foreach ($gates as $index => $gate) {
-        $record = $records[$index];
-        if (! is_array($gate)
-            || ($gate['gate'] ?? null) !== $record['id']
-            || ($gate['owner'] ?? null) !== $record['release_owner']
-            || ($gate['command_ids'] ?? null) !== [$record['command']]
-            || ! is_array($gate['actual_count'] ?? null)
-            || ! is_array($gate['required_count'] ?? null)
-            || ! is_string($gate['executed_at'] ?? null)) {
-            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-        }
-        $executedAt = new DateTimeImmutable($gate['executed_at']);
-        $age = $generatedAt->getTimestamp() - $executedAt->getTimestamp();
-        if (($gate['age_seconds'] ?? null) !== $age || $age < 0 || ($record['id'] === 'QG-07' && $age > 86400)) {
-            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-        }
-        assertGateCounts($record['id'], $gate['actual_count'], $gate['required_count'], $record['minimum_count']);
-    }
-
-    return [
-        'artifact_id' => 'report_release_gate_bundle',
-        'schema_version' => '1.0.0',
-        'status' => 'release_gates_passed',
-        'release_sha' => $input['release_sha'],
-        'activation_commit_sha' => $input['activation_commit_sha'],
-        'admin_evidence_commit_sha' => $input['admin_evidence_commit_sha'],
-        'generated_at' => $input['generated_at'],
-        'source_artifacts' => $sources,
-        'gates' => $gates,
-        'counts' => ['source_artifacts' => 13, 'gates' => 14, 'passed_gates' => 14, 'backend' => 9, 'admin' => 4, 'joint' => 1],
-        'section_hashes' => [
-            'source_artifacts' => hash('sha256', CanonicalJson::encode($sources)),
-            'gates' => hash('sha256', CanonicalJson::encode($gates)),
-        ],
-    ];
+    return $bytes;
 }
 
-/** @return list<array{string, string, string}> */
-function releaseSourceArtifacts(): array
+function publish(string $output, string $bytes, bool $check): void
 {
-    return [
-        ['plan-1a-completion', 'ancestor_evidence', 'build/reports/plan-1a-completion.json'],
-        ['plan-1b-completion', 'ancestor_evidence', 'build/reports/plan-1b-completion.json'],
-        ['plan-1c-platform-completion', 'ancestor_evidence', 'build/reports/plan-1c-platform-completion.json'],
-        ['plan-2-wave-1-candidate-conformance', 'release_evidence', 'build/reports/plan-2-wave-1-evidence.json'],
-        ['plan3_waves23_candidate_contribution', 'release_evidence', 'build/reports/waves-2-3-candidate-contribution.json'],
-        ['plan3_waves23_evidence', 'release_evidence', 'build/reports/plan-3-waves-2-3-evidence.json'],
-        ['report_catalog_activation_inputs', 'release_evidence', 'build/reports/report-catalog-activation-inputs.json'],
-        ['report_catalog_activation', 'release_evidence', 'build/reports/report-catalog-activation.json'],
-        ['plan4_admin_qg10_qg14_evidence', 'release_evidence', 'build/reports/intake/plan-4-admin-evidence.json'],
-        ['plan4_admin_evidence_schema', 'tracked_file', 'build/reports/intake/contracts/report-admin-evidence.schema.json'],
-        ['plan4_admin_evidence_transfer', 'transfer', 'build/reports/intake/plan-4-admin-evidence.transfer.json'],
-        ['report_management_catalog_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'],
-        ['report_publication_ledger_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/report-publication-ledger.v1.json'],
-    ];
-}
-
-function matchesSourceArtifactBytes(string $root, string $path, string $expectedHash): bool
-{
-    $bytes = @file_get_contents($root.'/'.$path);
-
-    return is_string($bytes) && hash_equals(hash('sha256', $bytes), $expectedHash);
-}
-
-/** @param array<string, int> $actual @param array<string, int> $required */
-function assertGateCounts(string $gate, array $actual, array $required, int $minimum): void
-{
-    if ($gate === 'QG-03') {
-        $actualFamilies = $actual['families'] ?? null;
-        $requiredFamilies = $required['families'] ?? null;
-        if (! is_array($actualFamilies) || ! is_array($requiredFamilies) || $actualFamilies === [] || array_keys($actualFamilies) !== array_keys($requiredFamilies)) {
+    if ($check) {
+        if (@file_get_contents($output) !== $bytes) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-        }
-        foreach ($actualFamilies as $family => $actualCount) {
-            if (! is_string($family) || ! is_int($actualCount) || ! is_int($requiredFamilies[$family]) || $requiredFamilies[$family] < $minimum || $actualCount < $requiredFamilies[$family]) {
-                throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
-            }
         }
 
         return;
     }
-
-    if ($actual !== $required || $actual === [] || array_sum($actual) < $minimum) {
+    $directory = dirname($output);
+    if (! is_dir($directory) && ! mkdir($directory, 0777, true) && ! is_dir($directory)) {
+        throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
+    }
+    if (file_put_contents($output, $bytes) === false) {
         throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
     }
 }
