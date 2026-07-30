@@ -68,6 +68,7 @@ class SafetyExposureBackfill
         $attributed = collect();
         foreach ($batch as $row) {
             $siteIds = $this->siteIdsForCorrection($organizationId, $row);
+            $gaps += $this->zeroStaleSiteDays($organizationId, $row, $siteIds);
             if ($siteIds->count() !== 1) {
                 $gaps++;
                 continue;
@@ -172,5 +173,38 @@ class SafetyExposureBackfill
             ->distinct()
             ->orderBy('safety_site_id')
             ->pluck('safety_site_id');
+    }
+
+    protected function zeroStaleSiteDays(int $organizationId, object $correction, Collection $currentSiteIds): int
+    {
+        $gaps = 0;
+        $staleSiteIds = DB::table('safety_exposure_days')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', (int) $correction->project_id)
+            ->whereDate('exposure_date', (string) $correction->work_date)
+            ->when(
+                $currentSiteIds->isNotEmpty(),
+                static fn ($query) => $query->whereNotIn('safety_site_id', $currentSiteIds->all()),
+            )
+            ->pluck('safety_site_id');
+        foreach ($staleSiteIds as $siteId) {
+            try {
+                $this->projector->project(
+                    $organizationId,
+                    (int) $correction->project_id,
+                    (int) $siteId,
+                    CarbonImmutable::parse((string) $correction->work_date),
+                    '0.0000',
+                    0,
+                    $this->sourceCode(),
+                    (string) $correction->updated_at,
+                    $currentSiteIds->count() <= 1,
+                );
+            } catch (\Throwable) {
+                $gaps++;
+            }
+        }
+
+        return $gaps;
     }
 }

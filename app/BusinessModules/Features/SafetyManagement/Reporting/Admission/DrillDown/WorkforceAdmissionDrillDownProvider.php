@@ -44,7 +44,7 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
             ScopedReportSourceGuard::assertExactAccessible(
                 $context,
                 new ReportScopedResource(
-                    $medical ? 'safety_medical_exam' : 'safety_'.$row->requirement_type,
+                    (string) $row->evidence_type,
                     (int) $row->evidence_id,
                     (int) $row->project_id,
                 ),

@@ -52,7 +52,7 @@ final readonly class QualityDefectFlowBackfill
                 continue;
             }
             $dimensions = $history->reporting_dimensions;
-            if (! is_array($dimensions) && $history->defect->updated_at?->greaterThan($history->changed_at)) {
+            if (! is_array($dimensions) || ! is_array($history->reporting_evidence_refs)) {
                 $gaps++;
                 $unknownOwnerKeys[] = 'quality_defect_status_history:'.(int) $history->id;
                 continue;

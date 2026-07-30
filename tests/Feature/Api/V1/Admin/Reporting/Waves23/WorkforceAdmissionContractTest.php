@@ -45,6 +45,7 @@ final class WorkforceAdmissionContractTest extends TestCase
             'employee_id' => 5,
             'requirement_code' => 'medical',
             'requirement_type' => 'medical_exam',
+            'evidence_type' => 'medical_exam',
             'status' => 'restricted',
             'blocked' => false,
             'verified' => true,
@@ -78,6 +79,7 @@ final class WorkforceAdmissionContractTest extends TestCase
             'employee_id' => 5,
             'requirement_code' => 'medical',
             'requirement_type' => 'medical_exam',
+            'evidence_type' => 'medical_exam',
             'status' => 'valid',
             'blocked' => false,
             'verified' => true,
@@ -89,7 +91,7 @@ final class WorkforceAdmissionContractTest extends TestCase
         $method->invoke(
             new WorkforceAdmissionRowQuery,
             $row,
-            $this->context(true, [new ReportScopedResource('safety_medical_exam', 99, 2)]),
+            $this->context(true, [new ReportScopedResource('medical_exam', 99, 2)]),
         );
     }
 

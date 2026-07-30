@@ -299,6 +299,15 @@ final class QualityDefectService
                 'schedule_task_id' => $defect->schedule_task_id,
                 'severity' => $defect->severity->value,
             ],
+            'reporting_evidence_refs' => $defect->photos()
+                ->where('organization_id', $defect->organization_id)
+                ->orderBy('id')
+                ->get(['id', 'type'])
+                ->map(static fn ($photo): array => [
+                    'id' => (int) $photo->id,
+                    'type' => (string) $photo->type,
+                ])
+                ->all(),
         ]);
         $this->transitionRecorder->record($defect, $history);
     }

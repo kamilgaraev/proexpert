@@ -72,6 +72,14 @@ final class SafetyExposureBackfillTest extends TestCase
             {
                 return collect();
             }
+
+            protected function zeroStaleSiteDays(
+                int $organizationId,
+                object $correction,
+                Collection $currentSiteIds,
+            ): int {
+                return 0;
+            }
         };
         $batch = collect([(object) [
             'id' => 11,

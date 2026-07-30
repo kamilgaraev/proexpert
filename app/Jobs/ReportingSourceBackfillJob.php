@@ -38,15 +38,13 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
 
     public static function request(int $organizationId, string $sourceCode): void
     {
-        [$targetCursor, $ownerFacts] = self::ownerCutoff($organizationId, $sourceCode);
-        $checksum = hash('sha256', CanonicalJson::encode($ownerFacts));
-        DB::transaction(function () use ($organizationId, $sourceCode, $targetCursor, $checksum): void {
+        DB::transaction(function () use ($organizationId, $sourceCode): void {
             DB::table('report_source_sync_ledgers')->insertOrIgnore([
                 'organization_id' => $organizationId,
                 'source_code' => $sourceCode,
                 'cursor' => '{}',
-                'target_cursor' => json_encode($targetCursor, JSON_THROW_ON_ERROR),
-                'owner_checksum' => $checksum,
+                'target_cursor' => '{}',
+                'owner_checksum' => str_repeat('0', 64),
                 'status' => 'pending',
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -56,6 +54,13 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
                 ->where('source_code', $sourceCode)
                 ->lockForUpdate()
                 ->first();
+            if (DB::connection()->getDriverName() === 'pgsql') {
+                foreach (self::ownerTables($sourceCode) as $table) {
+                    DB::statement('LOCK TABLE '.$table.' IN SHARE MODE');
+                }
+            }
+            [$targetCursor, $ownerFacts] = self::ownerCutoff($organizationId, $sourceCode);
+            $checksum = hash('sha256', CanonicalJson::encode($ownerFacts));
             if ($ledger->completed_owner_checksum !== $checksum) {
                 DB::table('report_source_sync_ledgers')->where('id', $ledger->id)->update([
                     'cursor' => '{}',
@@ -193,9 +198,25 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
             default => throw new \LogicException('report_source_sync_unknown'),
         };
         $query = DB::table($table)->where('organization_id', $organizationId);
+        if ($sourceCode === self::WORKFORCE_ADMISSION) {
+            $query->where('status', 'active')
+                ->whereNotNull('project_id')
+                ->whereNull('deleted_at');
+        }
         $id = (int) ($query->max('id') ?? 0);
         $watermarkColumn = $sourceCode === self::QUALITY_DEFECTS ? 'changed_at' : 'updated_at';
 
         return [['id' => $id], ['id' => $id, 'count' => $query->count(), 'watermark' => $query->max($watermarkColumn)]];
+    }
+
+    private static function ownerTables(string $sourceCode): array
+    {
+        return match ($sourceCode) {
+            self::QUALITY_DEFECTS => ['quality_defect_status_history'],
+            self::SAFETY_EXPOSURE => ['workforce_attendance_corrections'],
+            self::WORKFORCE_ADMISSION => ['workforce_employee_assignments'],
+            self::SAFETY_INCIDENTS => ['safety_incidents', 'safety_violations', 'safety_corrective_actions'],
+            default => throw new \LogicException('report_source_sync_unknown'),
+        };
     }
 }

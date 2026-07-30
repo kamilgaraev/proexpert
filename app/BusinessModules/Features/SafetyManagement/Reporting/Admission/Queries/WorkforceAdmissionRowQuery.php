@@ -139,7 +139,7 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
             ScopedReportSourceGuard::assertExactAccessible(
                 $context,
                 new ReportScopedResource(
-                    $medical ? 'safety_medical_exam' : 'safety_'.$row->requirement_type,
+                    (string) $row->evidence_type,
                     (int) $row->evidence_id,
                     (int) $row->project_id,
                 ),

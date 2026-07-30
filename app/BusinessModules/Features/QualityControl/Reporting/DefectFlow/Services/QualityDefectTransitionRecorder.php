@@ -32,17 +32,9 @@ final readonly class QualityDefectTransitionRecorder
                 ->orderByDesc('event_version')
                 ->first();
             $version = ($last?->event_version ?? 0) + 1;
-            $changedAt = $history->changed_at;
-            $evidenceRefs = $defect->photos()
-                ->where('organization_id', $defect->organization_id)
-                ->when($changedAt !== null, static fn ($query) => $query->where('created_at', '<=', $changedAt))
-                ->orderBy('id')
-                ->get(['id', 'type'])
-                ->map(static fn ($photo): array => [
-                    'id' => (int) $photo->id,
-                    'type' => (string) $photo->type,
-                ])
-                ->all();
+            $evidenceRefs = is_array($history->reporting_evidence_refs)
+                ? $history->reporting_evidence_refs
+                : [];
             if (trim((string) $history->comment) !== '') {
                 $evidenceRefs[] = [
                     'hash' => hash('sha256', trim((string) $history->comment)),

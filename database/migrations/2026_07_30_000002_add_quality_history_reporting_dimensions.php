@@ -11,13 +11,14 @@ return new class extends Migration {
     {
         Schema::table('quality_defect_status_history', function (Blueprint $table): void {
             $table->jsonb('reporting_dimensions')->nullable();
+            $table->jsonb('reporting_evidence_refs')->nullable();
         });
     }
 
     public function down(): void
     {
         Schema::table('quality_defect_status_history', function (Blueprint $table): void {
-            $table->dropColumn('reporting_dimensions');
+            $table->dropColumn(['reporting_dimensions', 'reporting_evidence_refs']);
         });
     }
 };
