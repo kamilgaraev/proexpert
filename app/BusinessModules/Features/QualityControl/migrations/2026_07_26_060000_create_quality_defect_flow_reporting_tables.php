@@ -72,6 +72,7 @@ return new class extends Migration
             $table->char('source_hash', 64);
             $table->timestampTz('as_of');
             $table->timestampTz('source_watermark');
+            $table->jsonb('source_ledger_binding');
             $table->unsignedBigInteger('row_count')->default(0);
             $table->unsignedBigInteger('opening_count')->default(0);
             $table->unsignedBigInteger('created_count')->default(0);

@@ -8,10 +8,10 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadines
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DTO\SafetyIncidentReadiness;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentSnapshot;
 use DateTimeImmutable;
-use Illuminate\Support\Facades\DB;
 
 final readonly class SafetyIncidentReadinessProbe implements ReportDefinitionReadinessProbe
 {
@@ -38,17 +38,11 @@ final readonly class SafetyIncidentReadinessProbe implements ReportDefinitionRea
         if (! $snapshot instanceof SafetyIncidentSnapshot) {
             return new SafetyIncidentReadiness('unavailable', 0, 0, 0, 0, false, null, null, null);
         }
-        $readySources = DB::table('report_source_sync_ledgers')
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('source_code', ['safety_subject_lifecycle', 'approved_workforce_attendance'])
-            ->where('status', 'ready')
-            ->where('gap_count', 0)
-            ->where('unknown_count', 0)
-            ->whereColumn('completed_owner_checksum', 'owner_checksum')
-            ->whereColumn('cursor', 'target_cursor')
-            ->distinct()
-            ->count('source_code');
-        $ready = $readySources === 2
+        $sourceReady = CompletedReportSourceLedgerBinding::matches(
+            $context->scope->organizationId,
+            is_array($snapshot->source_ledger_binding) ? $snapshot->source_ledger_binding : [],
+        );
+        $ready = $sourceReady
             && (int) $snapshot->eligible_count === (int) $snapshot->projected_count
             && (int) $snapshot->gap_count === 0
             && (int) $snapshot->unknown_count === 0

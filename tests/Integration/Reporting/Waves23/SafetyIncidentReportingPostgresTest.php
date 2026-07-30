@@ -7,18 +7,28 @@ namespace Tests\Integration\Reporting\Waves23;
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\ProductionReportScopedResourceAuthorizers;
+use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Backfill\WorkforceAdmissionBackfill;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyExposureBackfill;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyIncidentBackfill;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetySite;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyTransitionEvent;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services\SafetyTransitionRecorder;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
 use App\Jobs\ReportingSourceBackfillJob;
+use App\Jobs\SafetyExposureZeroFillJob;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use DateTimeImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use LogicException;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -245,6 +255,172 @@ SQL);
         $violation->update(['status' => 'open']);
 
         self::assertFalse($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
+    }
+
+    #[Test]
+    public function safety_replay_recomputes_the_exact_event_hash_and_rejects_changed_evidence(): void
+    {
+        $this->requirePostgres();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $actor = User::factory()->create();
+        $violation = SafetyViolation::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'created_by_user_id' => $actor->id,
+            'resolved_by_user_id' => $actor->id,
+            'violation_number' => 'HSE-REPLAY-HASH-1',
+            'title' => 'Replay evidence',
+            'severity' => 'major',
+            'status' => 'resolved',
+            'resolved_at' => now(),
+            'resolution_comment' => 'Original resolution',
+        ]);
+        $recorder = app(SafetyTransitionRecorder::class);
+        $recorder->record(
+            $violation,
+            'open',
+            'resolved',
+            (int) $actor->id,
+            $violation->resolved_at,
+        );
+        $violation->resolution_comment = 'Changed resolution';
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('safety_transition_conflict');
+
+        $recorder->record(
+            $violation,
+            'open',
+            'resolved',
+            (int) $actor->id,
+            $violation->resolved_at,
+        );
+    }
+
+    #[Test]
+    public function completed_snapshot_binding_never_matches_a_later_rebuild_generation(): void
+    {
+        $this->requirePostgres();
+        $organization = Organization::factory()->create();
+        $firstChecksum = str_repeat('a', 64);
+        $secondChecksum = str_repeat('b', 64);
+        DB::table('report_source_sync_ledgers')->insert([
+            'organization_id' => $organization->id,
+            'source_code' => ReportingSourceBackfillJob::SAFETY_INCIDENTS,
+            'cursor' => '{}',
+            'target_cursor' => '{}',
+            'owner_checksum' => $firstChecksum,
+            'completed_owner_checksum' => $firstChecksum,
+            'status' => 'ready',
+            'source_count' => 0,
+            'projected_count' => 0,
+            'gap_count' => 0,
+            'unknown_count' => 0,
+            'unknown_owner_keys' => '[]',
+            'source_watermark' => now(),
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $binding = CompletedReportSourceLedgerBinding::capture(
+            (int) $organization->id,
+            [ReportingSourceBackfillJob::SAFETY_INCIDENTS],
+        );
+        DB::table('report_source_sync_ledgers')
+            ->where('organization_id', $organization->id)
+            ->where('source_code', ReportingSourceBackfillJob::SAFETY_INCIDENTS)
+            ->update([
+                'owner_checksum' => $secondChecksum,
+                'completed_owner_checksum' => $secondChecksum,
+                'completed_at' => now()->addSecond(),
+                'updated_at' => now()->addSecond(),
+            ]);
+
+        self::assertFalse(CompletedReportSourceLedgerBinding::matches(
+            (int) $organization->id,
+            $binding,
+        ));
+    }
+
+    #[Test]
+    public function missing_attendance_evidence_is_not_treated_as_authoritative_zero(): void
+    {
+        $this->requirePostgres();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $site = SafetySite::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'code' => 'ZERO-UNKNOWN',
+            'name' => 'Unknown attendance',
+            'timezone' => 'Europe/Moscow',
+            'is_active' => true,
+            'active_from' => '2026-07-01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $job = new SafetyExposureZeroFillJob(
+            (int) $organization->id,
+            '2026-07-30',
+            '2026-07-30',
+        );
+        $method = new \ReflectionMethod(SafetyExposureZeroFillJob::class, 'hasAuthoritativeZeroAttendance');
+
+        self::assertFalse($method->invoke(
+            $job,
+            (int) $project->id,
+            (int) $site->id,
+            CarbonImmutable::parse('2026-07-30'),
+        ));
+    }
+
+    #[Test]
+    public function owner_mutation_before_job_completion_retargets_instead_of_completing_a_stale_generation(): void
+    {
+        $this->requirePostgres();
+        Queue::fake();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $actor = User::factory()->create();
+        $incident = SafetyIncident::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'reported_by_user_id' => $actor->id,
+            'incident_number' => 'HSE-MUTATION-DURING-JOB-1',
+            'title' => 'Pinned generation',
+            'incident_type' => 'near_miss',
+            'severity' => 'minor',
+            'status' => 'reported',
+            'occurred_at' => now()->subMinute(),
+        ]);
+        ReportingSourceBackfillJob::request(
+            (int) $organization->id,
+            ReportingSourceBackfillJob::SAFETY_INCIDENTS,
+        );
+        $before = DB::table('report_source_sync_ledgers')
+            ->where('organization_id', $organization->id)
+            ->where('source_code', ReportingSourceBackfillJob::SAFETY_INCIDENTS)
+            ->first();
+        self::assertNotNull($before);
+        $incident->update(['title' => 'Mutated generation']);
+
+        (new ReportingSourceBackfillJob(
+            (int) $organization->id,
+            ReportingSourceBackfillJob::SAFETY_INCIDENTS,
+        ))->handle(
+            app(QualityDefectFlowBackfill::class),
+            app(SafetyIncidentBackfill::class),
+            app(SafetyExposureBackfill::class),
+            app(WorkforceAdmissionBackfill::class),
+        );
+        $after = DB::table('report_source_sync_ledgers')->where('id', $before->id)->first();
+        self::assertNotNull($after);
+
+        self::assertNotSame((string) $before->owner_checksum, (string) $after->owner_checksum);
+        self::assertSame('pending', $after->status);
+        self::assertSame([], json_decode((string) $after->cursor, true, 512, JSON_THROW_ON_ERROR));
+        self::assertNull($after->completed_owner_checksum);
     }
 
     private function requirePostgres(): void

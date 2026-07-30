@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSourceOwnerGeneration;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Backfill\WorkforceAdmissionBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyExposureBackfill;
@@ -14,7 +15,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
@@ -58,14 +58,13 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
                 ->where('source_code', $sourceCode)
                 ->lockForUpdate()
                 ->first();
-            if (DB::connection()->getDriverName() === 'pgsql') {
-                foreach (self::ownerTables($sourceCode) as $table) {
-                    DB::statement('LOCK TABLE '.$table.' IN SHARE MODE');
-                }
-            }
             [$targetCursor, $ownerFacts] = self::ownerCutoff($organizationId, $sourceCode);
             $checksum = hash('sha256', CanonicalJson::encode($ownerFacts));
+            $shouldDispatch = $ledger->status !== 'ready'
+                || CanonicalJson::encode(json_decode((string) $ledger->cursor, true, 512, JSON_THROW_ON_ERROR))
+                    !== CanonicalJson::encode(json_decode((string) $ledger->target_cursor, true, 512, JSON_THROW_ON_ERROR));
             if ($ledger->completed_owner_checksum !== $checksum) {
+                $shouldDispatch = true;
                 DB::table('report_source_sync_ledgers')->where('id', $ledger->id)->update([
                     'cursor' => '{}',
                     'target_cursor' => json_encode($targetCursor, JSON_THROW_ON_ERROR),
@@ -81,7 +80,9 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
                     'updated_at' => now(),
                 ]);
             }
-            self::dispatch($organizationId, $sourceCode)->afterCommit();
+            if ($shouldDispatch) {
+                self::dispatch($organizationId, $sourceCode)->afterCommit();
+            }
         });
     }
 
@@ -100,6 +101,29 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
             $cursor = json_decode((string) $ledger->cursor, true, 512, JSON_THROW_ON_ERROR);
             $target = json_decode((string) $ledger->target_cursor, true, 512, JSON_THROW_ON_ERROR);
             [$result, $nextCursor, $hasMore] = $this->process($cursor, $target, $quality, $incidents, $exposure, $admission);
+            if (! $hasMore) {
+                [$currentTarget, $currentFacts] = self::ownerCutoff($this->organizationId, $this->sourceCode);
+                $currentChecksum = hash('sha256', CanonicalJson::encode($currentFacts));
+                if (! hash_equals((string) $ledger->owner_checksum, $currentChecksum)) {
+                    DB::table('report_source_sync_ledgers')->where('id', $ledger->id)->update([
+                        'cursor' => '{}',
+                        'target_cursor' => json_encode($currentTarget, JSON_THROW_ON_ERROR),
+                        'owner_checksum' => $currentChecksum,
+                        'status' => 'pending',
+                        'source_count' => 0,
+                        'projected_count' => 0,
+                        'gap_count' => 0,
+                        'unknown_count' => 0,
+                        'unknown_owner_keys' => '[]',
+                        'source_watermark' => null,
+                        'completed_owner_checksum' => null,
+                        'completed_at' => null,
+                        'updated_at' => now(),
+                    ]);
+
+                    return true;
+                }
+            }
             $totalGaps = (int) $ledger->gap_count + (int) $result['gap_count'];
             $totalUnknowns = (int) $ledger->unknown_count + (int) $result['unknown_count'];
             $unknownOwnerKeys = array_values(array_unique([
@@ -154,6 +178,15 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
         $result['unknown_count'] ??= 0;
 
         $nextCursor = (int) ($batch->max('id') ?? $currentCursor);
+        if ($nextCursor === $currentCursor && $currentCursor < $targetCursor) {
+            $nextCursor = $targetCursor;
+            $result['gap_count']++;
+            $result['unknown_count']++;
+            $result['unknown_owner_keys'] = [
+                ...($result['unknown_owner_keys'] ?? []),
+                $this->sourceCode.':missing_target:'.$targetCursor,
+            ];
+        }
 
         return [$result, ['id' => $nextCursor], $nextCursor < $targetCursor];
     }
@@ -171,141 +204,36 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
             'violation_id' => (int) ($batch['violations']->max('id') ?? ($cursor['violation_id'] ?? 0)),
             'action_id' => (int) ($batch['actions']->max('id') ?? ($cursor['action_id'] ?? 0)),
         ];
+        $missingTargets = [];
+        foreach ($next as $key => $value) {
+            if ($value < (int) ($target[$key] ?? 0)
+                && ($batch[match ($key) {
+                    'incident_id' => 'incidents',
+                    'violation_id' => 'violations',
+                    default => 'actions',
+                }] ?? collect())->isEmpty()) {
+                $next[$key] = (int) $target[$key];
+                $missingTargets[] = $this->sourceCode.':missing_target:'.$key.':'.$target[$key];
+            }
+        }
         $hasMore = collect($next)->contains(
             static fn (int $value, string $key): bool => $value < (int) ($target[$key] ?? 0),
         );
+        $result = $backfill->apply($batch);
+        $result['gap_count'] += count($missingTargets);
+        $result['unknown_count'] += count($missingTargets);
+        $result['unknown_owner_keys'] = [
+            ...($result['unknown_owner_keys'] ?? []),
+            ...$missingTargets,
+        ];
 
-        return [$backfill->apply($batch), $next, $hasMore];
+        return [$result, $next, $hasMore];
     }
 
     private static function ownerCutoff(int $organizationId, string $sourceCode): array
     {
-        if ($sourceCode === self::SAFETY_INCIDENTS) {
-            $facts = [];
-            $cursor = [];
-            foreach ([
-                'incident_id' => 'safety_incidents',
-                'violation_id' => 'safety_violations',
-                'action_id' => 'safety_corrective_actions',
-            ] as $key => $table) {
-                $query = DB::table($table)->where('organization_id', $organizationId);
-                $cursor[$key] = (int) ($query->max('id') ?? 0);
-            }
-            foreach (self::ownerTables($sourceCode) as $table) {
-                $facts[$table] = self::tableContentFact($organizationId, $table);
-            }
+        $generation = ReportSourceOwnerGeneration::capture($organizationId, $sourceCode);
 
-            return [$cursor, $facts];
-        }
-        $table = match ($sourceCode) {
-            self::QUALITY_DEFECTS => 'quality_defect_status_history',
-            self::SAFETY_EXPOSURE => 'workforce_attendance_corrections',
-            self::WORKFORCE_ADMISSION => 'workforce_employee_assignments',
-            default => throw new \LogicException('report_source_sync_unknown'),
-        };
-        $query = DB::table($table)->where('organization_id', $organizationId);
-        if ($sourceCode === self::WORKFORCE_ADMISSION) {
-            $query->where('status', 'active')
-                ->whereNotNull('project_id')
-                ->whereNull('deleted_at');
-        }
-        $id = (int) ($query->max('id') ?? 0);
-        $watermarkColumn = $sourceCode === self::QUALITY_DEFECTS ? 'changed_at' : 'updated_at';
-
-        return [[
-            'id' => $id,
-        ], [
-            'id' => $id,
-            'owner' => self::tableContentFact($organizationId, $table),
-            'watermark' => (clone $query)->max($watermarkColumn),
-            'dependencies' => self::dependentFacts($organizationId, $sourceCode),
-        ]];
-    }
-
-    private static function ownerTables(string $sourceCode): array
-    {
-        $primary = match ($sourceCode) {
-            self::QUALITY_DEFECTS => ['quality_defect_status_history'],
-            self::SAFETY_EXPOSURE => ['workforce_attendance_corrections'],
-            self::WORKFORCE_ADMISSION => ['workforce_employee_assignments'],
-            self::SAFETY_INCIDENTS => ['safety_incidents', 'safety_violations', 'safety_corrective_actions'],
-            default => throw new \LogicException('report_source_sync_unknown'),
-        };
-
-        return array_values(array_unique([
-            ...$primary,
-            ...self::dependentTables($sourceCode),
-        ]));
-    }
-
-    private static function dependentFacts(int $organizationId, string $sourceCode): array
-    {
-        $facts = [];
-        foreach (self::dependentTables($sourceCode) as $table) {
-            $facts[$table] = self::tableContentFact($organizationId, $table);
-        }
-
-        return $facts;
-    }
-
-    private static function dependentTables(string $sourceCode): array
-    {
-        return match ($sourceCode) {
-            self::QUALITY_DEFECTS => ['quality_defect_status_history'],
-            self::SAFETY_EXPOSURE => ['safety_site_workforce_assignments', 'safety_sites'],
-            self::WORKFORCE_ADMISSION => [
-                'safety_site_workforce_assignments',
-                'safety_workforce_lifecycle_events',
-                'safety_admission_policy_versions',
-                'safety_training_records',
-                'safety_medical_exams',
-                'safety_ppe_issues',
-                'safety_employee_requirements',
-            ],
-            self::SAFETY_INCIDENTS => ['safety_transition_events', 'safety_incident_policy_versions', 'safety_exposure_days'],
-            default => [],
-        };
-    }
-
-    private static function tableContentFact(int $organizationId, string $table): array
-    {
-        $columns = Schema::getColumnListing($table);
-        sort($columns);
-        $query = DB::table($table)->where('organization_id', $organizationId);
-        $hash = hash_init('sha256');
-        (clone $query)
-            ->select($columns)
-            ->orderBy('id')
-            ->chunkById(500, static function (Collection $rows) use ($columns, $hash): void {
-                foreach ($rows as $row) {
-                    $values = [];
-                    foreach ($columns as $column) {
-                        $values[$column] = $row->{$column};
-                    }
-                    hash_update($hash, CanonicalJson::encode($values)."\n");
-                }
-            });
-        $watermarks = [];
-        foreach (array_intersect(
-            ['changed_at', 'created_at', 'occurred_at', 'source_watermark', 'updated_at', 'valid_from', 'valid_to'],
-            $columns,
-        ) as $column) {
-            $watermarks[$column] = (clone $query)->max($column);
-        }
-        $versions = [];
-        foreach (array_intersect(
-            ['event_version', 'formula_version', 'policy_version', 'schema_version', 'version'],
-            $columns,
-        ) as $column) {
-            $versions[$column] = (clone $query)->max($column);
-        }
-
-        return [
-            'content_hash' => hash_final($hash),
-            'count' => (clone $query)->count(),
-            'max_id' => (clone $query)->max('id'),
-            'versions' => $versions,
-            'watermarks' => $watermarks,
-        ];
+        return [$generation['target_cursor'], $generation['facts']];
     }
 }

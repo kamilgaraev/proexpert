@@ -19,7 +19,7 @@ final readonly class QualityDefectTransitionRecorder
             'quality_defect_transition:'.$defect->organization_id.':'.$defect->id,
             function () use ($defect, $history): QualityDefectTransitionEvent {
                 $evidenceRefs = $this->evidenceRefs($history);
-                $dimensions = is_array($history->reporting_dimensions) ? $history->reporting_dimensions : [];
+                $dimensions = $this->pinnedDimensions($defect, $history);
                 $existing = QualityDefectTransitionEvent::query()
                     ->where('organization_id', $defect->organization_id)
                     ->where('status_history_id', $history->id)
@@ -58,17 +58,18 @@ final readonly class QualityDefectTransitionRecorder
 
     private function evidenceRefs(QualityDefectStatusHistory $history): array
     {
-        $evidenceRefs = is_array($history->reporting_evidence_refs)
-            ? array_map(
-                static fn (array $evidence): array => [
-                    ...$evidence,
-                    'type' => ($evidence['type'] ?? null) === 'status_comment'
-                        ? 'status_comment'
-                        : 'quality_defect_photo',
-                ],
-                $history->reporting_evidence_refs,
-            )
-            : [];
+        if (! is_array($history->reporting_evidence_refs)) {
+            throw new LogicException('quality_defect_transition_evidence_invalid');
+        }
+        $evidenceRefs = [];
+        foreach ($history->reporting_evidence_refs as $evidence) {
+            if (! is_array($evidence)
+                || ! is_int($evidence['id'] ?? null)
+                || ! in_array($evidence['type'] ?? null, ['quality_defect_photo', 'status_comment'], true)) {
+                throw new LogicException('quality_defect_transition_evidence_invalid');
+            }
+            $evidenceRefs[] = $evidence;
+        }
         if (trim((string) $history->comment) !== '') {
             $evidenceRefs[] = [
                 'hash' => hash('sha256', trim((string) $history->comment)),
@@ -89,19 +90,42 @@ final readonly class QualityDefectTransitionRecorder
     ): array {
         return [
             'actor_user_id' => $history->changed_by === null ? null : (int) $history->changed_by,
-            'contractor_id' => isset($dimensions['contractor_id']) ? (int) $dimensions['contractor_id'] : ($defect->contractor_id === null ? null : (int) $defect->contractor_id),
-            'due_date' => $dimensions['due_date'] ?? $defect->due_date?->toDateString(),
+            'contractor_id' => $dimensions['contractor_id'] === null ? null : (int) $dimensions['contractor_id'],
+            'due_date' => $dimensions['due_date'],
             'evidence_refs' => $evidenceRefs,
             'event_version' => $version,
             'from_status' => $history->from_status?->value,
             'occurred_at' => $history->changed_at?->toAtomString(),
-            'organization_id' => (int) $defect->organization_id,
-            'project_id' => (int) ($dimensions['project_id'] ?? $defect->project_id),
-            'quality_defect_id' => (int) $defect->id,
-            'schedule_task_id' => isset($dimensions['schedule_task_id']) ? (int) $dimensions['schedule_task_id'] : ($defect->schedule_task_id === null ? null : (int) $defect->schedule_task_id),
-            'severity' => (string) ($dimensions['severity'] ?? $defect->severity->value),
+            'organization_id' => (int) $history->organization_id,
+            'project_id' => (int) $dimensions['project_id'],
+            'quality_defect_id' => (int) $history->quality_defect_id,
+            'schedule_task_id' => $dimensions['schedule_task_id'] === null ? null : (int) $dimensions['schedule_task_id'],
+            'severity' => (string) $dimensions['severity'],
             'status_history_id' => (int) $history->id,
             'to_status' => $history->to_status->value,
         ];
+    }
+
+    private function pinnedDimensions(QualityDefect $defect, QualityDefectStatusHistory $history): array
+    {
+        $dimensions = $history->reporting_dimensions;
+        $required = ['contractor_id', 'due_date', 'project_id', 'schedule_task_id', 'severity'];
+        $missing = array_filter(
+            $required,
+            static fn (string $key): bool => ! is_array($dimensions) || ! array_key_exists($key, $dimensions),
+        );
+        if (! is_array($dimensions)
+            || $missing !== []
+            || (int) $history->quality_defect_id !== (int) $defect->id
+            || (int) $history->organization_id !== (int) $defect->organization_id
+            || ! is_int($dimensions['project_id'])
+            || ! is_string($dimensions['severity'])
+            || ($dimensions['contractor_id'] !== null && ! is_int($dimensions['contractor_id']))
+            || ($dimensions['schedule_task_id'] !== null && ! is_int($dimensions['schedule_task_id']))
+            || ($dimensions['due_date'] !== null && ! is_string($dimensions['due_date']))) {
+            throw new LogicException('quality_defect_transition_dimensions_invalid');
+        }
+
+        return $dimensions;
     }
 }

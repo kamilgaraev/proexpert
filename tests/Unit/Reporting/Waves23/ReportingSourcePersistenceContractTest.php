@@ -31,9 +31,13 @@ final class ReportingSourcePersistenceContractTest extends TestCase
             dirname(__DIR__, 4).'/database/migrations/2026_07_30_000001_create_report_source_sync_ledgers.php',
         );
         $job = file_get_contents(dirname(__DIR__, 4).'/app/Jobs/ReportingSourceBackfillJob.php');
+        $generation = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/Support/ReportSourceOwnerGeneration.php',
+        );
 
         self::assertIsString($migration);
         self::assertIsString($job);
+        self::assertIsString($generation);
         self::assertStringContainsString("Schema::create('report_source_sync_ledgers'", $migration);
         self::assertStringContainsString("->jsonb('cursor')", $migration);
         self::assertStringContainsString("->jsonb('target_cursor')", $migration);
@@ -43,10 +47,39 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString("'status' => 'pending'", $job);
         self::assertStringContainsString("'completed_owner_checksum' => null", $job);
         self::assertStringContainsString('->afterCommit()', $job);
-        self::assertStringContainsString("'content_hash' => hash_final(\$hash)", $job);
-        self::assertStringContainsString("'versions' => \$versions", $job);
-        self::assertStringContainsString("'watermarks' => \$watermarks", $job);
-        self::assertStringContainsString('...self::dependentTables($sourceCode)', $job);
+        self::assertStringContainsString("'content_hash' => hash_final(\$hash)", $generation);
+        self::assertStringContainsString("'versions' => \$versions", $generation);
+        self::assertStringContainsString("'watermarks' => \$watermarks", $generation);
+        self::assertStringContainsString('...self::dependentTables($sourceCode)', $generation);
+        self::assertStringContainsString('ownerCutoff($this->organizationId, $this->sourceCode)', $job);
+        self::assertStringContainsString("':missing_target:'", $job);
+    }
+
+    #[Test]
+    public function every_quality_snapshot_is_bound_to_its_exact_completed_ledger_generation(): void
+    {
+        foreach ([
+            'app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/QualityDefectFlowSnapshotMaterializer.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Services/SafetyIncidentSnapshotMaterializer.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Services/WorkforceAdmissionSnapshotMaterializer.php',
+        ] as $relativePath) {
+            $source = file_get_contents(dirname(__DIR__, 4).'/'.$relativePath);
+            self::assertIsString($source);
+            self::assertStringContainsString('CompletedReportSourceLedgerBinding::capture', $source);
+            self::assertStringContainsString('CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration', $source);
+            self::assertStringContainsString("'source_ledger_binding' => \$ledgerBinding", $source);
+            self::assertStringContainsString("'source_watermark' => CarbonImmutable::parse", $source);
+        }
+
+        foreach ([
+            'app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Readiness/QualityDefectFlowReadinessProbe.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Readiness/SafetyIncidentReadinessProbe.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Readiness/WorkforceAdmissionReadinessProbe.php',
+        ] as $relativePath) {
+            $source = file_get_contents(dirname(__DIR__, 4).'/'.$relativePath);
+            self::assertIsString($source);
+            self::assertStringContainsString('CompletedReportSourceLedgerBinding::matches', $source);
+        }
     }
 
     #[Test]

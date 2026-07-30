@@ -10,17 +10,18 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
+use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
 use App\BusinessModules\Core\Reporting\Support\ReportIdentitySetReconciler;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceRequirementResult;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DTO\AdmissionRequirementState;
-use App\Jobs\ReportingSourceBackfillJob;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionRow;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionSnapshot;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetySiteWorkforceAssignment;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
+use App\Jobs\ReportingSourceBackfillJob;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
@@ -40,17 +41,27 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
     {
+        $organizationId = $context->scope->organizationId;
+        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
+        $ledgerBinding = CompletedReportSourceLedgerBinding::capture(
+            $organizationId,
+            [ReportingSourceBackfillJob::WORKFORCE_ADMISSION],
+        );
+
         return ReportSnapshotFirstWriter::run(
-            'workforce_admission:'.$context->scope->organizationId.':'.$query->definition->definitionHash->value
+            'workforce_admission:'.$organizationId.':'.$query->definition->definitionHash->value
             .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
-            fn (): SafetyAdmissionSnapshot => $this->materializeLocked($context, $query),
+            fn (): SafetyAdmissionSnapshot => $this->materializeLocked($context, $query, $ledgerBinding),
         );
     }
 
-    private function materializeLocked(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
-    {
+    private function materializeLocked(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        array $ledgerBinding,
+    ): SafetyAdmissionSnapshot {
         $organizationId = $context->scope->organizationId;
-        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
+        CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration($organizationId, $ledgerBinding);
         $asOf = CarbonImmutable::instance($query->asOf);
         $date = $asOf->startOfDay();
         $assignments = $this->assignments(
@@ -103,6 +114,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 ->values()
                 ->all(),
             'workforce_assignment_hashes' => $projection['workforce_assignment_hashes'],
+            'source_ledger_binding' => $ledgerBinding,
         ]));
         $outputHash = hash('sha256', CanonicalJson::encode([
             'rows' => $projection['rows'],
@@ -144,10 +156,10 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 $query,
                 $organizationId,
                 $date,
-                $assignments,
                 $projection,
                 $policyIds,
                 $inputHash,
+                $ledgerBinding,
                 $outputHash,
                 $sourceHash,
                 $scopeHash,
@@ -164,57 +176,58 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 }
 
                 return DB::transaction(function () use (
-            $query,
-            $organizationId,
-            $date,
-            $assignments,
-            $projection,
-            $policyIds,
-            $inputHash,
-            $outputHash,
-            $sourceHash,
-            $scopeHash,
-        ): SafetyAdmissionSnapshot {
-            $rows = $projection['rows'];
-            $summary = $this->formula->summarize($projection['metrics']);
-            $generatedAt = CarbonImmutable::now();
-            $siteFilter = $this->filterValues($query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
-            $snapshot = SafetyAdmissionSnapshot::query()->create([
-                'id' => (string) Str::ulid(),
-                'organization_id' => $organizationId,
-                'project_id' => count($query->scope->projectIds) === 1 ? $query->scope->projectIds[0] : null,
-                'safety_site_id' => count($siteFilter) === 1 ? (int) $siteFilter[0] : null,
-                'policy_version_ids' => $policyIds,
-                'scope_hash' => $scopeHash,
-                'definition_hash' => $query->definition->definitionHash->value,
-                'formula_version' => $query->definition->formulaVersion,
-                'query_hash' => $query->queryHash->value,
-                'input_hash' => $inputHash,
-                'output_hash' => $outputHash,
-                'source_hash' => $sourceHash,
-                'snapshot_date' => $date->toDateString(),
-                'source_watermark' => $assignments->max('created_at') ?? $date,
-                'row_count' => count($rows),
-                'evaluated_people' => $summary->personDenominator,
-                'admitted_people' => $summary->admittedPeople,
-                'partial_people' => $summary->partialPeople,
-                'not_admitted_people' => $summary->notAdmittedPeople,
-                'blocker_count' => $projection['blocker_count'],
-                'expiring_count' => $projection['expiring_count'],
-                'unverified_count' => $projection['unknown_count'],
-                'eligible_count' => $projection['eligible_count'],
-                'projected_count' => count($rows),
-                'gap_count' => $projection['gap_count'],
-                'unknown_count' => $projection['unknown_count'],
-                'generated_at' => $generatedAt,
-                'stale_at' => $generatedAt->addMinutes(15),
-            ]);
-            foreach ($rows as $row) {
-                SafetyAdmissionRow::query()->create([
-                    'organization_id' => $organizationId,
-                    'snapshot_id' => $snapshot->id,
-                ] + $row);
-            }
+                    $query,
+                    $organizationId,
+                    $date,
+                    $projection,
+                    $policyIds,
+                    $inputHash,
+                    $ledgerBinding,
+                    $outputHash,
+                    $sourceHash,
+                    $scopeHash,
+                ): SafetyAdmissionSnapshot {
+                    $rows = $projection['rows'];
+                    $summary = $this->formula->summarize($projection['metrics']);
+                    $generatedAt = CarbonImmutable::now();
+                    $siteFilter = $this->filterValues($query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
+                    $snapshot = SafetyAdmissionSnapshot::query()->create([
+                        'id' => (string) Str::ulid(),
+                        'organization_id' => $organizationId,
+                        'project_id' => count($query->scope->projectIds) === 1 ? $query->scope->projectIds[0] : null,
+                        'safety_site_id' => count($siteFilter) === 1 ? (int) $siteFilter[0] : null,
+                        'policy_version_ids' => $policyIds,
+                        'scope_hash' => $scopeHash,
+                        'definition_hash' => $query->definition->definitionHash->value,
+                        'formula_version' => $query->definition->formulaVersion,
+                        'query_hash' => $query->queryHash->value,
+                        'input_hash' => $inputHash,
+                        'output_hash' => $outputHash,
+                        'source_hash' => $sourceHash,
+                        'snapshot_date' => $date->toDateString(),
+                        'source_watermark' => CarbonImmutable::parse((string) $ledgerBinding['watermark']),
+                        'source_ledger_binding' => $ledgerBinding,
+                        'row_count' => count($rows),
+                        'evaluated_people' => $summary->personDenominator,
+                        'admitted_people' => $summary->admittedPeople,
+                        'partial_people' => $summary->partialPeople,
+                        'not_admitted_people' => $summary->notAdmittedPeople,
+                        'blocker_count' => $projection['blocker_count'],
+                        'expiring_count' => $projection['expiring_count'],
+                        'unverified_count' => $projection['unknown_count'],
+                        'eligible_count' => $projection['eligible_count'],
+                        'projected_count' => count($rows),
+                        'gap_count' => $projection['gap_count'],
+                        'unknown_count' => $projection['unknown_count'],
+                        'generated_at' => $generatedAt,
+                        'stale_at' => $generatedAt->addMinutes(15),
+                    ]);
+                    foreach ($rows as $row) {
+                        SafetyAdmissionRow::query()->create([
+                            'organization_id' => $organizationId,
+                            'snapshot_id' => $snapshot->id,
+                        ] + $row);
+                    }
 
                     return $snapshot;
                 });
@@ -369,6 +382,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             $workforceAssignmentHashes[] = $workforceAssignment['source_hash'];
             if (! $workforceAssignment['active']) {
                 $gapCount++;
+
                 continue;
             }
 
@@ -385,6 +399,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 $lifecycleFlags = $this->compliance->pinnedLifecycleFlags($complianceContext);
             } catch (DomainException $exception) {
                 $gapCount++;
+
                 continue;
             }
             $states = [
@@ -441,6 +456,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 $rows[] = [
                     'project_id' => (int) $assignment->project_id,
                     'safety_site_id' => (int) $assignment->safety_site_id,
+                    'site_assignment_id' => (int) $assignment->id,
                     'workforce_assignment_id' => (int) $assignment->workforce_assignment_id,
                     'employee_id' => (int) $assignment->employee_id,
                     'snapshot_date' => $date->toDateString(),

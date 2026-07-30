@@ -114,6 +114,21 @@ final class QualityDefectFlowPostgresTest extends TestCase
         $recorder->record($defect, $history);
     }
 
+    #[Test]
+    public function explicit_null_dimensions_are_preserved_when_current_owner_values_change(): void
+    {
+        $this->requirePostgres();
+        $history = QualityDefectStatusHistory::query()->findOrFail($this->historyId());
+        $defect = QualityDefect::query()->findOrFail($history->quality_defect_id);
+        $defect->update(['due_date' => '2026-08-15']);
+
+        $event = app(QualityDefectTransitionRecorder::class)->record($defect, $history);
+
+        self::assertNull($event->due_date);
+        self::assertNull($event->contractor_id);
+        self::assertNull($event->schedule_task_id);
+    }
+
     private function historyId(): int
     {
         $organization = Organization::factory()->create();
@@ -140,7 +155,13 @@ final class QualityDefectFlowPostgresTest extends TestCase
             'comment' => 'created',
             'changed_by' => $actor->id,
             'changed_at' => '2026-07-30 10:00:00+00',
-            'reporting_dimensions' => json_encode(['project_id' => $project->id], JSON_THROW_ON_ERROR),
+            'reporting_dimensions' => json_encode([
+                'contractor_id' => null,
+                'due_date' => null,
+                'project_id' => $project->id,
+                'schedule_task_id' => null,
+                'severity' => 'major',
+            ], JSON_THROW_ON_ERROR),
             'reporting_evidence_refs' => json_encode([['id' => 1, 'type' => 'quality_defect_photo']], JSON_THROW_ON_ERROR),
         ]);
     }

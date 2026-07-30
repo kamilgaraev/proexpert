@@ -16,6 +16,7 @@ final class SafetyAdmissionRow extends Model
 
     protected $casts = [
         'snapshot_date' => 'immutable_date',
+        'site_assignment_id' => 'integer',
         'mandatory' => 'boolean',
         'blocked' => 'boolean',
         'verified' => 'boolean',

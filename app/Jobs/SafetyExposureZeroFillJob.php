@@ -11,8 +11,9 @@ use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
 
-final class SafetyExposureZeroFillJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
+final class SafetyExposureZeroFillJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Queueable;
 
@@ -56,7 +57,12 @@ final class SafetyExposureZeroFillJob implements ShouldQueue, ShouldBeUniqueUnti
                     ->where('organization_id', $this->organizationId)
                     ->where('safety_site_id', $site->id)
                     ->whereDate('exposure_date', $date->toDateString())
-                    ->exists()) {
+                    ->exists()
+                    && $this->hasAuthoritativeZeroAttendance(
+                        (int) $site->project_id,
+                        (int) $site->id,
+                        $date,
+                    )) {
                     $projector->project(
                         $this->organizationId,
                         (int) $site->project_id,
@@ -76,5 +82,52 @@ final class SafetyExposureZeroFillJob implements ShouldQueue, ShouldBeUniqueUnti
                 }
             }
         }
+    }
+
+    private function hasAuthoritativeZeroAttendance(
+        int $projectId,
+        int $siteId,
+        CarbonImmutable $date,
+    ): bool {
+        $employeeIds = DB::table('safety_site_workforce_assignments as mapping')
+            ->join('workforce_employee_assignments as assignment', 'assignment.id', '=', 'mapping.workforce_assignment_id')
+            ->join('safety_sites as site', 'site.id', '=', 'mapping.safety_site_id')
+            ->where('mapping.organization_id', $this->organizationId)
+            ->where('mapping.project_id', $projectId)
+            ->where('mapping.safety_site_id', $siteId)
+            ->where('assignment.organization_id', $this->organizationId)
+            ->where('assignment.project_id', $projectId)
+            ->where('assignment.status', 'active')
+            ->whereNull('assignment.deleted_at')
+            ->whereColumn('assignment.employee_id', 'mapping.employee_id')
+            ->where('site.organization_id', $this->organizationId)
+            ->where('site.project_id', $projectId)
+            ->where('site.is_active', true)
+            ->whereDate('mapping.valid_from', '<=', $date->toDateString())
+            ->where(static fn ($query) => $query
+                ->whereNull('mapping.valid_to')
+                ->orWhereDate('mapping.valid_to', '>=', $date->toDateString()))
+            ->distinct()
+            ->pluck('mapping.employee_id');
+        if ($employeeIds->isEmpty()) {
+            return false;
+        }
+        $latest = DB::table('workforce_attendance_corrections')
+            ->where('organization_id', $this->organizationId)
+            ->where('project_id', $projectId)
+            ->whereDate('work_date', $date->toDateString())
+            ->whereIn('employee_id', $employeeIds->all())
+            ->orderBy('id')
+            ->get(['id', 'employee_id', 'status', 'hours'])
+            ->groupBy('employee_id')
+            ->map(static fn ($rows) => $rows->last());
+        if ($latest->count() !== $employeeIds->count()) {
+            return false;
+        }
+
+        return $latest->every(
+            static fn (object $row): bool => $row->status !== 'at_work'
+                && ($row->hours === null || (float) $row->hours === 0.0),
+        );
     }
 }

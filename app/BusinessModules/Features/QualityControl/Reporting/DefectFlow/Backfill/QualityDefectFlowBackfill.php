@@ -26,7 +26,7 @@ final readonly class QualityDefectFlowBackfill
     public function nextBatch(int $organizationId, int $afterHistoryId, int $limit = 500): Collection
     {
         return QualityDefectStatusHistory::query()
-            ->with('defect.photos:id,quality_defect_id,type')
+            ->with('defect')
             ->where('organization_id', $organizationId)
             ->where('id', '>', $afterHistoryId)
             ->orderBy('id')
@@ -52,27 +52,31 @@ final readonly class QualityDefectFlowBackfill
                 continue;
             }
             $dimensions = $history->reporting_dimensions;
-            if (! is_array($dimensions) || ! is_array($history->reporting_evidence_refs)) {
+            $missingDimensions = array_filter(
+                ['contractor_id', 'due_date', 'project_id', 'schedule_task_id', 'severity'],
+                static fn (string $key): bool => ! is_array($dimensions) || ! array_key_exists($key, $dimensions),
+            );
+            if (! is_array($dimensions)
+                || $missingDimensions !== []
+                || ! is_array($history->reporting_evidence_refs)) {
                 $gaps++;
                 $unknownOwnerKeys[] = 'quality_defect_status_history:'.(int) $history->id;
+
                 continue;
             }
             $inputHashes[] = hash('sha256', CanonicalJson::encode([
                 'changed_at' => $history->changed_at?->toAtomString(),
                 'changed_by' => $history->changed_by,
                 'comment_hash' => hash('sha256', trim((string) $history->comment)),
-                'contractor_id' => $history->defect->contractor_id,
+                'contractor_id' => $dimensions['contractor_id'],
                 'defect_id' => $history->quality_defect_id,
-                'due_date' => $history->defect->due_date?->toDateString(),
+                'due_date' => $dimensions['due_date'],
+                'evidence_refs' => $history->reporting_evidence_refs,
                 'from_status' => $history->from_status?->value,
                 'history_id' => $history->id,
-                'photo_refs' => $history->defect->photos
-                    ->map(static fn ($photo): array => ['id' => (int) $photo->id, 'type' => (string) $photo->type])
-                    ->sortBy('id')
-                    ->values()
-                    ->all(),
-                'project_id' => $history->defect->project_id,
-                'severity' => $history->defect->severity->value,
+                'project_id' => $dimensions['project_id'],
+                'schedule_task_id' => $dimensions['schedule_task_id'],
+                'severity' => $dimensions['severity'],
                 'to_status' => $history->to_status->value,
             ]));
             $outputHashes[] = $this->recorder->record($history->defect, $history)->event_hash;

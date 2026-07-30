@@ -10,17 +10,18 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowPolicyVersion;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowRow;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowSnapshot;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectTransitionEvent;
+use App\Jobs\ReportingSourceBackfillJob;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use App\Jobs\ReportingSourceBackfillJob;
 use Throwable;
 
 final readonly class QualityDefectFlowSnapshotMaterializer
@@ -29,17 +30,27 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
     {
+        $organizationId = $context->scope->organizationId;
+        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
+        $ledgerBinding = CompletedReportSourceLedgerBinding::capture(
+            $organizationId,
+            [ReportingSourceBackfillJob::QUALITY_DEFECTS],
+        );
+
         return ReportSnapshotFirstWriter::run(
-            'quality_defect_flow:'.$context->scope->organizationId.':'.$query->definition->definitionHash->value
+            'quality_defect_flow:'.$organizationId.':'.$query->definition->definitionHash->value
             .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
-            fn (): QualityDefectFlowSnapshot => $this->materializeLocked($context, $query),
+            fn (): QualityDefectFlowSnapshot => $this->materializeLocked($context, $query, $ledgerBinding),
         );
     }
 
-    private function materializeLocked(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
-    {
+    private function materializeLocked(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        array $ledgerBinding,
+    ): QualityDefectFlowSnapshot {
         $organizationId = $context->scope->organizationId;
-        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
+        CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration($organizationId, $ledgerBinding);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
         $events = $this->events(
@@ -74,6 +85,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             'period_from' => $periodFrom->toAtomString(),
             'period_to' => $periodTo->toAtomString(),
             'policy_hashes' => collect($policies)->pluck('source_hash')->unique()->sort()->values()->all(),
+            'source_ledger_binding' => $ledgerBinding,
         ]));
         $outputHash = hash('sha256', CanonicalJson::encode($analysis));
         $sourceHash = hash('sha256', CanonicalJson::encode([
@@ -100,9 +112,9 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                 $organizationId,
                 $asOf,
                 $policyIds,
-                $events,
                 $analysis,
                 $inputHash,
+                $ledgerBinding,
                 $outputHash,
                 $sourceHash,
                 $scopeHash,
@@ -120,60 +132,61 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                 }
 
                 return DB::transaction(function () use (
-            $organizationId,
-            $asOf,
-            $policyIds,
-            $events,
-            $analysis,
-            $inputHash,
-            $outputHash,
-            $sourceHash,
-            $scopeHash,
-            $query,
-        ): QualityDefectFlowSnapshot {
-            $generatedAt = CarbonImmutable::now();
-            $snapshot = QualityDefectFlowSnapshot::query()->create([
-                'id' => (string) Str::ulid(),
-                'organization_id' => $organizationId,
-                'project_id' => count($query->scope->projectIds) === 1 ? $query->scope->projectIds[0] : null,
-                'policy_version_ids' => $policyIds,
-                'scope_hash' => $scopeHash,
-                'definition_hash' => $query->definition->definitionHash->value,
-                'formula_version' => $query->definition->formulaVersion,
-                'query_hash' => $query->queryHash->value,
-                'input_hash' => $inputHash,
-                'output_hash' => $outputHash,
-                'source_hash' => $sourceHash,
-                'as_of' => $asOf,
-                'source_watermark' => $events->max('occurred_at') ?? $asOf,
-                'row_count' => count($analysis['rows']),
-                'opening_count' => $analysis['opening'],
-                'created_count' => $analysis['created'],
-                'reopened_count' => $analysis['reopened'],
-                'closed_count' => $analysis['closed'],
-                'closing_count' => $analysis['closing'],
-                'due_count' => $analysis['due_count'],
-                'overdue_count' => $analysis['overdue_count'],
-                'overdue_pct' => $analysis['overdue_pct'],
-                'mature_cohort_count' => $analysis['mature_cohort_count'],
-                'first_pass_count' => $analysis['first_pass_count'],
-                'mature_reopened_count' => $analysis['mature_reopened_count'],
-                'reopen_rate' => $analysis['reopen_rate'],
-                'first_pass_yield' => $analysis['first_pass_yield'],
-                'eligible_count' => count($analysis['rows']),
-                'projected_count' => count($analysis['rows']),
-                'gap_count' => $analysis['gaps'],
-                'unknown_count' => $analysis['unknowns'],
-                'generated_at' => $generatedAt,
-                'stale_at' => $generatedAt->addDay(),
-            ]);
+                    $organizationId,
+                    $asOf,
+                    $policyIds,
+                    $analysis,
+                    $inputHash,
+                    $ledgerBinding,
+                    $outputHash,
+                    $sourceHash,
+                    $scopeHash,
+                    $query,
+                ): QualityDefectFlowSnapshot {
+                    $generatedAt = CarbonImmutable::now();
+                    $snapshot = QualityDefectFlowSnapshot::query()->create([
+                        'id' => (string) Str::ulid(),
+                        'organization_id' => $organizationId,
+                        'project_id' => count($query->scope->projectIds) === 1 ? $query->scope->projectIds[0] : null,
+                        'policy_version_ids' => $policyIds,
+                        'scope_hash' => $scopeHash,
+                        'definition_hash' => $query->definition->definitionHash->value,
+                        'formula_version' => $query->definition->formulaVersion,
+                        'query_hash' => $query->queryHash->value,
+                        'input_hash' => $inputHash,
+                        'output_hash' => $outputHash,
+                        'source_hash' => $sourceHash,
+                        'as_of' => $asOf,
+                        'source_watermark' => CarbonImmutable::parse((string) $ledgerBinding['watermark']),
+                        'source_ledger_binding' => $ledgerBinding,
+                        'row_count' => count($analysis['rows']),
+                        'opening_count' => $analysis['opening'],
+                        'created_count' => $analysis['created'],
+                        'reopened_count' => $analysis['reopened'],
+                        'closed_count' => $analysis['closed'],
+                        'closing_count' => $analysis['closing'],
+                        'due_count' => $analysis['due_count'],
+                        'overdue_count' => $analysis['overdue_count'],
+                        'overdue_pct' => $analysis['overdue_pct'],
+                        'mature_cohort_count' => $analysis['mature_cohort_count'],
+                        'first_pass_count' => $analysis['first_pass_count'],
+                        'mature_reopened_count' => $analysis['mature_reopened_count'],
+                        'reopen_rate' => $analysis['reopen_rate'],
+                        'first_pass_yield' => $analysis['first_pass_yield'],
+                        'eligible_count' => count($analysis['rows']),
+                        'projected_count' => count($analysis['rows']),
+                        'gap_count' => $analysis['gaps'],
+                        'unknown_count' => $analysis['unknowns'],
+                        'generated_at' => $generatedAt,
+                        'stale_at' => $generatedAt->addDay(),
+                    ]);
 
-            foreach ($analysis['rows'] as $row) {
-                QualityDefectFlowRow::query()->create([
-                    'organization_id' => $organizationId,
-                    'snapshot_id' => $snapshot->id,
-                ] + $row);
-            }
+                    foreach ($analysis['rows'] as $row) {
+                        QualityDefectFlowRow::query()->create([
+                            'organization_id' => $organizationId,
+                            'snapshot_id' => $snapshot->id,
+                        ] + $row);
+                    }
 
                     return $snapshot;
                 });
@@ -382,6 +395,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
             if ($occurredAt < $periodFrom) {
                 $openingState[$defectId] = ! $isClosed;
+
                 continue;
             }
             if ($occurredAt > $periodTo) {
@@ -618,5 +632,4 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             static fn (mixed $item): bool => is_int($item) || is_string($item),
         ));
     }
-
 }

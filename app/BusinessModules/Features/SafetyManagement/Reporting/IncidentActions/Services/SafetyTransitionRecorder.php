@@ -15,6 +15,7 @@ use App\Models\Contractor;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use InvalidArgumentException;
+use LogicException;
 
 final readonly class SafetyTransitionRecorder
 {
@@ -38,6 +39,20 @@ final readonly class SafetyTransitionRecorder
                     ->where('occurred_at', $occurredAt)
                     ->first();
                 if ($existing instanceof SafetyTransitionEvent) {
+                    $this->assertReplayMatches(
+                        $existing,
+                        $this->payload(
+                            $subject,
+                            $fromStatus,
+                            $toStatus,
+                            $actorUserId,
+                            $occurredAt,
+                            (int) $existing->event_version,
+                        ),
+                        $subject,
+                        $toStatus,
+                    );
+
                     return $existing;
                 }
                 $last = SafetyTransitionEvent::query()
@@ -48,44 +63,101 @@ final readonly class SafetyTransitionRecorder
                     ->orderByDesc('event_version')
                     ->first();
                 if ($last instanceof SafetyTransitionEvent && $last->to_status === $toStatus) {
+                    $this->assertReplayMatches(
+                        $last,
+                        $this->payload(
+                            $subject,
+                            $fromStatus,
+                            $toStatus,
+                            $actorUserId,
+                            $occurredAt,
+                            (int) $last->event_version,
+                        ),
+                        $subject,
+                        $toStatus,
+                    );
+
                     return $last;
                 }
 
-                $siteId = $this->siteId($subject);
                 $version = ($last?->event_version ?? 0) + 1;
-                [$evidenceType, $evidenceId] = $this->evidence($subject, $toStatus);
-                $payload = [
-                    'actor_user_id' => $actorUserId,
-                    'category' => $this->category($subject),
-                    'contractor_id' => $this->contractorId($subject),
-                    'due_date' => $subject instanceof SafetyIncident ? null : $subject->due_date?->toDateString(),
-                    'event_version' => $version,
-                    'evidence_id' => $evidenceId,
-                    'evidence_type' => $evidenceType,
-                    'from_status' => $fromStatus,
-                    'occurred_at' => $occurredAt->format(DATE_ATOM),
-                    'organization_id' => (int) $subject->organization_id,
-                    'owner_user_id' => $this->ownerUserId($subject),
-                    'project_id' => (int) $subject->project_id,
-                    'resolved_at' => $subject instanceof SafetyCorrectiveAction || $subject instanceof SafetyViolation
-                        ? $subject->resolved_at?->format(DATE_ATOM)
-                        : null,
-                    'safety_site_id' => $siteId,
-                    'severity' => (string) $subject->severity,
-                    'subject_id' => (int) $subject->id,
-                    'subject_type' => $subjectType,
-                    'to_status' => $toStatus,
-                    'verified_at' => $subject instanceof SafetyCorrectiveAction
-                        ? $subject->verified_at?->format(DATE_ATOM)
-                        : null,
-                ];
+                $payload = $this->payload(
+                    $subject,
+                    $fromStatus,
+                    $toStatus,
+                    $actorUserId,
+                    $occurredAt,
+                    $version,
+                );
 
                 return SafetyTransitionEvent::query()->create($payload + [
-                    'event_hash' => hash('sha256', CanonicalJson::encode($payload)),
+                    'event_hash' => $this->eventHash($payload, $subject, $toStatus),
                     'recorded_at' => now(),
                 ]);
             },
         );
+    }
+
+    private function payload(
+        SafetyIncident|SafetyViolation|SafetyCorrectiveAction $subject,
+        ?string $fromStatus,
+        string $toStatus,
+        ?int $actorUserId,
+        DateTimeInterface $occurredAt,
+        int $version,
+    ): array {
+        [$evidenceType, $evidenceId] = $this->evidence($subject, $toStatus);
+
+        return [
+            'actor_user_id' => $actorUserId,
+            'category' => $this->category($subject),
+            'contractor_id' => $this->contractorId($subject),
+            'due_date' => $subject instanceof SafetyIncident ? null : $subject->due_date?->toDateString(),
+            'event_version' => $version,
+            'evidence_id' => $evidenceId,
+            'evidence_type' => $evidenceType,
+            'from_status' => $fromStatus,
+            'occurred_at' => $occurredAt->format(DATE_ATOM),
+            'organization_id' => (int) $subject->organization_id,
+            'owner_user_id' => $this->ownerUserId($subject),
+            'project_id' => (int) $subject->project_id,
+            'resolved_at' => $subject instanceof SafetyCorrectiveAction || $subject instanceof SafetyViolation
+                ? $subject->resolved_at?->format(DATE_ATOM)
+                : null,
+            'safety_site_id' => $this->siteId($subject),
+            'severity' => (string) $subject->severity,
+            'subject_id' => (int) $subject->id,
+            'subject_type' => $this->subjectType($subject),
+            'to_status' => $toStatus,
+            'verified_at' => $subject instanceof SafetyCorrectiveAction
+                ? $subject->verified_at?->format(DATE_ATOM)
+                : null,
+        ];
+    }
+
+    private function assertReplayMatches(
+        SafetyTransitionEvent $event,
+        array $payload,
+        SafetyIncident|SafetyViolation|SafetyCorrectiveAction $subject,
+        string $toStatus,
+    ): void {
+        $expected = $this->eventHash($payload, $subject, $toStatus);
+        if (! hash_equals((string) $event->event_hash, $expected)) {
+            throw new LogicException('safety_transition_conflict');
+        }
+    }
+
+    private function eventHash(
+        array $payload,
+        SafetyIncident|SafetyViolation|SafetyCorrectiveAction $subject,
+        string $toStatus,
+    ): string {
+        [, , $evidenceContentHash] = $this->evidence($subject, $toStatus);
+
+        return hash('sha256', CanonicalJson::encode([
+            'event' => $payload,
+            'evidence_content_hash' => $evidenceContentHash,
+        ]));
     }
 
     private function subjectType(Model $subject): string
@@ -198,12 +270,13 @@ final readonly class SafetyTransitionRecorder
         };
 
         if ($evidence === null) {
-            return [null, null];
+            return [null, null, null];
         }
 
         return [
             $evidence['type'],
             (string) $subject->id,
+            hash('sha256', CanonicalJson::encode($evidence['value'])),
         ];
     }
 }

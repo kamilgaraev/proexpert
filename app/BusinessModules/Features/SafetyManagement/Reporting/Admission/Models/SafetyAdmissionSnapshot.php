@@ -22,6 +22,7 @@ final class SafetyAdmissionSnapshot extends Model
         'policy_version_ids' => 'array',
         'snapshot_date' => 'immutable_date',
         'source_watermark' => 'immutable_datetime',
+        'source_ledger_binding' => 'array',
         'generated_at' => 'immutable_datetime',
         'stale_at' => 'immutable_datetime',
         'row_count' => 'integer',

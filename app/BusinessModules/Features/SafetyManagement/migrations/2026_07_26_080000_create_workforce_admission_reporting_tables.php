@@ -19,6 +19,7 @@ return new class extends Migration
             $table->foreignId('organization_id')->constrained()->restrictOnDelete();
             $table->foreignId('project_id')->constrained()->restrictOnDelete();
             $table->foreignId('safety_site_id')->constrained('safety_sites')->restrictOnDelete();
+            $table->foreignId('site_assignment_id')->constrained('safety_site_workforce_assignments')->restrictOnDelete();
             $table->foreignId('workforce_assignment_id')->constrained('workforce_employee_assignments')->restrictOnDelete();
             $table->foreignId('employee_id')->constrained('workforce_employees')->restrictOnDelete();
             $table->date('valid_from');
@@ -99,6 +100,7 @@ return new class extends Migration
             $table->char('source_hash', 64);
             $table->date('snapshot_date');
             $table->timestampTz('source_watermark');
+            $table->jsonb('source_ledger_binding');
             $table->unsignedBigInteger('row_count')->default(0);
             $table->unsignedBigInteger('evaluated_people')->default(0);
             $table->unsignedBigInteger('admitted_people')->default(0);

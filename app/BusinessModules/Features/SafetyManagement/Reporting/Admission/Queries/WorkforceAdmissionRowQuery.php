@@ -131,6 +131,8 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
             new ReportScopedResource('workforce_assignment', (int) $row->workforce_assignment_id, (int) $row->project_id),
             new ReportScopedResource('workforce_employee', (int) $row->employee_id, (int) $row->project_id),
             new ReportScopedResource('safety_site', (int) $row->safety_site_id, (int) $row->project_id),
+            new ReportScopedResource('workforce_assignment_site', (int) $row->site_assignment_id, (int) $row->project_id),
+            new ReportScopedResource('workforce_snapshot_evidence', (int) $row->id, (int) $row->project_id),
         ]);
 
         $medical = $row->requirement_type === 'medical_exam';
@@ -248,5 +250,4 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
 
         return sprintf('%d.%02d', intdiv($scaled, 100), $scaled % 100);
     }
-
 }

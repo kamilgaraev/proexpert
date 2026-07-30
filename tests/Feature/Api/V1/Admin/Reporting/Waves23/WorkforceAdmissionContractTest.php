@@ -37,10 +37,12 @@ final class WorkforceAdmissionContractTest extends TestCase
     public function medical_status_and_evidence_are_redacted_without_sensitive_visibility(): void
     {
         $row = (new SafetyAdmissionRow)->setRawAttributes([
+            'id' => 20,
             'row_key' => 'assignment:4:employee:5:requirement:medical',
             'snapshot_date' => '2026-07-26',
             'project_id' => 2,
             'safety_site_id' => 3,
+            'site_assignment_id' => 21,
             'workforce_assignment_id' => 4,
             'employee_id' => 5,
             'requirement_code' => 'medical',
@@ -71,10 +73,12 @@ final class WorkforceAdmissionContractTest extends TestCase
     public function exact_medical_source_scope_is_enforced_even_with_sensitive_visibility(): void
     {
         $row = (new SafetyAdmissionRow)->setRawAttributes([
+            'id' => 20,
             'row_key' => 'assignment:4:employee:5:requirement:medical',
             'snapshot_date' => '2026-07-26',
             'project_id' => 2,
             'safety_site_id' => 3,
+            'site_assignment_id' => 21,
             'workforce_assignment_id' => 4,
             'employee_id' => 5,
             'requirement_code' => 'medical',

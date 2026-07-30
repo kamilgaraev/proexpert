@@ -10,16 +10,17 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DTO\SafetyTransitionFact;
-use App\Jobs\ReportingSourceBackfillJob;
-use App\Jobs\SafetyExposureZeroFillJob;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentRow;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentSnapshot;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetySite;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyTransitionEvent;
+use App\Jobs\ReportingSourceBackfillJob;
+use App\Jobs\SafetyExposureZeroFillJob;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -33,18 +34,31 @@ final readonly class SafetyIncidentSnapshotMaterializer
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
     {
-        return ReportSnapshotFirstWriter::run(
-            'safety_incident_actions:'.$context->scope->organizationId.':'.$query->definition->definitionHash->value
-            .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
-            fn (): SafetyIncidentSnapshot => $this->materializeLocked($context, $query),
-        );
-    }
-
-    private function materializeLocked(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
-    {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_INCIDENTS);
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_EXPOSURE);
+        $ledgerBinding = CompletedReportSourceLedgerBinding::capture(
+            $organizationId,
+            [
+                ReportingSourceBackfillJob::SAFETY_INCIDENTS,
+                ReportingSourceBackfillJob::SAFETY_EXPOSURE,
+            ],
+        );
+
+        return ReportSnapshotFirstWriter::run(
+            'safety_incident_actions:'.$organizationId.':'.$query->definition->definitionHash->value
+            .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
+            fn (): SafetyIncidentSnapshot => $this->materializeLocked($context, $query, $ledgerBinding),
+        );
+    }
+
+    private function materializeLocked(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        array $ledgerBinding,
+    ): SafetyIncidentSnapshot {
+        $organizationId = $context->scope->organizationId;
+        CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration($organizationId, $ledgerBinding);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
         SafetyExposureZeroFillJob::dispatch(
@@ -105,6 +119,9 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $exposure,
             $context->scope->resources,
         );
+        $missingExposureDays = max(0, $coverage['expected_days'] - $coverage['projected_days']);
+        $analysis['gaps'] += $missingExposureDays;
+        $analysis['unknowns'] += $missingExposureDays;
         $multipliers = collect($policies)->pluck('frequency_multiplier')->map(static fn (mixed $value): int => (int) $value)->unique();
         if ($multipliers->count() !== 1) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
@@ -132,6 +149,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             'period_from' => $periodFrom->toAtomString(),
             'period_to' => $periodTo->toAtomString(),
             'policy_hashes' => collect($policies)->pluck('source_hash')->unique()->sort()->values()->all(),
+            'source_ledger_binding' => $ledgerBinding,
         ]));
         $outputHash = hash('sha256', CanonicalJson::encode($analysis));
         $sourceHash = hash('sha256', CanonicalJson::encode([
@@ -158,11 +176,11 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 $organizationId,
                 $asOf,
                 $policyIds,
-                $events,
                 $analysis,
                 $coverage,
                 $frequency,
                 $inputHash,
+                $ledgerBinding,
                 $outputHash,
                 $sourceHash,
                 $scopeHash,
@@ -179,58 +197,59 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 }
 
                 return DB::transaction(function () use (
-            $query,
-            $organizationId,
-            $asOf,
-            $policyIds,
-            $events,
-            $analysis,
-            $coverage,
-            $frequency,
-            $inputHash,
-            $outputHash,
-            $sourceHash,
-            $scopeHash,
-        ): SafetyIncidentSnapshot {
-            $generatedAt = CarbonImmutable::now();
-            $snapshot = SafetyIncidentSnapshot::query()->create([
-                'id' => (string) Str::ulid(),
-                'organization_id' => $organizationId,
-                'project_id' => count($query->scope->projectIds) === 1 ? $query->scope->projectIds[0] : null,
-                'policy_version_ids' => $policyIds,
-                'scope_hash' => $scopeHash,
-                'definition_hash' => $query->definition->definitionHash->value,
-                'formula_version' => $query->definition->formulaVersion,
-                'query_hash' => $query->queryHash->value,
-                'input_hash' => $inputHash,
-                'output_hash' => $outputHash,
-                'source_hash' => $sourceHash,
-                'as_of' => $asOf,
-                'source_watermark' => $events->max('occurred_at') ?? $asOf,
-                'row_count' => count($analysis['rows']),
-                'incident_count' => $analysis['incident_count'],
-                'violation_count' => $analysis['violation_count'],
-                'action_due_count' => $analysis['action_due_count'],
-                'action_overdue_count' => $analysis['action_overdue_count'],
-                'action_closed_on_time_count' => $analysis['action_closed_on_time_count'],
-                'opening_backlog_count' => $analysis['opening_backlog_count'],
-                'closing_backlog_count' => $analysis['closing_backlog_count'],
-                'exposure_hours' => $coverage['complete'] ? $coverage['hours'] : null,
-                'exposure_complete' => $coverage['complete'],
-                'incident_frequency' => $frequency,
-                'eligible_count' => count($analysis['rows']),
-                'projected_count' => count($analysis['rows']),
-                'gap_count' => $analysis['gaps'],
-                'unknown_count' => $analysis['unknowns'],
-                'generated_at' => $generatedAt,
-                'stale_at' => $generatedAt->addDay(),
-            ]);
-            foreach ($analysis['rows'] as $row) {
-                SafetyIncidentRow::query()->create([
-                    'organization_id' => $organizationId,
-                    'snapshot_id' => $snapshot->id,
-                ] + $row);
-            }
+                    $query,
+                    $organizationId,
+                    $asOf,
+                    $policyIds,
+                    $analysis,
+                    $coverage,
+                    $frequency,
+                    $inputHash,
+                    $ledgerBinding,
+                    $outputHash,
+                    $sourceHash,
+                    $scopeHash,
+                ): SafetyIncidentSnapshot {
+                    $generatedAt = CarbonImmutable::now();
+                    $snapshot = SafetyIncidentSnapshot::query()->create([
+                        'id' => (string) Str::ulid(),
+                        'organization_id' => $organizationId,
+                        'project_id' => count($query->scope->projectIds) === 1 ? $query->scope->projectIds[0] : null,
+                        'policy_version_ids' => $policyIds,
+                        'scope_hash' => $scopeHash,
+                        'definition_hash' => $query->definition->definitionHash->value,
+                        'formula_version' => $query->definition->formulaVersion,
+                        'query_hash' => $query->queryHash->value,
+                        'input_hash' => $inputHash,
+                        'output_hash' => $outputHash,
+                        'source_hash' => $sourceHash,
+                        'as_of' => $asOf,
+                        'source_watermark' => CarbonImmutable::parse((string) $ledgerBinding['watermark']),
+                        'source_ledger_binding' => $ledgerBinding,
+                        'row_count' => count($analysis['rows']),
+                        'incident_count' => $analysis['incident_count'],
+                        'violation_count' => $analysis['violation_count'],
+                        'action_due_count' => $analysis['action_due_count'],
+                        'action_overdue_count' => $analysis['action_overdue_count'],
+                        'action_closed_on_time_count' => $analysis['action_closed_on_time_count'],
+                        'opening_backlog_count' => $analysis['opening_backlog_count'],
+                        'closing_backlog_count' => $analysis['closing_backlog_count'],
+                        'exposure_hours' => $coverage['complete'] ? $coverage['hours'] : null,
+                        'exposure_complete' => $coverage['complete'],
+                        'incident_frequency' => $frequency,
+                        'eligible_count' => count($analysis['rows']),
+                        'projected_count' => count($analysis['rows']),
+                        'gap_count' => $analysis['gaps'],
+                        'unknown_count' => $analysis['unknowns'],
+                        'generated_at' => $generatedAt,
+                        'stale_at' => $generatedAt->addDay(),
+                    ]);
+                    foreach ($analysis['rows'] as $row) {
+                        SafetyIncidentRow::query()->create([
+                            'organization_id' => $organizationId,
+                            'snapshot_id' => $snapshot->id,
+                        ] + $row);
+                    }
 
                     return $snapshot;
                 });
@@ -484,6 +503,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             }
             if ($occurredAt < $periodFrom) {
                 $openingState[$key] = ! $closureVerified;
+
                 continue;
             }
             if ($occurredAt > $periodTo) {
@@ -855,8 +875,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         Builder $builder,
         array $resources,
         string $siteColumn = 'safety_site_id',
-    ): void
-    {
+    ): void {
         if ($resources === []) {
             return;
         }

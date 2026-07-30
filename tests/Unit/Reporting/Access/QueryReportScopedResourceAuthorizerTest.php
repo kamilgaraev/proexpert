@@ -99,7 +99,9 @@ final class QueryReportScopedResourceAuthorizerTest extends TestCase
             'training',
             'violation_resolution',
             'workforce_assignment',
+            'workforce_assignment_site',
             'workforce_employee',
+            'workforce_snapshot_evidence',
         ];
 
         self::assertSame($expected, $kinds);
@@ -176,7 +178,9 @@ final class QueryReportScopedResourceAuthorizerTest extends TestCase
             'training',
             'violation_resolution',
             'workforce_assignment',
+            'workforce_assignment_site',
             'workforce_employee',
+            'workforce_snapshot_evidence',
         ];
     }
 
