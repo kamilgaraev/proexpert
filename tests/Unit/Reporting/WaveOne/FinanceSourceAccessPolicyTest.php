@@ -20,7 +20,7 @@ final class FinanceSourceAccessPolicyTest extends TestCase
     #[Test]
     public function source_object_abac_is_fail_closed_for_unscoped_and_malformed_references(): void
     {
-        $visible = (new FinanceSourceAccessPolicy())->visibleRefs(
+        $visible = (new FinanceSourceAccessPolicy)->visibleRefs(
             $this->context(),
             [
                 ['type' => 'contract', 'id' => 10, 'hash' => str_repeat('a', 64)],
@@ -44,12 +44,32 @@ final class FinanceSourceAccessPolicyTest extends TestCase
     {
         self::assertSame(
             [],
-            (new FinanceSourceAccessPolicy())->visibleRefs(
+            (new FinanceSourceAccessPolicy)->visibleRefs(
                 $this->context(),
                 ['type' => 'contract', 'id' => 10],
                 ['contract'],
             ),
         );
+    }
+
+    #[Test]
+    public function aggregate_rows_are_restricted_by_matching_source_resources(): void
+    {
+        $policy = new FinanceSourceAccessPolicy;
+        $scope = $this->context()->scope;
+
+        self::assertTrue($policy->allowsAggregate(
+            $scope,
+            [['type' => 'contract', 'id' => 10]],
+            ['contract'],
+        ));
+        self::assertFalse($policy->allowsAggregate(
+            $scope,
+            [['type' => 'contract', 'id' => 11]],
+            ['contract'],
+        ));
+        self::assertFalse($policy->allowsAggregate($scope, [], ['contract']));
+        self::assertTrue($policy->allowsAggregate($scope, [], ['change_request']));
     }
 
     private function context(): ReportExecutionContext

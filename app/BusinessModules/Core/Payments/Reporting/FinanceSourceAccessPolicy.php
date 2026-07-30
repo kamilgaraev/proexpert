@@ -5,15 +5,42 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Payments\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 
 final readonly class FinanceSourceAccessPolicy
 {
+    public function allowsAggregate(ReportScope $scope, mixed $sourceRefs, array $allowedTypes): bool
+    {
+        $restricted = [];
+        foreach ($scope->resources as $resource) {
+            if (in_array($resource->kind, $allowedTypes, true)) {
+                $restricted[$resource->kind.':'.$resource->id] = true;
+            }
+        }
+        if ($restricted === []) {
+            return true;
+        }
+        if (! is_array($sourceRefs)) {
+            return false;
+        }
+        foreach ($sourceRefs as $ref) {
+            if (is_array($ref)
+                && is_string($ref['type'] ?? null)
+                && (is_int($ref['id'] ?? null) || ctype_digit((string) ($ref['id'] ?? '')))
+                && isset($restricted[$ref['type'].':'.(string) $ref['id']])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function visibleRefs(
         ReportExecutionContext $context,
         mixed $sourceRefs,
         array $allowedTypes,
     ): array {
-        if (!is_array($sourceRefs) || !array_is_list($sourceRefs)) {
+        if (! is_array($sourceRefs) || ! array_is_list($sourceRefs)) {
             return [];
         }
         $allowed = array_fill_keys($allowedTypes, true);
@@ -23,14 +50,14 @@ final readonly class FinanceSourceAccessPolicy
         }
         $visible = [];
         foreach ($sourceRefs as $ref) {
-            if (!is_array($ref)
-                || !is_string($ref['type'] ?? null)
-                || !isset($allowed[$ref['type']])
-                || (!is_int($ref['id'] ?? null) && !ctype_digit((string) ($ref['id'] ?? '')))) {
+            if (! is_array($ref)
+                || ! is_string($ref['type'] ?? null)
+                || ! isset($allowed[$ref['type']])
+                || (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))) {
                 continue;
             }
             $id = (string) $ref['id'];
-            if (!isset($resources[$ref['type'].':'.$id])) {
+            if (! isset($resources[$ref['type'].':'.$id])) {
                 continue;
             }
             $visible[] = [...$ref, 'id' => $id];

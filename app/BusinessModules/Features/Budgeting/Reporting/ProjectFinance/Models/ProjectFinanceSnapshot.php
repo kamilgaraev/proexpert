@@ -20,7 +20,7 @@ final class ProjectFinanceSnapshot extends Model
     protected $casts = [
         'period_from' => 'date',
         'period_to' => 'date',
-        'as_of' => 'date',
+        'as_of' => 'immutable_datetime',
         'totals' => 'array',
         'source_refs' => 'array',
         'generated_at' => 'immutable_datetime',

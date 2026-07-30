@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance;
 
+use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ExactDecimal;
 use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\Models\EpmDataMartSnapshot;
 use App\BusinessModules\Features\Budgeting\Models\WipForecastVersion;
@@ -23,6 +25,15 @@ use Illuminate\Support\Str;
 
 final readonly class ProjectFinanceProjectionService
 {
+    private const SOURCE_RESOURCE_TYPES = [
+        'budget_line',
+        'budget_amount',
+        'payment_document',
+        'payment_transaction',
+        'completed_work',
+        'approved_act',
+    ];
+
     private const REPORT_SOURCE_SCOPE = [
         'project_margin' => 'project_margin',
         'budget_plan_fact' => 'plan_fact',
@@ -34,6 +45,8 @@ final readonly class ProjectFinanceProjectionService
         'budget_plan_fact' => 'PT15M',
         'wip_completion_forecast' => 'PT10M',
     ];
+
+    public function __construct(private FinanceSourceAccessPolicy $sourceAccess) {}
 
     public function materializeMargin(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
@@ -80,7 +93,13 @@ final readonly class ProjectFinanceProjectionService
             ->where('organization_id', $scope->organizationId)
             ->where('report_scope', self::REPORT_SOURCE_SCOPE[$code])
             ->orderBy('aggregate_key')
-            ->get();
+            ->get()
+            ->filter(fn (object $row): bool => $this->sourceAccess->allowsAggregate(
+                $scope,
+                $row->source_refs ?? null,
+                self::SOURCE_RESOURCE_TYPES,
+            ))
+            ->values();
 
         if ($sourceRows->isEmpty()) {
             throw new DomainException('report_mandatory_source_unavailable');
@@ -103,7 +122,7 @@ final readonly class ProjectFinanceProjectionService
         $totals = $this->totals($code, $mappedRows);
         $staleAt = $generatedAt->add(new DateInterval(self::TTL[$code]));
 
-        DB::transaction(function () use (
+        $persistedSnapshot = DB::transaction(function () use (
             $code,
             $scope,
             $query,
@@ -114,23 +133,26 @@ final readonly class ProjectFinanceProjectionService
             $staleAt,
             $totals,
             $mappedRows,
-        ): void {
-            ProjectFinanceSnapshot::query()->create([
-                'id' => $snapshotId,
+        ): ProjectFinanceSnapshot {
+            $identity = [
                 'organization_id' => $scope->organizationId,
                 'report_code' => $code,
-                'definition_hash' => $query->definition->definitionHash->value,
-                'formula_version' => $query->definition->formulaVersion,
-                'source_schema_version' => $query->definition->sourceSchemaVersion,
                 'scope_hash' => hash('sha256', CanonicalJson::encode($scope->canonicalIdentity())),
                 'query_hash' => $query->queryHash->value,
                 'source_hash' => $sourceHash->value,
+            ];
+            $inserted = ProjectFinanceSnapshot::query()->insertOrIgnore([[
+                'id' => $snapshotId,
+                ...$identity,
+                'definition_hash' => $query->definition->definitionHash->value,
+                'formula_version' => $query->definition->formulaVersion,
+                'source_schema_version' => $query->definition->sourceSchemaVersion,
                 'source_snapshot_kind' => 'budgeting_epm_data_mart',
                 'source_snapshot_id' => (string) $source->uuid,
                 'source_snapshot_hash' => (string) $source->source_hash,
                 'period_from' => $source->period_start,
                 'period_to' => $source->period_end,
-                'as_of' => $source->as_of_date,
+                'as_of' => $query->asOf,
                 'budget_version_id' => $this->nullablePositiveInt($query->filters->values['budget_version_id'] ?? null),
                 'forecast_version_id' => $this->nullablePositiveInt($query->filters->values['forecast_version_id'] ?? null),
                 'closure_hash' => $code === 'budget_plan_fact' ? (string) $source->source_hash : null,
@@ -152,13 +174,21 @@ final readonly class ProjectFinanceProjectionService
                 'coverage_denominator' => count($mappedRows),
                 'generated_at' => $generatedAt,
                 'stale_at' => $staleAt,
-            ]);
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]]);
+            $snapshot = ProjectFinanceSnapshot::query()->where($identity)->first();
+            if (! $snapshot instanceof ProjectFinanceSnapshot
+                || ! hash_equals((string) $snapshot->source_hash, $sourceHash->value)
+                || ! hash_equals((string) $snapshot->definition_hash, $query->definition->definitionHash->value)
+                || (string) $snapshot->formula_version !== $query->definition->formulaVersion
+                || (string) $snapshot->source_schema_version !== $query->definition->sourceSchemaVersion) {
+                throw new DomainException('project_finance_snapshot_race_conflict');
+            }
 
-            foreach (array_chunk($mappedRows, 500) as $chunk) {
-                ProjectFinanceSnapshot::query()
-                    ->findOrFail($snapshotId)
-                    ->rows()
-                    ->createMany(array_map(
+            if ($inserted === 1) {
+                foreach (array_chunk($mappedRows, 500) as $chunk) {
+                    $snapshot->rows()->createMany(array_map(
                         static fn (array $row): array => [
                             ...$row,
                             'organization_id' => $scope->organizationId,
@@ -166,18 +196,21 @@ final readonly class ProjectFinanceProjectionService
                         ],
                         $chunk,
                     ));
+                }
             }
+
+            return $snapshot;
         });
 
         return new ReportSnapshotRef(
             kind: 'budgeting_project_finance',
-            id: $snapshotId,
+            id: (string) $persistedSnapshot->id,
             scope: $scope,
             definitionHash: $query->definition->definitionHash,
             formulaVersion: $query->definition->formulaVersion,
             sourceHash: $sourceHash,
-            generatedAt: $generatedAt,
-            staleAt: $staleAt,
+            generatedAt: $persistedSnapshot->generated_at->toDateTimeImmutable(),
+            staleAt: $persistedSnapshot->stale_at?->toDateTimeImmutable(),
             watermarks: [
                 'query_hash' => $query->queryHash->value,
                 'as_of' => (string) $source->as_of_date?->format('Y-m-d'),
@@ -219,6 +252,12 @@ final readonly class ProjectFinanceProjectionService
             'currency' => $currency,
             'currency_source' => 'budgeting_epm_snapshot',
             'tax_basis' => 'unknown',
+            'direction' => $code === 'budget_plan_fact'
+                ? $this->sealedDirection($dimensions['direction'] ?? null)
+                : null,
+            'cost_class' => $code === 'budget_plan_fact'
+                ? $this->costClass($dimensions, $sourceRow->source_refs ?? null)
+                : null,
             'quality_status' => 'complete',
             'source_refs' => is_array($sourceRow->source_refs ?? null) ? $sourceRow->source_refs : [],
         ];
@@ -350,23 +389,36 @@ final readonly class ProjectFinanceProjectionService
         if ($value === null || $value === '') {
             return null;
         }
-        if (! is_numeric($value)) {
+        if (! is_int($value) && ! is_string($value)) {
             throw new DomainException('report_money_invalid');
         }
-        $normalized = number_format((float) $value, 2, '.', '');
-        if (abs((float) $value - (float) $normalized) > 0.000001) {
-            throw new DomainException('report_money_minor_unit_loss');
-        }
-        $negative = str_starts_with($normalized, '-');
-        [$whole, $fraction] = explode('.', ltrim($normalized, '-'));
-        $minor = ((int) $whole * 100) + (int) $fraction;
 
-        return $negative ? -$minor : $minor;
+        return ExactDecimal::minor((string) $value);
     }
 
     private function decimal(mixed $value): ?string
     {
-        return is_numeric($value) ? number_format((float) $value, 8, '.', '') : null;
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (! is_int($value) && ! is_string($value)) {
+            throw new DomainException('report_decimal_invalid');
+        }
+        $raw = trim((string) $value);
+        $scale = str_contains($raw, '.') ? strlen(substr(strrchr($raw, '.'), 1)) : 0;
+        if ($scale > 8) {
+            throw new DomainException('report_decimal_invalid');
+        }
+        $units = ExactDecimal::units($raw, 8);
+        $negative = $units < 0;
+        $absolute = abs($units);
+
+        return ($negative ? '-' : '').intdiv($absolute, 100_000_000).'.'.str_pad(
+            (string) ($absolute % 100_000_000),
+            8,
+            '0',
+            STR_PAD_LEFT,
+        );
     }
 
     private function nullablePositiveInt(mixed $value): ?int
@@ -377,6 +429,36 @@ final readonly class ProjectFinanceProjectionService
     private function nullableString(mixed $value): ?string
     {
         return is_string($value) && trim($value) !== '' ? trim($value) : null;
+    }
+
+    private function costClass(array $dimensions, mixed $sourceRefs): string
+    {
+        $classes = [];
+        if (is_string($dimensions['cost_class'] ?? null)) {
+            $classes[] = $dimensions['cost_class'];
+        }
+        if (is_array($sourceRefs)) {
+            foreach ($sourceRefs as $ref) {
+                if (is_array($ref) && is_string($ref['cost_class'] ?? null)) {
+                    $classes[] = $ref['cost_class'];
+                }
+            }
+        }
+        $classes = array_values(array_unique(array_filter($classes, static fn (string $value): bool => $value !== '')));
+        if (count($classes) !== 1 || ! in_array($classes[0], ['labor', 'non_labor'], true)) {
+            throw new DomainException('report_cost_classification_unsealed');
+        }
+
+        return $classes[0];
+    }
+
+    private function sealedDirection(mixed $value): string
+    {
+        if (! is_string($value) || ! in_array($value, ['income', 'expense'], true)) {
+            throw new DomainException('report_finance_direction_unsealed');
+        }
+
+        return $value;
     }
 
     private function dateValue(mixed $value): ?string

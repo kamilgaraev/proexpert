@@ -24,6 +24,8 @@ final class FinanceOwnerPostgresContractTest extends TestCase
     public function reporting_owner_tables_have_real_append_only_triggers(): void
     {
         $expected = [
+            'budgeting_project_finance_snapshots' => 'budgeting_project_finance_snapshots_append_only',
+            'budgeting_project_finance_rows' => 'budgeting_project_finance_rows_append_only',
             'contract_settlement_source_facts' => 'contract_settlement_source_facts_append_only',
             'contract_settlement_owner_versions' => 'contract_settlement_owner_versions_append_only',
             'contract_settlement_owner_history_checkpoints' => 'contract_settlement_owner_checkpoints_append_only',
@@ -52,6 +54,7 @@ final class FinanceOwnerPostgresContractTest extends TestCase
     public function first_writer_identity_indexes_are_present_and_unique(): void
     {
         foreach ([
+            'budgeting_project_finance_snapshot_identity_unique',
             'contract_settlement_source_identity_unique',
             'management_pnl_snapshot_identity_unique',
             'change_request_version_identity_unique',
@@ -64,6 +67,32 @@ final class FinanceOwnerPostgresContractTest extends TestCase
                 ->first();
             self::assertNotNull($row, $index);
             self::assertStringContainsString('UNIQUE INDEX', mb_strtoupper((string) $row->indexdef));
+        }
+    }
+
+    #[Test]
+    public function append_only_triggers_reject_real_mutations(): void
+    {
+        foreach (array_values([
+            'reports_project_finance_append_only',
+            'reports_contract_settlement_append_only',
+            'reports_management_pnl_append_only',
+            'reports_change_claim_append_only',
+        ]) as $index => $function) {
+            DB::beginTransaction();
+            try {
+                $table = 'report_append_only_probe_'.$index;
+                DB::statement('CREATE TEMP TABLE '.$table.' (id integer primary key, value integer)');
+                DB::statement('CREATE TRIGGER '.$table.'_guard BEFORE UPDATE OR DELETE ON '.$table
+                    .' FOR EACH ROW EXECUTE FUNCTION '.$function.'()');
+                DB::table($table)->insert(['id' => 1, 'value' => 1]);
+                DB::table($table)->where('id', 1)->update(['value' => 2]);
+                self::fail($function.' accepted UPDATE');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertStringContainsString('append-only', $exception->getMessage(), $function);
+            } finally {
+                DB::rollBack();
+            }
         }
     }
 }

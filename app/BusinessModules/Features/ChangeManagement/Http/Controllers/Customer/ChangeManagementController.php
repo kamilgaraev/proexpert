@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ChangeManagement\Http\Controllers\Customer;
 
+use App\BusinessModules\Features\ChangeManagement\Http\Requests\ApproveChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Http\Resources\ChangeRequestResource;
 use App\BusinessModules\Features\ChangeManagement\Services\ChangeManagementService;
 use App\Http\Controllers\Controller;
@@ -16,9 +17,7 @@ use Illuminate\Validation\ValidationException;
 
 final class ChangeManagementController extends Controller
 {
-    public function __construct(private readonly ChangeManagementService $service)
-    {
-    }
+    public function __construct(private readonly ChangeManagementService $service) {}
 
     public function changes(Request $request): JsonResponse
     {
@@ -43,16 +42,17 @@ final class ChangeManagementController extends Controller
         }
     }
 
-    public function approve(Request $request, int $id): JsonResponse
+    public function approve(ApproveChangeRequest $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate(['comment' => ['nullable', 'string', 'max:2000']]);
+            $validated = $request->validated();
             $change = $this->service->findChange((int) $request->attributes->get('current_organization_id'), $id);
 
             return CustomerResponse::success(
                 new ChangeRequestResource($this->service->customerApprove(
                     $change,
                     (int) $request->user()?->id,
+                    $validated['approved_cost_amount'],
                     $validated['comment'] ?? null
                 )),
                 trans_message('change_management.messages.customer_approved')

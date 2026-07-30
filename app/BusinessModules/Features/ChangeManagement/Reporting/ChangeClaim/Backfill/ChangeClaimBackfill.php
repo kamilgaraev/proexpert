@@ -12,9 +12,7 @@ use DomainException;
 
 final readonly class ChangeClaimBackfill
 {
-    public function __construct(private ChangeWorkflowEventRecorder $recorder)
-    {
-    }
+    public function __construct(private ChangeWorkflowEventRecorder $recorder) {}
 
     public function slice(int $organizationId, int $afterId, int $limit): int
     {
@@ -37,10 +35,13 @@ final readonly class ChangeClaimBackfill
                 ->exists()) {
                 continue;
             }
-            $links = is_array($change->linked_entities) ? $change->linked_entities : [];
-            if (!is_string($links['currency'] ?? null)
-                || !isset($links['contract_project_allocation_id'])
-                || $change->impact === null) {
+            if (! is_string($change->reporting_currency)
+                || $change->reporting_contract_project_allocation_id === null
+                || $change->impact === null
+                || ($change->approved_at !== null && ! $change->approvals()
+                    ->whereNotNull('approved_cost_minor')
+                    ->where('currency', $change->reporting_currency)
+                    ->exists())) {
                 continue;
             }
             $timestamp = $change->approved_at

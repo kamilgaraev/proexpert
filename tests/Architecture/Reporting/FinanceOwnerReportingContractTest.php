@@ -114,6 +114,7 @@ final class FinanceOwnerReportingContractTest extends TestCase
         $settlement = (string) file_get_contents($root.'/app/BusinessModules/Features/ContractManagement/migrations/2026_07_26_000140_create_contract_settlement_report_projections.php');
         $change = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/migrations/2026_07_26_110000_create_change_claim_reporting_tables.php');
         foreach ([
+            [$projectFinance = (string) file_get_contents($root.'/app/BusinessModules/Features/Budgeting/migrations/2026_07_26_000110_create_budgeting_project_finance_report_projections.php'), 'reports_project_finance_append_only', 'budgeting_project_finance_snapshots_append_only'],
             [$management, 'reports_management_pnl_append_only', 'management_pnl_snapshots_append_only'],
             [$settlement, 'reports_contract_settlement_append_only', 'contract_settlement_source_facts_append_only'],
             [$change, 'reports_change_claim_append_only', 'contingency_ledger_entries_append_only'],
@@ -132,6 +133,11 @@ final class FinanceOwnerReportingContractTest extends TestCase
         self::assertStringContainsString('contingency_ledger_replay_conflict', $ledger);
         self::assertStringContainsString('contract_settlement_source_fact_race_conflict', $settlementWriter);
         self::assertStringContainsString('contract_settlement_snapshot_race_conflict', $settlementWriter);
+        self::assertStringContainsString('project_finance_snapshot_race_conflict', $projectFinanceWriter = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/Budgeting/Reporting/ProjectFinance/ProjectFinanceProjectionService.php',
+        ));
+        self::assertStringContainsString('insertOrIgnore', $projectFinanceWriter);
+        self::assertStringNotContainsString('(float)', $projectFinanceWriter);
 
         $managementWriter = (string) file_get_contents($root.'/app/BusinessModules/Features/Budgeting/Reporting/ManagementPnl/ManagementPnlProjectionService.php');
         $changeWriter = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ChangeClaimSnapshotMaterializer.php');
@@ -146,11 +152,21 @@ final class FinanceOwnerReportingContractTest extends TestCase
         $root = $this->root();
         $recorder = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ChangeWorkflowEventRecorder.php');
         $workflow = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Services/ChangeManagementService.php');
-        self::assertStringContainsString('? $proposed', $recorder);
+        self::assertStringContainsString('approved_cost_minor', $recorder);
+        self::assertStringContainsString('reporting_currency', $recorder);
+        self::assertStringContainsString('reporting_contract_project_allocation_id', $recorder);
+        self::assertStringNotContainsString("['contingency_opening_amount']", $recorder);
+        self::assertStringNotContainsString('? $proposed', $recorder);
         self::assertStringContainsString("'approve' => 'consumption'", $recorder);
         self::assertStringContainsString('$this->contingencyLedger->append(', $recorder);
         self::assertStringContainsString("\$this->changeEvents->record(\$change, 'approve'", $workflow);
         self::assertStringNotContainsString("array_key_exists('approved_cost'", $recorder);
+        self::assertStringContainsString('monetary_context', (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ChangeManagement/Http/Requests/StoreChangeRequest.php',
+        ));
+        self::assertStringContainsString('approved_cost_amount', (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ChangeManagement/Http/Requests/ApproveChangeRequest.php',
+        ));
     }
 
     #[Test]
@@ -230,6 +246,12 @@ final class FinanceOwnerReportingContractTest extends TestCase
         self::assertStringContainsString("'version' => (int) \$version", $contractSource);
         self::assertStringContainsString("'hash' => \$hash", $contractSource);
         self::assertStringContainsString('contract_settlement_owner_history_checkpoint_missing', $contractSource);
+        self::assertStringContainsString('management_pnl_component_tuple_ambiguous', (string) file_get_contents(
+            $this->root().'/app/BusinessModules/Features/Budgeting/Reporting/ProjectFinance/ProjectFinanceManagementPnlComponentSource.php',
+        ));
+        self::assertStringContainsString('management_pnl_cost_classification_unsealed', (string) file_get_contents(
+            $this->root().'/app/BusinessModules/Features/Budgeting/Reporting/ProjectFinance/ProjectFinanceManagementPnlComponentSource.php',
+        ));
 
         $backfill = (string) file_get_contents(
             $this->root().'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementOwnerHistoryBackfillService.php',

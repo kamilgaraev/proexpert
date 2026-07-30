@@ -27,6 +27,7 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+
 use function trans_message;
 
 final class PlanFactReportService
@@ -42,8 +43,7 @@ final class PlanFactReportService
     public function __construct(
         private readonly PlanFactCalculator $calculator,
         private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
-    ) {
-    }
+    ) {}
 
     public function report(array $input): array
     {
@@ -165,7 +165,7 @@ final class PlanFactReportService
         $version = $this->resolveVersion($organizationId, $periodStart, $periodEnd, $scenario, $input['budget_version_uuid'] ?? null);
         $scenario = $version->scenario;
 
-        if (!$scenario instanceof BudgetScenario) {
+        if (! $scenario instanceof BudgetScenario) {
             throw new DomainException(trans_message('budgeting.scenarios.not_found'));
         }
 
@@ -210,7 +210,7 @@ final class PlanFactReportService
 
     private function resolveScenario(int $organizationId, mixed $scenarioUuid): ?BudgetScenario
     {
-        if (!is_string($scenarioUuid) || trim($scenarioUuid) === '') {
+        if (! is_string($scenarioUuid) || trim($scenarioUuid) === '') {
             return null;
         }
 
@@ -219,7 +219,7 @@ final class PlanFactReportService
             ->where('uuid', trim($scenarioUuid))
             ->first();
 
-        if (!$scenario instanceof BudgetScenario) {
+        if (! $scenario instanceof BudgetScenario) {
             throw new DomainException(trans_message('budgeting.scenarios.not_found'));
         }
 
@@ -240,7 +240,7 @@ final class PlanFactReportService
                 ->where('uuid', trim($versionUuid))
                 ->first();
 
-            if (!$version instanceof BudgetVersion) {
+            if (! $version instanceof BudgetVersion) {
                 throw new DomainException(trans_message('budgeting.versions.not_found'));
             }
 
@@ -259,7 +259,7 @@ final class PlanFactReportService
             ->whereIn('status', [BudgetWorkflowService::STATUS_ACTIVE])
             ->whereIn('budget_kind', ['bdds', 'consolidated'])
             ->when($scenario instanceof BudgetScenario, fn (Builder $query): Builder => $query->where('scenario_id', $scenario->id))
-            ->when(!($scenario instanceof BudgetScenario), function (Builder $query): void {
+            ->when(! ($scenario instanceof BudgetScenario), function (Builder $query): void {
                 $query->whereHas('scenario', fn (Builder $scenarioQuery): Builder => $scenarioQuery
                     ->where('is_default', true)
                     ->where('is_active', true));
@@ -310,7 +310,7 @@ final class PlanFactReportService
     }
 
     /**
-     * @param class-string<BudgetArticle|ResponsibilityCenter> $modelClass
+     * @param  class-string<BudgetArticle|ResponsibilityCenter>  $modelClass
      * @return array{0:?int,1:?string}
      */
     private function resolveCatalogFilter(string $modelClass, int $organizationId, mixed $value, string $message): array
@@ -330,7 +330,7 @@ final class PlanFactReportService
             })
             ->first();
 
-        if (!$model) {
+        if (! $model) {
             throw new DomainException($message);
         }
 
@@ -349,7 +349,7 @@ final class PlanFactReportService
             ->accessibleByOrganization($organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('budgeting.lines.project_not_found'));
         }
 
@@ -368,7 +368,7 @@ final class PlanFactReportService
             ->whereKey($counterpartyId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('budgeting.lines.counterparty_not_found'));
         }
 
@@ -387,12 +387,12 @@ final class PlanFactReportService
 
         $normalized = [];
         foreach ($groups as $group) {
-            if (!is_string($group) || trim($group) === '') {
+            if (! is_string($group) || trim($group) === '') {
                 continue;
             }
 
             $group = trim($group);
-            if (!in_array($group, PlanFactReportFilters::ALLOWED_GROUP_BY, true)) {
+            if (! in_array($group, PlanFactReportFilters::ALLOWED_GROUP_BY, true)) {
                 throw new DomainException(trans_message('budgeting.plan_fact.errors.group_by_invalid'));
             }
 
@@ -403,7 +403,7 @@ final class PlanFactReportService
             $normalized = PlanFactReportFilters::DEFAULT_GROUP_BY;
         }
 
-        if (!in_array(PlanFactReportFilters::GROUP_CURRENCY, $normalized, true)) {
+        if (! in_array(PlanFactReportFilters::GROUP_CURRENCY, $normalized, true)) {
             $normalized[] = PlanFactReportFilters::GROUP_CURRENCY;
         }
 
@@ -412,7 +412,7 @@ final class PlanFactReportService
 
     private function nullableCurrency(mixed $value): ?string
     {
-        if (!is_string($value) || trim($value) === '') {
+        if (! is_string($value) || trim($value) === '') {
             return null;
         }
 
@@ -609,7 +609,7 @@ final class PlanFactReportService
     }
 
     /**
-     * @param Collection<int, object> $rows
+     * @param  Collection<int, object>  $rows
      * @return list<PlanFactSourceAggregate>
      */
     private function mapAggregates(Collection $rows, string $sourceType): array
@@ -654,7 +654,7 @@ final class PlanFactReportService
         $counterpartyIds = [];
 
         foreach ($aggregates as $aggregate) {
-            if (!$aggregate instanceof PlanFactSourceAggregate) {
+            if (! $aggregate instanceof PlanFactSourceAggregate) {
                 continue;
             }
 
@@ -673,12 +673,11 @@ final class PlanFactReportService
         array $centerIds,
         array $projectIds,
         array $counterpartyIds,
-    ): PlanFactDimensions
-    {
+    ): PlanFactDimensions {
         $articles = BudgetArticle::query()
             ->where('organization_id', $organizationId)
             ->whereIn('id', $articleIds)
-            ->get(['id', 'uuid', 'code', 'name', 'budget_kind', 'flow_direction'])
+            ->get(['id', 'uuid', 'code', 'name', 'budget_kind', 'flow_direction', 'management_cost_class'])
             ->mapWithKeys(static fn (BudgetArticle $article): array => [
                 (int) $article->id => [
                     'id' => $article->uuid,
@@ -686,6 +685,7 @@ final class PlanFactReportService
                     'name' => $article->name,
                     'budget_kind' => $article->budget_kind,
                     'flow_direction' => $article->flow_direction,
+                    'management_cost_class' => $article->management_cost_class,
                 ],
             ])
             ->all();
@@ -906,7 +906,7 @@ final class PlanFactReportService
     ): void {
         if ($key->hasDimension(PlanFactReportFilters::GROUP_MONTH)) {
             $month = (string) $key->value(PlanFactReportFilters::GROUP_MONTH);
-            $query->whereRaw("{$monthExpression} = ?", [CarbonImmutable::parse($month . '-01')->toDateString()]);
+            $query->whereRaw("{$monthExpression} = ?", [CarbonImmutable::parse($month.'-01')->toDateString()]);
         }
 
         $this->applyNullableDrillDimension($query, $key, PlanFactReportFilters::GROUP_BUDGET_ARTICLE, $budgetArticleColumn);
@@ -925,7 +925,7 @@ final class PlanFactReportService
         string $columnOrExpression,
         bool $raw = false,
     ): void {
-        if (!$key->hasDimension($dimension)) {
+        if (! $key->hasDimension($dimension)) {
             return;
         }
 
@@ -934,15 +934,18 @@ final class PlanFactReportService
         if ($value === null || $value === '') {
             if ($raw) {
                 $query->whereRaw("{$columnOrExpression} IS NULL");
+
                 return;
             }
 
             $query->whereNull($columnOrExpression);
+
             return;
         }
 
         if ($raw) {
             $query->whereRaw("{$columnOrExpression} = ?", [(int) $value]);
+
             return;
         }
 
@@ -952,7 +955,7 @@ final class PlanFactReportService
     private function assertDrillDownKeyMatchesFilters(PlanFactReportFilters $filters, PlanFactDrillDownKey $key): void
     {
         foreach ($key->groupBy as $group) {
-            if (!in_array($group, PlanFactReportFilters::ALLOWED_GROUP_BY, true)) {
+            if (! in_array($group, PlanFactReportFilters::ALLOWED_GROUP_BY, true)) {
                 throw new InvalidArgumentException(trans_message('budgeting.plan_fact.errors.drill_down_key_invalid'));
             }
         }
@@ -980,7 +983,7 @@ final class PlanFactReportService
             : [
                 'name' => 'admin.payments.documents.show',
                 'params' => ['id' => $paymentDocumentId ?? $sourceId],
-                'api_path' => '/api/v1/admin/payments/documents/' . (string) ($paymentDocumentId ?? $sourceId),
+                'api_path' => '/api/v1/admin/payments/documents/'.(string) ($paymentDocumentId ?? $sourceId),
             ];
         $amount = round((float) $row->amount, 2);
 
@@ -999,7 +1002,7 @@ final class PlanFactReportService
     }
 
     /**
-     * @param list<PlanFactDrillDownItem> $items
+     * @param  list<PlanFactDrillDownItem>  $items
      */
     private function drillDownSummary(array $items): array
     {
@@ -1046,10 +1049,10 @@ final class PlanFactReportService
     }
 
     /**
-     * @param list<PlanFactSourceAggregate> $planAggregates
-     * @param list<PlanFactSourceAggregate> $actualAggregates
-     * @param list<PlanFactSourceAggregate> $reservationAggregates
-     * @param list<PlanFactSourceAggregate> $documentAggregates
+     * @param  list<PlanFactSourceAggregate>  $planAggregates
+     * @param  list<PlanFactSourceAggregate>  $actualAggregates
+     * @param  list<PlanFactSourceAggregate>  $reservationAggregates
+     * @param  list<PlanFactSourceAggregate>  $documentAggregates
      * @return array{0:list<array<string, mixed>>,1:list<string>}
      */
     private function sourcesCoverage(
@@ -1202,15 +1205,15 @@ final class PlanFactReportService
     private function transactionCounterpartyExpression(): string
     {
         return "CASE WHEN payment_documents.direction = 'incoming' "
-            . 'THEN COALESCE(payment_transactions.payer_contractor_id, payment_documents.payer_contractor_id, payment_documents.contractor_id) '
-            . 'ELSE COALESCE(payment_transactions.payee_contractor_id, payment_documents.payee_contractor_id, payment_documents.contractor_id) END';
+            .'THEN COALESCE(payment_transactions.payer_contractor_id, payment_documents.payer_contractor_id, payment_documents.contractor_id) '
+            .'ELSE COALESCE(payment_transactions.payee_contractor_id, payment_documents.payee_contractor_id, payment_documents.contractor_id) END';
     }
 
     private function documentCounterpartyExpression(): string
     {
         return "CASE WHEN payment_documents.direction = 'incoming' "
-            . 'THEN COALESCE(payment_documents.payer_contractor_id, payment_documents.contractor_id) '
-            . 'ELSE COALESCE(payment_documents.payee_contractor_id, payment_documents.contractor_id) END';
+            .'THEN COALESCE(payment_documents.payer_contractor_id, payment_documents.contractor_id) '
+            .'ELSE COALESCE(payment_documents.payee_contractor_id, payment_documents.contractor_id) END';
     }
 
     /**

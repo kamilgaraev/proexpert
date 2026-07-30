@@ -12,6 +12,7 @@ use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\Cont
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimLink;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeRequestVersion;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeWorkflowEvent;
+use App\Models\ContractProjectAllocation;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -41,19 +42,29 @@ final readonly class ChangeWorkflowEventRecorder
                 ->first();
             $version = ($latest?->version ?? 0) + 1;
             $links = is_array($change->linked_entities) ? $change->linked_entities : [];
-            $currency = $this->currency($links['currency'] ?? null);
+            $currency = $this->currency($change->reporting_currency);
             $proposed = $this->minor($change->impact?->cost_delta ?? 0);
-            $approved = in_array($eventType, ['approve', 'implement', 'close'], true)
-                && $change->approved_at !== null
-                ? $proposed
-                : null;
+            $approval = $change->approvals()
+                ->where('status', 'approved')
+                ->whereNotNull('approved_cost_minor')
+                ->latest('decided_at')
+                ->first();
+            $approved = $approval?->approved_cost_minor;
+            if (in_array($eventType, ['approve', 'implement', 'close'], true)
+                && (! is_int($approved) || $approval?->currency !== $currency)) {
+                throw new DomainException('change_approved_monetary_evidence_missing');
+            }
+            $allocationId = $change->reporting_contract_project_allocation_id;
+            $contractId = $allocationId === null
+                ? null
+                : ContractProjectAllocation::query()->whereKey((int) $allocationId)->value('contract_id');
             $payload = [
                 'organization_id' => (int) $change->organization_id,
                 'change_request_id' => (int) $change->id,
                 'version' => $version,
                 'project_id' => (int) $change->project_id,
-                'contract_id' => $this->positiveInt($links['contract_id'] ?? null),
-                'contract_project_allocation_id' => $this->positiveInt($links['contract_project_allocation_id'] ?? null),
+                'contract_id' => $this->positiveInt($contractId),
+                'contract_project_allocation_id' => $this->positiveInt($allocationId),
                 'initiator_user_id' => $change->created_by_user_id,
                 'initiator_type' => (string) $change->initiator_type,
                 'reason' => (string) $change->reason,
@@ -66,7 +77,7 @@ final readonly class ChangeWorkflowEventRecorder
                     ? null
                     : (int) $links['approved_schedule_days'],
                 'currency' => $currency,
-                'currency_source' => $currency === null ? null : (string) ($links['currency_source'] ?? 'change_request'),
+                'currency_source' => $currency === null ? null : 'change_request_monetary_context',
                 'effective_at' => $occurredAt->format(DATE_ATOM),
             ];
             $versionRecord = ChangeRequestVersion::query()->create([
@@ -169,20 +180,20 @@ final readonly class ChangeWorkflowEventRecorder
         if ($version->contract_project_allocation_id === null || $version->currency === null) {
             return;
         }
-        $links = is_array($change->linked_entities) ? $change->linked_entities : [];
         $amount = match ($eventType) {
-            'create' => $links['contingency_opening_amount'] ?? null,
-            'submit' => $links['contingency_allocation_amount'] ?? null,
+            'create' => $change->contingency_opening_minor,
+            'submit' => $change->contingency_allocation_minor,
             'approve' => $version->approved_cost_minor,
-            'close' => $links['contingency_release_amount'] ?? null,
+            'close' => $change->contingency_release_minor,
             default => null,
         };
         if ($amount === null) {
             return;
         }
-        $amountMinor = is_int($amount) && in_array($eventType, ['approve'], true)
-            ? $amount
-            : $this->minor($amount);
+        if (! is_int($amount)) {
+            throw new DomainException('change_contingency_monetary_evidence_invalid');
+        }
+        $amountMinor = $amount;
         $type = match ($eventType) {
             'create' => 'opening',
             'submit' => 'allocation',

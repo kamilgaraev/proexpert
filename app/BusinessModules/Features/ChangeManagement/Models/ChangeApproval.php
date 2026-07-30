@@ -18,11 +18,14 @@ final class ChangeApproval extends Model
         'approval_type',
         'status',
         'comment',
+        'approved_cost_minor',
+        'currency',
         'decided_at',
     ];
 
     protected $casts = [
         'decided_at' => 'datetime',
+        'approved_cost_minor' => 'integer',
     ];
 
     public function changeRequest(): BelongsTo

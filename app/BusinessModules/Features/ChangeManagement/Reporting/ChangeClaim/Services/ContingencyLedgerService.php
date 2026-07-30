@@ -54,6 +54,41 @@ final readonly class ContingencyLedgerService
         $entryHash = hash('sha256', CanonicalJson::encode($payload));
 
         return DB::transaction(function () use ($change, $movement, $payload, $entryHash): ContingencyLedgerEntry {
+            $allocation = DB::table('contract_project_allocations')
+                ->where('id', $movement->allocationId)
+                ->lockForUpdate()
+                ->first();
+            if ($allocation === null) {
+                throw new DomainException('contingency_movement_allocation_missing');
+            }
+            $existing = ContingencyLedgerEntry::query()
+                ->where('organization_id', $change->organization_id)
+                ->where('idempotency_key', $movement->idempotencyKey)
+                ->first();
+            if ($existing instanceof ContingencyLedgerEntry) {
+                if (! hash_equals((string) $existing->entry_hash, $entryHash)) {
+                    throw new DomainException('contingency_ledger_replay_conflict');
+                }
+
+                return $existing;
+            }
+            $ledger = ContingencyLedgerEntry::query()
+                ->where('organization_id', $change->organization_id)
+                ->where('project_id', $movement->projectId)
+                ->where('contract_project_allocation_id', $movement->allocationId)
+                ->where('currency', $movement->currency)
+                ->orderBy('effective_at')
+                ->orderBy('id')
+                ->get();
+            $openingCount = $ledger->where('movement_type', 'opening')->count();
+            if (($movement->type === 'opening' && $openingCount !== 0)
+                || ($movement->type !== 'opening' && $openingCount !== 1)) {
+                throw new DomainException('contingency_ledger_opening_cardinality_invalid');
+            }
+            $balance = (int) $ledger->sum('signed_amount_minor');
+            if ($balance + $movement->signedMinor() < 0) {
+                throw new DomainException('contingency_ledger_balance_negative');
+            }
             ContingencyLedgerEntry::query()->insertOrIgnore([[
                 ...$payload,
                 'entry_hash' => $entryHash,

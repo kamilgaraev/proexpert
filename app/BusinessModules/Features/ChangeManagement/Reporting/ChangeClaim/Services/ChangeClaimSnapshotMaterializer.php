@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services;
 
+use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -27,7 +28,10 @@ final readonly class ChangeClaimSnapshotMaterializer
 {
     public const FORMULA_VERSION = 'change-claim-contingency.v1';
 
-    public function __construct(private ChangeClaimContingencyFormula $formula) {}
+    public function __construct(
+        private ChangeClaimContingencyFormula $formula,
+        private FinanceSourceAccessPolicy $sourceAccess,
+    ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
@@ -58,7 +62,17 @@ final readonly class ChangeClaimSnapshotMaterializer
             ->when(isset($filters['period_to']), static fn (Builder $builder) => $builder->whereDate('effective_at', '<=', (string) $filters['period_to']));
         $versions = $versionsQuery
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->filter(fn (ChangeRequestVersion $version): bool => $this->sourceAccess->allowsAggregate(
+                $scope,
+                [
+                    ['type' => 'change_request', 'id' => (int) $version->change_request_id],
+                    ['type' => 'contract', 'id' => $version->contract_id],
+                    ['type' => 'contract_allocation', 'id' => $version->contract_project_allocation_id],
+                ],
+                ['change_request', 'contract', 'contract_allocation'],
+            ))
+            ->values();
         $ledgerQuery = ContingencyLedgerEntry::query()
             ->where('organization_id', $scope->organizationId)
             ->where('effective_at', '<=', $query->asOf)
@@ -77,7 +91,16 @@ final readonly class ChangeClaimSnapshotMaterializer
         $ledger = $ledgerQuery
             ->orderBy('effective_at')
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->filter(fn (ContingencyLedgerEntry $entry): bool => $this->sourceAccess->allowsAggregate(
+                $scope,
+                [
+                    ['type' => 'contract_allocation', 'id' => (int) $entry->contract_project_allocation_id],
+                    ['type' => (string) $entry->source_type, 'id' => (string) $entry->source_id],
+                ],
+                ['change_request', 'contract_allocation'],
+            ))
+            ->values();
         if ($versions->isEmpty() && $ledger->isEmpty()) {
             throw new DomainException('report_mandatory_source_unavailable');
         }

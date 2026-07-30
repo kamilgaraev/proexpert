@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -25,7 +26,7 @@ return new class extends Migration
             $table->char('source_snapshot_hash', 64);
             $table->date('period_from')->nullable();
             $table->date('period_to')->nullable();
-            $table->date('as_of')->nullable();
+            $table->dateTimeTz('as_of');
             $table->unsignedBigInteger('budget_version_id')->nullable();
             $table->unsignedBigInteger('forecast_version_id')->nullable();
             $table->char('closure_hash', 64)->nullable();
@@ -71,6 +72,7 @@ return new class extends Migration
             $table->string('currency_source', 64);
             $table->string('tax_basis', 32)->default('unknown');
             $table->string('direction', 32)->nullable();
+            $table->string('cost_class', 32)->nullable();
             $table->bigInteger('plan_revenue_minor')->nullable();
             $table->bigInteger('actual_revenue_minor')->nullable();
             $table->bigInteger('forecast_revenue_minor')->nullable();
@@ -136,10 +138,26 @@ return new class extends Migration
                 'budgeting_project_finance_eac_sort',
             );
         });
+
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION reports_project_finance_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'project finance reporting projections are append-only';
+END;
+$$;
+CREATE TRIGGER budgeting_project_finance_snapshots_append_only
+BEFORE UPDATE OR DELETE ON budgeting_project_finance_snapshots
+FOR EACH ROW EXECUTE FUNCTION reports_project_finance_append_only();
+CREATE TRIGGER budgeting_project_finance_rows_append_only
+BEFORE UPDATE OR DELETE ON budgeting_project_finance_rows
+FOR EACH ROW EXECUTE FUNCTION reports_project_finance_append_only();
+SQL);
     }
 
     public function down(): void
     {
+        DB::unprepared('DROP FUNCTION IF EXISTS reports_project_finance_append_only() CASCADE');
         Schema::dropIfExists('budgeting_project_finance_rows');
         Schema::dropIfExists('budgeting_project_finance_snapshots');
     }

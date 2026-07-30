@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ChangeManagement\Services;
 
+use App\BusinessModules\Core\Reporting\Support\ExactDecimal;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeApproval;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeClaim;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeManagementRfi;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Models\VariationOrder;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services\ChangeWorkflowEventRecorder;
+use App\Models\ContractProjectAllocation;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
@@ -19,9 +21,7 @@ use Illuminate\Support\Facades\DB;
 
 final class ChangeManagementService
 {
-    public function __construct(private readonly ChangeWorkflowEventRecorder $changeEvents)
-    {
-    }
+    public function __construct(private readonly ChangeWorkflowEventRecorder $changeEvents) {}
 
     public function paginateRfis(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
@@ -80,7 +80,7 @@ final class ChangeManagementService
             ->forOrganization($organizationId)
             ->find($id);
 
-        if (!$rfi instanceof ChangeManagementRfi) {
+        if (! $rfi instanceof ChangeManagementRfi) {
             throw new DomainException(trans_message('change_management.errors.rfi_not_found'));
         }
 
@@ -127,12 +127,28 @@ final class ChangeManagementService
     public function createChange(int $organizationId, int $userId, array $data): ChangeRequest
     {
         $this->assertProjectInOrganization((int) $data['project_id'], $organizationId);
+        $monetary = $data['monetary_context'];
+        $allocationId = (int) $monetary['contract_project_allocation_id'];
+        $allocationExists = ContractProjectAllocation::query()
+            ->whereKey($allocationId)
+            ->where('project_id', (int) $data['project_id'])
+            ->whereHas('contract', static fn ($query) => $query->where('organization_id', $organizationId))
+            ->exists();
+        if (! $allocationExists) {
+            throw new DomainException(trans_message('change_management.errors.project_scope'));
+        }
 
         if (($data['related_rfi_id'] ?? null) !== null) {
             $this->findRfi($organizationId, (int) $data['related_rfi_id']);
         }
 
-        return DB::transaction(function () use ($organizationId, $userId, $data): ChangeRequest {
+        return DB::transaction(function () use (
+            $organizationId,
+            $userId,
+            $data,
+            $monetary,
+            $allocationId,
+        ): ChangeRequest {
             $change = ChangeRequest::create([
                 'organization_id' => $organizationId,
                 'project_id' => (int) $data['project_id'],
@@ -147,6 +163,11 @@ final class ChangeManagementService
                 'affected_schedule_task_ids' => $this->integerList($data['affected_schedule_task_ids'] ?? []),
                 'affected_estimate_item_ids' => $this->integerList($data['affected_estimate_item_ids'] ?? []),
                 'linked_entities' => $data['linked_entities'] ?? [],
+                'reporting_currency' => mb_strtoupper((string) $monetary['currency']),
+                'reporting_contract_project_allocation_id' => $allocationId,
+                'contingency_opening_minor' => ExactDecimal::minor((string) $monetary['contingency_opening_amount']),
+                'contingency_allocation_minor' => ExactDecimal::minor((string) $monetary['contingency_allocation_amount']),
+                'contingency_release_minor' => ExactDecimal::minor((string) $monetary['contingency_release_amount']),
             ]);
             $this->changeEvents->record($change, 'create', CarbonImmutable::now(), $userId);
 
@@ -161,7 +182,7 @@ final class ChangeManagementService
             ->forOrganization($organizationId)
             ->find($id);
 
-        if (!$change instanceof ChangeRequest) {
+        if (! $change instanceof ChangeRequest) {
             throw new DomainException(trans_message('change_management.errors.change_not_found'));
         }
 
@@ -233,7 +254,7 @@ final class ChangeManagementService
         $this->assertStatus($change->status, ['internal_review']);
         $impact = $this->assertImpactExists($change);
 
-        if (!$impact->requires_customer_approval) {
+        if (! $impact->requires_customer_approval) {
             throw new DomainException(trans_message('change_management.errors.customer_approval_not_required'));
         }
 
@@ -245,8 +266,12 @@ final class ChangeManagementService
         });
     }
 
-    public function approveChange(ChangeRequest $change, int $userId, ?string $comment = null): ChangeRequest
-    {
+    public function approveChange(
+        ChangeRequest $change,
+        int $userId,
+        string $approvedCostAmount,
+        ?string $comment = null,
+    ): ChangeRequest {
         $this->assertStatus($change->status, ['internal_review']);
         $impact = $this->assertImpactExists($change);
 
@@ -254,24 +279,28 @@ final class ChangeManagementService
             throw new DomainException(trans_message('change_management.errors.customer_approval_required'));
         }
 
-        return $this->approve($change, $userId, 'internal', $comment);
+        return $this->approve($change, $userId, 'internal', $approvedCostAmount, $comment);
     }
 
-    public function customerApprove(ChangeRequest $change, int $userId, ?string $comment = null): ChangeRequest
-    {
+    public function customerApprove(
+        ChangeRequest $change,
+        int $userId,
+        string $approvedCostAmount,
+        ?string $comment = null,
+    ): ChangeRequest {
         $this->assertStatus($change->status, ['customer_review']);
         $impact = $this->assertImpactExists($change);
 
-        if (!$impact->requires_customer_approval) {
+        if (! $impact->requires_customer_approval) {
             throw new DomainException(trans_message('change_management.errors.customer_approval_not_required'));
         }
 
-        return $this->approve($change, $userId, 'customer', $comment);
+        return $this->approve($change, $userId, 'customer', $approvedCostAmount, $comment);
     }
 
     public function createVariationOrder(ChangeRequest $change, array $data): VariationOrder
     {
-        if (!in_array($change->status, ['approved', 'implemented', 'closed'], true)) {
+        if (! in_array($change->status, ['approved', 'implemented', 'closed'], true)) {
             throw new DomainException(trans_message('change_management.errors.variation_requires_approved_change'));
         }
 
@@ -352,9 +381,23 @@ final class ChangeManagementService
         });
     }
 
-    private function approve(ChangeRequest $change, int $userId, string $approvalType, ?string $comment): ChangeRequest
-    {
-        return DB::transaction(function () use ($change, $userId, $approvalType, $comment): ChangeRequest {
+    private function approve(
+        ChangeRequest $change,
+        int $userId,
+        string $approvalType,
+        string $approvedCostAmount,
+        ?string $comment,
+    ): ChangeRequest {
+        return DB::transaction(function () use (
+            $change,
+            $userId,
+            $approvalType,
+            $approvedCostAmount,
+            $comment,
+        ): ChangeRequest {
+            if ($change->reporting_currency === null) {
+                throw new DomainException(trans_message('change_management.errors.monetary_context_missing'));
+            }
             ChangeApproval::create([
                 'organization_id' => $change->organization_id,
                 'change_request_id' => $change->id,
@@ -362,6 +405,8 @@ final class ChangeManagementService
                 'approval_type' => $approvalType,
                 'status' => 'approved',
                 'comment' => $comment,
+                'approved_cost_minor' => ExactDecimal::minor($approvedCostAmount),
+                'currency' => (string) $change->reporting_currency,
                 'decided_at' => now(),
             ]);
 
@@ -382,14 +427,14 @@ final class ChangeManagementService
             ->where('organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('change_management.errors.project_scope'));
         }
     }
 
     private function assertStatus(string $currentStatus, array $allowedStatuses): void
     {
-        if (!in_array($currentStatus, $allowedStatuses, true)) {
+        if (! in_array($currentStatus, $allowedStatuses, true)) {
             throw new DomainException(trans_message('change_management.errors.invalid_status'));
         }
     }
