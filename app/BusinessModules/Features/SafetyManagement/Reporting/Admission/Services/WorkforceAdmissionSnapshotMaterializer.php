@@ -40,6 +40,15 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
     {
+        return ReportSnapshotFirstWriter::run(
+            'workforce_admission:'.$context->scope->organizationId.':'.$query->definition->definitionHash->value
+            .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
+            fn (): SafetyAdmissionSnapshot => $this->materializeLocked($context, $query),
+        );
+    }
+
+    private function materializeLocked(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
+    {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
         $asOf = CarbonImmutable::instance($query->asOf);
@@ -437,8 +446,9 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'snapshot_date' => $date->toDateString(),
                     'row_type' => 'requirement',
                     'row_key' => sprintf(
-                        'assignment:%d:employee:%d:requirement:%s',
+                        'assignment:%d:site:%d:employee:%d:requirement:%s',
                         $assignment->workforce_assignment_id,
+                        $assignment->safety_site_id,
                         $assignment->employee_id,
                         $state->code,
                     ),

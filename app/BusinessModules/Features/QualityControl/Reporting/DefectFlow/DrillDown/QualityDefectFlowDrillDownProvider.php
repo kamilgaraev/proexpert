@@ -42,6 +42,20 @@ final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDo
                 new ReportScopedResource('contractor', (int) $row->contractor_id, (int) $row->project_id),
             ]),
         ]);
+        if ($context->visibility->canViewAudit) {
+            foreach (($row->evidence_refs ?? []) as $evidence) {
+                if (is_array($evidence) && isset($evidence['id'])) {
+                    ScopedReportSourceGuard::assertExactAccessible(
+                        $context,
+                        new ReportScopedResource(
+                            ($evidence['type'] ?? null) === 'status_comment' ? 'quality_defect_status_history' : 'quality_defect_photo',
+                            (int) $evidence['id'],
+                            (int) $row->project_id,
+                        ),
+                    );
+                }
+            }
+        }
 
         return new ReportDrillDownResult(
             rows: [[

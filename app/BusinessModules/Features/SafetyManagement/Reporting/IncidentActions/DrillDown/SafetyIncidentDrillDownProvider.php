@@ -47,6 +47,12 @@ final readonly class SafetyIncidentDrillDownProvider implements ReportDrillDownP
                 new ReportScopedResource('contractor', (int) $row->contractor_id, (int) $row->project_id),
             ]),
         ]);
+        if ($context->visibility->canViewAudit && $row->evidence_id !== null) {
+            ScopedReportSourceGuard::assertExactAccessible(
+                $context,
+                new ReportScopedResource((string) $row->evidence_type, (int) $row->subject_id, (int) $row->project_id),
+            );
+        }
 
         return new ReportDrillDownResult(
             [[

@@ -29,6 +29,15 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
     {
+        return ReportSnapshotFirstWriter::run(
+            'quality_defect_flow:'.$context->scope->organizationId.':'.$query->definition->definitionHash->value
+            .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
+            fn (): QualityDefectFlowSnapshot => $this->materializeLocked($context, $query),
+        );
+    }
+
+    private function materializeLocked(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
+    {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
         $asOf = CarbonImmutable::instance($query->asOf);

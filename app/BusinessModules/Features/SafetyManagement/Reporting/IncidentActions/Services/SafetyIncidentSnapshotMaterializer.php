@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DTO\SafetyTransitionFact;
 use App\Jobs\ReportingSourceBackfillJob;
+use App\Jobs\SafetyExposureZeroFillJob;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentRow;
@@ -32,11 +33,25 @@ final readonly class SafetyIncidentSnapshotMaterializer
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
     {
+        return ReportSnapshotFirstWriter::run(
+            'safety_incident_actions:'.$context->scope->organizationId.':'.$query->definition->definitionHash->value
+            .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
+            fn (): SafetyIncidentSnapshot => $this->materializeLocked($context, $query),
+        );
+    }
+
+    private function materializeLocked(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
+    {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_INCIDENTS);
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_EXPOSURE);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
+        SafetyExposureZeroFillJob::dispatch(
+            $organizationId,
+            $periodFrom->toDateString(),
+            $periodTo->toDateString(),
+        );
         $events = $this->events(
             $organizationId,
             $context->scope->projectIds,

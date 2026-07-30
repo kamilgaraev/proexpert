@@ -206,7 +206,14 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
         $id = (int) ($query->max('id') ?? 0);
         $watermarkColumn = $sourceCode === self::QUALITY_DEFECTS ? 'changed_at' : 'updated_at';
 
-        return [['id' => $id], ['id' => $id, 'count' => $query->count(), 'watermark' => $query->max($watermarkColumn)]];
+        return [[
+            'id' => $id,
+        ], [
+            'id' => $id,
+            'count' => $query->count(),
+            'watermark' => $query->max($watermarkColumn),
+            'dependencies' => self::dependentFacts($organizationId, $sourceCode),
+        ]];
     }
 
     private static function ownerTables(string $sourceCode): array
@@ -218,5 +225,34 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
             self::SAFETY_INCIDENTS => ['safety_incidents', 'safety_violations', 'safety_corrective_actions'],
             default => throw new \LogicException('report_source_sync_unknown'),
         };
+    }
+
+    private static function dependentFacts(int $organizationId, string $sourceCode): array
+    {
+        $tables = match ($sourceCode) {
+            self::QUALITY_DEFECTS => ['quality_defect_status_history'],
+            self::SAFETY_EXPOSURE => ['safety_site_workforce_assignments', 'safety_sites'],
+            self::WORKFORCE_ADMISSION => [
+                'safety_site_workforce_assignments',
+                'safety_workforce_lifecycle_events',
+                'safety_admission_policy_versions',
+                'safety_training_records',
+                'safety_medical_exams',
+                'safety_ppe_issues',
+                'safety_employee_requirements',
+            ],
+            self::SAFETY_INCIDENTS => ['safety_transition_events', 'safety_incident_policy_versions', 'safety_exposure_days'],
+            default => [],
+        };
+        $facts = [];
+        foreach ($tables as $table) {
+            $query = DB::table($table)->where('organization_id', $organizationId);
+            $facts[$table] = [
+                'count' => $query->count(),
+                'max_id' => $query->max('id'),
+            ];
+        }
+
+        return $facts;
     }
 }

@@ -198,7 +198,7 @@ class SafetyExposureBackfill
                     0,
                     $this->sourceCode(),
                     (string) $correction->updated_at,
-                    $currentSiteIds->count() <= 1,
+                    $currentSiteIds->count() === 1,
                 );
             } catch (\Throwable) {
                 $gaps++;

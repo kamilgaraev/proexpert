@@ -51,7 +51,8 @@ final class SafetyIncidentActionsContractTest extends TestCase
             'closed_flag' => true,
             'closure_verified' => true,
             'closure_days' => 3,
-            'evidence_id' => 'evidence-9',
+            'evidence_type' => 'safety_incident_evidence',
+            'evidence_id' => 9,
         ], true);
         $method = new \ReflectionMethod(SafetyIncidentRowQuery::class, 'serialize');
         $query = new SafetyIncidentRowQuery;
@@ -60,7 +61,7 @@ final class SafetyIncidentActionsContractTest extends TestCase
         $visible = $method->invoke($query, $row, $this->context(true));
 
         self::assertNull($redacted['evidence_id']);
-        self::assertSame('evidence-9', $visible['evidence_id']);
+        self::assertSame(9, $visible['evidence_id']);
         self::assertArrayNotHasKey('medical_details', $redacted);
     }
 

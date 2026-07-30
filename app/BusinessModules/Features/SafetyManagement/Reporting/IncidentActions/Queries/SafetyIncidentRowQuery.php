@@ -141,6 +141,12 @@ final readonly class SafetyIncidentRowQuery implements ReportRowQuery
                 new ReportScopedResource('contractor', (int) $row->contractor_id, (int) $row->project_id),
             ]),
         ]);
+        if ($context->visibility->canViewAudit && $row->evidence_id !== null) {
+            ScopedReportSourceGuard::assertExactAccessible(
+                $context,
+                new ReportScopedResource((string) $row->evidence_type, (int) $row->subject_id, (int) $row->project_id),
+            );
+        }
 
         return [
             'row_key' => (string) $row->row_key,
