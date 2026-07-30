@@ -76,3 +76,8 @@ rr.exe
 /build/reports/plan-1b-completion.json
 /build/reports/gates/
 /build/reports/conformance/
+/build/reports/report-catalog-activation-inputs.json
+/build/reports/report-catalog-activation.json
+/build/reports/report-release-gate-bundle.json
+/build/reports/report-release-evidence.json
+/build/reports/report-cleanup-evidence.json
