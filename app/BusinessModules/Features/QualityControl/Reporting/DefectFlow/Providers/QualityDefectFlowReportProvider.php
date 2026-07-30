@@ -23,13 +23,17 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowSnapshot;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectFlowSnapshotMaterializer;
 use DateTimeImmutable;
 
 final readonly class QualityDefectFlowReportProvider implements ReportDataProvider
 {
-    public function __construct(private QualityDefectFlowSnapshotMaterializer $materializer) {}
+    public function __construct(
+        private QualityDefectFlowSnapshotMaterializer $materializer,
+        private CanonicalReportSnapshotSealer $sealer,
+    ) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -102,7 +106,13 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
             staleAt: DateTimeImmutable::createFromInterface($snapshot->stale_at),
             watermarks: ['quality_defect_transitions' => $snapshot->source_watermark->toAtomString()],
             classification: $classification,
-            seal: null,
+            seal: $this->sealer->seal(
+                (string) $snapshot->id,
+                'quality_defect_flow',
+                DateTimeImmutable::createFromInterface($snapshot->generated_at),
+                new Sha256Hash((string) $snapshot->source_hash),
+                DateTimeImmutable::createFromInterface($snapshot->sealed_at),
+            ),
         );
     }
 

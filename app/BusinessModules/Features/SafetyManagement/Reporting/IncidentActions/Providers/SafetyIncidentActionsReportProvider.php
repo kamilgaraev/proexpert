@@ -23,13 +23,17 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentSnapshot;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services\SafetyIncidentSnapshotMaterializer;
 use DateTimeImmutable;
 
 final readonly class SafetyIncidentActionsReportProvider implements ReportDataProvider
 {
-    public function __construct(private SafetyIncidentSnapshotMaterializer $materializer) {}
+    public function __construct(
+        private SafetyIncidentSnapshotMaterializer $materializer,
+        private CanonicalReportSnapshotSealer $sealer,
+    ) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -50,7 +54,13 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
             staleAt: DateTimeImmutable::createFromInterface($record->stale_at),
             watermarks: ['safety_transitions' => $record->source_watermark->toAtomString()],
             classification: $query->definition->snapshotClassification,
-            seal: null,
+            seal: $this->sealer->seal(
+                (string) $record->id,
+                'safety_incident_actions',
+                DateTimeImmutable::createFromInterface($record->generated_at),
+                new Sha256Hash((string) $record->source_hash),
+                DateTimeImmutable::createFromInterface($record->sealed_at),
+            ),
         );
     }
 

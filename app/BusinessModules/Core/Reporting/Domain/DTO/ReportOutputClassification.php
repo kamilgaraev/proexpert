@@ -28,7 +28,6 @@ final readonly class ReportOutputClassification
     public function requiresSensitiveForRows(): bool
     {
         return $this->defaultClassification === ReportDataClassification::SENSITIVE
-            || $this->sensitiveColumnIds !== []
             || $this->totalsSensitive;
     }
 

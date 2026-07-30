@@ -37,6 +37,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use Illuminate\Support\ServiceProvider;
 
 final class ReportingContractsServiceProvider extends ServiceProvider
@@ -47,6 +48,10 @@ final class ReportingContractsServiceProvider extends ServiceProvider
         $this->app->singleton(ReportErrorResponseFactory::class);
         $this->app->singleton(ReportAccessService::class);
         $this->app->singleton(ReportExecutionContextFactory::class);
+        $this->app->singleton(
+            CanonicalReportSnapshotSealer::class,
+            fn (): CanonicalReportSnapshotSealer => new CanonicalReportSnapshotSealer((string) config('app.key')),
+        );
         $this->app->singleton(CandidateReportDefinitionRegistry::class, ProductionCandidateReportDefinitionRegistry::class);
         $this->app->singleton(ReportDefinitionBindingAssembler::class, ProductionReportDefinitionBindingAssembler::class);
         $this->app->singleton(ReportDefinitionRegistry::class, ProductionReportDefinitionRegistry::class);
