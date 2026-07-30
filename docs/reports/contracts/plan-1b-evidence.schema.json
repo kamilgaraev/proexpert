@@ -3,312 +3,203 @@
   "$id": "urn:most:reporting:plan-1b-evidence:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "plan_id",
-    "status",
-    "generated_at",
-    "plan_1a_reference",
-    "repository_revision",
-    "gates",
-    "ownership",
-    "performance_measurements",
-    "unresolved_risks",
-    "handoff"
-  ],
+  "required": ["schema_version", "plan_id", "evidence_scope", "status", "generated_at", "plan_1a_reference", "repository_revision", "gates", "ownership", "performance_measurements", "unresolved_risks", "handoff"],
   "properties": {
-    "schema_version": {
-      "const": "1.0.0"
-    },
-    "plan_id": {
-      "const": "1b"
-    },
-    "status": {
-      "const": "passed"
-    },
-    "generated_at": {
-      "$ref": "#/$defs/timestamp"
-    },
-    "plan_1a_reference": {
-      "$ref": "#/$defs/planOneAReference"
-    },
-    "repository_revision": {
-      "$ref": "#/$defs/sha1"
-    },
+    "schema_version": {"const": "1.0.0"},
+    "plan_id": {"const": "1b"},
+    "evidence_scope": {"enum": ["deterministic_fixture", "ci"]},
+    "status": {"const": "passed"},
+    "generated_at": {"$ref": "#/$defs/timestamp"},
+    "plan_1a_reference": {"$ref": "#/$defs/planOneAReference"},
+    "repository_revision": {"$ref": "#/$defs/sha1"},
     "gates": {
       "type": "array",
-      "minItems": 28,
-      "maxItems": 28,
-      "items": {
-        "$ref": "#/$defs/gate"
-      }
+      "prefixItems": [
+        {"$ref": "#/$defs/plan1a_handoff"},
+        {"$ref": "#/$defs/ownership_boundary"},
+        {"$ref": "#/$defs/run_state_machine"},
+        {"$ref": "#/$defs/run_idempotency"},
+        {"$ref": "#/$defs/snapshot_identity"},
+        {"$ref": "#/$defs/snapshot_seal_trust"},
+        {"$ref": "#/$defs/typed_data_classification"},
+        {"$ref": "#/$defs/rows_cursor_drill_parity"},
+        {"$ref": "#/$defs/row_stream_shape"},
+        {"$ref": "#/$defs/export_state_machine"},
+        {"$ref": "#/$defs/export_idempotency"},
+        {"$ref": "#/$defs/dispatch_outbox_atomicity"},
+        {"$ref": "#/$defs/dispatch_lease_recovery"},
+        {"$ref": "#/$defs/dispatch_dead_letter"},
+        {"$ref": "#/$defs/audit_outbox_delivery"},
+        {"$ref": "#/$defs/current_async_authorization"},
+        {"$ref": "#/$defs/execution_attempt_leases"},
+        {"$ref": "#/$defs/renderer_parity"},
+        {"$ref": "#/$defs/pdf_renderer_budget"},
+        {"$ref": "#/$defs/streaming_budget"},
+        {"$ref": "#/$defs/file_service_call_graph"},
+        {"$ref": "#/$defs/s3_version_race"},
+        {"$ref": "#/$defs/audit_fail_closed"},
+        {"$ref": "#/$defs/retention_exact_version"},
+        {"$ref": "#/$defs/action_bindings"},
+        {"$ref": "#/$defs/error_retryability"},
+        {"$ref": "#/$defs/run_export_observability"},
+        {"$ref": "#/$defs/static_analysis"}
+      ],
+      "items": false
     },
-    "ownership": {
-      "$ref": "#/$defs/ownership"
-    },
-    "performance_measurements": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "$ref": "#/$defs/performanceMeasurement"
-      }
-    },
-    "unresolved_risks": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "handoff": {
-      "$ref": "#/$defs/handoff"
-    }
+    "ownership": {"$ref": "#/$defs/ownership"},
+    "performance_measurements": {"$ref": "#/$defs/performanceMeasurements"},
+    "unresolved_risks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1, "pattern": "^(?!.*(?:subscription|telemetry)).+$"}},
+    "handoff": {"$ref": "#/$defs/handoff"}
   },
   "$defs": {
-    "sha1": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{40}$"
-    },
-    "sha256": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "timestamp": {
-      "type": "string",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
-    },
+    "sha1": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
     "planOneAReference": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "lock_sha256",
-        "evidence_sha256",
-        "generated_at",
-        "status"
-      ],
+      "required": ["lock_sha256", "evidence_sha256", "generated_at", "status"],
       "properties": {
-        "lock_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "evidence_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "generated_at": {
-          "$ref": "#/$defs/timestamp"
-        },
-        "status": {
-          "const": "passed"
-        }
+        "lock_sha256": {"$ref": "#/$defs/sha256"},
+        "evidence_sha256": {"$ref": "#/$defs/sha256"},
+        "generated_at": {"$ref": "#/$defs/timestamp"},
+        "status": {"const": "passed"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_code", "tests", "assertions", "required_checks"],
+      "properties": {
+        "exit_code": {"const": 0},
+        "tests": {"type": "integer", "minimum": 0},
+        "assertions": {"type": "integer", "minimum": 0},
+        "required_checks": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "sha256", "repository_revision"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^plan1b\\.gate\\.[a-z0-9_]+$"},
+        "type": {"enum": ["contract_json", "architecture_json", "unit_json", "postgresql_json", "cryptographic_json", "authorization_json", "queue_json", "parity_json", "performance_json", "s3_json", "observability_json", "phpstan_json"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "repository_revision": {"$ref": "#/$defs/sha1"}
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "value", "unit", "limit", "status"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "value": {"type": "integer", "minimum": 0},
+        "unit": {"enum": ["rows", "pages", "bytes", "milliseconds"]},
+        "limit": {"type": "integer", "minimum": 1},
+        "status": {"const": "passed"}
       }
     },
     "gate": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "id",
-        "status",
-        "command",
-        "result",
-        "duration_ms",
-        "artifacts"
-      ],
+      "required": ["id", "status", "command", "result", "duration_ms", "artifacts", "measurements"],
       "properties": {
-        "id": {
-          "enum": [
-            "plan1a_handoff",
-            "ownership_boundary",
-            "run_state_machine",
-            "run_idempotency",
-            "snapshot_identity",
-            "snapshot_seal_trust",
-            "typed_data_classification",
-            "rows_cursor_drill_parity",
-            "row_stream_shape",
-            "export_state_machine",
-            "export_idempotency",
-            "dispatch_outbox_atomicity",
-            "dispatch_lease_recovery",
-            "dispatch_dead_letter",
-            "audit_outbox_delivery",
-            "current_async_authorization",
-            "execution_attempt_leases",
-            "renderer_parity",
-            "pdf_renderer_budget",
-            "streaming_budget",
-            "file_service_call_graph",
-            "s3_version_race",
-            "audit_fail_closed",
-            "retention_exact_version",
-            "action_bindings",
-            "error_retryability",
-            "run_export_observability",
-            "static_analysis"
-          ]
-        },
-        "status": {
-          "const": "passed"
-        },
-        "command": {
-          "type": "string",
-          "minLength": 1
-        },
-        "result": {
-          "$ref": "#/$defs/gateResult"
-        },
-        "duration_ms": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "artifacts": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/artifactDigest"
-          }
-        }
+        "id": {"type": "string"},
+        "status": {"const": "passed"},
+        "command": {"type": "string", "minLength": 1},
+        "result": {"$ref": "#/$defs/result"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "artifacts": {"type": "array", "prefixItems": [{"$ref": "#/$defs/artifact"}], "items": false},
+        "measurements": {"type": "array"}
       }
     },
-    "gateResult": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "exit_code",
-        "tests",
-        "assertions"
+    "noMeasurements": {"type": "array", "maxItems": 0},
+    "pdfMeasurements": {
+      "type": "array",
+      "minItems": 5,
+      "prefixItems": [
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_detail_rows"}, "unit": {"const": "rows"}, "value": {"maximum": 5000}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_pages"}, "unit": {"const": "pages"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_html_bytes"}, "unit": {"const": "bytes"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_output_bytes"}, "unit": {"const": "bytes"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_memory_delta_bytes"}, "unit": {"const": "bytes"}}}]}
       ],
-      "properties": {
-        "exit_code": {
-          "const": 0
-        },
-        "tests": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "assertions": {
-          "type": "integer",
-          "minimum": 0
-        }
-      }
+      "items": false
     },
-    "artifactDigest": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "sha256"
+    "streamingMeasurements": {
+      "type": "array",
+      "minItems": 3,
+      "prefixItems": [
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_chunk_rows"}, "unit": {"const": "rows"}, "value": {"maximum": 5000}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_peak_memory_bytes"}, "unit": {"const": "bytes"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_artifact_bytes"}, "unit": {"const": "bytes"}}}]}
       ],
-      "properties": {
-        "name": {
-          "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9._-]*$"
-        },
-        "sha256": {
-          "$ref": "#/$defs/sha256"
-        }
-      }
+      "items": false
     },
+    "performanceMeasurements": {
+      "type": "array",
+      "minItems": 8,
+      "prefixItems": [
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_detail_rows"}, "unit": {"const": "rows"}, "value": {"maximum": 5000}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_pages"}, "unit": {"const": "pages"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_html_bytes"}, "unit": {"const": "bytes"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_output_bytes"}, "unit": {"const": "bytes"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "pdf_memory_delta_bytes"}, "unit": {"const": "bytes"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_chunk_rows"}, "unit": {"const": "rows"}, "value": {"maximum": 5000}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_peak_memory_bytes"}, "unit": {"const": "bytes"}}}]},
+        {"allOf": [{"$ref": "#/$defs/measurement"}, {"properties": {"id": {"const": "stream_artifact_bytes"}, "unit": {"const": "bytes"}}}]}
+      ],
+      "items": false
+    },
+    "plan1a_handoff": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "plan1a_handoff"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_plan1a_handoff"}, "result": {"properties": {"required_checks": {"const": ["immutable_history", "forward_only_lineage", "exact_ownership_manifest", "strict_clean_preflight", "fresh_runner_counts", "verify_existing_no_write"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.plan1a_handoff"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "ownership_boundary": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "ownership_boundary"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_ownership_boundary"}, "result": {"properties": {"required_checks": {"const": ["plan1a_symbol_intersection_empty", "plans_2_3_candidate_only", "plan1c_publication_owner", "plan4_rollout_owner"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.ownership_boundary"}, "type": {"const": "architecture_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "run_state_machine": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "run_state_machine"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_run_state_machine"}, "result": {"properties": {"required_checks": {"const": ["six_state_transition_matrix", "audit_precedes_ready"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.run_state_machine"}, "type": {"const": "unit_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "run_idempotency": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "run_idempotency"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_run_idempotency_postgresql"}, "result": {"properties": {"required_checks": {"const": ["same_org_cross_actor_reuse", "changed_body_conflict", "other_org_independence", "retry_key_replay"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.run_idempotency"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "snapshot_identity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "snapshot_identity"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_snapshot_identity"}, "result": {"properties": {"required_checks": {"const": ["validator_equalities", "decimal_grammar_negative_zero", "source_projection_sort", "duplicate_identity", "no_input_mutation", "expired_status_only", "expired_data_fail_closed"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.snapshot_identity"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "snapshot_seal_trust": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "snapshot_seal_trust"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_snapshot_seal_trust"}, "result": {"properties": {"required_checks": {"const": ["typed_structural_reasons", "official_seal_mapping", "closed_public_key_map", "sodium_detached_verification", "trust_case_matrix", "signed_field_mutations", "payload_binding"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.snapshot_seal_trust"}, "type": {"const": "cryptographic_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "typed_data_classification": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "typed_data_classification"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_typed_data_classification"}, "result": {"properties": {"required_checks": {"const": ["sensitive_access_typed", "audit_access_typed", "heuristics_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.typed_data_classification"}, "type": {"const": "authorization_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "rows_cursor_drill_parity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "rows_cursor_drill_parity"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_rows_cursor_drill_parity"}, "result": {"properties": {"required_checks": {"const": ["rows_cursor_identity", "drill_down_identity", "summary_semantic_parity"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.rows_cursor_drill_parity"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "row_stream_shape": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "row_stream_shape"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_row_stream_shape"}, "result": {"properties": {"required_checks": {"const": ["one_row_envelope", "bounded_internal_chunks", "nested_shape_rejected", "identity_drift_rejected"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.row_stream_shape"}, "type": {"const": "unit_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "export_state_machine": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "export_state_machine"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_export_state_machine"}, "result": {"properties": {"required_checks": {"const": ["seven_state_transition_matrix", "retry_parent_ready_unexpired", "retry_denial_before_side_effects"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.export_state_machine"}, "type": {"const": "unit_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "export_idempotency": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "export_idempotency"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_export_idempotency_postgresql"}, "result": {"properties": {"required_checks": {"const": ["same_org_cross_actor_reuse", "changed_body_conflict", "other_org_independence", "retry_key_replay", "parent_run_fence"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.export_idempotency"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "dispatch_outbox_atomicity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "dispatch_outbox_atomicity"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_dispatch_outbox_atomicity_postgresql"}, "result": {"properties": {"required_checks": {"const": ["closed_named_schemas", "aggregate_transport_rollback", "unique_event_keys", "closed_subjects"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.dispatch_outbox_atomicity"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "dispatch_lease_recovery": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "dispatch_lease_recovery"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_dispatch_lease_recovery_postgresql"}, "result": {"properties": {"required_checks": {"const": ["skip_locked_claims", "lease_fencing_reclaim", "deterministic_backoff", "publication_redelivery"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.dispatch_lease_recovery"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "dispatch_dead_letter": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "dispatch_dead_letter"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_dispatch_dead_letter_postgresql"}, "result": {"properties": {"required_checks": {"const": ["run_attempt_12_atomic_failure", "export_attempt_12_atomic_failure", "pre_table_branch_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.dispatch_dead_letter"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "audit_outbox_delivery": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "audit_outbox_delivery"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_audit_outbox_delivery_postgresql"}, "result": {"properties": {"required_checks": {"const": ["id_only_mapping", "transactional_intent", "append_ack_order", "append_replay", "lease_fenced_backoff", "attempt_12_dead_letter", "critical_alerting"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.audit_outbox_delivery"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "current_async_authorization": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "current_async_authorization"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_current_async_authorization_postgresql"}, "result": {"properties": {"required_checks": {"const": ["typed_scope_cutover", "exact_resource_decisions", "repeatable_read_snapshot", "state_operation_matrix", "revocation_before_side_effects", "request_globals_bypassed", "authority_cache_bypassed", "atomic_cutover_rollback"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.current_async_authorization"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "execution_attempt_leases": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "execution_attempt_leases"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_execution_attempt_leases"}, "result": {"properties": {"required_checks": {"const": ["runtime_inequalities", "authority_free_claim", "same_token_renewal", "token_fencing", "leased_failure", "watchdog_requeue", "job_failed_aba_fence"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.execution_attempt_leases"}, "type": {"const": "queue_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "renderer_parity": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "renderer_parity"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_renderer_parity"}, "result": {"properties": {"required_checks": {"const": ["csv_semantic_identity", "xlsx_semantic_identity", "pdf_semantic_identity"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.renderer_parity"}, "type": {"const": "parity_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "pdf_renderer_budget": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "pdf_renderer_budget"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_pdf_renderer_budget_performance"}, "result": {"properties": {"required_checks": {"const": ["locked_dependency_versions", "definition_budget_registry", "row_boundary_5000", "page_html_pdf_memory_limits", "safe_failure_mapping", "retry_cleanup"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.pdf_renderer_budget"}, "type": {"const": "performance_json"}}}]}, "measurements": {"$ref": "#/$defs/pdfMeasurements"}}},
+    "streaming_budget": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "streaming_budget"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_streaming_budget_performance"}, "result": {"properties": {"required_checks": {"const": ["bounded_chunks", "bounded_peak_memory", "bounded_artifact_bytes"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.streaming_budget"}, "type": {"const": "performance_json"}}}]}, "measurements": {"$ref": "#/$defs/streamingMeasurements"}}},
+    "file_service_call_graph": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "file_service_call_graph"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_file_service_call_graph"}, "result": {"properties": {"required_checks": {"const": ["multipart_create", "multipart_upload_part", "multipart_complete", "multipart_abort", "exact_version_head", "temporary_link", "exact_version_delete"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.file_service_call_graph"}, "type": {"const": "architecture_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "s3_version_race": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "s3_version_race"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_s3_version_race_s3"}, "result": {"properties": {"required_checks": {"const": ["conditional_race_winner", "loser_abort_once", "post_completion_identity", "metadata_drift_fail_closed"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.s3_version_race"}, "type": {"const": "s3_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "audit_fail_closed": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "audit_fail_closed"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_audit_fail_closed_postgresql"}, "result": {"properties": {"required_checks": {"const": ["ready_transition_rollback", "terminal_transition_rollback", "remote_io_outside_transaction"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.audit_fail_closed"}, "type": {"const": "postgresql_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "retention_exact_version": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "retention_exact_version"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_retention_exact_version_s3"}, "result": {"properties": {"required_checks": {"const": ["exact_version_inventory", "lease_fenced_delete", "historical_identity_retained", "replay_idempotency"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.retention_exact_version"}, "type": {"const": "s3_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "action_bindings": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "action_bindings"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_action_bindings"}, "result": {"properties": {"required_checks": {"const": ["one_handler_per_action", "thin_controllers", "catalog_publication_unbound"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.action_bindings"}, "type": {"const": "architecture_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "error_retryability": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "error_retryability"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_error_retryability"}, "result": {"properties": {"required_checks": {"const": ["status_mapping", "retryability_mapping", "technical_message_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.error_retryability"}, "type": {"const": "contract_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "run_export_observability": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "run_export_observability"}, "command": {"const": "vendor/bin/phpunit --testsuite reports_run_export_observability"}, "result": {"properties": {"required_checks": {"const": ["bounded_run_families", "bounded_export_families", "non_run_export_family_absent"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.run_export_observability"}, "type": {"const": "observability_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
+    "static_analysis": {"$ref": "#/$defs/gate", "properties": {"id": {"const": "static_analysis"}, "command": {"const": "vendor/bin/phpstan analyse --configuration=phpstan.neon.dist"}, "result": {"properties": {"required_checks": {"const": ["changed_php_syntax", "changed_php_phpstan"]}}}, "artifacts": {"prefixItems": [{"properties": {"id": {"const": "plan1b.gate.static_analysis"}, "type": {"const": "phpstan_json"}}}]}, "measurements": {"$ref": "#/$defs/noMeasurements"}}},
     "ownership": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "plan_1a_symbols",
-        "plan_1b_symbols",
-        "external_plan_owners"
-      ],
+      "required": ["plan_1a_symbols", "plan_1b_symbols", "external_plan_owners"],
       "properties": {
-        "plan_1a_symbols": {
-          "$ref": "#/$defs/symbols"
-        },
-        "plan_1b_symbols": {
-          "$ref": "#/$defs/symbols"
-        },
-        "external_plan_owners": {
-          "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
-          "uniqueItems": true,
-          "items": {
-            "enum": [
-              "plan_1c_publication_registry",
-              "plan_2_candidate_provider_bindings",
-              "plan_3_candidate_provider_bindings",
-              "plan_4_evidence_verification_rollout"
-            ]
-          }
-        }
-      }
-    },
-    "symbols": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-      }
-    },
-    "performanceMeasurement": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "value",
-        "unit",
-        "limit",
-        "status"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*$"
-        },
-        "value": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "unit": {
-          "enum": [
-            "rows",
-            "bytes",
-            "milliseconds"
-          ]
-        },
-        "limit": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "status": {
-          "const": "passed"
-        }
+        "plan_1a_symbols": {"const": ["CandidateReportDefinition", "CreateReportExportData", "CreateReportRunData", "PublishedReportDefinition", "ReportCursor", "ReportDataProvider", "ReportDefinition", "ReportDefinitionBinding", "ReportDefinitionBindingMap", "ReportDownloadLink", "ReportDrillDownProvider", "ReportExport", "ReportPage", "ReportQuery", "ReportRowQuery", "ReportRun"]},
+        "plan_1b_symbols": {"const": ["PlanOneACompletionRef", "PlanOneACompletionVerifier", "PlanOneBEvidenceBuilder", "PlanOneBEvidenceValidator"]},
+        "external_plan_owners": {"const": ["plan_1c_publication_registry", "plan_2_candidate_provider_bindings", "plan_3_candidate_provider_bindings", "plan_4_evidence_verification_rollout"]}
       }
     },
     "handoff": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "plans_2_and_3",
-        "plan_1c",
-        "plan_4",
-        "artifact_path",
-        "digest_algorithm"
-      ],
+      "required": ["plans_2_and_3", "plan_1c", "plan_4", "artifact_path", "digest_algorithm"],
       "properties": {
-        "plans_2_and_3": {
-          "const": "plan_1a_provider_ports_candidate_bindings_only"
-        },
-        "plan_1c": {
-          "const": "published_registry_map_and_all_publication_transitions"
-        },
-        "plan_4": {
-          "const": "evidence_verification_and_deployment_rollout_only"
-        },
-        "artifact_path": {
-          "const": "build/reports/plan-1b-completion.json"
-        },
-        "digest_algorithm": {
-          "const": "sha256"
-        }
+        "plans_2_and_3": {"const": "plan_1a_provider_ports_candidate_bindings_only"},
+        "plan_1c": {"const": "published_registry_map_and_all_publication_transitions"},
+        "plan_4": {"const": "evidence_verification_and_deployment_rollout_only"},
+        "artifact_path": {"const": "build/reports/plan-1b-completion.json"},
+        "digest_algorithm": {"const": "sha256"}
       }
     }
   }

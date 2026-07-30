@@ -9,164 +9,137 @@ use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceVali
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use InvalidArgumentException;
+use Opis\JsonSchema\CompliantValidator;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-
-require_once dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php';
 
 final class PlanOneBEvidenceValidatorTest extends TestCase
 {
-    public function test_accepts_the_tracked_deterministic_fixture_with_stable_canonical_digest(): void
+    public function test_fixture_is_explicitly_synthetic_and_passes_both_executable_validators(): void
     {
         $document = $this->fixture();
 
+        self::assertSame('deterministic_fixture', $document['evidence_scope']);
+        self::assertTrue($this->schemaAccepts($document));
         $this->validator($document)->validate($document);
-
         self::assertSame(
-            '31017bd4d8007c9881243f3a0c97919a96fb6b55f39e844e530a3459de24179e',
+            '7f1510b8e5dcbde60557fa405ef1543b24d8977e39350da14c148d0532d12fa2',
             hash('sha256', CanonicalJson::encode($document)),
         );
     }
 
-    public function test_rejects_missing_unknown_and_wrongly_typed_root_members(): void
+    #[DataProvider('sharedMutationCorpus')]
+    public function test_schema_and_php_validator_reject_the_same_json_representable_mutations(
+        string $label,
+        callable $mutation,
+    ): void {
+        $document = $this->fixture();
+        $mutation($document);
+
+        self::assertFalse($this->schemaAccepts($document), $label.' schema');
+        $this->assertRejected(fn () => $this->validator($document)->validate($document), $label.' PHP');
+    }
+
+    public static function sharedMutationCorpus(): array
     {
-        $mutations = [
-            'missing root member' => static function (array &$document): void {
+        return [
+            'missing root property' => ['missing root property', static function (array &$document): void {
                 unset($document['repository_revision']);
-            },
-            'unknown root member' => static function (array &$document): void {
-                $document['telemetry_mode'] = false;
-            },
-            'wrong scalar type' => static function (array &$document): void {
+            }],
+            'unknown root property' => ['unknown root property', static function (array &$document): void {
+                $document['unknown'] = true;
+            }],
+            'wrong scalar type' => ['wrong scalar type', static function (array &$document): void {
                 $document['schema_version'] = 1;
-            },
+            }],
+            'duplicate gate' => ['duplicate gate', static function (array &$document): void {
+                $document['gates'][1] = $document['gates'][0];
+            }],
+            'permuted gates' => ['permuted gates', static function (array &$document): void {
+                [$document['gates'][0], $document['gates'][1]] = [$document['gates'][1], $document['gates'][0]];
+            }],
+            'extra gate' => ['extra gate', static function (array &$document): void {
+                $document['gates'][] = $document['gates'][0];
+            }],
+            'arbitrary command' => ['arbitrary command', static function (array &$document): void {
+                $document['gates'][2]['command'] = 'vendor/bin/phpunit';
+            }],
+            'wrong artifact ID' => ['wrong artifact ID', static function (array &$document): void {
+                $document['gates'][2]['artifacts'][0]['id'] = 'plan1b.gate.other';
+            }],
+            'wrong artifact type' => ['wrong artifact type', static function (array &$document): void {
+                $document['gates'][2]['artifacts'][0]['type'] = 's3_json';
+            }],
+            'extra artifact' => ['extra artifact', static function (array &$document): void {
+                $document['gates'][2]['artifacts'][] = $document['gates'][2]['artifacts'][0];
+            }],
+            'wrong required results' => ['wrong required results', static function (array &$document): void {
+                array_pop($document['gates'][4]['result']['required_checks']);
+            }],
+            'unknown result member' => ['unknown result member', static function (array &$document): void {
+                $document['gates'][4]['result']['unknown'] = true;
+            }],
+            'arbitrary ownership' => ['arbitrary ownership', static function (array &$document): void {
+                $document['ownership']['plan_1b_symbols'][0] = 'ReportRun';
+            }],
+            'permuted performance' => ['permuted performance', static function (array &$document): void {
+                [$document['performance_measurements'][0], $document['performance_measurements'][1]]
+                    = [$document['performance_measurements'][1], $document['performance_measurements'][0]];
+            }],
+            'missing gate measurement' => ['missing gate measurement', static function (array &$document): void {
+                array_pop($document['gates'][18]['measurements']);
+            }],
+            'wrong measurement ID' => ['wrong measurement ID', static function (array &$document): void {
+                $document['gates'][18]['measurements'][0]['id'] = 'arbitrary';
+            }],
+            'row limit exceeded' => ['row limit exceeded', static function (array &$document): void {
+                $document['gates'][18]['measurements'][0]['value'] = 5001;
+            }],
+            'noncanonical digest' => ['noncanonical digest', static function (array &$document): void {
+                $document['gates'][2]['artifacts'][0]['sha256'] = str_repeat('A', 64);
+            }],
+            'forbidden evidence family' => ['forbidden evidence family', static function (array &$document): void {
+                $document['unresolved_risks'][] = 'subscription telemetry';
+            }],
         ];
-
-        $this->assertMutationsRejected($mutations);
     }
 
-    public function test_rejects_non_iso_timestamps_and_noncanonical_digests(): void
+    public function test_php_validator_additionally_binds_cross_field_reference_revision_and_limits(): void
     {
         $mutations = [
-            'non ISO generation timestamp' => static function (array &$document): void {
-                $document['generated_at'] = '2026-07-30 12:00:00';
+            static function (array &$document): void {
+                $document['plan_1a_reference']['lock_sha256'] = str_repeat('f', 64);
             },
-            'impossible timestamp' => static function (array &$document): void {
-                $document['generated_at'] = '2026-02-30T12:00:00Z';
+            static function (array &$document): void {
+                $document['gates'][2]['artifacts'][0]['repository_revision'] = str_repeat('f', 40);
             },
-            'uppercase digest' => static function (array &$document): void {
-                $document['gates'][1]['artifacts'][0]['sha256'] = str_repeat('A', 64);
+            static function (array &$document): void {
+                $document['gates'][18]['measurements'][1]['value'] = 21;
             },
-            'short digest' => static function (array &$document): void {
-                $document['gates'][1]['artifacts'][0]['sha256'] = str_repeat('a', 63);
-            },
-            'wrong revision type' => static function (array &$document): void {
-                $document['repository_revision'] = 123;
+            static function (array &$document): void {
+                $document['performance_measurements'][0]['value'] = 4999;
             },
         ];
 
-        $this->assertMutationsRejected($mutations);
-    }
-
-    public function test_rejects_a_plan_one_a_lock_digest_different_from_the_verified_reference(): void
-    {
-        $document = $this->fixture();
-        $validator = $this->validator($document);
-        $document['plan_1a_reference']['lock_sha256'] = str_repeat('f', 64);
-
-        $this->assertRejected(static fn () => $validator->validate($document));
-    }
-
-    public function test_rejects_missing_duplicate_unknown_or_failed_required_gates(): void
-    {
-        $mutations = [
-            'missing required gate' => static function (array &$document): void {
-                array_pop($document['gates']);
-            },
-            'duplicate gate ID' => static function (array &$document): void {
-                $document['gates'][1]['id'] = $document['gates'][0]['id'];
-            },
-            'unknown gate ID' => static function (array &$document): void {
-                $document['gates'][1]['id'] = 'browser_smoke';
-            },
-            'failed required gate' => static function (array &$document): void {
-                $document['gates'][1]['status'] = 'failed';
-            },
-        ];
-
-        $this->assertMutationsRejected($mutations);
-    }
-
-    public function test_rejects_missing_command_result_duration_and_artifact_digest(): void
-    {
-        foreach (['command', 'result', 'duration_ms', 'artifacts'] as $member) {
+        foreach ($mutations as $mutation) {
             $document = $this->fixture();
-            unset($document['gates'][1][$member]);
-            $this->assertRejected(
-                fn () => $this->validator($document)->validate($document),
-                $member,
-            );
-        }
-
-        $document = $this->fixture();
-        unset($document['gates'][1]['artifacts'][0]['sha256']);
-        $this->assertRejected(fn () => $this->validator($document)->validate($document));
-    }
-
-    public function test_rejects_forbidden_runtime_browser_and_build_evidence(): void
-    {
-        foreach (['runtime verification', 'browser smoke', 'npm run build'] as $command) {
-            $document = $this->fixture();
-            $document['gates'][1]['command'] = $command;
-            $this->assertRejected(
-                fn () => $this->validator($document)->validate($document),
-                $command,
-            );
-        }
-    }
-
-    public function test_rejects_plan_one_a_symbols_claimed_by_plan_one_b(): void
-    {
-        $document = $this->fixture();
-        $document['ownership']['plan_1b_symbols'][0] = 'ReportRun';
-
-        $this->assertRejected(fn () => $this->validator($document)->validate($document));
-    }
-
-    public function test_rejects_subscription_telemetry_at_any_nested_value(): void
-    {
-        $document = $this->fixture();
-        $document['unresolved_risks'][] = 'subscription telemetry is pending';
-
-        $this->assertRejected(fn () => $this->validator($document)->validate($document));
-    }
-
-    public function test_rejects_duplicate_artifact_names_and_invalid_performance_limits(): void
-    {
-        $mutations = [
-            'duplicate artifact names' => static function (array &$document): void {
-                $document['gates'][1]['artifacts'][] = $document['gates'][1]['artifacts'][0];
-            },
-            'measurement over limit' => static function (array &$document): void {
-                $document['performance_measurements'][0]['value'] = 5001;
-            },
-            'duplicate measurement ID' => static function (array &$document): void {
-                $document['performance_measurements'][1]['id'] = $document['performance_measurements'][0]['id'];
-            },
-        ];
-
-        $this->assertMutationsRejected($mutations);
-    }
-
-    private function assertMutationsRejected(array $mutations): void
-    {
-        foreach ($mutations as $label => $mutation) {
-            $document = $this->fixture();
+            $validator = $this->validator($document);
             $mutation($document);
-            $this->assertRejected(
-                fn () => $this->validator($document)->validate($document),
-                $label,
-            );
+            $this->assertRejected(static fn () => $validator->validate($document));
         }
+    }
+
+    private function schemaAccepts(array $document): bool
+    {
+        $data = json_decode(json_encode($document, JSON_THROW_ON_ERROR), false, 512, JSON_THROW_ON_ERROR);
+        $schema = json_decode(
+            (string) file_get_contents(dirname(__DIR__, 4).'/docs/reports/contracts/plan-1b-evidence.schema.json'),
+            false,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        return (new CompliantValidator)->validate($data, $schema)->isValid();
     }
 
     private function assertRejected(callable $operation, string $label = ''): void

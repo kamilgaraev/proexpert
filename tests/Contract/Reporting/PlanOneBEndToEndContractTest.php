@@ -7,53 +7,76 @@ namespace Tests\Contract\Reporting;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneACompletionRef;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceBuilder;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceValidator;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
+use Opis\JsonSchema\Validator as JsonSchemaValidator;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Process\Process;
 
-require_once dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php';
-require_once dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php';
-
 final class PlanOneBEndToEndContractTest extends TestCase
 {
-    public function test_fixture_passes_schema_executable_validator_and_builder_round_trip(): void
+    public function test_fixture_and_real_artifact_round_trip_pass_both_validators(): void
     {
-        $fixturePath = $this->root().'/tests/Fixtures/Reporting/plan-1b-completion.valid.json';
-        $fixtureBytes = (string) file_get_contents($fixturePath);
-        $fixture = json_decode($fixtureBytes, true, 512, JSON_THROW_ON_ERROR);
-        $schema = json_decode(
-            (string) file_get_contents($this->root().'/docs/reports/contracts/plan-1b-evidence.schema.json'),
-            true,
-            512,
-            JSON_THROW_ON_ERROR,
-        );
+        $fixture = $this->decode($this->root().'/tests/Fixtures/Reporting/plan-1b-completion.valid.json');
         $reference = $this->reference($fixture);
+        $runtimeValidator = new PlanOneBEvidenceValidator($reference);
 
-        self::assertSame('https://json-schema.org/draft/2020-12/schema', $schema['$schema']);
-        self::assertSame('urn:most:reporting:plan-1b-evidence:v1', $schema['$id']);
-        self::assertFalse($schema['additionalProperties']);
-        (new PlanOneBEvidenceValidator($reference))->validate($fixture);
+        $this->assertSchemaValid($fixture);
+        $runtimeValidator->validate($fixture);
 
         $directory = sys_get_temp_dir().'/most-plan1b-contract-'.bin2hex(random_bytes(8));
-        mkdir($directory);
+        self::assertTrue(mkdir($directory));
         $artifact = $directory.'/plan-1b-completion.json';
+
         try {
+            $gateArtifacts = [];
+            foreach ($fixture['gates'] as $gate) {
+                $gatePath = $directory.'/'.$gate['id'].'.json';
+                $envelope = [
+                    'schema_version' => $fixture['schema_version'],
+                    'artifact_id' => $gate['artifacts'][0]['id'],
+                    'artifact_type' => $gate['artifacts'][0]['type'],
+                    'repository_revision' => $fixture['repository_revision'],
+                    'gate' => [
+                        'id' => $gate['id'],
+                        'status' => $gate['status'],
+                        'command' => $gate['command'],
+                        'result' => $gate['result'],
+                        'duration_ms' => $gate['duration_ms'],
+                        'measurements' => $gate['measurements'],
+                    ],
+                ];
+                $bytes = CanonicalJson::encode($envelope)."\n";
+                file_put_contents($gatePath, $bytes);
+                $gateArtifacts[] = [
+                    'path' => $gatePath,
+                    'sha256' => hash('sha256', $bytes),
+                ];
+            }
+
             $built = (new PlanOneBEvidenceBuilder($artifact))->build(
                 $reference,
                 [
                     'repository_revision' => $fixture['repository_revision'],
-                    'gates' => $fixture['gates'],
+                    'gate_artifacts' => $gateArtifacts,
                     'ownership' => $fixture['ownership'],
-                    'performance_measurements' => $fixture['performance_measurements'],
                     'unresolved_risks' => $fixture['unresolved_risks'],
                 ],
                 new DateTimeImmutable($fixture['generated_at']),
             );
-            self::assertEquals($fixture, $built);
-            self::assertEquals($fixture, $this->decode($artifact));
+
+            self::assertSame('ci', $built['evidence_scope']);
+            $runtimeValidator->validate($built);
+            $this->assertSchemaValid($built);
+            self::assertSame(CanonicalJson::encode($built)."\n", (string) file_get_contents($artifact));
+            foreach ($built['gates'] as $index => $gate) {
+                self::assertSame($gateArtifacts[$index]['sha256'], $gate['artifacts'][0]['sha256']);
+            }
         } finally {
-            if (is_file($artifact)) {
-                unlink($artifact);
+            foreach (glob($directory.'/*') ?: [] as $path) {
+                if (is_file($path)) {
+                    unlink($path);
+                }
             }
             rmdir($directory);
         }
@@ -91,6 +114,19 @@ final class PlanOneBEndToEndContractTest extends TestCase
         $tracked->run();
         self::assertNotSame(0, $tracked->getExitCode());
         self::assertFileDoesNotExist($this->root().'/build/reports/plan-1b-completion.json');
+    }
+
+    private function assertSchemaValid(array $document): void
+    {
+        $schema = json_decode(
+            (string) file_get_contents($this->root().'/docs/reports/contracts/plan-1b-evidence.schema.json'),
+        );
+        $result = (new JsonSchemaValidator)->validate(
+            json_decode(json_encode($document, JSON_THROW_ON_ERROR), false, 512, JSON_THROW_ON_ERROR),
+            $schema,
+        );
+
+        self::assertTrue($result->isValid(), $result->error()?->message() ?? 'JSON Schema validation failed');
     }
 
     private function reference(array $fixture): PlanOneACompletionRef

@@ -2964,9 +2964,19 @@ Task 14 is implemented at its local canonical commit boundary. The Draft 2020-12
 
 Local non-database evidence:
 
-- the exact Task 14 PHPUnit gate passes with `17 tests, 86 assertions`;
+- the exact amended Task 14 PHPUnit gate passes with `31 tests, 425 assertions`;
 - PHPStan reports no errors for the two changed production PHP files;
 - Pint completed for all six changed PHP files;
 - `build/reports/plan-1b-completion.json` remains ignored, absent, and untracked.
 
 Plan 1b completion evidence remains post-CI. The generated artifact and its SHA-256 may be published only after every isolated required gate is `passed`; no local result in this amendment is current CI completion evidence.
+
+### Task 14 review amendment — round 1
+
+The evidence contract now has one exact ordered set of 28 gates in both Draft 2020-12 JSON Schema and the executable PHP validator. Gate commands, artifact identifiers and types, required result checks, and performance measurement identifiers and units are closed and deterministic. A single mutation corpus exercises both validators; cross-field invariants that JSON Schema cannot express are covered by the executable validator.
+
+The builder accepts only paths and expected SHA-256 values for real gate artifacts. It rereads every artifact, verifies its digest and embedded repository revision, reconstructs the completion document from those bytes, validates the temporary canonical document before rename, and rereads the final path after rename. A final-byte mismatch removes the invalid final artifact and fails closed. The committed fixture is explicitly marked as deterministic synthetic evidence and cannot be confused with a CI completion artifact.
+
+The ownership test scans every `Create` entry in the whole canonical plan, including entries containing several backtick paths. It locks the complete path count and proves that none of the exact Plan 1a symbols is recreated. All amended tests use the production Composer autoloader.
+
+Local validation for this amendment is intentionally limited to the amended Task 14 non-database gate, changed production-file static analysis, formatting, and diff hygiene. PostgreSQL, S3, queue, authorization, performance, complete-module, and deployment gates remain isolated CI or deployment evidence and are not represented as locally executed results.

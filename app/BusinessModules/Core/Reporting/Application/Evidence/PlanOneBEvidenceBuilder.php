@@ -5,19 +5,28 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Application\Evidence;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
 use JsonException;
 use RuntimeException;
+use Throwable;
 
 final readonly class PlanOneBEvidenceBuilder
 {
+    private string $artifactPath;
+
+    private Closure $atomicRename;
+
     public function __construct(
-        private string $artifactPath = 'build/reports/plan-1b-completion.json',
+        string $artifactPath = 'build/reports/plan-1b-completion.json',
+        ?Closure $atomicRename = null,
     ) {
         if (trim($artifactPath) !== $artifactPath || $artifactPath === '') {
             throw new RuntimeException('plan_one_b_evidence_artifact_path_invalid');
         }
+        $this->artifactPath = $artifactPath;
+        $this->atomicRename = $atomicRename ?? static fn (string $temporary, string $final): bool => rename($temporary, $final);
     }
 
     public function build(
@@ -27,21 +36,29 @@ final readonly class PlanOneBEvidenceBuilder
     ): array {
         if (! $this->hasExactKeys(
             $checks,
-            [
-                'repository_revision',
-                'gates',
-                'ownership',
-                'performance_measurements',
-                'unresolved_risks',
-            ],
-        )) {
+            ['repository_revision', 'gate_artifacts', 'ownership', 'unresolved_risks'],
+        )
+            || ! is_string($checks['repository_revision'])
+            || preg_match('/^[a-f0-9]{40}$/D', $checks['repository_revision']) !== 1
+            || ! is_array($checks['gate_artifacts'])
+            || ! array_is_list($checks['gate_artifacts'])) {
             throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
+        }
+
+        $gates = [];
+        $performance = [];
+        foreach ($checks['gate_artifacts'] as $artifactInput) {
+            [$gate, $artifact] = $this->readGateArtifact($artifactInput, $checks['repository_revision']);
+            $gate['artifacts'] = [$artifact];
+            $gates[] = $gate;
+            array_push($performance, ...$gate['measurements']);
         }
 
         $utc = new DateTimeZone('UTC');
         $document = [
             'schema_version' => '1.0.0',
             'plan_id' => '1b',
+            'evidence_scope' => 'ci',
             'status' => 'passed',
             'generated_at' => $generatedAt->setTimezone($utc)->format('Y-m-d\TH:i:s\Z'),
             'plan_1a_reference' => [
@@ -51,9 +68,9 @@ final readonly class PlanOneBEvidenceBuilder
                 'status' => $planOneA->status,
             ],
             'repository_revision' => $checks['repository_revision'],
-            'gates' => $checks['gates'],
+            'gates' => $gates,
             'ownership' => $checks['ownership'],
-            'performance_measurements' => $checks['performance_measurements'],
+            'performance_measurements' => $performance,
             'unresolved_risks' => $checks['unresolved_risks'],
             'handoff' => [
                 'plans_2_and_3' => 'plan_1a_provider_ports_candidate_bindings_only',
@@ -67,27 +84,66 @@ final readonly class PlanOneBEvidenceBuilder
         $validator = new PlanOneBEvidenceValidator($planOneA);
         $validator->validate($document);
         $bytes = CanonicalJson::encode($document)."\n";
-        $this->writeAtomically($bytes);
-        $reread = file_get_contents($this->artifactPath);
-        if (! is_string($reread) || ! hash_equals($bytes, $reread)) {
-            throw new RuntimeException('plan_one_b_evidence_artifact_reread_failed');
-        }
+        $expectedSha256 = hash('sha256', $bytes);
+        $this->publishAtomically($bytes, $expectedSha256, $validator);
 
-        try {
-            $decoded = json_decode($reread, true, 512, JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            throw new RuntimeException('plan_one_b_evidence_artifact_reread_failed', 0, $exception);
-        }
-        if (! is_array($decoded) || CanonicalJson::encode($decoded)."\n" !== $reread) {
-            throw new RuntimeException('plan_one_b_evidence_artifact_noncanonical');
-        }
-        $validator->validate($decoded);
-
-        return $decoded;
+        return $this->validatedDocument($this->artifactPath, $bytes, $expectedSha256, $validator);
     }
 
-    private function writeAtomically(string $bytes): void
+    private function readGateArtifact(mixed $artifactInput, string $repositoryRevision): array
     {
+        if (! is_array($artifactInput)
+            || array_is_list($artifactInput)
+            || ! $this->hasExactKeys($artifactInput, ['path', 'sha256'])
+            || ! is_string($artifactInput['path'])
+            || trim($artifactInput['path']) !== $artifactInput['path']
+            || $artifactInput['path'] === ''
+            || ! is_string($artifactInput['sha256'])
+            || preg_match('/^[a-f0-9]{64}$/D', $artifactInput['sha256']) !== 1
+            || ! is_file($artifactInput['path'])
+            || is_link($artifactInput['path'])) {
+            throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
+        }
+        $bytes = file_get_contents($artifactInput['path']);
+        if (! is_string($bytes)
+            || ! hash_equals($artifactInput['sha256'], hash('sha256', $bytes))) {
+            throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
+        }
+        $envelope = $this->decode($bytes);
+        if (! $this->hasExactKeys(
+            $envelope,
+            ['schema_version', 'artifact_id', 'artifact_type', 'repository_revision', 'gate'],
+        )
+            || $envelope['schema_version'] !== '1.0.0'
+            || ! is_string($envelope['artifact_id'])
+            || ! is_string($envelope['artifact_type'])
+            || $envelope['repository_revision'] !== $repositoryRevision
+            || ! is_array($envelope['gate'])
+            || array_is_list($envelope['gate'])
+            || ! $this->hasExactKeys(
+                $envelope['gate'],
+                ['id', 'status', 'command', 'result', 'duration_ms', 'measurements'],
+            )
+            || $envelope['artifact_id'] !== 'plan1b.gate.'.$envelope['gate']['id']) {
+            throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
+        }
+
+        return [
+            $envelope['gate'],
+            [
+                'id' => $envelope['artifact_id'],
+                'type' => $envelope['artifact_type'],
+                'sha256' => $artifactInput['sha256'],
+                'repository_revision' => $repositoryRevision,
+            ],
+        ];
+    }
+
+    private function publishAtomically(
+        string $bytes,
+        string $expectedSha256,
+        PlanOneBEvidenceValidator $validator,
+    ): void {
         $directory = dirname($this->artifactPath);
         if (! is_dir($directory) && ! mkdir($directory, 0777, true) && ! is_dir($directory)) {
             throw new RuntimeException('plan_one_b_evidence_artifact_directory_failed');
@@ -102,15 +158,61 @@ final readonly class PlanOneBEvidenceBuilder
         }
 
         try {
-            if (file_put_contents($temporaryPath, $bytes, LOCK_EX) !== strlen($bytes)
-                || ! rename($temporaryPath, $this->artifactPath)) {
+            if (file_put_contents($temporaryPath, $bytes, LOCK_EX) !== strlen($bytes)) {
                 throw new RuntimeException('plan_one_b_evidence_artifact_write_failed');
+            }
+            $this->validatedDocument($temporaryPath, $bytes, $expectedSha256, $validator);
+            if (! ($this->atomicRename)($temporaryPath, $this->artifactPath)) {
+                throw new RuntimeException('plan_one_b_evidence_artifact_write_failed');
+            }
+            try {
+                $this->validatedDocument($this->artifactPath, $bytes, $expectedSha256, $validator);
+            } catch (Throwable $exception) {
+                if (is_file($this->artifactPath)) {
+                    unlink($this->artifactPath);
+                }
+                throw new RuntimeException('plan_one_b_evidence_artifact_final_mismatch', 0, $exception);
             }
         } finally {
             if (is_file($temporaryPath)) {
                 unlink($temporaryPath);
             }
         }
+    }
+
+    private function validatedDocument(
+        string $path,
+        string $expectedBytes,
+        string $expectedSha256,
+        PlanOneBEvidenceValidator $validator,
+    ): array {
+        $bytes = file_get_contents($path);
+        if (! is_string($bytes)
+            || ! hash_equals($expectedBytes, $bytes)
+            || ! hash_equals($expectedSha256, hash('sha256', $bytes))) {
+            throw new RuntimeException('plan_one_b_evidence_artifact_reread_failed');
+        }
+        $document = $this->decode($bytes);
+        if (CanonicalJson::encode($document)."\n" !== $bytes) {
+            throw new RuntimeException('plan_one_b_evidence_artifact_noncanonical');
+        }
+        $validator->validate($document);
+
+        return $document;
+    }
+
+    private function decode(string $bytes): array
+    {
+        try {
+            $decoded = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new RuntimeException('plan_one_b_evidence_artifact_invalid_json', 0, $exception);
+        }
+        if (! is_array($decoded) || array_is_list($decoded)) {
+            throw new RuntimeException('plan_one_b_evidence_artifact_invalid_json');
+        }
+
+        return $decoded;
     }
 
     private function hasExactKeys(array $value, array $expected): bool
