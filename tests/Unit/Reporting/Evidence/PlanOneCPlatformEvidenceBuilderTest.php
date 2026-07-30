@@ -15,6 +15,64 @@ use RuntimeException;
 
 final class PlanOneCPlatformEvidenceBuilderTest extends TestCase
 {
+    public function test_build_uses_repository_commit_blobs_instead_of_working_tree_sources(): void
+    {
+        $sourceRoot = dirname(__DIR__, 4);
+        $repositoryRoot = sys_get_temp_dir().'/plan-one-c-evidence-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($repositoryRoot, 0777, true));
+
+        try {
+            $targetCommit = $this->currentCommit($sourceRoot);
+            $this->createLinkedWorkingTreeSnapshot($sourceRoot, $repositoryRoot, $targetCommit);
+
+            $targetSourceHashes = $this->sourceHashes($repositoryRoot, $targetCommit);
+            $translationPath = $repositoryRoot.'/'.$this->sourceHashPaths()['translation'];
+            self::assertNotFalse(file_put_contents($translationPath, "\nreturn ['snapshot' => 'changed'];\n", FILE_APPEND));
+
+            $workingTreeSourceHashes = $this->workingTreeSourceHashes($repositoryRoot);
+            self::assertNotSame(
+                $targetSourceHashes['translation'],
+                $workingTreeSourceHashes['translation'],
+            );
+
+            $document = $this->builder($repositoryRoot, $targetCommit)->build(
+                $this->prerequisiteBundle($sourceRoot),
+                $this->planOneB($targetCommit),
+                $this->planOneC($targetCommit),
+                $targetCommit,
+                new DateTimeImmutable('2026-07-26T00:00:00Z'),
+                [
+                    'platform_quality' => $this->platformQuality($repositoryRoot, $targetCommit),
+                    'ci_artifacts' => $this->ciArtifacts($repositoryRoot, $targetCommit),
+                    'published_count' => 28,
+                    'binding_count' => 28,
+                    'unresolved_risks' => [],
+                ],
+            );
+
+            self::assertSame(
+                $this->gitBlobHash(
+                    $repositoryRoot,
+                    $targetCommit,
+                    'docs/reports/contracts/plan-1c-contract-lock.json',
+                ),
+                $document['plan_1c_lock_sha256'],
+            );
+            self::assertSame(
+                $this->gitBlobHash(
+                    $repositoryRoot,
+                    $targetCommit,
+                    'docs/reports/contracts/report-platform-gates.v1.json',
+                ),
+                $document['platform_quality_catalog_sha256'],
+            );
+            self::assertSame($targetSourceHashes, $document['source_hashes']);
+            self::assertNotSame($workingTreeSourceHashes, $document['source_hashes']);
+        } finally {
+            $this->removeDirectory($repositoryRoot);
+        }
+    }
+
     public function test_rejects_forged_structured_passed_ci_artifact(): void
     {
         $root = dirname(__DIR__, 4);
@@ -174,8 +232,12 @@ final class PlanOneCPlatformEvidenceBuilderTest extends TestCase
     /** @return array<string, mixed> */
     private function platformQuality(string $root, string $commit): array
     {
-        $catalogPath = $root.'/docs/reports/contracts/report-platform-gates.v1.json';
-        $catalog = json_decode((string) file_get_contents($catalogPath), true, 512, JSON_THROW_ON_ERROR);
+        $catalog = json_decode(
+            $this->gitBlob($root, $commit, 'docs/reports/contracts/report-platform-gates.v1.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
         $gates = [];
         foreach ($catalog['gates'] as $gate) {
             $sources = [];
@@ -246,27 +308,128 @@ final class PlanOneCPlatformEvidenceBuilderTest extends TestCase
     /** @return array<string, string> */
     private function sourceHashes(string $root, string $commit): array
     {
-        return [
-            'manifest' => $this->gitBlobHash($root, $commit, 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'),
-            'official_manifest' => $this->gitBlobHash($root, $commit, 'app/BusinessModules/Core/Reporting/resources/official-document-catalog.v1.yaml'),
-            'generated_catalog' => $this->gitBlobHash($root, $commit, 'docs/reports/generated/reporting-catalog.v1.json'),
-            'resource' => $this->gitBlobHash($root, $commit, 'docs/reports/contracts/reporting-admin-resources.v1.schema.json'),
-            'permission' => $this->gitBlobHash($root, $commit, 'docs/reports/generated/report-permissions.v1.json'),
-            'translation' => $this->gitBlobHash($root, $commit, 'lang/ru/reports.php'),
-            'route' => $this->gitBlobHash($root, $commit, 'app/BusinessModules/Core/Reporting/routes.php'),
-            'schema' => $this->gitBlobHash($root, $commit, 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json'),
-            'candidate_validation' => $this->gitBlobHash($root, $commit, 'docs/reports/contracts/report-candidate-validation.schema.json'),
-            'conformance_framework' => $this->gitBlobHash($root, $commit, 'docs/reports/contracts/report-conformance-evidence.schema.json'),
-            'publication_framework' => $this->gitBlobHash($root, $commit, 'docs/reports/contracts/report-publication-ledger.schema.json'),
-            'platform_quality_ledger' => $this->gitBlobHash($root, $commit, 'docs/reports/contracts/report-quality-evidence.schema.json'),
-        ];
+        $hashes = [];
+        foreach ($this->sourceHashPaths() as $key => $path) {
+            $hashes[$key] = $this->gitBlobHash($root, $commit, $path);
+        }
+
+        return $hashes;
     }
 
     private function gitBlobHash(string $root, string $commit, string $path): string
     {
-        $bytes = shell_exec('git -C '.escapeshellarg($root).' show '.escapeshellarg($commit.':'.$path));
+        return hash('sha256', $this->gitBlob($root, $commit, $path));
+    }
+
+    private function gitBlob(string $root, string $commit, string $path): string
+    {
+        $bytes = shell_exec(
+            'git -C '.escapeshellarg($root).' show '.escapeshellarg($commit.':'.$path),
+        );
         self::assertIsString($bytes);
 
-        return hash('sha256', $bytes);
+        return $bytes;
+    }
+
+    /** @return array<string, string> */
+    private function sourceHashPaths(): array
+    {
+        return [
+            'manifest' => 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml',
+            'official_manifest' => 'app/BusinessModules/Core/Reporting/resources/official-document-catalog.v1.yaml',
+            'generated_catalog' => 'docs/reports/generated/reporting-catalog.v1.json',
+            'resource' => 'docs/reports/contracts/reporting-admin-resources.v1.schema.json',
+            'permission' => 'docs/reports/generated/report-permissions.v1.json',
+            'translation' => 'lang/ru/reports.php',
+            'route' => 'app/BusinessModules/Core/Reporting/routes.php',
+            'schema' => 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json',
+            'candidate_validation' => 'docs/reports/contracts/report-candidate-validation.schema.json',
+            'conformance_framework' => 'docs/reports/contracts/report-conformance-evidence.schema.json',
+            'publication_framework' => 'docs/reports/contracts/report-publication-ledger.schema.json',
+            'platform_quality_ledger' => 'docs/reports/contracts/report-quality-evidence.schema.json',
+        ];
+    }
+
+    /** @return array<string, string> */
+    private function workingTreeSourceHashes(string $root): array
+    {
+        $hashes = [];
+        foreach ($this->sourceHashPaths() as $key => $path) {
+            $hash = hash_file('sha256', $root.'/'.$path);
+            self::assertIsString($hash);
+            $hashes[$key] = $hash;
+        }
+
+        return $hashes;
+    }
+
+    private function createLinkedWorkingTreeSnapshot(string $sourceRoot, string $snapshotRoot, string $commit): void
+    {
+        $gitDirectory = $this->gitOutput($sourceRoot, ['rev-parse', '--absolute-git-dir']);
+        self::assertNotSame('', $gitDirectory);
+        self::assertNotFalse(
+            file_put_contents(
+                $snapshotRoot.'/.git',
+                'gitdir: '.str_replace('\\', '/', $gitDirectory)."\n",
+            ),
+        );
+
+        $paths = [
+            'docs/reports/contracts/plan-1c-contract-lock.json',
+            'docs/reports/contracts/plan-1c-platform-completion.schema.json',
+            'docs/reports/contracts/report-platform-gates.v1.json',
+            'docs/reports/contracts/report-quality-evidence.schema.json',
+            ...array_values($this->sourceHashPaths()),
+        ];
+        $catalog = json_decode(
+            $this->gitBlob($snapshotRoot, $commit, 'docs/reports/contracts/report-platform-gates.v1.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+        foreach ($catalog['gates'] as $gate) {
+            foreach ($gate['source_paths'] as $path) {
+                $paths[] = $path;
+            }
+        }
+
+        foreach (array_unique($paths) as $path) {
+            $target = $snapshotRoot.'/'.$path;
+            $directory = dirname($target);
+            if (!is_dir($directory)) {
+                self::assertTrue(mkdir($directory, 0777, true));
+            }
+            self::assertNotFalse(file_put_contents($target, $this->gitBlob($snapshotRoot, $commit, $path)));
+        }
+    }
+
+    /** @param list<string> $arguments */
+    private function gitOutput(string $root, array $arguments): string
+    {
+        $command = 'git -C '.escapeshellarg($root);
+        foreach ($arguments as $argument) {
+            $command .= ' '.escapeshellarg($argument);
+        }
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+        self::assertSame(0, $exitCode);
+
+        return trim(implode("\n", $output));
+    }
+
+    private function removeDirectory(string $directory): void
+    {
+        if (!is_dir($directory)) {
+            return;
+        }
+        $items = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($items as $item) {
+            $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+        }
+        rmdir($directory);
     }
 }
