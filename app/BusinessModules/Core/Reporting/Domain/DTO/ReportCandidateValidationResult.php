@@ -16,22 +16,22 @@ final readonly class ReportCandidateValidationResult
     {
         $indexed = [];
         foreach ($items as $item) {
-            if (!$item instanceof ReportCandidateValidationItem || isset($indexed[$item->code])) {
+            if (! $item instanceof ReportCandidateValidationItem || isset($indexed[$item->code])) {
                 throw new InvalidArgumentException('report_candidate_validation_result_invalid');
             }
             $indexed[$item->code] = $item;
         }
-        ksort($indexed, SORT_STRING);
         $this->items = array_values($indexed);
     }
 
     public function passed(): bool
     {
         foreach ($this->items as $item) {
-            if (!$item->passed) {
+            if (! $item->passed) {
                 return false;
             }
         }
+
         return true;
     }
 
