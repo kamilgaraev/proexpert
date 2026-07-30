@@ -10,7 +10,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\Models\ContractPerformanceAct;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAcceptanceFact;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionRow;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot;
@@ -26,10 +25,15 @@ final readonly class AcceptedProductionSnapshotMaterializer
 {
     private const FORMULA_VERSION = 'accepted_production.v1';
 
+    private AcceptedProductionLifecycleCompleteness $completeness;
+
     public function __construct(
         private AcceptedProductionFormula $formula,
         private ProductionAcceptanceRecognitionGrain $grain,
-    ) {}
+        ?AcceptedProductionLifecycleCompleteness $completeness = null,
+    ) {
+        $this->completeness = $completeness ?? new AcceptedProductionLifecycleCompleteness;
+    }
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
@@ -48,7 +52,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
             ->orderBy('source_line_id')
             ->orderBy('transition_version')
             ->get();
-        $this->assertProjectionComplete($scope, $query, $allEvents);
+        $this->completeness->assertComplete($scope, $query->asOf, $allEvents);
         $events = $allEvents
             ->filter(fn (ProductionAcceptanceEvent $event): bool => $this->matchesFilters($query, $event))
             ->values();
@@ -243,53 +247,6 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 currencySource: $first->currency_source,
             ),
         ];
-    }
-
-    private function assertProjectionComplete(
-        ReportScope $scope,
-        ReportQuery $query,
-        Collection $events,
-    ): void {
-        $latestEvents = $events
-            ->groupBy(static fn (ProductionAcceptanceEvent $event): string => implode(':', [
-                $event->performance_act_id,
-                $event->source_line_type,
-                $event->source_line_id,
-            ]))
-            ->map(static fn (Collection $lineEvents): ?ProductionAcceptanceEvent => $lineEvents->last());
-        $acts = ContractPerformanceAct::query()
-            ->whereIn('project_id', $scope->projectIds)
-            ->whereHas('contract', static fn ($builder) => $builder->where('organization_id', $scope->organizationId))
-            ->where('created_at', '<=', $query->asOf)
-            ->where(function ($builder): void {
-                $builder
-                    ->where('is_approved', true)
-                    ->orWhereIn('status', [
-                        ContractPerformanceAct::STATUS_APPROVED,
-                        ContractPerformanceAct::STATUS_SIGNED,
-                    ]);
-            })
-            ->with(['lines:id,performance_act_id', 'completedWorks:id'])
-            ->get();
-        foreach ($acts as $act) {
-            if ($act->signed_at !== null && $act->signed_at->greaterThan($query->asOf)) {
-                continue;
-            }
-            $sourceLineType = $act->lines->isNotEmpty() ? 'performance_act_line' : 'completed_work';
-            $sourceLineIds = $act->lines->isNotEmpty()
-                ? $act->lines->pluck('id')
-                : $act->completedWorks->pluck('id');
-            if ($sourceLineIds->isEmpty()) {
-                throw new InvalidArgumentException('accepted_production_lines_missing');
-            }
-            foreach ($sourceLineIds as $sourceLineId) {
-                $key = implode(':', [$act->id, $sourceLineType, $sourceLineId]);
-                $latest = $latestEvents->get($key);
-                if (! $latest instanceof ProductionAcceptanceEvent || $latest->event_type !== 'accepted') {
-                    throw new InvalidArgumentException('accepted_production_projection_incomplete');
-                }
-            }
-        }
     }
 
     private function totals(Collection $rows): array

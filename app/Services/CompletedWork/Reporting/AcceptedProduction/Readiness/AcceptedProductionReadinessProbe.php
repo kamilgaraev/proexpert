@@ -9,15 +9,20 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
-use App\Models\ContractPerformanceAct;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLifecycleCompleteness;
 use App\Support\Reporting\ReportSourceReadinessFactory;
 
 final readonly class AcceptedProductionReadinessProbe implements ReportSourceReadinessProbe
 {
+    private AcceptedProductionLifecycleCompleteness $completeness;
+
     public function __construct(
         private ReportSourceReadinessFactory $readiness,
-    ) {}
+        ?AcceptedProductionLifecycleCompleteness $completeness = null,
+    ) {
+        $this->completeness = $completeness ?? new AcceptedProductionLifecycleCompleteness;
+    }
 
     public function supports(ReportDefinition $definition): bool
     {
@@ -43,9 +48,6 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             ->orderBy('source_line_id')
             ->orderBy('transition_version')
             ->get();
-        $latestEventTypes = $events
-            ->groupBy(self::key(...))
-            ->map(static fn ($lineEvents): string => (string) $lineEvents->last()->event_type);
         $eligible = $events->map(static fn (ProductionAcceptanceEvent $event): array => [
             'event_id' => (int) $event->id,
             'source_hash' => (string) $event->source_hash,
@@ -62,67 +64,13 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             ->all();
         $gapCount = count($eligible) - count($projected);
 
-        $acts = ContractPerformanceAct::query()
-            ->whereIn('project_id', $context->scope->projectIds)
-            ->where('created_at', '<=', $query->asOf)
-            ->whereHas('contract', fn ($builder) => $builder
-                ->where('organization_id', $context->scope->organizationId))
-            ->where(function ($builder): void {
-                $builder
-                    ->where('is_approved', true)
-                    ->orWhereIn('status', [
-                        ContractPerformanceAct::STATUS_APPROVED,
-                        ContractPerformanceAct::STATUS_SIGNED,
-                    ]);
-            })
-            ->with(['lines:id,performance_act_id', 'completedWorks:id'])
-            ->orderBy('id')
-            ->get();
-        foreach ($acts as $act) {
-            if ($act->signed_at !== null && $act->signed_at->greaterThan($query->asOf)) {
-                continue;
-            }
-            foreach ($this->sourceLines($act) as $sourceLine) {
-                $key = implode(':', [(int) $act->id, $sourceLine['type'], $sourceLine['id']]);
-                if ($latestEventTypes->get($key) === 'accepted') {
-                    continue;
-                }
-                $eligible[] = [
-                    'performance_act_id' => (int) $act->id,
-                    'source_line_id' => $sourceLine['id'],
-                    'source_line_type' => $sourceLine['type'],
-                ];
-                $gapCount++;
-            }
+        foreach ($this->completeness->inspect($context->scope, $query->asOf, $events) as $gap) {
+            $eligible[] = $gap;
+            $gapCount++;
         }
 
         $watermark = 'event:'.(int) ($events->max('id') ?? 0);
 
         return $this->readiness->make($eligible, $projected, $gapCount, 0, $watermark);
-    }
-
-    private function sourceLines(ContractPerformanceAct $act): array
-    {
-        $lines = $act->lines->map(static fn ($line): array => [
-            'id' => (int) $line->id,
-            'type' => 'performance_act_line',
-        ]);
-        if ($lines->isNotEmpty()) {
-            return $lines->all();
-        }
-
-        return $act->completedWorks->map(static fn ($work): array => [
-            'id' => (int) $work->id,
-            'type' => 'completed_work',
-        ])->all();
-    }
-
-    private static function key(ProductionAcceptanceEvent $event): string
-    {
-        return implode(':', [
-            (int) $event->performance_act_id,
-            (string) $event->source_line_type,
-            (int) $event->source_line_id,
-        ]);
     }
 }

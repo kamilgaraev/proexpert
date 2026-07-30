@@ -156,6 +156,7 @@ final readonly class BaselineScheduleSnapshotService
         $allowedScheduleIds = ProjectSchedule::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
+            ->where('created_at', '<=', $query->asOf)
             ->where('is_template', false)
             ->when($scheduleIds !== [], fn ($builder) => $builder->whereIn('id', $scheduleIds))
             ->pluck('id')

@@ -149,19 +149,85 @@ final class Waves23ProductionContractsTest extends TestCase
     }
 
     #[Test]
-    public function accepted_production_readiness_requires_latest_as_of_event_to_remain_accepted(): void
+    public function accepted_production_readiness_uses_latest_immutable_lifecycle_event(): void
     {
         $readiness = $this->source(
             'app/Services/CompletedWork/Reporting/AcceptedProduction/Readiness/'
             .'AcceptedProductionReadinessProbe.php',
         );
-
-        self::assertStringContainsString('->groupBy(self::key(...))', $readiness);
-        self::assertStringContainsString(
-            "\$latestEventTypes->get(\$key) === 'accepted'",
-            $readiness,
+        $lifecycle = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionLifecycleCompleteness.php',
         );
+
+        self::assertStringContainsString('->groupBy(static fn (ProductionAcceptanceEvent $event)', $lifecycle);
+        self::assertStringContainsString("\$latest->event_type !== 'reversed'", $lifecycle);
+        self::assertStringContainsString('$this->completeness->inspect(', $readiness);
         self::assertStringNotContainsString('$eventKeys->has($key)', $readiness);
+    }
+
+    #[Test]
+    public function accepted_production_completeness_uses_temporal_owner_history_instead_of_current_status(): void
+    {
+        $lifecycle = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionLifecycleCompleteness.php',
+        );
+        $readiness = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Readiness/'
+            .'AcceptedProductionReadinessProbe.php',
+        );
+        $materializer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionSnapshotMaterializer.php',
+        );
+
+        self::assertStringContainsString("where('signed_at', '<=', \$asOf)", $lifecycle);
+        self::assertStringContainsString("where('approval_date', '<=', \$asOf)", $lifecycle);
+        self::assertStringContainsString('rejected_at', $lifecycle);
+        self::assertStringContainsString('accepted_production_owner_history_unproven', $lifecycle);
+        self::assertStringNotContainsString("where('is_approved'", $lifecycle);
+        self::assertStringNotContainsString("orWhereIn('status'", $lifecycle);
+        self::assertStringContainsString('$this->completeness->inspect(', $readiness);
+        self::assertStringContainsString('$this->completeness->assertComplete(', $materializer);
+    }
+
+    #[Test]
+    public function schedule_candidate_universe_is_identical_and_historical_for_r06_and_r07(): void
+    {
+        $baselineReadiness = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Readiness/'
+            .'BaselineScheduleVarianceReadinessProbe.php',
+        );
+        $baselineMaterializer = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/'
+            .'BaselineScheduleSnapshotService.php',
+        );
+        $lookaheadReadiness = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Readiness/'
+            .'LookaheadReadinessProbe.php',
+        );
+        $lookaheadMaterializer = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadReadinessSnapshotMaterializer.php',
+        );
+
+        self::assertStringContainsString(
+            "throw new InvalidArgumentException('lookahead_project_filter_empty')",
+            $lookaheadReadiness,
+        );
+        self::assertStringContainsString(
+            "throw new InvalidArgumentException('lookahead_project_filter_empty')",
+            $lookaheadMaterializer,
+        );
+        foreach ([
+            $baselineReadiness,
+            $baselineMaterializer,
+            $lookaheadReadiness,
+            $lookaheadMaterializer,
+        ] as $source) {
+            self::assertStringContainsString("where('created_at', '<=', \$query->asOf)", $source);
+        }
     }
 
     #[Test]

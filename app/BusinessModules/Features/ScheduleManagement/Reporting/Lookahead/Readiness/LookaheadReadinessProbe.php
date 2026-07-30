@@ -48,6 +48,9 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             $context->scope->projectIds,
             $this->positiveIntegerFilter($query, 'project_ids') ?: $context->scope->projectIds,
         ));
+        if ($projectIds === []) {
+            throw new InvalidArgumentException('lookahead_project_filter_empty');
+        }
         try {
             $policySet = $this->policies->activeForProjects(
                 $context->scope->organizationId,
@@ -73,6 +76,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         $scheduleIds = ProjectSchedule::query()
             ->where('organization_id', $context->scope->organizationId)
             ->whereIn('project_id', $projectIds)
+            ->where('created_at', '<=', $query->asOf)
             ->where('is_template', false)
             ->pluck('id')
             ->map('intval')

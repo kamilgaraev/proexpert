@@ -7,7 +7,11 @@ namespace Tests\Feature\Reporting\Waves23;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFormula;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLifecycleCompleteness;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionSnapshotMaterializer;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceRecognitionGrain;
 use DateTimeImmutable;
@@ -133,6 +137,67 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         );
     }
 
+    public function test_approval_after_as_of_is_not_part_of_candidate_universe(): void
+    {
+        [$scope] = $this->insertLifecycleOwner(
+            approvalDate: '2026-08-02',
+            rejectedAt: null,
+        );
+
+        $gaps = (new AcceptedProductionLifecycleCompleteness)->inspect(
+            $scope,
+            new DateTimeImmutable('2026-07-30T23:59:59Z'),
+            collect(),
+        );
+
+        self::assertSame([], $gaps);
+    }
+
+    public function test_rejection_before_as_of_without_reversal_event_is_an_explicit_gap(): void
+    {
+        [$scope, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: '2026-07-20',
+            rejectedAt: '2026-07-29T12:00:00Z',
+        );
+        $this->insertEvent(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            eventType: 'accepted',
+            quantity: '2.500',
+            recognizedAt: '2026-07-20T00:00:00Z',
+            performanceActId: $actId,
+            sourceLineId: $lineId,
+        );
+
+        $gaps = (new AcceptedProductionLifecycleCompleteness)->inspect(
+            $scope,
+            new DateTimeImmutable('2026-07-30T23:59:59Z'),
+            ProductionAcceptanceEvent::query()->orderBy('transition_version')->get(),
+        );
+
+        self::assertCount(1, $gaps);
+        self::assertSame('accepted_production_owner_history_unproven', $gaps[0]['reason']);
+    }
+
+    public function test_mutable_current_status_does_not_remove_legacy_candidate_from_gap_detection(): void
+    {
+        [$scope, $actId] = $this->insertLifecycleOwner(
+            approvalDate: '2026-07-20',
+            rejectedAt: null,
+            currentStatus: 'draft',
+        );
+
+        $gaps = (new AcceptedProductionLifecycleCompleteness)->inspect(
+            $scope,
+            new DateTimeImmutable('2026-07-30T23:59:59Z'),
+            collect(),
+        );
+
+        self::assertCount(1, $gaps);
+        self::assertSame($actId, $gaps[0]['performance_act_id']);
+        self::assertSame('accepted_production_owner_history_unproven', $gaps[0]['reason']);
+    }
+
     private function insertEvent(
         int $organizationId,
         int $projectId,
@@ -141,14 +206,16 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         string $recognizedAt,
         ?int $reversesEventId = null,
         int $transitionVersion = 1,
+        int $performanceActId = 51,
+        int $sourceLineId = 91,
     ): int {
         return (int) DB::table('production_acceptance_events')->insertGetId([
             'organization_id' => $organizationId,
             'project_id' => $projectId,
             'contract_id' => 21,
-            'performance_act_id' => 51,
+            'performance_act_id' => $performanceActId,
             'source_line_type' => 'performance_act_line',
-            'source_line_id' => 91,
+            'source_line_id' => $sourceLineId,
             'work_id' => 77,
             'task_id' => 31,
             'wbs_code' => '1.2',
@@ -180,5 +247,68 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
                 ['type' => 'completed_work', 'id' => 77, 'project_id' => $projectId],
             ], JSON_THROW_ON_ERROR),
         ]);
+    }
+
+    private function insertLifecycleOwner(
+        string $approvalDate,
+        ?string $rejectedAt,
+        ?string $currentStatus = null,
+    ): array {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $contractorId = (int) DB::table('contractors')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Lifecycle contractor',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $contractId = (int) DB::table('contracts')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractorId,
+            'number' => 'LIFECYCLE-'.$project->id,
+            'date' => '2026-07-01',
+            'total_amount' => 1000,
+            'status' => 'active',
+            'created_at' => '2026-07-01T00:00:00Z',
+            'updated_at' => '2026-07-01T00:00:00Z',
+        ]);
+        $actId = (int) DB::table('contract_performance_acts')->insertGetId([
+            'contract_id' => $contractId,
+            'project_id' => $project->id,
+            'act_document_number' => 'ACT-'.$project->id,
+            'act_date' => '2026-07-20',
+            'amount' => 1000,
+            'status' => $currentStatus ?? ($rejectedAt === null ? 'approved' : 'rejected'),
+            'is_approved' => $currentStatus === null && $rejectedAt === null,
+            'approval_date' => $approvalDate,
+            'rejected_at' => $rejectedAt,
+            'created_at' => '2026-07-10T00:00:00Z',
+            'updated_at' => '2026-07-10T00:00:00Z',
+        ]);
+        $lineId = (int) DB::table('performance_act_lines')->insertGetId([
+            'performance_act_id' => $actId,
+            'line_type' => 'manual',
+            'title' => 'Lifecycle line',
+            'quantity' => 1,
+            'unit_price' => 1000,
+            'amount' => 1000,
+            'created_at' => '2026-07-10T00:00:00Z',
+            'updated_at' => '2026-07-10T00:00:00Z',
+        ]);
+
+        return [
+            new ReportScope(
+                (int) $organization->id,
+                [(int) $organization->id],
+                [(int) $project->id],
+                [],
+                new DateTimeZone('UTC'),
+            ),
+            $actId,
+            $lineId,
+            (int) $project->id,
+            (int) $organization->id,
+        ];
     }
 }

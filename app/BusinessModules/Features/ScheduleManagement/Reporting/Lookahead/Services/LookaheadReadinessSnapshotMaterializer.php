@@ -10,13 +10,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadConstraintState;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadEligibilityInput;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessRow;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
-use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\Models\ScheduleTask;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
@@ -32,8 +32,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         private LookaheadReadinessPolicyService $policies,
         private LookaheadReadinessFormula $formula,
         private HistoricalScheduleTaskStateQuery $historicalTasks,
-    ) {
-    }
+    ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
@@ -53,6 +52,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         $scheduleIds = \App\Models\ProjectSchedule::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
+            ->where('created_at', '<=', $query->asOf)
             ->where('is_template', false)
             ->pluck('id')
             ->map('intval')
@@ -136,7 +136,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     linkedResourceId: $linkedResource['id'] ?? null,
                 );
             }
-            if (!$this->matchesConstraintFilters($query, $constraints)) {
+            if (! $this->matchesConstraintFilters($query, $constraints)) {
                 continue;
             }
             $inputs[] = new LookaheadEligibilityInput(
@@ -205,130 +205,130 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 $inputs,
                 $sourceHash
             ): ReportSnapshotRef {
-            $snapshotId = (string) Str::ulid();
-            $metrics = array_map(
-                fn (LookaheadEligibilityInput $input): array => [
-                    $input,
-                    $this->formula->evaluate($input, $policySet->forProject((int) $input->projectId)),
-                ],
-                $inputs,
-            );
-            $projectionRows = [];
-            foreach ($metrics as [$input, $metric]) {
-                $constraints = $input->constraints === [] ? [null] : $input->constraints;
-                foreach ($constraints as $constraint) {
-                    $projectionRows[] = [$input, $metric, $constraint];
-                }
-            }
-            $coverage = $this->formula->summarize(array_column($metrics, 1));
-            $totals = [
-                'eligible_tasks' => (int) $coverage->denominator,
-                'ready_tasks' => (int) $coverage->numerator,
-                'readiness_pct' => $coverage->ratio,
-                'hard_blockers' => $coverage->hardBlockers,
-                'soft_blockers' => $coverage->softBlockers,
-            ];
-            $sourceRefs = [[
-                'source' => 'schedule',
-                'snapshot_kind' => 'lookahead_readiness',
-                'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
-                'schema_version' => 'lookahead_events_v1',
-                'watermark' => 'source_'.substr($sourceHash->value, 0, 24),
-                'row_count' => count($projectionRows),
-                'hash' => $sourceHash->value,
-            ]];
-            $snapshot = LookaheadReadinessSnapshot::query()->create([
-                'id' => $snapshotId,
-                'organization_id' => $scope->organizationId,
-                'policy_version_ids' => array_map(
-                    static fn ($policy): int => $policy->policyId ?? $policy->version,
-                    $policySet->all(),
-                ),
-                'as_of' => $query->asOf,
-                'formula_version' => self::FORMULA_VERSION,
-                'definition_hash' => $query->definition->definitionHash->value,
-                'query_hash' => $query->queryHash->value,
-                'source_hash' => $sourceHash->value,
-                'generated_at' => $query->asOf,
-                'stale_at' => $query->asOf->modify('+15 minutes'),
-                'watermarks' => [
-                    'policies' => $policyHashes,
-                    'events' => 'source_'.substr($sourceHash->value, 0, 24),
-                ],
-                'totals' => $totals,
-                'source_refs' => $sourceRefs,
-                'row_schema' => $this->rowSchema(),
-                'row_count' => count($projectionRows),
-            ]);
-
-            foreach ($projectionRows as [$input, $metric, $constraint]) {
-                $payload = [
-                    'project_id' => $input->projectId,
-                    'schedule_id' => $input->scheduleId,
-                    'task_id' => $input->taskId,
-                    'planned_start_date' => $input->plannedStart->format('Y-m-d'),
-                    'wbs_code' => $input->wbsCode,
-                    'owner_id' => $input->ownerId,
-                    'contractor_id' => $input->contractorId,
-                    'zone_id' => $input->zoneId,
-                    'eligible' => $metric->eligible,
-                    'ready' => $metric->ready,
-                    'blocking_constraint_ids' => $metric->blockingConstraintIds,
-                    'hard_blockers' => $metric->hardBlockers,
-                    'soft_blockers' => $metric->softBlockers,
-                    'constraint_age_days' => $metric->maxConstraintAgeDays,
-                    'constraint_id' => $constraint?->constraintId,
-                    'constraint_type' => $constraint?->type,
-                    'constraint_severity' => $constraint?->severity,
-                    'constraint_status' => $constraint?->status,
-                    'waiver_until' => $constraint?->waiverUntil?->format(DATE_ATOM),
-                    'waiver_evidence_ref' => $constraint?->waiverEvidenceRef,
-                    'linked_resource_type' => $constraint?->linkedResourceType,
-                    'linked_resource_id' => $constraint?->linkedResourceId,
-                    'warning_code' => $metric->warningCode,
-                    'unknown_metrics' => $metric->warningCode === null ? [] : ['waiver_validity'],
-                ];
-                LookaheadReadinessRow::query()->create([
-                    'organization_id' => $scope->organizationId,
-                    'snapshot_id' => $snapshotId,
-                    'row_key' => implode(':', [
-                        $input->projectId,
-                        $input->scheduleId,
-                        $input->taskId,
-                        $constraint?->constraintId ?? 'none',
-                    ]),
-                    'project_id' => $input->projectId,
-                    'schedule_id' => $input->scheduleId,
-                    'task_id' => $input->taskId,
-                    'constraint_id' => $constraint?->constraintId,
-                    'constraint_type' => $constraint?->type,
-                    'constraint_status' => $constraint?->status,
-                    'planned_start_date' => $input->plannedStart,
-                    'wbs_code' => $input->wbsCode,
-                    'owner_id' => $input->ownerId,
-                    'contractor_id' => $input->contractorId,
-                    'zone_id' => $input->zoneId,
-                    'severity' => $constraint?->severity,
-                    'due_date' => null,
-                    'eligible' => $metric->eligible,
-                    'ready' => $metric->ready,
-                    'age_days' => $metric->maxConstraintAgeDays,
-                    'payload' => $payload,
-                    'source_refs' => [
-                        ['type' => 'schedule_task', 'id' => $input->taskId, 'project_id' => $input->projectId],
-                        ...($constraint === null ? [] : [[
-                            'type' => 'work_constraint',
-                            'id' => $constraint->constraintId,
-                            'project_id' => $input->projectId,
-                        ]]),
-                        ...($constraint?->linkedResourceId === null ? [] : [[
-                            'type' => $constraint->linkedResourceType,
-                            'id' => $constraint->linkedResourceId,
-                            'project_id' => $input->projectId,
-                        ]]),
+                $snapshotId = (string) Str::ulid();
+                $metrics = array_map(
+                    fn (LookaheadEligibilityInput $input): array => [
+                        $input,
+                        $this->formula->evaluate($input, $policySet->forProject((int) $input->projectId)),
                     ],
+                    $inputs,
+                );
+                $projectionRows = [];
+                foreach ($metrics as [$input, $metric]) {
+                    $constraints = $input->constraints === [] ? [null] : $input->constraints;
+                    foreach ($constraints as $constraint) {
+                        $projectionRows[] = [$input, $metric, $constraint];
+                    }
+                }
+                $coverage = $this->formula->summarize(array_column($metrics, 1));
+                $totals = [
+                    'eligible_tasks' => (int) $coverage->denominator,
+                    'ready_tasks' => (int) $coverage->numerator,
+                    'readiness_pct' => $coverage->ratio,
+                    'hard_blockers' => $coverage->hardBlockers,
+                    'soft_blockers' => $coverage->softBlockers,
+                ];
+                $sourceRefs = [[
+                    'source' => 'schedule',
+                    'snapshot_kind' => 'lookahead_readiness',
+                    'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
+                    'schema_version' => 'lookahead_events_v1',
+                    'watermark' => 'source_'.substr($sourceHash->value, 0, 24),
+                    'row_count' => count($projectionRows),
+                    'hash' => $sourceHash->value,
+                ]];
+                $snapshot = LookaheadReadinessSnapshot::query()->create([
+                    'id' => $snapshotId,
+                    'organization_id' => $scope->organizationId,
+                    'policy_version_ids' => array_map(
+                        static fn ($policy): int => $policy->policyId ?? $policy->version,
+                        $policySet->all(),
+                    ),
+                    'as_of' => $query->asOf,
+                    'formula_version' => self::FORMULA_VERSION,
+                    'definition_hash' => $query->definition->definitionHash->value,
+                    'query_hash' => $query->queryHash->value,
+                    'source_hash' => $sourceHash->value,
+                    'generated_at' => $query->asOf,
+                    'stale_at' => $query->asOf->modify('+15 minutes'),
+                    'watermarks' => [
+                        'policies' => $policyHashes,
+                        'events' => 'source_'.substr($sourceHash->value, 0, 24),
+                    ],
+                    'totals' => $totals,
+                    'source_refs' => $sourceRefs,
+                    'row_schema' => $this->rowSchema(),
+                    'row_count' => count($projectionRows),
                 ]);
-            }
+
+                foreach ($projectionRows as [$input, $metric, $constraint]) {
+                    $payload = [
+                        'project_id' => $input->projectId,
+                        'schedule_id' => $input->scheduleId,
+                        'task_id' => $input->taskId,
+                        'planned_start_date' => $input->plannedStart->format('Y-m-d'),
+                        'wbs_code' => $input->wbsCode,
+                        'owner_id' => $input->ownerId,
+                        'contractor_id' => $input->contractorId,
+                        'zone_id' => $input->zoneId,
+                        'eligible' => $metric->eligible,
+                        'ready' => $metric->ready,
+                        'blocking_constraint_ids' => $metric->blockingConstraintIds,
+                        'hard_blockers' => $metric->hardBlockers,
+                        'soft_blockers' => $metric->softBlockers,
+                        'constraint_age_days' => $metric->maxConstraintAgeDays,
+                        'constraint_id' => $constraint?->constraintId,
+                        'constraint_type' => $constraint?->type,
+                        'constraint_severity' => $constraint?->severity,
+                        'constraint_status' => $constraint?->status,
+                        'waiver_until' => $constraint?->waiverUntil?->format(DATE_ATOM),
+                        'waiver_evidence_ref' => $constraint?->waiverEvidenceRef,
+                        'linked_resource_type' => $constraint?->linkedResourceType,
+                        'linked_resource_id' => $constraint?->linkedResourceId,
+                        'warning_code' => $metric->warningCode,
+                        'unknown_metrics' => $metric->warningCode === null ? [] : ['waiver_validity'],
+                    ];
+                    LookaheadReadinessRow::query()->create([
+                        'organization_id' => $scope->organizationId,
+                        'snapshot_id' => $snapshotId,
+                        'row_key' => implode(':', [
+                            $input->projectId,
+                            $input->scheduleId,
+                            $input->taskId,
+                            $constraint?->constraintId ?? 'none',
+                        ]),
+                        'project_id' => $input->projectId,
+                        'schedule_id' => $input->scheduleId,
+                        'task_id' => $input->taskId,
+                        'constraint_id' => $constraint?->constraintId,
+                        'constraint_type' => $constraint?->type,
+                        'constraint_status' => $constraint?->status,
+                        'planned_start_date' => $input->plannedStart,
+                        'wbs_code' => $input->wbsCode,
+                        'owner_id' => $input->ownerId,
+                        'contractor_id' => $input->contractorId,
+                        'zone_id' => $input->zoneId,
+                        'severity' => $constraint?->severity,
+                        'due_date' => null,
+                        'eligible' => $metric->eligible,
+                        'ready' => $metric->ready,
+                        'age_days' => $metric->maxConstraintAgeDays,
+                        'payload' => $payload,
+                        'source_refs' => [
+                            ['type' => 'schedule_task', 'id' => $input->taskId, 'project_id' => $input->projectId],
+                            ...($constraint === null ? [] : [[
+                                'type' => 'work_constraint',
+                                'id' => $constraint->constraintId,
+                                'project_id' => $input->projectId,
+                            ]]),
+                            ...($constraint?->linkedResourceId === null ? [] : [[
+                                'type' => $constraint->linkedResourceType,
+                                'id' => $constraint->linkedResourceId,
+                                'project_id' => $input->projectId,
+                            ]]),
+                        ],
+                    ]);
+                }
 
                 return $this->reference($scope, $query, $snapshot);
             });
@@ -349,10 +349,10 @@ final readonly class LookaheadReadinessSnapshotMaterializer
     private function linkedResource(array $evidenceRefs): ?array
     {
         foreach ($evidenceRefs as $reference) {
-            if (!is_array($reference)
+            if (! is_array($reference)
                 || ($reference['type'] ?? null) === 'waiver_evidence'
-                || !is_string($reference['type'] ?? null)
-                || !is_numeric($reference['id'] ?? null)
+                || ! is_string($reference['type'] ?? null)
+                || ! is_numeric($reference['id'] ?? null)
                 || (int) $reference['id'] < 1
             ) {
                 continue;
@@ -372,7 +372,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         $values = $query->filters->values;
         $horizonDays = $values['horizon_days'] ?? null;
         if ($horizonDays !== null) {
-            if (!is_numeric($horizonDays) || (int) $horizonDays < 1) {
+            if (! is_numeric($horizonDays) || (int) $horizonDays < 1) {
                 throw new InvalidArgumentException('lookahead_horizon_filter_invalid');
             }
             $filterEnd = $query->asOf->modify('+'.(int) $horizonDays.' days');
@@ -416,7 +416,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         if ($values === []) {
             return [];
         }
-        if (!is_array($values) || !array_is_list($values)) {
+        if (! is_array($values) || ! array_is_list($values)) {
             throw new InvalidArgumentException('lookahead_filter_invalid');
         }
 
@@ -433,7 +433,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         if ($filter === []) {
             return true;
         }
-        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+        if (! is_array($filter) || ! array_is_list($filter) || $value === null) {
             return false;
         }
 
