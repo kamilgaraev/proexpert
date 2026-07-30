@@ -31,6 +31,9 @@ final readonly class FilesystemReportConformanceEvidenceRepository implements Re
         ?Closure $atomicRename = null,
         ?string $schemaPath = null,
     ) {
+        if (@lstat($repositoryRoot) === false || is_link($repositoryRoot)) {
+            throw new RuntimeException('report_conformance_repository_root_invalid');
+        }
         $resolvedRoot = realpath($repositoryRoot);
         if (! is_string($resolvedRoot) || ! is_dir($resolvedRoot)) {
             throw new RuntimeException('report_conformance_repository_root_invalid');
@@ -39,12 +42,16 @@ final readonly class FilesystemReportConformanceEvidenceRepository implements Re
         $this->atomicRename = $atomicRename
             ?? static fn (string $temporary, string $final): bool => rename($temporary, $final);
 
-        $resolvedSchema = realpath(
-            $schemaPath ?? $this->repositoryRoot.'/docs/reports/contracts/report-conformance-evidence.schema.json',
+        $schemaCandidate = $schemaPath
+            ?? $this->repositoryRoot.'/docs/reports/contracts/report-conformance-evidence.schema.json';
+        $this->assertNoSymlinksWithinRoot(
+            $schemaCandidate,
+            true,
+            'report_conformance_schema_path_invalid',
         );
+        $resolvedSchema = realpath($schemaCandidate);
         if (! is_string($resolvedSchema)
             || ! is_file($resolvedSchema)
-            || is_link($resolvedSchema)
             || ! str_starts_with(
                 $this->normalizePath($resolvedSchema),
                 $this->repositoryRoot.'/docs/reports/contracts/',
@@ -60,10 +67,15 @@ final readonly class FilesystemReportConformanceEvidenceRepository implements Re
         Sha256Hash $fixtureHash,
     ): ReportDefinitionConformanceEvidence {
         $relativePath = $this->relativePath($code, $definitionHash, $fixtureHash);
-        $path = realpath($this->repositoryRoot.'/'.$relativePath);
+        $candidatePath = $this->repositoryRoot.'/'.$relativePath;
+        $this->assertNoSymlinksWithinRoot(
+            $candidatePath,
+            true,
+            'report_conformance_evidence_not_found',
+        );
+        $path = realpath($candidatePath);
         if (! is_string($path)
             || ! is_file($path)
-            || is_link($path)
             || ! str_starts_with(
                 $this->normalizePath($path),
                 $this->repositoryRoot.'/build/reports/conformance/',
@@ -94,12 +106,26 @@ final readonly class FilesystemReportConformanceEvidenceRepository implements Re
         );
         $path = $this->repositoryRoot.'/'.$relativePath;
         $directory = dirname($path);
+        $this->assertNoSymlinksWithinRoot(
+            $directory,
+            false,
+            'report_conformance_evidence_path_invalid',
+        );
         if (! is_dir($directory) && ! mkdir($directory, 0777, true) && ! is_dir($directory)) {
             throw new RuntimeException('report_conformance_evidence_directory_failed');
         }
+        $this->assertNoSymlinksWithinRoot(
+            $directory,
+            true,
+            'report_conformance_evidence_path_invalid',
+        );
+        $this->assertNoSymlinksWithinRoot(
+            $path,
+            false,
+            'report_conformance_evidence_path_invalid',
+        );
         $resolvedDirectory = realpath($directory);
         if (! is_string($resolvedDirectory)
-            || is_link($directory)
             || ! str_starts_with(
                 $this->normalizePath($resolvedDirectory).'/',
                 $this->repositoryRoot.'/build/reports/conformance/',
@@ -276,5 +302,40 @@ final readonly class FilesystemReportConformanceEvidenceRepository implements Re
     private function normalizePath(string $path): string
     {
         return rtrim(str_replace('\\', '/', $path), '/');
+    }
+
+    private function assertNoSymlinksWithinRoot(
+        string $path,
+        bool $mustExist,
+        string $error,
+    ): void {
+        $current = $this->normalizePath($path);
+        $root = $this->repositoryRoot;
+        $first = true;
+
+        while (true) {
+            $stat = @lstat($current);
+            if ($stat === false) {
+                if ($first && $mustExist) {
+                    throw new RuntimeException($error);
+                }
+            } elseif (is_link($current)) {
+                throw new RuntimeException($error);
+            }
+
+            if ($current === $root) {
+                return;
+            }
+            if (! str_starts_with($current.'/', $root.'/')) {
+                throw new RuntimeException($error);
+            }
+
+            $parent = $this->normalizePath(dirname($current));
+            if ($parent === $current) {
+                throw new RuntimeException($error);
+            }
+            $current = $parent;
+            $first = false;
+        }
     }
 }

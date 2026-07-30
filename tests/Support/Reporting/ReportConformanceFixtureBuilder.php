@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportConformanceFixture;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
@@ -26,13 +27,21 @@ final class ReportConformanceFixtureBuilder
 
     private Sha256Hash $expectedTotalsHash;
 
+    private ReportDrillDownCell $drillDownCell;
+
+    private Sha256Hash $expectedDrillDownHash;
+
     public function __construct()
     {
         $this->fixtureHash = new Sha256Hash(str_repeat('f', 64));
         $this->sort = new ReportWindowSort('name', ReportSortDirection::ASC);
-        $this->drillDown = new ReportDrillDownRequest('row-1', null, 25);
+        $this->drillDown = new ReportDrillDownRequest('signed.opaque.token', null, 25);
         $this->expectedTotalsHash = new Sha256Hash(
             hash('sha256', '{"amount":"30.00"}'),
+        );
+        $this->drillDownCell = new ReportDrillDownCell('row-1', 'name');
+        $this->expectedDrillDownHash = new Sha256Hash(
+            'c621ab66913de009c148301a72538f1e3c8ae7899452800387e8eb4cb6448641',
         );
     }
 
@@ -85,6 +94,20 @@ final class ReportConformanceFixtureBuilder
         return $this;
     }
 
+    public function drillDownCell(ReportDrillDownCell $value): self
+    {
+        $this->drillDownCell = $value;
+
+        return $this;
+    }
+
+    public function expectedDrillDownHash(Sha256Hash $value): self
+    {
+        $this->expectedDrillDownHash = $value;
+
+        return $this;
+    }
+
     public function build(): ReportConformanceFixture
     {
         return new ReportConformanceFixture(
@@ -95,6 +118,8 @@ final class ReportConformanceFixtureBuilder
             $this->cursorChunkSize,
             $this->drillDown,
             $this->expectedTotalsHash,
+            $this->drillDownCell,
+            $this->expectedDrillDownHash,
         );
     }
 }

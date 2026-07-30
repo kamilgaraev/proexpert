@@ -10,7 +10,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportConformanceFixture;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -23,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceConformanceEvidence;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -37,6 +37,7 @@ final class ReportSourceConformanceHarness
         'availability',
         'binding_identity',
         'canonical_values',
+        'drill_semantics',
         'page_cursor_semantics',
         'query_identity',
         'resource_links',
@@ -74,6 +75,28 @@ final class ReportSourceConformanceHarness
 
         $sourceChecks['binding_identity'] = $this->bindingIdentityMatches($definition, $binding);
         $sourceChecks['query_identity'] = $this->queryIdentityMatches($definition, $query);
+        $sourceChecks['scope'] = $context->scope->canonicalIdentity()
+            === $query->scope->canonicalIdentity();
+
+        if (! $sourceChecks['binding_identity']
+            || ! $sourceChecks['query_identity']
+            || ! $sourceChecks['scope']) {
+            return $this->evidence(
+                $definition,
+                $binding,
+                $fixture,
+                $sourceHash,
+                $snapshotKind,
+                $snapshotId,
+                $rowCount,
+                $rowsHash,
+                $totalsHash,
+                $sourceChecks,
+                $formulaChecks,
+                $commitSha,
+                $generatedAt,
+            );
+        }
 
         try {
             $progress = new ReportProgress(0);
@@ -95,10 +118,11 @@ final class ReportSourceConformanceHarness
             ) as $row) {
                 $rows[] = $row;
             }
+            $drillInput = $this->drillDownInput($fixture);
             $drill = $binding->drillDownProvider->drillDown(
                 $context,
                 $snapshot,
-                $this->drillDownInput($definition, $fixture),
+                $drillInput,
             );
 
             $snapshotKind = $snapshot->kind;
@@ -118,6 +142,13 @@ final class ReportSourceConformanceHarness
                 && count($rows) === $fixture->expectedRowCount;
             $sourceChecks['unique_row_keys'] = $this->hasUniqueRowKeys($rows);
             $sourceChecks['page_cursor_semantics'] = $this->pageMatchesCursor($page, $rows, $fixture);
+            $sourceChecks['drill_semantics'] = $this->drillSemanticsMatch(
+                $definition,
+                $fixture,
+                $rows,
+                $drillInput,
+                $drill,
+            );
             $sourceChecks['result_semantics'] = $this->resultSemanticsMatch(
                 $definition,
                 $snapshot,
@@ -127,14 +158,19 @@ final class ReportSourceConformanceHarness
             $sourceChecks['resource_links'] = $this->hasSignedResourceLinks($drill);
             $sourceChecks['sensitive_redaction'] = $this->isRedacted(
                 $definition,
-                [$rows, $page->rows, $page->totals, $result->totals, $drill->rows],
+                $result,
+                $page,
+                $rows,
+                $drill,
             );
 
             try {
                 $rowsHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($rows)));
                 $totalsHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($result->totals)));
                 CanonicalJson::encode($page->rows);
-                CanonicalJson::encode($drill->rows);
+                CanonicalJson::encode($this->drillPayload($drill));
+                CanonicalJson::encode($this->provenancePayload($result));
+                CanonicalJson::encode($this->qualityPayload($result->quality));
                 $sourceChecks['canonical_values'] = true;
             } catch (Throwable) {
                 $sourceChecks['canonical_values'] = false;
@@ -167,37 +203,18 @@ final class ReportSourceConformanceHarness
             $sourceChecks['query_identity'] = $this->queryIdentityMatches($definition, $query);
         }
 
-        $sourceCodes = $this->assertionCodes('source', $sourceChecks);
-        $formulaCodes = $this->assertionCodes('formula', $formulaChecks);
-        $sourcePassed = $this->allPassed($sourceChecks);
-        $formulaPassed = $this->allPassed($formulaChecks);
-        $sourceEvidence = new ReportSourceConformanceEvidence(
+        return $this->evidence(
+            $definition,
+            $binding,
+            $fixture,
             $sourceHash,
             $snapshotKind,
             $snapshotId,
             $rowCount,
             $rowsHash,
-            $sourcePassed,
-            $sourceCodes,
-        );
-        $formulaEvidence = new ReportFormulaConformanceEvidence(
-            $definition->formulaVersion,
             $totalsHash,
-            $formulaPassed,
-            $formulaCodes,
-        );
-
-        return new ReportDefinitionConformanceEvidence(
-            $definition->code,
-            $definition->definitionHash,
-            $definition->contractVersion,
-            $definition->sourceSchemaVersion,
-            $fixture->fixtureHash,
-            $sourceEvidence,
-            $formulaEvidence,
-            $this->componentClassHashes($definition, $binding),
-            count($sourceCodes) + count($formulaCodes),
-            $sourcePassed && $formulaPassed ? 'passed' : 'failed',
+            $sourceChecks,
+            $formulaChecks,
             $commitSha,
             $generatedAt,
         );
@@ -253,7 +270,42 @@ final class ReportSourceConformanceHarness
             && $page->limit === $fixture->pageLimit
             && $page->sort == $fixture->sort
             && $page->hasMore === (count($rows) > $fixture->pageLimit)
-            && ($page->hasMore || $page->nextCursor === null);
+            && ($page->hasMore
+                ? is_string($page->nextCursor)
+                    && $page->nextCursor !== ''
+                    && trim($page->nextCursor) === $page->nextCursor
+                : $page->nextCursor === null);
+    }
+
+    private function drillSemanticsMatch(
+        ReportDefinition $definition,
+        ReportConformanceFixture $fixture,
+        array $rows,
+        ReportDrillDownInput $input,
+        ReportDrillDownResult $drill,
+    ): bool {
+        $rowKeys = array_column($rows, 'row_key');
+        $columnIds = array_column($definition->columns, 'id');
+        if (! in_array($fixture->drillDownCell->rowKey, $rowKeys, true)
+            || ! in_array($fixture->drillDownCell->columnId, $columnIds, true)
+            || $input->cell != $fixture->drillDownCell
+            || $input->cursor !== $fixture->drillDown->cursor
+            || $input->limit !== $fixture->drillDown->limit
+            || ($drill->nextCursor !== null
+                && ($drill->nextCursor === '' || trim($drill->nextCursor) !== $drill->nextCursor))) {
+            return false;
+        }
+
+        try {
+            $actualHash = new Sha256Hash(hash(
+                'sha256',
+                CanonicalJson::encode($this->drillPayload($drill)),
+            ));
+        } catch (Throwable) {
+            return false;
+        }
+
+        return hash_equals($fixture->expectedDrillDownHash->value, $actualHash->value);
     }
 
     private function resultSemanticsMatch(
@@ -311,6 +363,45 @@ final class ReportSourceConformanceHarness
         ];
     }
 
+    private function provenancePayload(ReportResult $result): array
+    {
+        return [
+            'external_confirmation_role' => $result->provenance->externalConfirmationRole,
+            'source_hash' => $result->provenance->sourceHash->value,
+            'source_of_truth' => $result->provenance->sourceOfTruth,
+            'source_refs' => array_map(
+                static fn ($reference): array => [
+                    'hash' => $reference->hash->value,
+                    'row_count' => $reference->rowCount,
+                    'schema_version' => $reference->schemaVersion,
+                    'snapshot_id' => $reference->snapshotId,
+                    'snapshot_kind' => $reference->snapshotKind,
+                    'source' => $reference->source,
+                    'watermark' => $reference->watermark,
+                ],
+                $result->provenance->sourceRefs,
+            ),
+        ];
+    }
+
+    private function drillPayload(ReportDrillDownResult $drill): array
+    {
+        return [
+            'next_cursor' => $drill->nextCursor,
+            'resource_links' => array_map(
+                static fn (ReportResourceLink $link): array => [
+                    'availability' => $link->availability,
+                    'params' => $link->params,
+                    'resource_id' => $link->resourceId,
+                    'resource_type' => $link->resourceType,
+                    'route_name' => $link->routeName,
+                ],
+                $drill->resourceLinks,
+            ),
+            'rows' => $drill->rows,
+        ];
+    }
+
     private function hasUniqueRowKeys(array $rows): bool
     {
         $keys = [];
@@ -343,18 +434,68 @@ final class ReportSourceConformanceHarness
         return true;
     }
 
-    private function isRedacted(ReportDefinition $definition, array $values): bool
-    {
-        $forbiddenKeys = array_fill_keys(
-            array_merge(
-                ['email', 'filters', 'password', 'phone', 'pii', 'query', 'secret', 'token', 'url'],
-                $definition->outputClassification->sensitiveColumnIds,
-            ),
-            true,
-        );
+    private function isRedacted(
+        ReportDefinition $definition,
+        ReportResult $result,
+        ReportPage $page,
+        array $cursorRows,
+        ReportDrillDownResult $drill,
+    ): bool {
+        $columnIds = array_column($definition->columns, 'id');
+        $allowedRowKeys = array_fill_keys(array_merge(['row_key'], $columnIds), true);
+        foreach ([$cursorRows, $page->rows, $drill->rows] as $rows) {
+            foreach ($rows as $row) {
+                if (! is_array($row) || array_is_list($row)) {
+                    return false;
+                }
+                foreach (array_keys($row) as $key) {
+                    if (! is_string($key) || ! isset($allowedRowKeys[$key])) {
+                        return false;
+                    }
+                }
+            }
+        }
 
-        foreach ($values as $value) {
-            if ($this->containsForbiddenKey($value, $forbiddenKeys)) {
+        $classification = $definition->outputClassification;
+        $protectedColumns = array_fill_keys(array_merge(
+            $classification->sensitiveColumnIds,
+            $classification->auditColumnIds,
+        ), true);
+        foreach ([$cursorRows, $page->rows, $drill->rows] as $rows) {
+            foreach ($rows as $row) {
+                foreach (array_keys($row) as $key) {
+                    if (is_string($key) && isset($protectedColumns[$key])) {
+                        return false;
+                    }
+                }
+            }
+        }
+        foreach (array_keys($result->totals + $page->totals) as $key) {
+            if (isset($protectedColumns[$key])) {
+                return false;
+            }
+        }
+        if (($classification->defaultClassification === ReportDataClassification::SENSITIVE
+                && ($cursorRows !== [] || $page->rows !== [] || $drill->rows !== [] || $result->totals !== []))
+            || (($classification->totalsSensitive || $classification->totalsAudit)
+                && ($result->totals !== [] || $page->totals !== []))
+            || ($classification->provenanceAudit && $result->provenance->sourceRefs !== [])) {
+            return false;
+        }
+
+        $projections = [
+            $cursorRows,
+            $page->rows,
+            $page->totals,
+            $result->totals,
+            $result->rowSchema,
+            $result->capabilities,
+            $this->qualityPayload($result->quality),
+            $this->provenancePayload($result),
+            $this->drillPayload($drill),
+        ];
+        foreach ($projections as $projection) {
+            if ($this->containsForbiddenMaterial($projection)) {
                 return false;
             }
         }
@@ -362,16 +503,21 @@ final class ReportSourceConformanceHarness
         return true;
     }
 
-    private function containsForbiddenKey(mixed $value, array $forbiddenKeys): bool
+    private function containsForbiddenMaterial(mixed $value, ?string $key = null): bool
     {
+        if ($key !== null
+            && preg_match('/(?:pass(?:word|phrase)?|secret|token|credential|authorization|api[_-]?key|private[_-]?key|email|phone|passport|snils|address|pii|url|query|filter|sql)/i', $key) === 1) {
+            return true;
+        }
+        if (is_string($value)
+            && preg_match('/(?:https?:\/\/|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|bearer\s+|akia[0-9a-z]+|-----BEGIN|password|secret|access[_-]?token)/i', $value) === 1) {
+            return true;
+        }
         if (! is_array($value)) {
             return false;
         }
         foreach ($value as $key => $nested) {
-            if (is_string($key) && isset($forbiddenKeys[strtolower($key)])) {
-                return true;
-            }
-            if ($this->containsForbiddenKey($nested, $forbiddenKeys)) {
+            if ($this->containsForbiddenMaterial($nested, is_string($key) ? $key : null)) {
                 return true;
             }
         }
@@ -379,16 +525,63 @@ final class ReportSourceConformanceHarness
         return false;
     }
 
-    private function drillDownInput(
-        ReportDefinition $definition,
-        ReportConformanceFixture $fixture,
-    ): ReportDrillDownInput {
-        $columnId = $definition->columns[0]['id'];
-
+    private function drillDownInput(ReportConformanceFixture $fixture): ReportDrillDownInput
+    {
         return new ReportDrillDownInput(
-            new ReportDrillDownCell($fixture->drillDown->token, $columnId),
+            $fixture->drillDownCell,
             $fixture->drillDown->cursor,
             $fixture->drillDown->limit,
+        );
+    }
+
+    private function evidence(
+        ReportDefinition $definition,
+        ReportDefinitionBinding $binding,
+        ReportConformanceFixture $fixture,
+        Sha256Hash $sourceHash,
+        string $snapshotKind,
+        string $snapshotId,
+        int $rowCount,
+        Sha256Hash $rowsHash,
+        Sha256Hash $totalsHash,
+        array $sourceChecks,
+        array $formulaChecks,
+        string $commitSha,
+        DateTimeImmutable $generatedAt,
+    ): ReportDefinitionConformanceEvidence {
+        $sourceCodes = $this->assertionCodes('source', $sourceChecks);
+        $formulaCodes = $this->assertionCodes('formula', $formulaChecks);
+        $sourcePassed = $this->allPassed($sourceChecks);
+        $formulaPassed = $this->allPassed($formulaChecks);
+        $sourceEvidence = new ReportSourceConformanceEvidence(
+            $sourceHash,
+            $snapshotKind,
+            $snapshotId,
+            $rowCount,
+            $rowsHash,
+            $sourcePassed,
+            $sourceCodes,
+        );
+        $formulaEvidence = new ReportFormulaConformanceEvidence(
+            $definition->formulaVersion,
+            $totalsHash,
+            $formulaPassed,
+            $formulaCodes,
+        );
+
+        return new ReportDefinitionConformanceEvidence(
+            $definition->code,
+            $definition->definitionHash,
+            $definition->contractVersion,
+            $definition->sourceSchemaVersion,
+            $fixture->fixtureHash,
+            $sourceEvidence,
+            $formulaEvidence,
+            $this->componentClassHashes($definition, $binding),
+            count($sourceCodes) + count($formulaCodes),
+            $sourcePassed && $formulaPassed ? 'passed' : 'failed',
+            $commitSha,
+            $generatedAt,
         );
     }
 

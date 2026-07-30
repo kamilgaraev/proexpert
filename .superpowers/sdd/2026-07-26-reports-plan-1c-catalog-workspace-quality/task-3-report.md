@@ -103,3 +103,49 @@ GREEN:
 Открытых замечаний по Task 3 implementation нет.
 
 Локальный runtime проверок — PHP 8.3.7; целевая версия проекта — PHP 8.2.
+
+## Independent review round 1
+
+Статус: `FIXED`.
+
+Закрыты четыре блокирующих замечания.
+
+### Identity fence
+
+- binding, query и current owner scope проверяются до первого owner-port вызова;
+- mismatch немедленно возвращает failed evidence;
+- materialize/result/page/cursor/drill call counts при mismatch остаются нулевыми.
+
+### Page/cursor/drill parity
+
+- `hasMore` теперь строго эквивалентен наличию непустого canonical next cursor;
+- page limit, sort, row prefix и cursor chunk semantics проверяются точно;
+- fixture расширен явным `ReportDrillDownCell` и SHA-256 полного ожидаемого drill result;
+- opaque signed request token не используется как row key;
+- drill target row/column проверяются по candidate definition и cursor rows;
+- drill rows, next cursor и typed resource links входят в result-identity hash.
+
+### Leakage и redaction
+
+- row keys закрыты allowlist `row_key + definition.columns`;
+- undeclared поля fail closed;
+- учитываются default `SENSITIVE`, sensitive/audit columns, totalsSensitive, totalsAudit и provenanceAudit;
+- result/page/cursor/drill/totals/quality/provenance/resource-link projections рекурсивно проверяются;
+- проверяются не только имена, но и secret/PII credential-like значения;
+- link params с token/credential keys отклоняются.
+
+### Filesystem symlink fence
+
+- repository root, schema, evidence и directory path проверяются через `lstat`/`is_link` до `realpath`;
+- проверяется вся цепочка существующих компонентов внутри repository root;
+- schema/evidence symlink regressions добавлены;
+- на текущей Windows оба symlink regressions явно `Skipped`, поскольку ОС вернула failure при создании file symlink; silent pass отсутствует.
+
+### Проверки после round 1
+
+- amended exact two-file PHPUnit gate: `24 tests`, `123 assertions`, `2 skipped` только по документированной platform incapability;
+- PHPStan changed production: `[OK] No errors`, `--memory-limit=1G`;
+- Pint changed PHP files: PASS после двух точечных style fixes;
+- `git diff --check`: замечаний нет;
+- published registry/assembler/map dependencies отсутствуют;
+- Task 4 / global Task 18 не начинался.

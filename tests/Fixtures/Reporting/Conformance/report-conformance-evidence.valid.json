@@ -1,5 +1,5 @@
 {
-    "assertion_count": 15,
+    "assertion_count": 16,
     "code": "quality_report",
     "commit_sha": "1111111111111111111111111111111111111111",
     "component_class_hashes": [
@@ -10,7 +10,7 @@
     ],
     "contract_version": "1",
     "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "digest": "b23b6ae1033e1eb1bee25b337a1eaaa33b993e7fefa5b5d40a44aefca61d8edf",
+    "digest": "9c0b5d77171a7889b9f76ebc6326eda293e8b656e70bedc74e83ddadc1c3f9d8",
     "fixture_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "formula": {
         "assertion_codes": [
@@ -27,6 +27,7 @@
             "source.availability.passed",
             "source.binding_identity.passed",
             "source.canonical_values.passed",
+            "source.drill_semantics.passed",
             "source.page_cursor_semantics.passed",
             "source.query_identity.passed",
             "source.resource_links.passed",

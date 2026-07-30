@@ -11,9 +11,11 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportConformanceFixture;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
@@ -25,6 +27,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
@@ -65,7 +68,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
 
         self::assertTrue($evidence->passed());
         self::assertSame('passed', $evidence->status);
-        self::assertSame(15, $evidence->assertionCount);
+        self::assertSame(16, $evidence->assertionCount);
         self::assertSame('fixture', $evidence->source->snapshotKind);
         self::assertSame(2, $evidence->source->rowCount);
         self::assertSame('quality_report', $evidence->code);
@@ -76,7 +79,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         self::assertTrue($evidence->source->passed);
         self::assertTrue($evidence->formula->passed);
         self::assertSame('fixture-1', $evidence->source->snapshotId);
-        self::assertCount(13, $evidence->source->assertionCodes);
+        self::assertCount(14, $evidence->source->assertionCodes);
         self::assertCount(2, $evidence->formula->assertionCodes);
         self::assertTrue($this->verify($this->scenario(completeProgress: false))->passed());
     }
@@ -110,6 +113,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
 
         self::assertFalse($evidence->passed());
         self::assertContains('source.binding_identity.failed', $evidence->source->assertionCodes);
+        $this->assertOwnerPortsWereNotCalled($scenario['binding']);
 
         $sourceDrift = $this->verify($this->scenario(sourceHashDrift: true));
         self::assertFalse($sourceDrift->passed());
@@ -140,6 +144,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         self::assertSame('failed', $evidence->status);
         self::assertFalse($evidence->source->passed);
         self::assertSame('quality_report', $evidence->code);
+        $this->assertOwnerPortsWereNotCalled($scenario['binding']);
     }
 
     public function test_owner_scope_drift_returns_failed_evidence(): void
@@ -161,14 +166,21 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         self::assertContains('source.scope.failed', $evidence->source->assertionCodes);
         self::assertSame('failed', $evidence->status);
         self::assertFalse($evidence->source->passed);
+        $this->assertOwnerPortsWereNotCalled($scenario['binding']);
     }
 
     public function test_duplicate_cursor_row_keys_return_failed_evidence(): void
     {
-        $scenario = $this->scenario(cursorRows: [
-            ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
-            ['row_key' => 'row-1', 'name' => 'B', 'amount' => '20.00'],
-        ]);
+        $scenario = $this->scenario(
+            pageRows: [
+                ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
+                ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
+            ],
+            cursorRows: [
+                ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
+                ['row_key' => 'row-1', 'name' => 'B', 'amount' => '20.00'],
+            ],
+        );
 
         $evidence = $this->verify($scenario);
 
@@ -181,10 +193,16 @@ final class ReportSourceConformanceHarnessTest extends TestCase
 
     public function test_page_cursor_semantic_drift_returns_failed_evidence(): void
     {
-        $scenario = $this->scenario(cursorRows: [
-            ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
-            ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
-        ]);
+        $scenario = $this->scenario(
+            pageRows: [
+                ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
+                ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
+            ],
+            cursorRows: [
+                ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
+                ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
+            ],
+        );
 
         $evidence = $this->verify($scenario);
 
@@ -195,12 +213,65 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         self::assertContains('source.unique_row_keys.passed', $evidence->source->assertionCodes);
     }
 
+    public function test_has_more_without_valid_next_cursor_returns_failed_evidence(): void
+    {
+        $scenario = $this->scenario(
+            cursorRows: [
+                ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
+                ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
+                ['row_key' => 'row-3', 'name' => 'C', 'amount' => '30.00'],
+            ],
+            forceNullNextCursor: true,
+        );
+
+        $evidence = $this->verify($scenario);
+
+        self::assertFalse($evidence->passed());
+        self::assertContains('source.page_cursor_semantics.failed', $evidence->source->assertionCodes);
+    }
+
+    public function test_drill_target_and_result_identity_are_exact(): void
+    {
+        foreach ([
+            (new ReportConformanceFixtureBuilder)
+                ->drillDownCell(new ReportDrillDownCell('missing-row', 'name'))
+                ->build(),
+            (new ReportConformanceFixtureBuilder)
+                ->drillDownCell(new ReportDrillDownCell('row-1', 'missing_column'))
+                ->build(),
+            (new ReportConformanceFixtureBuilder)
+                ->expectedDrillDownHash(new Sha256Hash(str_repeat('e', 64)))
+                ->build(),
+        ] as $fixture) {
+            $scenario = $this->scenario();
+            $scenario['fixture'] = $fixture;
+
+            $evidence = $this->verify($scenario);
+
+            self::assertFalse($evidence->passed());
+            self::assertContains('source.drill_semantics.failed', $evidence->source->assertionCodes);
+        }
+
+        $scenario = $this->scenario();
+        $this->verify($scenario);
+        $input = $scenario['binding']->drillDownProvider->calls()[0][2];
+        self::assertSame('row-1', $input->cell->rowKey);
+        self::assertSame('name', $input->cell->columnId);
+        self::assertNotSame($scenario['fixture']->drillDown->token, $input->cell->rowKey);
+    }
+
     public function test_nonfinite_cursor_value_returns_failed_evidence(): void
     {
-        $scenario = $this->scenario(cursorRows: [
-            ['row_key' => 'row-1', 'name' => 'A', 'amount' => INF],
-            ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
-        ]);
+        $scenario = $this->scenario(
+            pageRows: [
+                ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
+                ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
+            ],
+            cursorRows: [
+                ['row_key' => 'row-1', 'name' => 'A', 'amount' => INF],
+                ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
+            ],
+        );
 
         $evidence = $this->verify($scenario);
 
@@ -226,6 +297,59 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         self::assertSame('failed', $evidence->status);
         self::assertFalse($evidence->source->passed);
         self::assertContains('source.canonical_values.passed', $evidence->source->assertionCodes);
+    }
+
+    public function test_undeclared_row_column_and_link_token_return_failed_evidence(): void
+    {
+        $rows = [
+            ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00', 'undeclared_metric' => '1'],
+            ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
+        ];
+        $undeclared = $this->verify($this->scenario(pageRows: $rows, cursorRows: $rows));
+        self::assertFalse($undeclared->passed());
+        self::assertContains('source.sensitive_redaction.failed', $undeclared->source->assertionCodes);
+
+        $linkToken = $this->verify($this->scenario(resourceParams: [
+            'project_id' => 1,
+            'access_token' => 'opaque',
+        ]));
+        self::assertFalse($linkToken->passed());
+        self::assertContains('source.sensitive_redaction.failed', $linkToken->source->assertionCodes);
+    }
+
+    public function test_default_totals_sensitive_and_audit_classification_return_failed_evidence(): void
+    {
+        foreach ([
+            new ReportOutputClassification(
+                ReportDataClassification::SENSITIVE,
+                [],
+                [],
+                false,
+                false,
+                false,
+            ),
+            new ReportOutputClassification(
+                ReportDataClassification::STANDARD,
+                [],
+                [],
+                true,
+                false,
+                false,
+            ),
+            new ReportOutputClassification(
+                ReportDataClassification::STANDARD,
+                [],
+                ['amount'],
+                false,
+                false,
+                false,
+            ),
+        ] as $classification) {
+            $evidence = $this->verify($this->scenario(outputClassification: $classification));
+
+            self::assertFalse($evidence->passed());
+            self::assertContains('source.sensitive_redaction.failed', $evidence->source->assertionCodes);
+        }
     }
 
     public function test_unsigned_or_unavailable_resource_link_returns_failed_evidence(): void
@@ -315,6 +439,64 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         }
     }
 
+    public function test_filesystem_repository_rejects_schema_symlink_before_realpath(): void
+    {
+        $root = $this->temporaryRepository();
+        $schema = $root.'/docs/reports/contracts/report-conformance-evidence.schema.json';
+        $target = $root.'/docs/reports/contracts/report-conformance-evidence.target.json';
+        rename($schema, $target);
+        if (! @symlink($target, $schema)) {
+            $this->removeDirectory($root);
+            self::markTestSkipped('Filesystem does not support file symlinks.');
+        }
+
+        try {
+            try {
+                new FilesystemReportConformanceEvidenceRepository(
+                    $root,
+                    new Draft202012SchemaValidator(new CompliantValidator),
+                    schemaPath: $schema,
+                );
+                self::fail('Schema symlink must fail closed.');
+            } catch (\RuntimeException) {
+                self::assertTrue(true);
+            }
+        } finally {
+            $this->removeDirectory($root);
+        }
+    }
+
+    public function test_filesystem_repository_rejects_evidence_symlink_before_realpath(): void
+    {
+        $scenario = $this->scenario();
+        $evidence = $this->verify($scenario);
+        $root = $this->temporaryRepository();
+        $repository = new FilesystemReportConformanceEvidenceRepository(
+            $root,
+            new Draft202012SchemaValidator(new CompliantValidator),
+        );
+        $repository->put($evidence);
+        $path = $root.'/build/reports/conformance/quality_report/'
+            .$evidence->definitionHash->value.'/'.$evidence->fixtureHash->value.'.json';
+        $target = dirname($path).'/evidence.target.json';
+        rename($path, $target);
+        if (! @symlink($target, $path)) {
+            $this->removeDirectory($root);
+            self::markTestSkipped('Filesystem does not support file symlinks.');
+        }
+
+        try {
+            try {
+                $repository->get($evidence->code, $evidence->definitionHash, $evidence->fixtureHash);
+                self::fail('Evidence symlink must fail closed.');
+            } catch (\RuntimeException) {
+                self::assertTrue(true);
+            }
+        } finally {
+            $this->removeDirectory($root);
+        }
+    }
+
     private function verify(array $scenario): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence
     {
         return (new ReportSourceConformanceHarness)->verify(
@@ -328,6 +510,15 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         );
     }
 
+    private function assertOwnerPortsWereNotCalled(ReportDefinitionBinding $binding): void
+    {
+        self::assertSame([], $binding->dataProvider->materializeCalls());
+        self::assertSame([], $binding->dataProvider->resultCalls());
+        self::assertSame([], $binding->rowQuery->pageCalls());
+        self::assertSame([], $binding->rowQuery->cursorCalls());
+        self::assertSame([], $binding->drillDownProvider->calls());
+    }
+
     private function scenario(
         ReportFreshnessStatus $freshness = ReportFreshnessStatus::FRESH,
         ?array $pageRows = null,
@@ -335,10 +526,25 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         string $resourceAvailability = 'available',
         bool $sourceHashDrift = false,
         bool $completeProgress = true,
+        bool $forceNullNextCursor = false,
+        ?array $resourceParams = null,
+        ?ReportOutputClassification $outputClassification = null,
     ): array {
         $candidate = (new ReportDefinitionBuilder)
             ->code('quality_report')
             ->sourceSchemaVersion('v1')
+            ->columns([
+                ['id' => 'name'],
+                ['id' => 'amount'],
+            ])
+            ->outputClassification($outputClassification ?? new ReportOutputClassification(
+                ReportDataClassification::STANDARD,
+                [],
+                [],
+                false,
+                false,
+                false,
+            ))
             ->candidate();
         $context = (new ReportExecutionContextBuilder)->build();
         $query = new ReportQuery(
@@ -349,18 +555,16 @@ final class ReportSourceConformanceHarnessTest extends TestCase
             new DateTimeImmutable('2026-07-26T00:00:00+00:00'),
             'ru',
         );
-        $rows = $pageRows ?? [
-            ['row_key' => 'row-1', 'name' => 'A', 'amount' => '10.00'],
-            ['row_key' => 'row-2', 'name' => 'B', 'amount' => '20.00'],
-        ];
         $cursorRows ??= [
             ['amount' => '10.00', 'name' => 'A', 'row_key' => 'row-1'],
             ['name' => 'B', 'row_key' => 'row-2', 'amount' => '20.00'],
         ];
+        $rows = $pageRows ?? array_slice($cursorRows, 0, 2);
+        $rowCount = count($cursorRows);
         $totals = ['amount' => '30.00'];
         $quality = new ReportQuality(
             ReportQualityStatus::COMPLETE,
-            new ReportCoverage('2', '2', '1.0'),
+            new ReportCoverage((string) $rowCount, (string) $rowCount, '1.0'),
             [],
             0,
             ReportReconciliationStatus::MATCHED,
@@ -379,6 +583,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
             $totals,
             $quality,
             $freshness,
+            $rowCount,
         );
         $sourceHash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
         if ($sourceHashDrift) {
@@ -393,15 +598,16 @@ final class ReportSourceConformanceHarnessTest extends TestCase
             $totals,
             $quality,
             $freshness,
+            $rowCount,
         );
         $page = new ReportPage(
             $rows,
             $totals,
             $freshness,
             $quality,
-            null,
+            $rowCount > 2 && ! $forceNullNextCursor ? 'signed-page-2' : null,
             2,
-            false,
+            $rowCount > 2,
             (new ReportConformanceFixtureBuilder)->build()->sort,
         );
         $drill = new ReportDrillDownResult(
@@ -411,7 +617,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
                 'project',
                 'project_1',
                 'admin.projects.show',
-                ['project_id' => 1],
+                $resourceParams ?? ['project_id' => 1],
                 $resourceAvailability,
             )],
         );
@@ -433,7 +639,9 @@ final class ReportSourceConformanceHarnessTest extends TestCase
             'binding' => $binding,
             'context' => $context,
             'query' => $query,
-            'fixture' => (new ReportConformanceFixtureBuilder)->build(),
+            'fixture' => (new ReportConformanceFixtureBuilder)
+                ->expectedRowCount($rowCount)
+                ->build(),
         ];
     }
 
@@ -446,6 +654,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         array $totals,
         ReportQuality $quality,
         ReportFreshnessStatus $freshness,
+        int $rowCount,
     ): array {
         $snapshot = new ReportSnapshotRef(
             'fixture',
@@ -468,14 +677,14 @@ final class ReportSourceConformanceHarnessTest extends TestCase
                 'fixture_1',
                 $query->definition->sourceSchemaVersion,
                 'period_2026_07',
-                2,
+                $rowCount,
                 $sourceRefHash,
             )],
             $sourceHash,
             null,
         );
         $result = new ReportResult(
-            new ReportResultMetadata($snapshot, 2, $generatedAt, null),
+            new ReportResultMetadata($snapshot, $rowCount, $generatedAt, null),
             $totals,
             $freshness,
             $quality,
