@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
+use DateTimeInterface;
 use Illuminate\Support\Collection;
 
 final readonly class SupplyBackfillEvidenceHasher
@@ -19,13 +20,16 @@ final readonly class SupplyBackfillEvidenceHasher
         'receiptLines.returns',
     ];
 
-    public function inputSlice(?string $previousHash, Collection $items): string
-    {
+    public function inputSlice(
+        ?string $previousHash,
+        Collection $items,
+        DateTimeInterface $historicalCutoff,
+    ): string {
         $hash = $previousHash;
         foreach ($items as $item) {
             $hash = hash('sha256', CanonicalJson::encode([
                 'previous' => $hash,
-                'fact' => $this->inputFact($item),
+                'fact' => $this->inputFact($item, $historicalCutoff),
             ]));
         }
 
@@ -36,11 +40,13 @@ final readonly class SupplyBackfillEvidenceHasher
         ?string $previousHash,
         int $organizationId,
         array $itemIds,
+        DateTimeInterface $historicalCutoff,
     ): string {
         $records = [
             ...SentPurchaseOrderLineOwner::query()
                 ->where('organization_id', $organizationId)
                 ->whereIn('purchase_order_item_id', $itemIds)
+                ->where('effective_from', '<=', $historicalCutoff)
                 ->orderBy('id')
                 ->get(['id', 'purchase_order_item_id', 'source_hash'])
                 ->map(static fn ($row): array => [
@@ -53,6 +59,7 @@ final readonly class SupplyBackfillEvidenceHasher
             ...PurchaseOrderPromiseVersion::query()
                 ->where('organization_id', $organizationId)
                 ->whereIn('purchase_order_item_id', $itemIds)
+                ->where('effective_from', '<=', $historicalCutoff)
                 ->orderBy('id')
                 ->get(['id', 'purchase_order_item_id', 'source_hash'])
                 ->map(static fn ($row): array => [
@@ -65,6 +72,7 @@ final readonly class SupplyBackfillEvidenceHasher
             ...SupplyLifecycleEvent::query()
                 ->where('organization_id', $organizationId)
                 ->whereIn('purchase_order_item_id', $itemIds)
+                ->where('occurred_at', '<=', $historicalCutoff)
                 ->orderBy('id')
                 ->get(['id', 'purchase_order_item_id', 'source_hash'])
                 ->map(static fn ($row): array => [
@@ -107,8 +115,12 @@ final readonly class SupplyBackfillEvidenceHasher
     /**
      * @return array{processed_count:int,input_hash:?string,output_hash:?string}
      */
-    public function recompute(int $organizationId, int $targetItemId, int $sliceSize = 500): array
-    {
+    public function recompute(
+        int $organizationId,
+        int $targetItemId,
+        DateTimeInterface $historicalCutoff,
+        int $sliceSize = 500,
+    ): array {
         $processedCount = 0;
         $inputHash = null;
         $outputHash = null;
@@ -117,6 +129,7 @@ final readonly class SupplyBackfillEvidenceHasher
             ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
             ->where('purchase_orders.organization_id', $organizationId)
             ->whereNotNull('purchase_orders.sent_at')
+            ->where('purchase_orders.sent_at', '<=', $historicalCutoff)
             ->where('purchase_order_items.id', '<=', $targetItemId)
             ->select('purchase_order_items.*')
             ->orderBy('purchase_order_items.id')
@@ -127,12 +140,14 @@ final readonly class SupplyBackfillEvidenceHasher
                     &$processedCount,
                     &$inputHash,
                     &$outputHash,
+                    $historicalCutoff,
                 ): void {
-                    $inputHash = $this->inputSlice($inputHash, $items);
+                    $inputHash = $this->inputSlice($inputHash, $items, $historicalCutoff);
                     $outputHash = $this->outputSlice(
                         $outputHash,
                         $organizationId,
                         $items->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+                        $historicalCutoff,
                     );
                     $processedCount += $items->count();
                 },
@@ -147,7 +162,7 @@ final readonly class SupplyBackfillEvidenceHasher
         ];
     }
 
-    private function inputFact(PurchaseOrderItem $item): array
+    private function inputFact(PurchaseOrderItem $item, DateTimeInterface $historicalCutoff): array
     {
         $order = $item->purchaseOrder;
         $request = $order->purchaseRequest;
@@ -181,19 +196,21 @@ final readonly class SupplyBackfillEvidenceHasher
                 'organization_id' => (int) $order->organization_id,
                 'purchase_request_id' => (int) $order->purchase_request_id,
                 'supplier_id' => $order->supplier_id === null ? null : (int) $order->supplier_id,
-                'status' => $order->status?->value,
                 'sent_at' => $order->sent_at?->format(DATE_ATOM),
-                'confirmed_at' => $order->confirmed_at?->format(DATE_ATOM),
-                'cancelled_at' => $order->cancelled_at?->format(DATE_ATOM),
-                'delivery_date' => $order->delivery_date?->format('Y-m-d'),
                 'currency' => $order->currency,
                 'pricing_source' => $order->pricing_source,
                 'warehouse_id' => $orderMetadata['warehouse_id'] ?? null,
                 'tax_basis' => $orderMetadata['tax_basis'] ?? null,
                 'freight_basis' => $orderMetadata['freight_basis'] ?? null,
                 'reporting_sent_at' => $orderMetadata['reporting_sent_at'] ?? null,
-                'reporting_confirmed_at' => $orderMetadata['reporting_confirmed_at'] ?? null,
-                'reporting_cancelled_at' => $orderMetadata['reporting_cancelled_at'] ?? null,
+                'reporting_confirmed_at' => $this->timestampAtOrBefore(
+                    $orderMetadata['reporting_confirmed_at'] ?? null,
+                    $historicalCutoff,
+                ),
+                'reporting_cancelled_at' => $this->timestampAtOrBefore(
+                    $orderMetadata['reporting_cancelled_at'] ?? null,
+                    $historicalCutoff,
+                ),
             ],
             'owner_source' => [
                 'request_id' => (int) $request->id,
@@ -205,8 +222,15 @@ final readonly class SupplyBackfillEvidenceHasher
                 'project_id' => $siteRequest === null ? null : (int) $siteRequest->project_id,
             ],
             'receipt_lines' => $item->receiptLines
+                ->filter(static function ($line) use ($historicalCutoff): bool {
+                    $metadata = is_array($line->metadata) ? $line->metadata : [];
+                    $postedAt = $metadata['reporting_posted_at'] ?? null;
+
+                    return is_string($postedAt) && strtotime($postedAt) !== false
+                        && strtotime($postedAt) <= $historicalCutoff->getTimestamp();
+                })
                 ->sortBy('id')
-                ->map(static function ($line): array {
+                ->map(static function ($line) use ($historicalCutoff): array {
                     $metadata = is_array($line->metadata) ? $line->metadata : [];
 
                     return [
@@ -220,11 +244,22 @@ final readonly class SupplyBackfillEvidenceHasher
                         'total_amount' => (string) $line->total_amount,
                         'source_version' => $metadata['reporting_source_version'] ?? null,
                         'posted_at' => $metadata['reporting_posted_at'] ?? null,
-                        'reversed_at' => $line->reversed_at?->format(DATE_ATOM),
-                        'reversal_reason_code' => $line->reversal_reason_code,
-                        'reversal_warehouse_movement_id' => $line->reversal_warehouse_movement_id,
-                        'legacy_corrections' => $metadata['reporting_return_events'] ?? [],
+                        'legacy_corrections' => collect($metadata['reporting_return_events'] ?? [])
+                            ->filter(static function ($correction) use ($historicalCutoff): bool {
+                                $occurredAt = is_array($correction)
+                                    ? ($correction['occurred_at'] ?? null)
+                                    : null;
+
+                                return is_string($occurredAt) && strtotime($occurredAt) !== false
+                                    && strtotime($occurredAt) <= $historicalCutoff->getTimestamp();
+                            })
+                            ->values()
+                            ->all(),
                         'returns' => $line->returns
+                            ->filter(
+                                static fn ($return): bool => $return->occurred_at->getTimestamp()
+                                    <= $historicalCutoff->getTimestamp(),
+                            )
                             ->sortBy('id')
                             ->map(static fn ($return): array => [
                                 'id' => (int) $return->id,
@@ -246,5 +281,15 @@ final readonly class SupplyBackfillEvidenceHasher
                 ->values()
                 ->all(),
         ];
+    }
+
+    private function timestampAtOrBefore(mixed $value, DateTimeInterface $cutoff): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+        $timestamp = strtotime($value);
+
+        return $timestamp !== false && $timestamp <= $cutoff->getTimestamp() ? $value : null;
     }
 }

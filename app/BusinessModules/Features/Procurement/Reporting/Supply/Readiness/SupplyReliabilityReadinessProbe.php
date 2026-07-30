@@ -190,6 +190,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             ? $this->evidence->recompute(
                 $context->scope->organizationId,
                 (int) $watermark->target_item_id,
+                $watermark->target_sent_at ?? new DateTimeImmutable('@0'),
             )
             : null;
         $incompleteBackfill = ! $watermark instanceof SupplyReliabilityBackfillWatermark
@@ -381,15 +382,40 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         string $tolerance,
     ): \Illuminate\Contracts\Database\Query\Expression {
         $cutoff = $query->asOf->format(DATE_ATOM);
-        $receipt = '(SELECT MIN(delay_event.occurred_at) FROM supply_lifecycle_events delay_event '
+        $relevantTypes = "('received', 'receipt_reversed', 'returned')";
+        $receipt = '(SELECT delay_event.occurred_at FROM supply_lifecycle_events delay_event '
             .'WHERE delay_event.promise_version_id = owner_promise.id '
             ."AND delay_event.occurred_at <= '{$cutoff}' "
+            ."AND delay_event.event_type = 'received' "
+            .'AND delay_event.signed_quantity > 0 '
             .'AND (SELECT COALESCE(SUM(delay_running.signed_quantity), 0) '
             .'FROM supply_lifecycle_events delay_running '
             .'WHERE delay_running.promise_version_id = owner_promise.id '
+            ."AND delay_running.event_type IN {$relevantTypes} "
             .'AND (delay_running.occurred_at < delay_event.occurred_at '
             .'OR (delay_running.occurred_at = delay_event.occurred_at AND delay_running.id <= delay_event.id))) '
-            .">= (owner_promise.ordered_quantity - {$tolerance}))";
+            .">= (owner_promise.ordered_quantity - {$tolerance}) "
+            .'AND (SELECT COALESCE(SUM(delay_before.signed_quantity), 0) '
+            .'FROM supply_lifecycle_events delay_before '
+            .'WHERE delay_before.promise_version_id = owner_promise.id '
+            ."AND delay_before.event_type IN {$relevantTypes} "
+            .'AND (delay_before.occurred_at < delay_event.occurred_at '
+            .'OR (delay_before.occurred_at = delay_event.occurred_at AND delay_before.id < delay_event.id))) '
+            ."< (owner_promise.ordered_quantity - {$tolerance}) "
+            .'AND NOT EXISTS (SELECT 1 FROM supply_lifecycle_events delay_later '
+            .'WHERE delay_later.promise_version_id = owner_promise.id '
+            ."AND delay_later.event_type IN {$relevantTypes} "
+            ."AND delay_later.occurred_at <= '{$cutoff}' "
+            .'AND (delay_later.occurred_at > delay_event.occurred_at '
+            .'OR (delay_later.occurred_at = delay_event.occurred_at AND delay_later.id > delay_event.id)) '
+            .'AND (SELECT COALESCE(SUM(delay_after.signed_quantity), 0) '
+            .'FROM supply_lifecycle_events delay_after '
+            .'WHERE delay_after.promise_version_id = owner_promise.id '
+            ."AND delay_after.event_type IN {$relevantTypes} "
+            .'AND (delay_after.occurred_at < delay_later.occurred_at '
+            .'OR (delay_after.occurred_at = delay_later.occurred_at AND delay_after.id <= delay_later.id))) '
+            ."< (owner_promise.ordered_quantity - {$tolerance})) "
+            .'ORDER BY delay_event.occurred_at DESC, delay_event.id DESC LIMIT 1)';
 
         return DB::raw(
             "(CASE WHEN {$receipt} IS NULL THEN 'unreceived' "

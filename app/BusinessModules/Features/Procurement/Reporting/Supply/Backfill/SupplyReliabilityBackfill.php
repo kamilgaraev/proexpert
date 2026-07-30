@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Supply\Backfill;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
@@ -44,6 +43,8 @@ final readonly class SupplyReliabilityBackfill
     ): OwnerBackfillBatch {
         $limit = min(self::MAX_SLICE, max(1, $limit));
         $watermark = $this->watermark($organizationId);
+        $historicalCutoff = $watermark->target_sent_at
+            ?? CarbonImmutable::createFromTimestampUTC(0);
         if (DB::getDriverName() === 'pgsql') {
             DB::select('SELECT pg_advisory_xact_lock(?, ?)', [$organizationId, 17]);
             $watermark->refresh();
@@ -60,6 +61,7 @@ final readonly class SupplyReliabilityBackfill
             ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
             ->where('purchase_orders.organization_id', $organizationId)
             ->whereNotNull('purchase_orders.sent_at')
+            ->where('purchase_orders.sent_at', '<=', $historicalCutoff)
             ->where('purchase_order_items.id', '>', $cursor)
             ->where('purchase_order_items.id', '<=', $watermark->target_item_id)
             ->select('purchase_order_items.*')
@@ -108,11 +110,11 @@ final readonly class SupplyReliabilityBackfill
                 $cancelledAt = is_string($cancelledEvidence) && trim($cancelledEvidence) !== ''
                     ? CarbonImmutable::parse($cancelledEvidence)->utc()
                     : null;
-                if ($order->status === PurchaseOrderStatusEnum::CANCELLED && $cancelledAt === null) {
-                    throw new DomainException('Legacy cancelled order requires explicit cancellation evidence.');
+                if ($confirmedAt?->greaterThan($historicalCutoff)) {
+                    $confirmedAt = null;
                 }
-                if ($order->confirmed_at !== null && $confirmedAt === null) {
-                    throw new DomainException('Legacy confirmed order requires explicit confirmation evidence.');
+                if ($cancelledAt?->greaterThan($historicalCutoff)) {
+                    $cancelledAt = null;
                 }
                 if (($confirmedAt !== null && $confirmedAt->lessThan($sentAt))
                     || ($cancelledAt !== null && $cancelledAt->lessThan($sentAt))) {
@@ -214,6 +216,9 @@ final readonly class SupplyReliabilityBackfill
 
                         continue;
                     }
+                    if (CarbonImmutable::parse($postedAt)->greaterThan($historicalCutoff)) {
+                        continue;
+                    }
                     $receipt = $this->events->receiptBackfill(
                         $line,
                         CarbonImmutable::parse($postedAt),
@@ -251,6 +256,9 @@ final readonly class SupplyReliabilityBackfill
                         }
                         $eventType = $correction['event_type'];
                         $occurredAt = CarbonImmutable::parse($correction['occurred_at']);
+                        if ($occurredAt->greaterThan($historicalCutoff)) {
+                            continue;
+                        }
                         $signedQuantity = '-'.ltrim($correction['quantity'], '+-');
                         $existingCorrection = SupplyLifecycleEvent::query()
                             ->where('organization_id', $organizationId)
@@ -294,11 +302,13 @@ final readonly class SupplyReliabilityBackfill
         $inputHash = $this->evidence->inputSlice(
             is_string($watermark->input_hash) ? $watermark->input_hash : null,
             $items,
+            $historicalCutoff,
         );
         $outputHash = $this->evidence->outputSlice(
             is_string($watermark->output_hash) ? $watermark->output_hash : null,
             $organizationId,
             $items->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+            $historicalCutoff,
         );
         $cumulativeGaps = (int) $watermark->gap_count + $gaps;
         $watermark->forceFill([
@@ -352,7 +362,7 @@ final readonly class SupplyReliabilityBackfill
                 'coverage_status' => 'running',
                 'input_hash' => null,
                 'output_hash' => null,
-                'target_sent_at' => $target?->target_sent_at,
+                'target_sent_at' => $target?->target_sent_at ?? CarbonImmutable::createFromTimestampUTC(0),
                 'completed_at' => null,
             ]);
         }, 3);

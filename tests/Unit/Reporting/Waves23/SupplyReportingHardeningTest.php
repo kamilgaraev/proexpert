@@ -263,6 +263,51 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('pg_advisory_xact_lock', $backfill);
     }
 
+    public function test_supply_readiness_and_backfill_share_the_frozen_historical_cohort(): void
+    {
+        $backfill = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Backfill/'
+            .'SupplyReliabilityBackfill.php',
+        );
+        $evidence = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Backfill/'
+            .'SupplyBackfillEvidenceHasher.php',
+        );
+        $readiness = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/'
+            .'SupplyReliabilityReadinessProbe.php',
+        );
+
+        self::assertStringContainsString(
+            "'purchase_orders.sent_at', '<=', \$historicalCutoff",
+            $backfill,
+        );
+        self::assertStringContainsString(
+            "'purchase_orders.sent_at', '<=', \$historicalCutoff",
+            $evidence,
+        );
+        self::assertStringContainsString("'occurred_at', '<=', \$historicalCutoff", $evidence);
+        self::assertStringContainsString("'effective_from', '<=', \$historicalCutoff", $evidence);
+        self::assertStringContainsString('$watermark->target_sent_at', $readiness);
+    }
+
+    public function test_readiness_delay_reducer_resets_after_negative_lifecycle_events(): void
+    {
+        $readiness = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/'
+            .'SupplyReliabilityReadinessProbe.php',
+        );
+
+        self::assertStringContainsString(
+            "('received', 'receipt_reversed', 'returned')",
+            $readiness,
+        );
+        self::assertStringContainsString("delay_event.event_type = 'received'", $readiness);
+        self::assertStringContainsString('delay_event.signed_quantity > 0', $readiness);
+        self::assertStringContainsString('AND NOT EXISTS (SELECT 1', $readiness);
+        self::assertStringContainsString('ORDER BY delay_event.occurred_at DESC', $readiness);
+    }
+
     public function test_owner_materializers_filter_sources_before_hashing_and_serialize_first_writer(): void
     {
         foreach ([
