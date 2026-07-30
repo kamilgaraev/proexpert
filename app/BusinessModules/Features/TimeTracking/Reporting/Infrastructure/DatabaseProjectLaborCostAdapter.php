@@ -560,6 +560,9 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         $id = (string) Str::ulid();
         $generatedAt = new DateTimeImmutable;
         $staleAt = $generatedAt->add(new DateInterval('P1D'));
+        [$periodFrom, $periodTo] = $this->period($query);
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
+        $managementPnlEligible = $this->managementPnlEligible($scope, $query);
         $sourceManifest = $this->sourceManifest($rows, $sourceCount);
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'organization_id' => $scope->organizationId,
@@ -591,6 +594,10 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             $sourceCount,
             $quality,
             $sourceManifest,
+            $scopeHash,
+            $periodFrom,
+            $periodTo,
+            $managementPnlEligible,
         ): void {
             $timestamp = $generatedAt->format('Y-m-d H:i:sP');
             $this->connection->table('project_labor_cost_report_snapshots')->insert([
@@ -598,7 +605,12 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
                 'organization_id' => $scope->organizationId,
                 'definition_hash' => $query->definition->definitionHash->value,
                 'query_hash' => $query->queryHash->value,
+                'scope_hash' => $scopeHash,
                 'source_hash' => $sourceHash->value,
+                'as_of' => $query->asOf->format('Y-m-d H:i:sP'),
+                'period_from' => $periodFrom,
+                'period_to' => $periodTo,
+                'management_pnl_eligible' => $managementPnlEligible,
                 'formula_version' => self::FORMULA_VERSION,
                 'source_schema_version' => self::SCHEMA_VERSION,
                 'freshness_status' => 'fresh',
@@ -977,6 +989,40 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             $tables,
             'TIME_TRACKING_HISTORICAL_SOURCE_UNAVAILABLE',
         );
+    }
+
+    private function managementPnlEligible(ReportScope $scope, ReportQuery $query): bool
+    {
+        foreach (['employee_ids', 'task_ids', 'work_type_ids', 'contractor_ids'] as $filter) {
+            if (($query->filters->values[$filter] ?? []) !== []) {
+                return false;
+            }
+        }
+        if (($query->filters->values['billable'] ?? null) !== null) {
+            return false;
+        }
+        $statuses = $query->filters->values['statuses'] ?? [];
+        if ($statuses !== [] && $statuses !== ['approved']) {
+            return false;
+        }
+        $requestedProjects = $query->filters->values['project_ids'] ?? [];
+        $scopeProjects = $scope->projectIds;
+        $resourceProjects = array_values(array_unique(array_map(
+            static fn (object $resource): int => $resource->id,
+            array_filter(
+                $scope->resources,
+                static fn (object $resource): bool => $resource->kind === 'project',
+            ),
+        )));
+        if ($resourceProjects !== []) {
+            $scopeProjects = $scopeProjects === []
+                ? $resourceProjects
+                : array_values(array_intersect($scopeProjects, $resourceProjects));
+        }
+        sort($scopeProjects, SORT_NUMERIC);
+        sort($requestedProjects, SORT_NUMERIC);
+
+        return $requestedProjects === [] || $requestedProjects === $scopeProjects;
     }
 
     private function assertScopedResource(

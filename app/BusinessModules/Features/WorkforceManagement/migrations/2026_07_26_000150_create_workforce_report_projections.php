@@ -55,7 +55,12 @@ return new class extends Migration
             $table->string('report_code', 64);
             $table->char('definition_hash', 64);
             $table->char('query_hash', 64);
+            $table->char('scope_hash', 64);
             $table->char('source_hash', 64);
+            $table->timestampTz('as_of');
+            $table->date('period_from');
+            $table->date('period_to');
+            $table->boolean('management_pnl_eligible')->default(false);
             $table->string('formula_version', 80);
             $table->string('source_schema_version', 80);
             $table->string('freshness_status', 32);
@@ -74,6 +79,10 @@ return new class extends Migration
             $table->index(
                 ['organization_id', 'report_code', 'generated_at'],
                 'workforce_report_snapshots_org_code_generated_idx',
+            );
+            $table->index(
+                ['organization_id', 'report_code', 'scope_hash', 'period_from', 'period_to', 'as_of'],
+                'workforce_report_snapshots_exact_tuple_idx',
             );
             $table->index(
                 ['organization_id', 'source_hash'],

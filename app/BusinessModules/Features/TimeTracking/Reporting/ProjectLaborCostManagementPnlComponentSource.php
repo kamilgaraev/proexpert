@@ -29,19 +29,38 @@ final readonly class ProjectLaborCostManagementPnlComponentSource implements Man
     public function snapshots(ReportScope $scope, ReportQuery $query): iterable
     {
         [$periodFrom, $periodTo, $scenario] = $this->scope($query);
-        $snapshot = $this->connection->table('project_labor_cost_report_snapshots')
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
+        $snapshots = $this->connection->table('project_labor_cost_report_snapshots')
             ->where('organization_id', $scope->organizationId)
-            ->where('generated_at', '<=', $query->asOf->format('Y-m-d H:i:sP'))
-            ->orderByDesc('generated_at')
-            ->orderByDesc('id')
-            ->first();
-        if ($snapshot === null) {
-            throw new DomainException('management_pnl_project_labor_cost_unavailable');
+            ->where('scope_hash', $scopeHash)
+            ->where('period_from', $periodFrom)
+            ->where('period_to', $periodTo)
+            ->where('as_of', $query->asOf->format('Y-m-d H:i:sP'))
+            ->where('management_pnl_eligible', true)
+            ->where('formula_version', 'labor-cost.v1')
+            ->where('source_schema_version', 'project-labor-cost-source.v1')
+            ->where('quality_status', 'complete')
+            ->where('reconciliation_status', 'matched')
+            ->orderBy('id')
+            ->get();
+        if ($snapshots->count() !== 1) {
+            throw new DomainException('management_pnl_project_labor_cost_tuple_ambiguous');
         }
+        $snapshot = $snapshots->first();
+        if ($snapshot === null
+            || preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->query_hash) !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->definition_hash) !== 1) {
+            throw new DomainException('management_pnl_project_labor_cost_unsealed');
+        }
+        $currencies = $this->currencies($query);
         $rows = $this->connection->table('project_labor_cost_snapshot_rows')
             ->where('organization_id', $scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
             ->whereBetween('work_date', [$periodFrom, $periodTo])
+            ->when(
+                $currencies !== [],
+                static fn ($builder) => $builder->whereIn('currency', $currencies),
+            )
             ->when(
                 $scope->projectIds !== [],
                 static fn ($builder) => $builder->whereIn('project_id', $scope->projectIds),
@@ -55,7 +74,13 @@ final readonly class ProjectLaborCostManagementPnlComponentSource implements Man
             throw new DomainException('management_pnl_project_labor_cost_incomplete');
         }
 
-        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
+        $persistedRowCount = $this->connection->table('project_labor_cost_snapshot_rows')
+            ->where('organization_id', $scope->organizationId)
+            ->where('snapshot_id', $snapshot->id)
+            ->count();
+        if ($persistedRowCount !== (int) $snapshot->row_count) {
+            throw new DomainException('management_pnl_project_labor_cost_unsealed');
+        }
         foreach ($rows->groupBy('currency')->sortKeys() as $currency => $currencyRows) {
             yield $this->component(
                 $scope,
@@ -135,11 +160,26 @@ final readonly class ProjectLaborCostManagementPnlComponentSource implements Man
         $periodTo = $query->filters->values['period_to'] ?? null;
         $scenarios = $query->filters->values['scenarios'] ?? null;
         if (! is_string($periodFrom) || ! is_string($periodTo) || $periodFrom > $periodTo
-            || ! is_array($scenarios) || count($scenarios) !== 1 || ! is_string($scenarios[0])) {
+            || ! is_array($scenarios) || $scenarios !== ['actual']) {
             throw new DomainException('management_pnl_exact_scope_required');
         }
 
         return [$periodFrom, $periodTo, $scenarios[0]];
+    }
+
+    private function currencies(ReportQuery $query): array
+    {
+        $currencies = $query->filters->values['currencies'] ?? [];
+        if (! is_array($currencies) || ! array_is_list($currencies)) {
+            throw new DomainException('management_pnl_exact_scope_required');
+        }
+        foreach ($currencies as $currency) {
+            if (! is_string($currency) || preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
+                throw new DomainException('management_pnl_exact_scope_required');
+            }
+        }
+
+        return array_values(array_unique($currencies));
     }
 
     private function minor(string $amount): int

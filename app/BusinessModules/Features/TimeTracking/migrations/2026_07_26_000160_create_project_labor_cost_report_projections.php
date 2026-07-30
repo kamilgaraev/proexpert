@@ -37,7 +37,12 @@ return new class extends Migration {
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->char('definition_hash', 64);
             $table->char('query_hash', 64);
+            $table->char('scope_hash', 64);
             $table->char('source_hash', 64);
+            $table->timestampTz('as_of');
+            $table->date('period_from');
+            $table->date('period_to');
+            $table->boolean('management_pnl_eligible')->default(false);
             $table->string('formula_version', 80);
             $table->string('source_schema_version', 80);
             $table->string('freshness_status', 32);
@@ -56,6 +61,10 @@ return new class extends Migration {
             $table->index(
                 ['organization_id', 'generated_at'],
                 'project_labor_cost_snapshots_org_generated_idx',
+            );
+            $table->index(
+                ['organization_id', 'scope_hash', 'period_from', 'period_to', 'as_of'],
+                'project_labor_cost_snapshots_exact_tuple_idx',
             );
             $table->index(
                 ['organization_id', 'source_hash'],

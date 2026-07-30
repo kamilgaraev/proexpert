@@ -7,6 +7,8 @@ namespace Tests\Unit\Reporting\WaveOne;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Contracts\ManagementPnlComponentSource;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\EffectiveLaborRateSource;
 use App\BusinessModules\Features\TimeTracking\Reporting\DTO\EffectiveLaborRateFact;
@@ -25,6 +27,7 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessM
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessQueryService;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollVersionTransitionResolver;
 use DateTimeImmutable;
+use DateTimeZone;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use PHPUnit\Framework\Attributes\Test;
@@ -100,6 +103,88 @@ final class LaborPayrollSourceTest extends TestCase
         self::assertStringContainsString(
             "\$this->assertScopedResource(",
             $source,
+        );
+        self::assertStringContainsString('PAYROLL_VALIDATION_ISSUE_SOURCE_SCOPE_MISMATCH', $source);
+        self::assertStringContainsString('PAYROLL_AUDIT_REFERENCE_SCOPE_MISMATCH', $source);
+        self::assertStringContainsString("'project_id' => \$issue->project_id", $source);
+        self::assertStringContainsString("'employee_id' => \$issue->employee_id", $source);
+    }
+
+    #[Test]
+    public function management_pnl_components_require_an_exact_sealed_source_tuple(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $labor = file_get_contents(
+            $root.'/app/BusinessModules/Features/TimeTracking/Reporting/'
+            .'ProjectLaborCostManagementPnlComponentSource.php',
+        );
+        $payroll = file_get_contents(
+            $root.'/app/BusinessModules/Features/WorkforceManagement/Reporting/'
+            .'PayrollReadinessManagementPnlComponentSource.php',
+        );
+        $payrollAdapter = file_get_contents(
+            $root.'/app/BusinessModules/Features/WorkforceManagement/Reporting/'
+            .'Infrastructure/DatabasePayrollReadinessAdapter.php',
+        );
+
+        foreach ([$labor, $payroll] as $source) {
+            self::assertIsString($source);
+            self::assertStringContainsString("->where('scope_hash', \$scopeHash)", $source);
+            self::assertStringContainsString("->where('period_from', \$periodFrom)", $source);
+            self::assertStringContainsString("->where('period_to', \$periodTo)", $source);
+            self::assertStringContainsString("->where('as_of', \$query->asOf", $source);
+            self::assertStringContainsString("->where('management_pnl_eligible', true)", $source);
+            self::assertStringContainsString("->where('quality_status', 'complete')", $source);
+            self::assertStringContainsString("->where('reconciliation_status', 'matched')", $source);
+            self::assertStringContainsString("\$snapshots->count() !== 1", $source);
+        }
+        self::assertIsString($payrollAdapter);
+        self::assertStringContainsString("'employee_name' => \$row['employee_name']", $payrollAdapter);
+        self::assertStringContainsString("'project_name' => \$row['project_name']", $payrollAdapter);
+        self::assertStringNotContainsString(
+            "join('workforce_employees as employee'",
+            substr(
+                $payrollAdapter,
+                (int) strpos($payrollAdapter, 'public function materialize('),
+                (int) strpos($payrollAdapter, 'private function persist(')
+                    - (int) strpos($payrollAdapter, 'public function materialize('),
+            ),
+        );
+    }
+
+    #[Test]
+    public function payroll_audit_reference_must_match_the_pinned_row_scope(): void
+    {
+        $adapter = new DatabasePayrollReadinessAdapter(
+            $this->createMock(ConnectionInterface::class),
+            new PayrollReadinessFormula,
+            new PayrollSourceRateFormula,
+        );
+        $assertScope = new ReflectionMethod($adapter, 'assertAuditReferenceScope');
+        $assertScope->setAccessible(true);
+        $scope = new ReportScope(
+            10,
+            [10],
+            [20],
+            [
+                new ReportScopedResource('project', 20, 20),
+                new ReportScopedResource('employee', 7, 20),
+            ],
+            new DateTimeZone('UTC'),
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('PAYROLL_AUDIT_REFERENCE_SCOPE_MISMATCH');
+        $assertScope->invoke(
+            $adapter,
+            $scope,
+            ['project_id' => 20, 'employee_id' => 7],
+            [
+                'entity_type' => 'payroll_source_row',
+                'entity_id' => 41,
+                'project_id' => 21,
+                'employee_id' => 7,
+            ],
         );
     }
 

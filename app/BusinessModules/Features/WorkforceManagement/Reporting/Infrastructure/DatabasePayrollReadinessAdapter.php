@@ -127,6 +127,8 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                         'source_row_id' => $row['source_row_id'],
                         'employee_id' => $row['employee_id'],
                         'project_id' => $row['project_id'],
+                        'employee_name' => $row['employee_name'],
+                        'project_name' => $row['project_name'],
                         'work_date' => $row['work_date'],
                         'source_type' => $row['source_type'],
                         'hours' => $row['hours'],
@@ -182,6 +184,14 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                     ->orderBy('id')
                     ->get();
                 $this->assertIssueOwnership($organizationId, $issues);
+                $issueEmployeeNames = $this->employeeNames(
+                    $organizationId,
+                    $issues->pluck('employee_id')->all(),
+                );
+                $issueProjectNames = $this->projectNames(
+                    $organizationId,
+                    $issues->pluck('project_id')->all(),
+                );
                 $issueSourceRows = $this->issueSourceRowMap(
                     $organizationId,
                     $calculationVersionId,
@@ -197,9 +207,17 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                             'issue_code' => (string) $issue->issue_code,
                             'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
                             'project_id' => $issue->project_id === null ? null : (int) $issue->project_id,
+                            'employee_name' => $issue->employee_id === null
+                                ? null
+                                : $issueEmployeeNames[(int) $issue->employee_id],
+                            'project_name' => $issue->project_id === null
+                                ? null
+                                : $issueProjectNames[(int) $issue->project_id],
                             'audit_ref' => CanonicalJson::encode([
                                 'entity_type' => (string) $issue->entity_type,
                                 'entity_id' => $issue->entity_id === null ? null : (int) $issue->entity_id,
+                                'project_id' => $issue->project_id === null ? null : (int) $issue->project_id,
+                                'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
                             ]),
                             'row_hash' => hash('sha256', CanonicalJson::encode([
                                 'id' => (int) $issue->id,
@@ -208,6 +226,12 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                                 'issue_code' => (string) $issue->issue_code,
                                 'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
                                 'project_id' => $issue->project_id === null ? null : (int) $issue->project_id,
+                                'employee_name' => $issue->employee_id === null
+                                    ? null
+                                    : $issueEmployeeNames[(int) $issue->employee_id],
+                                'project_name' => $issue->project_id === null
+                                    ? null
+                                    : $issueProjectNames[(int) $issue->project_id],
                             ])),
                         ])->all(),
                     );
@@ -229,6 +253,8 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                             $auditRef = [
                                 'entity_type' => 'payroll_source_row',
                                 'entity_id' => (int) $source->source_row_id,
+                                'project_id' => $source->project_id === null ? null : (int) $source->project_id,
+                                'employee_id' => (int) $source->employee_id,
                             ];
 
                             return [
@@ -240,6 +266,8 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                                 'issue_code' => 'PAYROLL_EFFECTIVE_RATE_MISSING',
                                 'employee_id' => (int) $source->employee_id,
                                 'project_id' => $source->project_id === null ? null : (int) $source->project_id,
+                                'employee_name' => (string) $source->employee_name,
+                                'project_name' => $source->project_name,
                                 'audit_ref' => CanonicalJson::encode($auditRef),
                                 'row_hash' => hash('sha256', CanonicalJson::encode([
                                     'issue_code' => 'PAYROLL_EFFECTIVE_RATE_MISSING',
@@ -440,14 +468,6 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         $versionIds = $versions->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
         $versionsById = $versions->keyBy(static fn (object $version): int => (int) $version->id);
         $sourceRows = $this->connection->table('workforce_payroll_calculation_source_rows as source')
-            ->join('workforce_employees as employee', static function (JoinClause $join): void {
-                $join->on('employee.id', '=', 'source.employee_id')
-                    ->on('employee.organization_id', '=', 'source.organization_id');
-            })
-            ->leftJoin('projects as project', static function (JoinClause $join): void {
-                $join->on('project.id', '=', 'source.project_id')
-                    ->on('project.organization_id', '=', 'source.organization_id');
-            })
             ->where('source.organization_id', $scope->organizationId)
             ->whereIn('source.calculation_version_id', $versionIds)
             ->when(
@@ -464,34 +484,14 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             )
             ->orderBy('source.calculation_version_id')
             ->orderBy('source.id')
-            ->get([
-                'source.*',
-                'employee.first_name',
-                'employee.last_name',
-                'employee.middle_name',
-                'project.name as project_name',
-            ]);
+            ->get(['source.*']);
         $issues = $this->connection->table('workforce_payroll_calculation_issues as issue')
-            ->leftJoin('workforce_employees as employee', static function (JoinClause $join): void {
-                $join->on('employee.id', '=', 'issue.employee_id')
-                    ->on('employee.organization_id', '=', 'issue.organization_id');
-            })
-            ->leftJoin('projects as project', static function (JoinClause $join): void {
-                $join->on('project.id', '=', 'issue.project_id')
-                    ->on('project.organization_id', '=', 'issue.organization_id');
-            })
             ->where('issue.organization_id', $scope->organizationId)
             ->whereIn('issue.calculation_version_id', $versionIds)
             ->orderBy('issue.calculation_version_id')
             ->orderByRaw("CASE WHEN issue.severity = 'blocking' THEN 0 ELSE 1 END")
             ->orderBy('issue.id')
-            ->get([
-                'issue.*',
-                'employee.first_name',
-                'employee.last_name',
-                'employee.middle_name',
-                'project.name as project_name',
-            ]);
+            ->get(['issue.*']);
         $issuesByVersion = $issues->groupBy(
             static fn (object $issue): int => (int) $issue->calculation_version_id,
         );
@@ -520,7 +520,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                     'calculation_version_id' => (int) $version->id,
                     'calculation_version' => (int) $version->version,
                     'employee_id' => (int) $source->employee_id,
-                    'employee_name' => $this->employeeName($source),
+                    'employee_name' => (string) $source->employee_name,
                     'project_id' => $source->project_id === null ? null : (int) $source->project_id,
                     'project_name' => $source->project_name,
                     'source_type' => (string) $source->source_type,
@@ -541,6 +541,8 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                         [
                             'entity_type' => 'payroll_calculation_issue',
                             'entity_id' => (int) $issue->id,
+                            'project_id' => $issue->project_id === null ? null : (int) $issue->project_id,
+                            'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
                         ],
                         $this->json($issue->audit_ref),
                     ],
@@ -577,7 +579,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 'calculation_version_id' => (int) $version->id,
                 'calculation_version' => (int) $version->version,
                 'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
-                'employee_name' => $issue->employee_id === null ? null : $this->employeeName($issue),
+                'employee_name' => $issue->employee_name,
                 'project_id' => $issue->project_id === null ? null : (int) $issue->project_id,
                 'project_name' => $issue->project_name,
                 'source_type' => null,
@@ -596,6 +598,8 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                     [
                         'entity_type' => 'payroll_calculation_issue',
                         'entity_id' => (int) $issue->id,
+                        'project_id' => $issue->project_id === null ? null : (int) $issue->project_id,
+                        'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
                     ],
                     $this->json($issue->audit_ref),
                 ],
@@ -818,6 +822,13 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             'rows' => $rows,
             'schema_version' => self::SCHEMA_VERSION,
         ])));
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
+        $periodFrom = (string) $versions->min('period_start');
+        $periodTo = (string) $versions->max('period_end');
+        $managementPnlEligible = $this->managementPnlEligible($scope, $query);
+        if ($periodFrom === '' || $periodTo === '') {
+            throw new DomainException('PAYROLL_READINESS_EXACT_PERIOD_UNAVAILABLE');
+        }
         $totals = $this->totals($rows);
         $sourceManifest = $versions->map(
             static fn (object $version): array => [
@@ -877,6 +888,10 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             $reconciliation,
             $rows,
             $sourceManifest,
+            $scopeHash,
+            $periodFrom,
+            $periodTo,
+            $managementPnlEligible,
         ): void {
             $timestamp = $generatedAt->format('Y-m-d H:i:sP');
             $this->connection->table('workforce_report_snapshots')->insert([
@@ -885,7 +900,12 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 'report_code' => 'payroll_readiness',
                 'definition_hash' => $query->definition->definitionHash->value,
                 'query_hash' => $query->queryHash->value,
+                'scope_hash' => $scopeHash,
                 'source_hash' => $sourceHash->value,
+                'as_of' => $query->asOf->format('Y-m-d H:i:sP'),
+                'period_from' => $periodFrom,
+                'period_to' => $periodTo,
+                'management_pnl_eligible' => $managementPnlEligible,
                 'formula_version' => self::FORMULA_VERSION,
                 'source_schema_version' => self::SCHEMA_VERSION,
                 'freshness_status' => 'fresh',
@@ -1161,16 +1181,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         }
         if ($context->visibility->canViewAudit) {
             foreach ($row['audit_refs'] as $ref) {
-                if (isset($ref['entity_type'], $ref['entity_id'])
-                    && is_string($ref['entity_type'])
-                    && is_int($ref['entity_id'])) {
-                    $this->assertScopedResource(
-                        $context->scope,
-                        $ref['entity_type'],
-                        $ref['entity_id'],
-                        $row['project_id'] === null ? null : (int) $row['project_id'],
-                    );
-                }
+                $this->assertAuditReferenceScope($context->scope, $row, $ref);
             }
         }
         if (! $context->visibility->canViewAudit) {
@@ -1200,6 +1211,33 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         }
 
         return array_values(array_unique($values));
+    }
+
+    private function managementPnlEligible(ReportScope $scope, ReportQuery $query): bool
+    {
+        foreach (['employee_ids', 'issue_codes', 'severities', 'statuses', 'source_types'] as $filter) {
+            if (($query->filters->values[$filter] ?? []) !== []) {
+                return false;
+            }
+        }
+        $requestedProjects = $query->filters->values['project_ids'] ?? [];
+        $scopeProjects = $scope->projectIds;
+        $resourceProjects = array_values(array_unique(array_map(
+            static fn (object $resource): int => $resource->id,
+            array_filter(
+                $scope->resources,
+                static fn (object $resource): bool => $resource->kind === 'project',
+            ),
+        )));
+        if ($resourceProjects !== []) {
+            $scopeProjects = $scopeProjects === []
+                ? $resourceProjects
+                : array_values(array_intersect($scopeProjects, $resourceProjects));
+        }
+        sort($scopeProjects, SORT_NUMERIC);
+        sort($requestedProjects, SORT_NUMERIC);
+
+        return $requestedProjects === [] || $requestedProjects === $scopeProjects;
     }
 
     private function employeeName(object $record): string
@@ -1262,14 +1300,42 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         }
         foreach ($row['audit_refs'] as $ref) {
             if (($ref['entity_id'] ?? null) !== null) {
-                $this->assertScopedResource(
-                    $scope,
-                    (string) $ref['entity_type'],
-                    (int) $ref['entity_id'],
-                    $projectId,
-                );
+                $this->assertAuditReferenceScope($scope, $row, $ref);
             }
         }
+    }
+
+    private function assertAuditReferenceScope(ReportScope $scope, array $row, mixed $ref): void
+    {
+        if (! is_array($ref)
+            || ! isset($ref['entity_type'], $ref['entity_id'])
+            || ! is_string($ref['entity_type'])
+            || ! is_int($ref['entity_id'])
+            || ! array_key_exists('project_id', $ref)
+            || ! array_key_exists('employee_id', $ref)) {
+            throw new DomainException('PAYROLL_AUDIT_REFERENCE_INVALID');
+        }
+        $rowProjectId = $row['project_id'] === null ? null : (int) $row['project_id'];
+        $rowEmployeeId = $row['employee_id'] === null ? null : (int) $row['employee_id'];
+        $refProjectId = $ref['project_id'] === null ? null : (int) $ref['project_id'];
+        $refEmployeeId = $ref['employee_id'] === null ? null : (int) $ref['employee_id'];
+        if ($refProjectId !== $rowProjectId
+            || ($refEmployeeId !== null && $refEmployeeId !== $rowEmployeeId)) {
+            throw new DomainException('PAYROLL_AUDIT_REFERENCE_SCOPE_MISMATCH');
+        }
+        $this->assertProjectAccess($scope, $refProjectId);
+        if ($refProjectId !== null) {
+            $this->assertScopedResource($scope, 'project', $refProjectId, $refProjectId);
+        }
+        if ($refEmployeeId !== null) {
+            $this->assertScopedResource($scope, 'employee', $refEmployeeId, $refProjectId);
+        }
+        $this->assertScopedResource(
+            $scope,
+            $ref['entity_type'],
+            $ref['entity_id'],
+            $refProjectId,
+        );
     }
 
     private function assertProjectAccess(ReportScope $scope, ?int $projectId): void
@@ -1402,6 +1468,22 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             ->unique()
             ->values()
             ->all();
+        $projectIds = $rows
+            ->pluck('project_id')
+            ->filter(static fn (mixed $id): bool => $id !== null)
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        $employees = $this->connection->table('workforce_employees')
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', $employeeIds)
+            ->get(['id', 'first_name', 'last_name', 'middle_name'])
+            ->keyBy(static fn (object $employee): int => (int) $employee->id);
+        $projects = $this->connection->table('projects')
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', $projectIds)
+            ->pluck('name', 'id');
         $rates = $employeeIds === []
             ? collect()
             : $this->connection->table('time_tracking_labor_rate_versions')
@@ -1414,7 +1496,12 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 ->get()
                 ->groupBy(static fn (object $rate): int => (int) $rate->employee_id);
 
-        return $rows->map(function (object $row) use ($rates): array {
+        return $rows->map(function (object $row) use ($rates, $employees, $projects): array {
+            $employee = $employees->get((int) $row->employee_id);
+            $projectName = $row->project_id === null ? null : $projects->get((int) $row->project_id);
+            if ($employee === null || ($row->project_id !== null && ! is_string($projectName))) {
+                throw new DomainException('PAYROLL_SOURCE_OWNER_LABEL_UNAVAILABLE');
+            }
             $rate = $this->effectiveRate(
                 $rates->get((int) $row->employee_id, collect()),
                 (string) $row->work_date,
@@ -1439,6 +1526,8 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 'source_row_id' => (int) $row->id,
                 'employee_id' => (int) $row->employee_id,
                 'project_id' => $row->project_id === null ? null : (int) $row->project_id,
+                'employee_name' => $this->employeeName($employee),
+                'project_name' => $projectName,
                 'work_date' => (string) $row->work_date,
                 'source_type' => (string) $row->source_type,
                 'hours' => (string) BigDecimal::of((string) $row->hours)->toScale(4, RoundingMode::Unnecessary),
@@ -1594,6 +1683,27 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 ->values()
                 ->all();
             $this->assertOwnedIds($organizationId, $tables[$entityType], $ids);
+            $columns = $entityType === 'payroll_source_row'
+                ? ['id', 'project_id', 'employee_id', 'payroll_period_id']
+                : ['id', 'project_id'];
+            $owners = $this->connection->table($tables[$entityType])
+                ->where('organization_id', $organizationId)
+                ->whereIn('id', $ids)
+                ->get($columns)
+                ->keyBy(static fn (object $owner): int => (int) $owner->id);
+            foreach ($typedIssues as $issue) {
+                if ($issue->entity_id === null) {
+                    throw new DomainException('PAYROLL_VALIDATION_ISSUE_SOURCE_INVALID');
+                }
+                $owner = $owners->get((int) $issue->entity_id);
+                if ($owner === null
+                    || (int) $owner->project_id !== (int) $issue->project_id
+                    || ($entityType === 'payroll_source_row'
+                        && ((int) $owner->employee_id !== (int) $issue->employee_id
+                            || (int) $owner->payroll_period_id !== (int) $issue->payroll_period_id))) {
+                    throw new DomainException('PAYROLL_VALIDATION_ISSUE_SOURCE_SCOPE_MISMATCH');
+                }
+            }
         }
         $this->assertOwnedIds(
             $organizationId,
@@ -1633,6 +1743,52 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         if ($found !== $ids) {
             throw new DomainException('PAYROLL_VALIDATION_ISSUE_SOURCE_INVALID');
         }
+    }
+
+    private function employeeNames(int $organizationId, array $ids): array
+    {
+        $ids = array_values(array_unique(array_map(
+            static fn (mixed $id): int => (int) $id,
+            array_filter($ids, static fn (mixed $id): bool => $id !== null),
+        )));
+        if ($ids === []) {
+            return [];
+        }
+        $employees = $this->connection->table('workforce_employees')
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', $ids)
+            ->get(['id', 'first_name', 'last_name', 'middle_name']);
+        $names = [];
+        foreach ($employees as $employee) {
+            $names[(int) $employee->id] = $this->employeeName($employee);
+        }
+        if (count($names) !== count($ids)) {
+            throw new DomainException('PAYROLL_SOURCE_OWNER_LABEL_UNAVAILABLE');
+        }
+
+        return $names;
+    }
+
+    private function projectNames(int $organizationId, array $ids): array
+    {
+        $ids = array_values(array_unique(array_map(
+            static fn (mixed $id): int => (int) $id,
+            array_filter($ids, static fn (mixed $id): bool => $id !== null),
+        )));
+        if ($ids === []) {
+            return [];
+        }
+        $names = $this->connection->table('projects')
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', $ids)
+            ->pluck('name', 'id')
+            ->mapWithKeys(static fn (mixed $name, mixed $id): array => [(int) $id => (string) $name])
+            ->all();
+        if (count($names) !== count($ids)) {
+            throw new DomainException('PAYROLL_SOURCE_OWNER_LABEL_UNAVAILABLE');
+        }
+
+        return $names;
     }
 
     private function versionById(int $organizationId, int $versionId): PayrollCalculationVersion

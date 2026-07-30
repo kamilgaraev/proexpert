@@ -84,6 +84,8 @@ return new class extends Migration
             $table->foreignId('source_row_id')->constrained('workforce_payroll_source_rows')->restrictOnDelete();
             $table->foreignId('employee_id')->constrained('workforce_employees')->restrictOnDelete();
             $table->foreignId('project_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('employee_name');
+            $table->string('project_name')->nullable();
             $table->date('work_date');
             $table->string('source_type', 80);
             $table->decimal('hours', 18, 4);
@@ -125,6 +127,8 @@ return new class extends Migration
             $table->string('issue_code', 120);
             $table->foreignId('employee_id')->nullable()->constrained('workforce_employees')->nullOnDelete();
             $table->foreignId('project_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('employee_name')->nullable();
+            $table->string('project_name')->nullable();
             $table->jsonb('audit_ref');
             $table->char('row_hash', 64);
 

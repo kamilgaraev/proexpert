@@ -997,6 +997,8 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $id = (string) Str::ulid();
         $generatedAt = new DateTimeImmutable;
         $staleAt = $generatedAt->add(new DateInterval($code === 'attendance_execution' ? 'PT15M' : 'P1D'));
+        [$periodFrom, $periodTo] = $this->snapshotPeriod($query, $code);
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
         $sourceManifest = $this->sourceManifest($code, $rows);
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'code' => $code,
@@ -1055,6 +1057,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             $quality,
             $reconciliation,
             $sourceManifest,
+            $scopeHash,
+            $periodFrom,
+            $periodTo,
         ): void {
             $timestamp = $generatedAt->format('Y-m-d H:i:sP');
             $this->connection->table('workforce_report_snapshots')->insert([
@@ -1063,7 +1068,11 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 'report_code' => $code,
                 'definition_hash' => $query->definition->definitionHash->value,
                 'query_hash' => $query->queryHash->value,
+                'scope_hash' => $scopeHash,
                 'source_hash' => $sourceHash->value,
+                'as_of' => $query->asOf->format('Y-m-d H:i:sP'),
+                'period_from' => $periodFrom,
+                'period_to' => $periodTo,
                 'formula_version' => $formulaVersion,
                 'source_schema_version' => self::SCHEMA_VERSION,
                 'freshness_status' => 'fresh',
@@ -1759,6 +1768,18 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         }
 
         return [$dayFrom, $dayTo];
+    }
+
+    private function snapshotPeriod(ReportQuery $query, string $code): array
+    {
+        if ($code === 'workforce_capacity') {
+            [$from, $to] = $this->monthRange($query);
+
+            return [$from->format('Y-m-d'), $to->modify('last day of this month')->format('Y-m-d')];
+        }
+        [$from, $to] = $this->dayRange($query);
+
+        return [$from->format('Y-m-d'), $to->format('Y-m-d')];
     }
 
     private function months(DateTimeImmutable $from, DateTimeImmutable $to): iterable

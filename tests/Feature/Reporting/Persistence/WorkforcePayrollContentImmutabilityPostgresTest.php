@@ -73,6 +73,8 @@ final class WorkforcePayrollContentImmutabilityPostgresTest extends TestCase
                                 'source_row_id' => $sourceRowId,
                                 'employee_id' => $employeeId,
                                 'project_id' => $projectId,
+                                'employee_name' => 'Pinned employee',
+                                'project_name' => 'Pinned project',
                                 'work_date' => '2026-07-10',
                                 'source_type' => 'timesheet_hours',
                                 'hours' => '8.0000',
@@ -94,6 +96,8 @@ final class WorkforcePayrollContentImmutabilityPostgresTest extends TestCase
                                 'issue_code' => 'late_insert',
                                 'employee_id' => $employeeId,
                                 'project_id' => $projectId,
+                                'employee_name' => 'Pinned employee',
+                                'project_name' => 'Pinned project',
                                 'audit_ref' => '{}',
                                 'row_hash' => str_repeat('b', 64),
                             ]);
