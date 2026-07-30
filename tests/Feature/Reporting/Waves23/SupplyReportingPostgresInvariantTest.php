@@ -650,6 +650,39 @@ SQL);
                 self::assertTrue(DB::table($table)->where('id', $id)->exists());
             }
         }
+        DB::table('purchase_receipt_inventory_lots')
+            ->where('purchase_receipt_line_id', $lineId)
+            ->update(['reversed_quantity' => '10.000000']);
+        $unrelatedMovementId = DB::table('warehouse_movements')->insertGetId([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => 'write_off',
+            'quantity' => '10.000',
+            'price' => '100.00',
+            'operation_category' => 'procurement_receipt_reversal',
+            'metadata' => json_encode([
+                'reversed_purchase_receipt_line_id' => $foreignLineId,
+                'reversed_receipt_movement_id' => $foreignMovementId,
+            ], JSON_THROW_ON_ERROR),
+            'movement_date' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::beginTransaction();
+        try {
+            DB::table('purchase_receipt_lines')->where('id', $lineId)->update([
+                'reversed_at' => $now,
+                'reversed_by_user_id' => $actor->id,
+                'reversal_reason_code' => 'supplier_return',
+                'reversal_warehouse_movement_id' => $unrelatedMovementId,
+                'reversal_idempotency_key' => 'forged-reversal-'.$lineId,
+            ]);
+            self::fail('Receipt reversal must reject an unrelated inventory movement.');
+        } catch (\Illuminate\Database\QueryException) {
+            DB::rollBack();
+            self::assertNull(DB::table('purchase_receipt_lines')->where('id', $lineId)->value('reversed_at'));
+        }
         $line = PurchaseReceiptLine::query()
             ->with(['purchaseReceipt', 'purchaseOrderItem'])
             ->findOrFail($lineId);
@@ -751,6 +784,11 @@ SQL);
             'status' => 'sent',
             'total_amount' => '200.00',
             'currency' => 'RUB',
+            'pricing_source' => 'test',
+            'metadata' => json_encode([
+                'tax_basis' => 'included',
+                'freight_basis' => 'excluded',
+            ], JSON_THROW_ON_ERROR),
             'created_at' => $now,
             'updated_at' => $now,
         ]);
@@ -774,11 +812,16 @@ SQL);
                 'unit' => 'kg',
                 'unit_price' => '100.00',
                 'total_price' => '100.00',
+                'metadata' => json_encode([
+                    'unit_dimension' => 'mass',
+                    'unit_conversion_version' => 'kg:v1',
+                    'reporting_source_version' => 1,
+                ], JSON_THROW_ON_ERROR),
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
         }
-        $promiseId = DB::table('purchase_order_promise_versions')->insertGetId([
+        $promiseAttributes = [
             'organization_id' => $organization->id,
             'purchase_order_id' => $orderId,
             'purchase_order_item_id' => $itemIds[0],
@@ -800,26 +843,55 @@ SQL);
             'source_version' => 1,
             'effective_from' => $now,
             'source_hash' => str_repeat('d', 64),
-        ]);
+        ];
+        DB::beginTransaction();
+        try {
+            DB::table('purchase_order_promise_versions')->insert(
+                array_merge($promiseAttributes, ['ordered_quantity' => '2.000000']),
+            );
+            self::fail('Promise quantity must match the immutable purchase order item.');
+        } catch (\Illuminate\Database\QueryException) {
+            DB::rollBack();
+            self::assertFalse(
+                DB::table('purchase_order_promise_versions')
+                    ->where('purchase_order_item_id', $itemIds[0])
+                    ->exists(),
+            );
+        }
+        $promiseId = DB::table('purchase_order_promise_versions')->insertGetId($promiseAttributes);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
-        DB::table('supply_lifecycle_events')->insert([
-            'organization_id' => $organization->id,
-            'purchase_order_id' => $orderId,
-            'purchase_order_item_id' => $itemIds[1],
-            'promise_version_id' => $promiseId,
-            'event_type' => 'sent',
-            'source_type' => 'purchase_order',
-            'source_id' => $orderId,
-            'source_version' => 1,
-            'signed_quantity' => '0',
-            'unit_dimension' => 'mass',
-            'unit_code' => 'kg',
-            'conversion_version' => 'kg:v1',
-            'occurred_at' => $now,
-            'idempotency_key' => 'mismatched-item-'.$organization->id,
-            'source_hash' => str_repeat('e', 64),
-        ]);
+        foreach ([
+            ['purchase_order_item_id' => $itemIds[1], 'source_id' => $orderId, 'key' => 'mismatched-item'],
+            ['purchase_order_item_id' => $itemIds[0], 'source_id' => $orderId + 999999, 'key' => 'missing-source'],
+        ] as $case) {
+            DB::beginTransaction();
+            try {
+                DB::table('supply_lifecycle_events')->insert([
+                    'organization_id' => $organization->id,
+                    'purchase_order_id' => $orderId,
+                    'purchase_order_item_id' => $case['purchase_order_item_id'],
+                    'promise_version_id' => $promiseId,
+                    'event_type' => 'sent',
+                    'source_type' => 'purchase_order',
+                    'source_id' => $case['source_id'],
+                    'source_version' => 1,
+                    'signed_quantity' => '0',
+                    'unit_dimension' => 'mass',
+                    'unit_code' => 'kg',
+                    'conversion_version' => 'kg:v1',
+                    'occurred_at' => $now,
+                    'idempotency_key' => $case['key'].'-'.$organization->id,
+                    'source_hash' => str_repeat('e', 64),
+                ]);
+                self::fail($case['key'].' lifecycle identity must be rejected.');
+            } catch (\Illuminate\Database\QueryException) {
+                DB::rollBack();
+            }
+        }
+        self::assertSame(
+            0,
+            DB::table('supply_lifecycle_events')->where('organization_id', $organization->id)->count(),
+        );
     }
 
     public function test_receipt_and_inventory_source_functions_expose_complete_identity_fences(): void

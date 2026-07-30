@@ -363,6 +363,9 @@ FOR EACH ROW EXECUTE FUNCTION most_receipt_inventory_lot_source_identity_v1();
 CREATE OR REPLACE FUNCTION most_purchase_receipt_line_reversal_v1() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE source_lot purchase_receipt_inventory_lots%ROWTYPE;
+DECLARE source_receipt_movement warehouse_movements%ROWTYPE;
+DECLARE reversal_movement warehouse_movements%ROWTYPE;
 BEGIN
     IF NEW.purchase_receipt_id <> OLD.purchase_receipt_id
        OR NEW.purchase_order_item_id <> OLD.purchase_order_item_id
@@ -384,6 +387,31 @@ BEGIN
            OR NEW.reversal_warehouse_movement_id IS NULL
            OR NEW.reversal_idempotency_key IS NULL THEN
             RAISE EXCEPTION 'purchase receipt reversal must be complete' USING ERRCODE = '55000';
+        END IF;
+        SELECT * INTO source_lot
+          FROM purchase_receipt_inventory_lots
+         WHERE purchase_receipt_line_id = NEW.id;
+        SELECT * INTO source_receipt_movement
+          FROM warehouse_movements
+         WHERE id = source_lot.receipt_warehouse_movement_id;
+        SELECT * INTO reversal_movement
+          FROM warehouse_movements
+         WHERE id = NEW.reversal_warehouse_movement_id;
+        IF source_lot.id IS NULL
+           OR source_lot.reversed_quantity <> source_lot.original_quantity
+           OR reversal_movement.id IS NULL
+           OR reversal_movement.organization_id <> source_lot.organization_id
+           OR reversal_movement.warehouse_id <> source_receipt_movement.warehouse_id
+           OR reversal_movement.material_id <> source_receipt_movement.material_id
+           OR reversal_movement.movement_type <> 'write_off'
+           OR reversal_movement.operation_category IS DISTINCT FROM 'procurement_receipt_reversal'
+           OR reversal_movement.quantity <> source_lot.original_quantity
+           OR (reversal_movement.metadata->>'reversed_purchase_receipt_line_id')
+              IS DISTINCT FROM NEW.id::text
+           OR (reversal_movement.metadata->>'reversed_receipt_movement_id')
+              IS DISTINCT FROM source_lot.receipt_warehouse_movement_id::text THEN
+            RAISE EXCEPTION 'purchase receipt reversal movement does not match its inventory lot'
+                USING ERRCODE = '23514';
         END IF;
     ELSIF NEW.reversed_at IS DISTINCT FROM OLD.reversed_at
        OR NEW.reversed_by_user_id IS DISTINCT FROM OLD.reversed_by_user_id
@@ -502,6 +530,17 @@ BEGIN
     ) AND (
         NEW.purchase_order_id <> OLD.purchase_order_id
         OR NEW.material_id IS DISTINCT FROM OLD.material_id
+        OR NEW.quantity IS DISTINCT FROM OLD.quantity
+        OR NEW.total_price IS DISTINCT FROM OLD.total_price
+        OR NEW.unit IS DISTINCT FROM OLD.unit
+        OR (NEW.metadata->>'reporting_source_version')
+           IS DISTINCT FROM (OLD.metadata->>'reporting_source_version')
+        OR (NEW.metadata->>'unit_dimension')
+           IS DISTINCT FROM (OLD.metadata->>'unit_dimension')
+        OR (NEW.metadata->>'unit_conversion_version')
+           IS DISTINCT FROM (OLD.metadata->>'unit_conversion_version')
+        OR (NEW.metadata->>'tax_basis') IS DISTINCT FROM (OLD.metadata->>'tax_basis')
+        OR (NEW.metadata->>'freight_basis') IS DISTINCT FROM (OLD.metadata->>'freight_basis')
     ) THEN
         RAISE EXCEPTION 'linked purchase order item identity is immutable' USING ERRCODE = '55000';
     END IF;
@@ -531,7 +570,16 @@ BEGIN
               FROM purchase_order_promise_versions
              WHERE purchase_order_id = OLD.id
         )
-    ) AND NEW.organization_id <> OLD.organization_id THEN
+    ) AND (
+        NEW.organization_id <> OLD.organization_id
+        OR NEW.purchase_request_id IS DISTINCT FROM OLD.purchase_request_id
+        OR NEW.supplier_id IS DISTINCT FROM OLD.supplier_id
+        OR NEW.currency IS DISTINCT FROM OLD.currency
+        OR NEW.pricing_source IS DISTINCT FROM OLD.pricing_source
+        OR (NEW.metadata->>'warehouse_id') IS DISTINCT FROM (OLD.metadata->>'warehouse_id')
+        OR (NEW.metadata->>'tax_basis') IS DISTINCT FROM (OLD.metadata->>'tax_basis')
+        OR (NEW.metadata->>'freight_basis') IS DISTINCT FROM (OLD.metadata->>'freight_basis')
+    ) THEN
         RAISE EXCEPTION 'linked purchase order identity is immutable' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
@@ -552,6 +600,12 @@ AS $$
 DECLARE source_order purchase_orders%ROWTYPE;
 DECLARE source_item purchase_order_items%ROWTYPE;
 DECLARE source_previous purchase_order_promise_versions%ROWTYPE;
+DECLARE source_project_id bigint;
+DECLARE expected_warehouse_id bigint;
+DECLARE expected_tax_basis text;
+DECLARE expected_freight_basis text;
+DECLARE expected_value_basis text;
+DECLARE expected_ordered_value_minor bigint;
 BEGIN
     SELECT * INTO source_order
       FROM purchase_orders
@@ -559,6 +613,25 @@ BEGIN
     SELECT * INTO source_item
       FROM purchase_order_items
      WHERE id = NEW.purchase_order_item_id;
+    SELECT site_request.project_id INTO source_project_id
+      FROM purchase_requests purchase_request
+      JOIN site_requests site_request
+        ON site_request.id = purchase_request.site_request_id
+     WHERE purchase_request.id = source_order.purchase_request_id;
+    expected_warehouse_id := NULLIF(source_order.metadata->>'warehouse_id', '')::bigint;
+    expected_tax_basis := COALESCE(
+        NULLIF(source_item.metadata->>'tax_basis', ''),
+        NULLIF(source_order.metadata->>'tax_basis', '')
+    );
+    expected_freight_basis := COALESCE(
+        NULLIF(source_item.metadata->>'freight_basis', ''),
+        NULLIF(source_order.metadata->>'freight_basis', '')
+    );
+    expected_value_basis := BTRIM(source_order.currency)
+        || ':' || BTRIM(source_order.pricing_source)
+        || ':' || expected_tax_basis
+        || ':' || expected_freight_basis;
+    expected_ordered_value_minor := (source_item.total_price * 100)::bigint;
     IF NEW.supersedes_id IS NOT NULL THEN
         SELECT * INTO source_previous
           FROM purchase_order_promise_versions
@@ -570,6 +643,20 @@ BEGIN
        OR source_order.organization_id <> NEW.organization_id
        OR source_item.purchase_order_id <> NEW.purchase_order_id
        OR source_item.material_id IS DISTINCT FROM NEW.material_id
+       OR source_order.supplier_id IS DISTINCT FROM NEW.supplier_id
+       OR source_project_id IS DISTINCT FROM NEW.project_id
+       OR expected_warehouse_id IS DISTINCT FROM NEW.warehouse_id
+       OR source_item.quantity IS DISTINCT FROM NEW.ordered_quantity
+       OR expected_ordered_value_minor IS DISTINCT FROM NEW.ordered_value_minor
+       OR BTRIM(source_item.unit) IS DISTINCT FROM NEW.unit_code
+       OR (source_item.metadata->>'unit_dimension') IS DISTINCT FROM NEW.unit_dimension
+       OR (source_item.metadata->>'unit_conversion_version') IS DISTINCT FROM NEW.conversion_version
+       OR (source_item.metadata->>'reporting_source_version') IS DISTINCT FROM NEW.source_version::text
+       OR BTRIM(source_order.currency) IS DISTINCT FROM NEW.currency
+       OR BTRIM(source_order.pricing_source) IS DISTINCT FROM NEW.currency_source
+       OR expected_tax_basis IS DISTINCT FROM NEW.tax_basis
+       OR expected_freight_basis IS DISTINCT FROM NEW.freight_basis
+       OR expected_value_basis IS DISTINCT FROM NEW.value_basis
        OR (
            NEW.promise_version = 1
            AND NEW.supersedes_id IS NOT NULL
@@ -598,6 +685,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE source_promise purchase_order_promise_versions%ROWTYPE;
 DECLARE reversed_event supply_lifecycle_events%ROWTYPE;
+DECLARE source_order purchase_orders%ROWTYPE;
+DECLARE source_line purchase_receipt_lines%ROWTYPE;
+DECLARE source_receipt purchase_receipts%ROWTYPE;
 BEGIN
     SELECT * INTO source_promise
       FROM purchase_order_promise_versions
@@ -607,6 +697,18 @@ BEGIN
           FROM supply_lifecycle_events
          WHERE id = NEW.reversed_event_id;
     END IF;
+    IF NEW.source_type = 'purchase_order' THEN
+        SELECT * INTO source_order
+          FROM purchase_orders
+         WHERE id = NEW.source_id;
+    ELSIF NEW.source_type = 'purchase_receipt_line' THEN
+        SELECT * INTO source_line
+          FROM purchase_receipt_lines
+         WHERE id = NEW.source_id;
+        SELECT * INTO source_receipt
+          FROM purchase_receipts
+         WHERE id = source_line.purchase_receipt_id;
+    END IF;
 
     IF source_promise.id IS NULL
        OR source_promise.organization_id <> NEW.organization_id
@@ -615,6 +717,29 @@ BEGIN
        OR source_promise.unit_dimension <> NEW.unit_dimension
        OR source_promise.unit_code <> NEW.unit_code
        OR source_promise.conversion_version <> NEW.conversion_version
+       OR (
+           NEW.event_type IN ('sent', 'confirmed', 'cancelled')
+           AND (
+               NEW.source_type <> 'purchase_order'
+               OR source_order.id IS NULL
+               OR source_order.id <> NEW.purchase_order_id
+               OR source_order.organization_id <> NEW.organization_id
+               OR NEW.source_version <> 1
+           )
+       )
+       OR (
+           NEW.event_type IN ('received', 'receipt_reversed', 'returned')
+           AND (
+               NEW.source_type <> 'purchase_receipt_line'
+               OR source_line.id IS NULL
+               OR source_receipt.id IS NULL
+               OR source_line.purchase_order_item_id <> NEW.purchase_order_item_id
+               OR source_receipt.purchase_order_id <> NEW.purchase_order_id
+               OR source_receipt.organization_id <> NEW.organization_id
+               OR (source_line.metadata->>'reporting_source_version')
+                  IS DISTINCT FROM NEW.source_version::text
+           )
+       )
        OR (
            NEW.event_type = 'receipt_reversed'
            AND (
