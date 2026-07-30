@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:report-quality-evidence:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_id", "schema_version", "status", "catalog", "release_sha", "generated_at", "gates"],
+  "properties": {
+    "artifact_id": {"enum": ["report_platform_gate_inputs", "report_quality_evidence"]},
+    "schema_version": {"const": "1.0.0"},
+    "status": {"enum": ["platform_gate_inputs_passed", "platform_passed", "release_passed"]},
+    "catalog": {"$ref": "#/$defs/catalog"},
+    "release_sha": {"$ref": "#/$defs/sha1"},
+    "generated_at": {"$ref": "#/$defs/timestamp"},
+    "gates": {"type": "array", "minItems": 14, "maxItems": 14, "items": {"$ref": "#/$defs/gate"}}
+  },
+  "$defs": {
+    "sha1": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "catalog": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"const": "docs/reports/contracts/report-platform-gates.v1.json"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "sourceArtifact": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_.\\-/]+$"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["gate", "owner_plan", "phase", "status", "command", "count", "schema_sha256", "release_sha", "commit_sha", "executed_at", "artifact_sha256", "source_artifacts"],
+      "properties": {
+        "gate": {"type": "string", "pattern": "^QG-(0[1-9]|1[0-4])$"},
+        "owner_plan": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"},
+        "phase": {"enum": ["platform", "release"]},
+        "status": {"enum": ["pending", "passed", "failed", "skipped"]},
+        "command": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"},
+        "count": {"type": "integer", "minimum": 0},
+        "schema_sha256": {"$ref": "#/$defs/sha256"},
+        "release_sha": {"$ref": "#/$defs/sha1"},
+        "commit_sha": {"$ref": "#/$defs/sha1"},
+        "executed_at": {"$ref": "#/$defs/timestamp"},
+        "artifact_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "source_artifacts": {"type": "array", "items": {"$ref": "#/$defs/sourceArtifact"}}
+      }
+    }
+  }
+}
