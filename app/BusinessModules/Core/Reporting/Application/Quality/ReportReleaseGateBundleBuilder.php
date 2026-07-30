@@ -35,6 +35,23 @@ final class ReportReleaseGateBundleBuilder
         ['report_publication_ledger_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/report-publication-ledger.v1.json'],
     ];
 
+    private const GATE_SOURCES = [
+        'QG-01' => 'plan-1c-platform-completion',
+        'QG-02' => 'plan-2-wave-1-candidate-conformance',
+        'QG-03' => 'plan-2-wave-1-candidate-conformance',
+        'QG-04' => 'plan-2-wave-1-candidate-conformance',
+        'QG-05' => 'plan-2-wave-1-candidate-conformance',
+        'QG-06' => 'plan3_waves23_candidate_contribution',
+        'QG-07' => 'plan3_waves23_candidate_contribution',
+        'QG-08' => 'plan3_waves23_evidence',
+        'QG-09' => 'plan3_waves23_evidence',
+        'QG-10' => 'plan4_admin_qg10_qg14_evidence',
+        'QG-11' => 'plan4_admin_qg10_qg14_evidence',
+        'QG-12' => 'plan4_admin_qg10_qg14_evidence',
+        'QG-13' => 'plan4_admin_qg10_qg14_evidence',
+        'QG-14' => 'plan4_admin_qg10_qg14_evidence',
+    ];
+
     public function __construct(private readonly ?ReportPlatformGateCatalog $catalog = null)
     {
     }
@@ -56,7 +73,7 @@ final class ReportReleaseGateBundleBuilder
             || $activationCommitSha === $releaseSha
             || ! array_is_list($gates)
             || count($gates) !== 14
-            || ! $this->hasExactSourceArtifacts($sources)) {
+            || ! $this->hasExactSourceArtifacts($sources, $releaseSha, $activationCommitSha, $adminEvidenceCommitSha)) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH);
         }
 
@@ -111,7 +128,7 @@ final class ReportReleaseGateBundleBuilder
         string $activationCommitSha,
         string $adminEvidenceCommitSha,
     ): array {
-        if (! $this->hasExactSourceArtifacts($sources)) {
+        if (! $this->hasExactSourceArtifacts($sources, $releaseSha, $activationCommitSha, $adminEvidenceCommitSha)) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH);
         }
 
@@ -159,23 +176,32 @@ final class ReportReleaseGateBundleBuilder
                 $activationCommitSha,
                 $adminEvidenceCommitSha,
             );
-            foreach ($document['gate_evidence'] as $item) {
+            foreach ($document['quality_gates'] as $item) {
                 $gate = $item['gate'] ?? null;
                 if (! is_string($gate) || isset($byGate[$gate])) {
                     throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
                 }
                 $catalogIndex = (int) substr($gate, -2) - 1;
                 $definition = $catalog[$catalogIndex] ?? null;
+                $section = is_string($item['evidence_section'] ?? null)
+                    ? ($document['evidence_sections'][$item['evidence_section']] ?? null)
+                    : null;
                 if (! is_array($definition)
+                    || ! $this->hasExactKeys($item, ['gate', 'owner_plan', 'command', 'count', 'schema_sha256', 'executed_at', 'evidence_section', 'artifact_sha256'])
                     || $gate !== $definition['id']
                     || ($item['owner_plan'] ?? null) !== $definition['release_owner']
-                    || ($item['status'] ?? null) !== 'passed'
                     || ($item['command'] ?? null) !== $definition['command']
                     || ! is_int($item['count'] ?? null)
                     || ($item['schema_sha256'] ?? null) !== $definition['schema_sha256']
-                    || preg_match('/^[a-f0-9]{40}$/D', $item['commit_sha'] ?? '') !== 1
-                    || ! is_array($item['evidence'] ?? null)
-                    || ($item['artifact_sha256'] ?? null) !== hash('sha256', CanonicalJson::encode($item['evidence']))) {
+                    || (self::GATE_SOURCES[$gate] ?? null) !== $source['artifact_id']
+                    || ! is_string($item['evidence_section'] ?? null)
+                    || ! is_array($section)
+                    || ! $this->hasExactKeys($section, ['source_artifact_id', 'gate', 'result', 'observed_count'])
+                    || ($section['source_artifact_id'] ?? null) !== $source['artifact_id']
+                    || ($section['gate'] ?? null) !== $gate
+                    || ($section['result'] ?? null) !== 'passed'
+                    || ($section['observed_count'] ?? null) !== $item['count']
+                    || ($item['artifact_sha256'] ?? null) !== ($document['section_hashes'][$item['evidence_section']] ?? null)) {
                     throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
                 }
                 $executedAt = $this->canonicalTime($item['executed_at'] ?? null);
@@ -188,7 +214,7 @@ final class ReportReleaseGateBundleBuilder
                     $item['count'],
                     new Sha256Hash($definition['schema_sha256']),
                     $releaseSha,
-                    $item['commit_sha'],
+                    $document['repository_commit'],
                     $executedAt,
                     new Sha256Hash($item['artifact_sha256']),
                 );
@@ -223,8 +249,13 @@ final class ReportReleaseGateBundleBuilder
         );
     }
 
-    /** @param list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> $sources */
-    private function hasExactSourceArtifacts(array $sources): bool
+    /** @param list<array<string, mixed>> $sources */
+    private function hasExactSourceArtifacts(
+        array $sources,
+        string $releaseSha,
+        string $activationCommitSha,
+        string $adminEvidenceCommitSha,
+    ): bool
     {
         if (! array_is_list($sources) || count($sources) !== 13) {
             return false;
@@ -232,26 +263,46 @@ final class ReportReleaseGateBundleBuilder
 
         foreach ($sources as $index => $source) {
             [$artifactId, $kind, $path] = self::SOURCE_ARTIFACTS[$index];
+            $bytes = @file_get_contents(dirname(__DIR__, 6).'/'.$path);
+            if (! is_string($bytes)) {
+                return false;
+            }
+            $bytesHash = hash('sha256', $bytes);
+            $expectedCommit = $this->expectedRepositoryCommit(
+                $artifactId,
+                $releaseSha,
+                $activationCommitSha,
+                $adminEvidenceCommitSha,
+            );
+            $expectedStatus = 'tracked';
+            $expectedSections = ['document' => $bytesHash];
+            if (! in_array($index, [9, 11, 12], true)) {
+                try {
+                    $document = $this->decodeCanonical($bytes);
+                } catch (\Throwable) {
+                    return false;
+                }
+                $expectedStatus = is_string($document['status'] ?? null) ? $document['status'] : '';
+                $expectedSections = is_array($document['section_hashes'] ?? null)
+                    ? $document['section_hashes']
+                    : [];
+            }
             if (! is_array($source)
-                || array_keys($source) !== ['artifact_id', 'kind', 'path', 'bytes_sha256']
+                || array_keys($source) !== ['artifact_id', 'kind', 'path', 'bytes_sha256', 'document_sha256', 'repository_commit', 'status', 'section_hashes']
                 || ($source['artifact_id'] ?? null) !== $artifactId
                 || ($source['kind'] ?? null) !== $kind
                 || ($source['path'] ?? null) !== $path
-                || preg_match('/^[a-f0-9]{64}$/', $source['bytes_sha256'] ?? null) !== 1
-                || ! $this->matchesArtifactBytes($path, $source['bytes_sha256'])
+                || ($source['bytes_sha256'] ?? null) !== $bytesHash
+                || ($source['document_sha256'] ?? null) !== $bytesHash
+                || ($source['repository_commit'] ?? null) !== $expectedCommit
+                || ($source['status'] ?? null) !== $expectedStatus
+                || ($source['section_hashes'] ?? null) !== $expectedSections
             ) {
                 return false;
             }
         }
 
         return true;
-    }
-
-    private function matchesArtifactBytes(string $path, string $expectedHash): bool
-    {
-        $bytes = @file_get_contents(dirname(__DIR__, 6).'/'.$path);
-
-        return is_string($bytes) && hash_equals(hash('sha256', $bytes), $expectedHash);
     }
 
     private function artifactBytes(string $path): string
@@ -288,20 +339,38 @@ final class ReportReleaseGateBundleBuilder
         string $activationCommitSha,
         string $adminEvidenceCommitSha,
     ): void {
-        $requiredKeys = ['artifact_id', 'schema_version', 'status', 'producer_commit_sha', 'generated_at', 'gate_evidence', 'section_hashes'];
-        foreach ($requiredKeys as $key) {
-            if (! array_key_exists($key, $document)) {
-                throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
-            }
+        $expectedKeys = ['artifact_id', 'schema_version', 'status', 'repository_commit', 'generated_at', 'evidence_sections', 'quality_gates', 'section_hashes'];
+        if ($kind !== 'ancestor_evidence') {
+            $expectedKeys[] = 'release_sha';
         }
-        if (($document['artifact_id'] ?? null) !== $artifactId
+        if ($kind === 'transfer') {
+            $expectedKeys[] = 'activation_commit_sha';
+            $expectedKeys[] = 'admin_evidence_commit_sha';
+        }
+        sort($expectedKeys);
+        $actualKeys = array_keys($document);
+        sort($actualKeys);
+        if ($actualKeys !== $expectedKeys
+            || ($document['artifact_id'] ?? null) !== $artifactId
             || ($document['schema_version'] ?? null) !== '1.0.0'
             || ! in_array($document['status'] ?? null, ['passed', 'artifact_transferred'], true)
-            || preg_match('/^[a-f0-9]{40}$/D', $document['producer_commit_sha'] ?? '') !== 1
-            || ! array_is_list($document['gate_evidence'] ?? null)
+            || ($document['repository_commit'] ?? null) !== $this->expectedRepositoryCommit(
+                $artifactId,
+                $releaseSha,
+                $activationCommitSha,
+                $adminEvidenceCommitSha,
+            )
+            || ! is_array($document['evidence_sections'] ?? null)
+            || ! array_is_list($document['quality_gates'] ?? null)
             || ! is_array($document['section_hashes'] ?? null)
-            || ($document['section_hashes']['gate_evidence'] ?? null) !== hash('sha256', CanonicalJson::encode($document['gate_evidence']))) {
+            || array_keys($document['section_hashes']) !== array_keys($document['evidence_sections'])) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+        foreach ($document['evidence_sections'] as $section => $evidence) {
+            if (preg_match('/^[a-z][a-z0-9_]{2,63}$/D', (string) $section) !== 1
+                || ($document['section_hashes'][$section] ?? null) !== hash('sha256', CanonicalJson::encode($evidence))) {
+                throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+            }
         }
         $this->canonicalTime($document['generated_at'] ?? null);
         if ($kind === 'ancestor_evidence') {
@@ -319,6 +388,19 @@ final class ReportReleaseGateBundleBuilder
         }
     }
 
+    private function expectedRepositoryCommit(
+        string $artifactId,
+        string $releaseSha,
+        string $activationCommitSha,
+        string $adminEvidenceCommitSha,
+    ): string {
+        return match ($artifactId) {
+            'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => $activationCommitSha,
+            'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => $adminEvidenceCommitSha,
+            default => $releaseSha,
+        };
+    }
+
     private function canonicalTime(mixed $value): DateTimeImmutable
     {
         if (! is_string($value)) {
@@ -334,5 +416,15 @@ final class ReportReleaseGateBundleBuilder
         }
 
         return $time;
+    }
+
+    /** @param array<string, mixed> $value @param list<string> $keys */
+    private function hasExactKeys(array $value, array $keys): bool
+    {
+        $actual = array_keys($value);
+        sort($actual);
+        sort($keys);
+
+        return $actual === $keys;
     }
 }

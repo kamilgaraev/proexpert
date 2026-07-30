@@ -103,7 +103,32 @@ function sourceArtifacts(array $options): array
         if (! is_string($value) || realpath($value) !== realpath($expected)) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
         }
-        $sources[] = ['artifact_id' => $artifactId, 'kind' => $kind, 'path' => $path, 'bytes_sha256' => hash('sha256', read($expected))];
+        $bytes = read($expected);
+        $bytesHash = hash('sha256', $bytes);
+        $tracked = in_array($artifactId, [
+            'plan4_admin_evidence_schema',
+            'report_management_catalog_active',
+            'report_publication_ledger_active',
+        ], true);
+        $document = $tracked ? null : json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
+        if (! $tracked && (! is_array($document) || CanonicalJson::encode($document)."\n" !== $bytes)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
+        }
+        $repositoryCommit = match ($artifactId) {
+            'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => $options['activation-commit'],
+            'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => $options['admin-evidence-commit'],
+            default => $options['release-sha'],
+        };
+        $sources[] = [
+            'artifact_id' => $artifactId,
+            'kind' => $kind,
+            'path' => $path,
+            'bytes_sha256' => $bytesHash,
+            'document_sha256' => $bytesHash,
+            'repository_commit' => $repositoryCommit,
+            'status' => $tracked ? 'tracked' : ($document['status'] ?? null),
+            'section_hashes' => $tracked ? ['document' => $bytesHash] : ($document['section_hashes'] ?? null),
+        ];
     }
 
     return $sources;
@@ -118,10 +143,22 @@ function releaseGateDocument(array $gates, \App\BusinessModules\Core\Reporting\D
             ? [$qg14Evidence->qg14AdminSha256->value, $qg14Evidence->qg14BackendSha256->value, $qg14Evidence->qg14CombinedSha256->value]
             : [$gate->artifactHash?->value ?? $gate->schemaHash->value];
 
-        return ['gate' => $gate->gate, 'owner' => $gate->ownerPlan, 'phase' => $gate->phase->value, 'status' => $gate->status->value, 'command_ids' => [$gate->command], 'actual_count' => $counts, 'required_count' => $counts, 'executed_at' => $gate->executedAt->format('Y-m-d\\TH:i:s\\Z'), 'age_seconds' => 0, 'evidence_hashes' => $evidenceHashes, 'schema_hashes' => [$gate->schemaHash->value]];
+        return ['gate' => $gate->gate, 'source_artifact_id' => gateSourceArtifact($gate->gate), 'owner' => $gate->ownerPlan, 'phase' => $gate->phase->value, 'status' => $gate->status->value, 'command_ids' => [$gate->command], 'actual_count' => $counts, 'required_count' => $counts, 'executed_at' => $gate->executedAt->format('Y-m-d\\TH:i:s\\Z'), 'age_seconds' => 0, 'evidence_hashes' => $evidenceHashes, 'schema_hashes' => [$gate->schemaHash->value]];
     }, $gates);
 
     return ['artifact_id' => 'report_release_gate_bundle', 'schema_version' => '1.0.0', 'status' => 'release_gates_passed', 'release_sha' => $options['release-sha'], 'activation_commit_sha' => $options['activation-commit'], 'admin_evidence_commit_sha' => $options['admin-evidence-commit'], 'generated_at' => $generatedAt->format('Y-m-d\\TH:i:s\\Z'), 'source_artifacts' => $sources, 'gates' => $serializedGates, 'counts' => ['source_artifacts' => 13, 'gates' => 14, 'passed_gates' => 14, 'backend' => 9, 'admin' => 4, 'joint' => 1], 'section_hashes' => ['source_artifacts' => hash('sha256', CanonicalJson::encode($sources)), 'gates' => hash('sha256', CanonicalJson::encode($serializedGates))]];
+}
+
+function gateSourceArtifact(string $gate): string
+{
+    return match ($gate) {
+        'QG-01' => 'plan-1c-platform-completion',
+        'QG-02', 'QG-03', 'QG-04', 'QG-05' => 'plan-2-wave-1-candidate-conformance',
+        'QG-06', 'QG-07' => 'plan3_waves23_candidate_contribution',
+        'QG-08', 'QG-09' => 'plan3_waves23_evidence',
+        'QG-10', 'QG-11', 'QG-12', 'QG-13', 'QG-14' => 'plan4_admin_qg10_qg14_evidence',
+        default => throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID),
+    };
 }
 
 /** @return array<string, int|array<string, int>> */

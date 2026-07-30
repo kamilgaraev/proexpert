@@ -105,7 +105,12 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
 
-        $this->build($this->gates(), $sources);
+        $this->builder()->loadGateEvidence(
+            $sources,
+            str_repeat('a', 40),
+            str_repeat('b', 40),
+            str_repeat('c', 40),
+        );
     }
 
     public function test_rejects_source_artifact_hash_that_does_not_match_its_file_bytes(): void
@@ -115,18 +120,68 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
 
-        $this->build($this->gates(), $sources);
+        $this->builder()->loadGateEvidence(
+            $sources,
+            str_repeat('a', 40),
+            str_repeat('b', 40),
+            str_repeat('c', 40),
+        );
     }
 
     public function test_rejects_structurally_empty_source_bytes_even_when_the_hash_matches(): void
     {
+        $sources = $this->sources();
         $path = $this->sourceRoot.'/build/reports/plan-2-wave-1-evidence.json';
         file_put_contents($path, "plan-2-wave-1-candidate-conformance\n");
+        $sources[3]['bytes_sha256'] = hash_file('sha256', $path);
+        $sources[3]['document_sha256'] = $sources[3]['bytes_sha256'];
+
+        $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
+
+        $this->builder()->loadGateEvidence(
+            $sources,
+            str_repeat('a', 40),
+            str_repeat('b', 40),
+            str_repeat('c', 40),
+        );
+    }
+
+    public function test_rejects_a_self_signed_gate_section_with_forged_evidence(): void
+    {
+        $path = $this->sourceRoot.'/build/reports/plan-1c-platform-completion.json';
+        $document = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        $document['evidence_sections']['qg_01_evidence']['result'] = 'invented';
+        $document['section_hashes']['qg_01_evidence'] = hash(
+            'sha256',
+            CanonicalJson::encode($document['evidence_sections']['qg_01_evidence']),
+        );
+        $document['quality_gates'][0]['artifact_sha256'] = $document['section_hashes']['qg_01_evidence'];
+        file_put_contents($path, CanonicalJson::encode($document)."\n");
         $sources = $this->sources();
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE));
 
-        $this->build($this->gates(), $sources);
+        $this->builder()->loadGateEvidence(
+            $sources,
+            str_repeat('a', 40),
+            str_repeat('b', 40),
+            str_repeat('c', 40),
+        );
+    }
+
+    public function test_rejects_a_dummy_artifact_even_with_a_valid_handoff_shape(): void
+    {
+        $sources = $this->sources();
+        $sources[2]['artifact_id'] = 'dummy_release_evidence';
+
+        $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
+
+        $this->builder()->loadGateEvidence(
+            $sources,
+            str_repeat('a', 40),
+            str_repeat('b', 40),
+            str_repeat('c', 40),
+        );
     }
 
     public function test_release_bundle_cli_requires_primary_artifacts_without_requiring_a_complete_input_bundle(): void
@@ -231,41 +286,47 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
             5 => [8, 9],
             8 => [10, 11, 12, 13, 14],
         ];
-        $gateEvidence = [];
+        $qualityGates = [];
+        $evidenceSections = [];
         foreach ($gateRanges[$index] ?? [] as $gateNumber) {
             $definition = (new ReportPlatformGateCatalog(
                 $this->sourceRoot.'/docs/reports/contracts/report-platform-gates.v1.json',
             ))->records()[$gateNumber - 1];
-            $evidence = [
+            $section = strtolower(str_replace('-', '_', $definition['id'])).'_evidence';
+            $evidenceSections[$section] = [
                 'source_artifact_id' => $artifactId,
                 'gate' => $definition['id'],
                 'result' => 'passed',
                 'observed_count' => $definition['minimum_count'],
             ];
-            $gateEvidence[] = [
+            $qualityGates[] = [
                 'gate' => $definition['id'],
                 'owner_plan' => $definition['release_owner'],
-                'status' => 'passed',
                 'command' => $definition['command'],
                 'count' => $definition['minimum_count'],
                 'schema_sha256' => $definition['schema_sha256'],
-                'commit_sha' => str_repeat('c', 40),
                 'executed_at' => '2026-07-26T00:00:00Z',
-                'evidence' => $evidence,
-                'artifact_sha256' => hash('sha256', CanonicalJson::encode($evidence)),
+                'evidence_section' => $section,
+                'artifact_sha256' => hash('sha256', CanonicalJson::encode($evidenceSections[$section])),
             ];
         }
-        $sections = ['gate_evidence' => $gateEvidence];
+        $repositoryCommit = match ($artifactId) {
+            'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => str_repeat('b', 40),
+            'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => str_repeat('c', 40),
+            default => str_repeat('a', 40),
+        };
         $document = [
             'artifact_id' => $artifactId,
             'schema_version' => '1.0.0',
             'status' => $kind === 'transfer' ? 'artifact_transferred' : 'passed',
-            'producer_commit_sha' => str_repeat('c', 40),
+            'repository_commit' => $repositoryCommit,
             'generated_at' => '2026-07-26T00:00:00Z',
-            'gate_evidence' => $gateEvidence,
-            'section_hashes' => [
-                'gate_evidence' => hash('sha256', CanonicalJson::encode($sections['gate_evidence'])),
-            ],
+            'evidence_sections' => $evidenceSections,
+            'quality_gates' => $qualityGates,
+            'section_hashes' => array_map(
+                static fn (mixed $section): string => hash('sha256', CanonicalJson::encode($section)),
+                $evidenceSections,
+            ),
         ];
         if ($kind !== 'ancestor_evidence') {
             $document['release_sha'] = str_repeat('a', 40);
@@ -281,12 +342,31 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
     /** @return list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> */
     private function sources(): array
     {
-        return array_map(fn (array $source): array => [
-            'artifact_id' => $source[0],
-            'kind' => $source[1],
-            'path' => $source[2],
-            'bytes_sha256' => hash_file('sha256', $this->sourceRoot.'/'.$source[2]),
-        ], $this->sourceDefinitions());
+        return array_map(function (array $source): array {
+            $bytes = (string) file_get_contents($this->sourceRoot.'/'.$source[2]);
+            $bytesHash = hash('sha256', $bytes);
+            $tracked = in_array($source[0], [
+                'plan4_admin_evidence_schema',
+                'report_management_catalog_active',
+                'report_publication_ledger_active',
+            ], true);
+            $document = $tracked ? null : json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
+
+            return [
+                'artifact_id' => $source[0],
+                'kind' => $source[1],
+                'path' => $source[2],
+                'bytes_sha256' => $bytesHash,
+                'document_sha256' => $bytesHash,
+                'repository_commit' => match ($source[0]) {
+                    'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => str_repeat('b', 40),
+                    'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => str_repeat('c', 40),
+                    default => str_repeat('a', 40),
+                },
+                'status' => $tracked ? 'tracked' : $document['status'],
+                'section_hashes' => $tracked ? ['document' => $bytesHash] : $document['section_hashes'],
+            ];
+        }, $this->sourceDefinitions());
     }
 
     /** @return list<array{string, string, string}> */

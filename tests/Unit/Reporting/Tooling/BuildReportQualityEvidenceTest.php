@@ -39,6 +39,7 @@ final class BuildReportQualityEvidenceTest extends TestCase
                 '--activation-inputs=ignored',
                 '--activation=ignored',
                 '--activation-commit='.str_repeat('b', 40),
+                '--admin-evidence-commit='.str_repeat('c', 40),
                 '--gates=build/reports/report-release-gate-bundle.json',
                 '--plan-1a=ignored',
                 '--plan-1b=ignored',
