@@ -409,6 +409,97 @@ final class LaborPayrollSourceTest extends TestCase
     }
 
     #[Test]
+    public function management_pnl_source_tuple_accepts_a_real_payroll_manifest_with_domain_metadata(): void
+    {
+        $connection = $this->sourceRunConnection();
+        $clock = new FakeReportExecutionClock(new DateTimeImmutable('2030-02-01T00:00:00+00:00'));
+        $scope = new ReportScope(10, [10], [20], [], new DateTimeZone('UTC'));
+        $definition = (new ReportDefinitionBuilder)
+            ->code('payroll_readiness')
+            ->formulaVersion('payroll-readiness.v1')
+            ->sourceSchemaVersion('workforce-payroll-calculation.v1')
+            ->published();
+        $query = $this->sourceQuery(
+            $definition,
+            $scope,
+            new DateTimeImmutable('2030-01-31T23:59:59+00:00'),
+        );
+        $this->insertSourceRun(
+            $connection,
+            'payroll-run',
+            'payroll-snapshot',
+            $query->canonicalJson,
+            $definition->definitionHash->value,
+            '2030-02-02T00:00:00+00:00',
+            '2030-01-31T23:30:00+00:00',
+            reportCode: 'payroll_readiness',
+            snapshotKind: 'payroll_readiness',
+            formulaVersion: 'payroll-readiness.v1',
+            sourceSchemaVersion: 'workforce-payroll-calculation.v1',
+        );
+
+        $tuple = (new ManagementPnlSourceTupleGuard($connection, $clock))->selectActiveReadyTuple(
+            10,
+            'payroll_readiness',
+            'payroll_readiness',
+            $definition,
+            $query,
+            'locked_payroll_calculation',
+            function (object $run): object {
+                $snapshot = $this->sourceSnapshot($run);
+                $sourceRefs = $this->sourceRefs();
+                $sourceRefs[0]['payroll_period_id'] = 41;
+                $snapshot->source_refs = CanonicalJson::encode($sourceRefs);
+
+                return $snapshot;
+            },
+        );
+
+        self::assertSame('payroll-run', $tuple->run->id);
+        self::assertSame('payroll-snapshot', $tuple->snapshot->id);
+    }
+
+    #[Test]
+    public function management_pnl_source_tuple_propagates_snapshot_loader_errors(): void
+    {
+        $connection = $this->sourceRunConnection();
+        $clock = new FakeReportExecutionClock(new DateTimeImmutable('2030-02-01T00:00:00+00:00'));
+        $scope = new ReportScope(10, [10], [20], [], new DateTimeZone('UTC'));
+        $definition = (new ReportDefinitionBuilder)
+            ->code('project_labor_cost')
+            ->formulaVersion('labor-cost.v1')
+            ->sourceSchemaVersion('project-labor-cost-source.v1')
+            ->published();
+        $query = $this->sourceQuery(
+            $definition,
+            $scope,
+            new DateTimeImmutable('2030-01-31T23:59:59+00:00'),
+        );
+        $this->insertSourceRun(
+            $connection,
+            'loader-error-run',
+            'loader-error-snapshot',
+            $query->canonicalJson,
+            $definition->definitionHash->value,
+            '2030-02-02T00:00:00+00:00',
+            '2030-01-31T23:30:00+00:00',
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('snapshot_loader_failed');
+
+        (new ManagementPnlSourceTupleGuard($connection, $clock))->selectActiveReadyTuple(
+            10,
+            'project_labor_cost',
+            'project_labor_cost',
+            $definition,
+            $query,
+            'time_tracking_owner_snapshot',
+            static fn (object $run): never => throw new \RuntimeException('snapshot_loader_failed'),
+        );
+    }
+
+    #[Test]
     public function management_pnl_source_tuple_rejects_every_mismatched_sealed_lineage_field(): void
     {
         $connection = $this->sourceRunConnection();

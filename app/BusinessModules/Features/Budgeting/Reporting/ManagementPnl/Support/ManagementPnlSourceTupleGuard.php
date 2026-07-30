@@ -7,6 +7,8 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Support
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementPnlSourceTuple;
@@ -89,7 +91,9 @@ final readonly class ManagementPnlSourceTupleGuard
         PublishedReportDefinition $expected,
         string $sourceOfTruth,
     ): void {
-        $sourceRefs = $this->jsonArray($snapshot->source_refs ?? null);
+        $sourceRefs = $this->canonicalSourceRefs(
+            $this->jsonArray($snapshot->source_refs ?? null),
+        );
         $watermarks = $sourceRefs === null
             ? null
             : array_column($sourceRefs, 'watermark', 'snapshot_id');
@@ -168,6 +172,51 @@ final readonly class ManagementPnlSourceTupleGuard
         }
 
         return is_array($decoded) ? $decoded : null;
+    }
+
+    private function canonicalSourceRefs(?array $sourceRefs): ?array
+    {
+        if ($sourceRefs === null || ! array_is_list($sourceRefs)) {
+            return null;
+        }
+
+        $canonical = [];
+        foreach ($sourceRefs as $sourceRef) {
+            if (! is_array($sourceRef)
+                || ! is_string($sourceRef['source'] ?? null)
+                || ! is_string($sourceRef['snapshot_kind'] ?? null)
+                || ! is_string($sourceRef['snapshot_id'] ?? null)
+                || ! is_string($sourceRef['schema_version'] ?? null)
+                || ! is_string($sourceRef['watermark'] ?? null)
+                || ! is_int($sourceRef['row_count'] ?? null)
+                || ! is_string($sourceRef['hash'] ?? null)) {
+                return null;
+            }
+            try {
+                $ref = new ReportSourceRef(
+                    source: $sourceRef['source'],
+                    snapshotKind: $sourceRef['snapshot_kind'],
+                    snapshotId: $sourceRef['snapshot_id'],
+                    schemaVersion: $sourceRef['schema_version'],
+                    watermark: $sourceRef['watermark'],
+                    rowCount: $sourceRef['row_count'],
+                    hash: new Sha256Hash($sourceRef['hash']),
+                );
+            } catch (Throwable) {
+                return null;
+            }
+            $canonical[] = [
+                'source' => $ref->source,
+                'snapshot_kind' => $ref->snapshotKind,
+                'snapshot_id' => $ref->snapshotId,
+                'schema_version' => $ref->schemaVersion,
+                'watermark' => $ref->watermark,
+                'row_count' => $ref->rowCount,
+                'hash' => $ref->hash->value,
+            ];
+        }
+
+        return $canonical;
     }
 
     public function assertRequestedGroupCoverage(
