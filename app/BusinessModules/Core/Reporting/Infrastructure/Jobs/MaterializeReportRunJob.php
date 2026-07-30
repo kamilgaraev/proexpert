@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportProgressWritePolicy;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotIdentityBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
@@ -118,7 +119,8 @@ final class MaterializeReportRunJob implements ShouldQueue
             }
 
             $result = $binding->dataProvider->result($context, $snapshot);
-            $sourceHash = $sourceHashes->build($query, $snapshot, $result);
+            (new ReportSnapshotIdentityBuilder($sourceHashes))->build($query, $snapshot, $result);
+            $sourceHash = $snapshot->sourceHash;
             $progress->advance(100);
             $runs->sealReady($context, $this->runId, $leaseToken, $snapshot, $result, $sourceHash, $clock->now());
             $telemetry->runTransition($run->reportCode, ReportRunStatus::READY->value);

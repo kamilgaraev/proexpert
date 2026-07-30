@@ -11,6 +11,9 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('report_runs', function (Blueprint $table): void {
+            $table->char('snapshot_identity_hash', 64)->nullable();
+        });
         Schema::create('report_snapshot_seals', function (Blueprint $table): void {
             $table->string('snapshot_kind', 128);
             $table->string('snapshot_id', 64);
@@ -59,5 +62,8 @@ SQL);
         DB::statement('DROP FUNCTION IF EXISTS immutable_report_snapshot_seal_guard() CASCADE');
         Schema::dropIfExists('report_snapshot_seal_backfills');
         Schema::dropIfExists('report_snapshot_seals');
+        Schema::table('report_runs', function (Blueprint $table): void {
+            $table->dropColumn('snapshot_identity_hash');
+        });
     }
 };

@@ -83,8 +83,11 @@ final class QualityReportsPostgresEndToEndContractTest extends TestCase
         );
 
         self::assertStringContainsString('ReportSnapshotSealValidator $sealValidator', $store);
-        self::assertStringContainsString('ReportSnapshotSealVerifier $sealVerifier', $store);
-        self::assertGreaterThanOrEqual(2, substr_count($store, 'assertTrustedReadyRecord('));
+        $hydrator = (string) file_get_contents(
+            $root.'/app/BusinessModules/Core/Reporting/Infrastructure/Persistence/ReportRunHydrator.php',
+        );
+        self::assertStringContainsString('ReportSnapshotSealVerifier $sealVerifier', $hydrator);
+        self::assertStringContainsString('ReportSnapshotIdentityValidator $snapshotIdentities', $hydrator);
         self::assertStringContainsString('lockForUpdate()', $sealStore);
         self::assertStringContainsString("DB::table('report_snapshot_seals')->insert", $sealStore);
         self::assertStringContainsString('report_snapshot_seal_immutable', $migration);

@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Actions;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceAccessResolver;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CancelReportRunHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CreateReportRunHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportRunHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\RetryReportRunHandler;
-use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
-use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
-use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceAccessResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
@@ -23,6 +23,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSour
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunCoordinator;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotIdentityBuilder;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportRunData;
@@ -149,6 +150,15 @@ final class ReportRunHandlersTest extends TestCase
             ['result', ReportResult::class],
         ], Sha256Hash::class);
         $this->assertMethodSurface(CanonicalReportSourceHashBuilder::class, ['build']);
+        $this->assertConstructor(ReportSnapshotIdentityBuilder::class, [
+            ['canonical', CanonicalReportSourceHashBuilder::class],
+        ]);
+        $this->assertMethod(ReportSnapshotIdentityBuilder::class, 'build', [
+            ['query', \App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery::class],
+            ['snapshot', \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef::class],
+            ['result', \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult::class],
+        ], \App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash::class);
+        $this->assertMethodSurface(ReportSnapshotIdentityBuilder::class, ['__construct', 'build']);
 
         $this->assertMethod(ReportSnapshotSealVerifier::class, 'assertTrusted', [
             ['input', ReportSnapshotSealVerificationInput::class],
@@ -385,7 +395,7 @@ final class ReportRunHandlersTest extends TestCase
         }
 
         [, $readyStore] = $this->fixture();
-        $ready = (new ReportRunBuilder())
+        $ready = (new ReportRunBuilder)
             ->definitionHash($readyStore->query->definition->definitionHash)
             ->queryHash($readyStore->query->queryHash)
             ->ready();
@@ -402,22 +412,22 @@ final class ReportRunHandlersTest extends TestCase
     public function test_retry_authorizes_original_definition_without_resolving_current_registry_definition(): void
     {
         $oldPolicy = new ReportPermissionPolicy(['reports.old'], ['reports.export'], [], []);
-        $oldDefinition = (new ReportDefinitionBuilder())->permissionPolicy($oldPolicy)->payload();
-        $context = (new ReportExecutionContextBuilder())->actor(new ReportActor(1, 'active', ['reports.view', 'reports.run', 'reports.old']))->build();
+        $oldDefinition = (new ReportDefinitionBuilder)->permissionPolicy($oldPolicy)->payload();
+        $context = (new ReportExecutionContextBuilder)->actor(new ReportActor(1, 'active', ['reports.view', 'reports.run', 'reports.old']))->build();
         $oldQuery = new ReportQuery($oldDefinition, $context->scope, new ReportFilterSet([]), [], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU');
         $store = new RecordingRunStore($oldQuery, $this->makeRun(ReportRunStatus::QUEUED, $oldQuery));
         $store->retrySource = new ReportRunRetrySource($this->makeRun(ReportRunStatus::CANCELLED, $oldQuery), $oldQuery, null, null);
-        $newDefinition = (new ReportDefinitionBuilder())
+        $newDefinition = (new ReportDefinitionBuilder)
             ->definitionHash(new Sha256Hash(str_repeat('f', 64)))
             ->permissionPolicy(new ReportPermissionPolicy(['reports.new'], ['reports.export'], [], []))
             ->published();
         $registry = new SingleDefinitionRegistry($newDefinition);
         $coordinator = new ReportRunCoordinator(
             $registry,
-            new RecordingSavedViewResolver(),
+            new RecordingSavedViewResolver,
             new ReportAccessService(
                 new RecordingActorLoader(new ReportActor(1, 'active', ['reports.view', 'reports.run', 'reports.old'])),
-                new PermissiveSourceResolver(),
+                new PermissiveSourceResolver,
             ),
             $store,
             new FixedClock(new DateTimeImmutable('2026-07-29T09:30:00Z')),
@@ -512,17 +522,17 @@ final class ReportRunHandlersTest extends TestCase
 
     private function fixture(?ReportOutputClassification $output = null, ?array $permissions = null): array
     {
-        $definition = (new ReportDefinitionBuilder())
+        $definition = (new ReportDefinitionBuilder)
             ->permissionPolicy(new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []))
             ->outputClassification($output ?? new ReportOutputClassification(ReportDataClassification::STANDARD, [], [], false, false, false))
             ->payload();
         $published = new PublishedReportDefinition($definition);
-        $context = (new ReportExecutionContextBuilder())->actor(new ReportActor(1, 'active', $permissions ?? ['reports.view', 'reports.run']))->build();
+        $context = (new ReportExecutionContextBuilder)->actor(new ReportActor(1, 'active', $permissions ?? ['reports.view', 'reports.run']))->build();
         $query = new ReportQuery($definition, $context->scope, new ReportFilterSet([]), [], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU');
         $store = new RecordingRunStore($query, $this->makeRun(ReportRunStatus::QUEUED, $query));
-        $savedViews = new RecordingSavedViewResolver();
+        $savedViews = new RecordingSavedViewResolver;
         $actorLoader = new RecordingActorLoader(new ReportActor(1, 'active', $permissions ?? ['reports.view', 'reports.run']));
-        $access = new ReportAccessService($actorLoader, new PermissiveSourceResolver());
+        $access = new ReportAccessService($actorLoader, new PermissiveSourceResolver);
         $clock = new FixedClock(new DateTimeImmutable('2026-07-29T09:30:00.123456Z'));
         $coordinator = new ReportRunCoordinator(new SingleDefinitionRegistry($published), $savedViews, $access, $store, $clock);
 
@@ -614,16 +624,16 @@ final class ReportRunHandlersTest extends TestCase
 
     private function parseSource(string $source): array
     {
-        $statements = (new ParserFactory())->createForNewestSupportedVersion()->parse($source);
+        $statements = (new ParserFactory)->createForNewestSupportedVersion()->parse($source);
         self::assertIsArray($statements);
-        $traverser = new NodeTraverser(new NameResolver());
+        $traverser = new NodeTraverser(new NameResolver);
 
         return $traverser->traverse($statements);
     }
 
     private function forbiddenDependencyNames(string $source): array
     {
-        $finder = new NodeFinder();
+        $finder = new NodeFinder;
         $forbiddenExact = [
             'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord',
             'App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportMaterializationDispatcher',
@@ -654,13 +664,13 @@ final class ReportRunHandlersTest extends TestCase
         string $consumerName,
         int $statementCount,
     ): array {
-        $finder = new NodeFinder();
+        $finder = new NodeFinder;
         $ast = $this->parseSource($source);
         $method = $finder->findFirst(
             $ast,
             static fn (Node $node): bool => $node instanceof ClassMethod && $node->name->toString() === $methodName,
         );
-        if (!$method instanceof ClassMethod || $method->stmts === null) {
+        if (! $method instanceof ClassMethod || $method->stmts === null) {
             return ['method_missing'];
         }
 
@@ -670,15 +680,15 @@ final class ReportRunHandlersTest extends TestCase
         }
         $first = $method->stmts[0] ?? null;
         $assignment = $first instanceof Expression ? $first->expr : null;
-        if (!$assignment instanceof Assign
-            || !$assignment->var instanceof Variable
+        if (! $assignment instanceof Assign
+            || ! $assignment->var instanceof Variable
             || $assignment->var->name !== 'record'
-            || !$assignment->expr instanceof MethodCall
-            || !$assignment->expr->var instanceof Variable
+            || ! $assignment->expr instanceof MethodCall
+            || ! $assignment->expr->var instanceof Variable
             || $assignment->expr->var->name !== 'this'
-            || !$assignment->expr->name instanceof Node\Identifier
+            || ! $assignment->expr->name instanceof Node\Identifier
             || $assignment->expr->name->toString() !== $lookupName
-            || !$this->hasExactVariableArgs($assignment->expr->args, ['context', 'runId'])) {
+            || ! $this->hasExactVariableArgs($assignment->expr->args, ['context', 'runId'])) {
             $violations[] = 'lookup_assignment';
         }
 
@@ -691,23 +701,23 @@ final class ReportRunHandlersTest extends TestCase
         if (count($lookupCalls) !== 1) {
             $violations[] = 'lookup_call_count';
         }
-        if ($methodName === 'exportSource' && !$this->hasExactExpiredExportGuard($method->stmts[1] ?? null)) {
+        if ($methodName === 'exportSource' && ! $this->hasExactExpiredExportGuard($method->stmts[1] ?? null)) {
             $violations[] = 'expired_export_guard';
         }
 
         $last = $method->stmts[array_key_last($method->stmts)] ?? null;
         $consumer = $last instanceof Return_ ? $last->expr : null;
-        if (!$consumer instanceof MethodCall
-            || !$consumer->var instanceof PropertyFetch
-            || !$consumer->var->var instanceof Variable
+        if (! $consumer instanceof MethodCall
+            || ! $consumer->var instanceof PropertyFetch
+            || ! $consumer->var->var instanceof Variable
             || $consumer->var->var->name !== 'this'
-            || !$consumer->var->name instanceof Node\Identifier
+            || ! $consumer->var->name instanceof Node\Identifier
             || $consumer->var->name->toString() !== 'hydrator'
-            || !$consumer->name instanceof Node\Identifier
+            || ! $consumer->name instanceof Node\Identifier
             || $consumer->name->toString() !== $consumerName
-            || !isset($consumer->args[0])
-            || !$consumer->args[0] instanceof Arg
-            || !$consumer->args[0]->value instanceof Variable
+            || ! isset($consumer->args[0])
+            || ! $consumer->args[0] instanceof Arg
+            || ! $consumer->args[0]->value instanceof Variable
             || $consumer->args[0]->value->name !== 'record') {
             $violations[] = 'record_consumer';
         }
@@ -717,42 +727,42 @@ final class ReportRunHandlersTest extends TestCase
 
     private function hasExactExpiredExportGuard(?Node $statement): bool
     {
-        if (!$statement instanceof If_
-            || !$statement->cond instanceof MethodCall
-            || !$statement->cond->var instanceof Variable
+        if (! $statement instanceof If_
+            || ! $statement->cond instanceof MethodCall
+            || ! $statement->cond->var instanceof Variable
             || $statement->cond->var->name !== 'this'
-            || !$statement->cond->name instanceof Node\Identifier
+            || ! $statement->cond->name instanceof Node\Identifier
             || $statement->cond->name->toString() !== 'isExpiredForExport'
             || count($statement->cond->args) !== 2
-            || !$statement->cond->args[0]->value instanceof PropertyFetch
-            || !$statement->cond->args[0]->value->var instanceof Variable
+            || ! $statement->cond->args[0]->value instanceof PropertyFetch
+            || ! $statement->cond->args[0]->value->var instanceof Variable
             || $statement->cond->args[0]->value->var->name !== 'record'
-            || !$statement->cond->args[0]->value->name instanceof Node\Identifier
+            || ! $statement->cond->args[0]->value->name instanceof Node\Identifier
             || $statement->cond->args[0]->value->name->toString() !== 'expires_at'
-            || !$statement->cond->args[1]->value instanceof MethodCall
-            || !$statement->cond->args[1]->value->var instanceof PropertyFetch
-            || !$statement->cond->args[1]->value->var->var instanceof Variable
+            || ! $statement->cond->args[1]->value instanceof MethodCall
+            || ! $statement->cond->args[1]->value->var instanceof PropertyFetch
+            || ! $statement->cond->args[1]->value->var->var instanceof Variable
             || $statement->cond->args[1]->value->var->var->name !== 'this'
-            || !$statement->cond->args[1]->value->var->name instanceof Node\Identifier
+            || ! $statement->cond->args[1]->value->var->name instanceof Node\Identifier
             || $statement->cond->args[1]->value->var->name->toString() !== 'clock'
-            || !$statement->cond->args[1]->value->name instanceof Node\Identifier
+            || ! $statement->cond->args[1]->value->name instanceof Node\Identifier
             || $statement->cond->args[1]->value->name->toString() !== 'now'
             || count($statement->stmts) !== 1
-            || !$statement->stmts[0] instanceof Expression
-            || !$statement->stmts[0]->expr instanceof Throw_) {
+            || ! $statement->stmts[0] instanceof Expression
+            || ! $statement->stmts[0]->expr instanceof Throw_) {
             return false;
         }
         $exception = $statement->stmts[0]->expr->expr;
-        if (!$exception instanceof StaticCall
-            || !$exception->class instanceof Name
+        if (! $exception instanceof StaticCall
+            || ! $exception->class instanceof Name
             || $exception->class->toString() !== ReportContractException::class
-            || !$exception->name instanceof Node\Identifier
+            || ! $exception->name instanceof Node\Identifier
             || $exception->name->toString() !== 'fromCode'
             || count($exception->args) !== 1
-            || !$exception->args[0]->value instanceof ClassConstFetch
-            || !$exception->args[0]->value->class instanceof Name
+            || ! $exception->args[0]->value instanceof ClassConstFetch
+            || ! $exception->args[0]->value->class instanceof Name
             || $exception->args[0]->value->class->toString() !== \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::class
-            || !$exception->args[0]->value->name instanceof Node\Identifier
+            || ! $exception->args[0]->value->name instanceof Node\Identifier
             || $exception->args[0]->value->name->toString() !== 'REPORT_SNAPSHOT_EXPIRED') {
             return false;
         }
@@ -766,7 +776,7 @@ final class ReportRunHandlersTest extends TestCase
             return false;
         }
         foreach ($args as $index => $arg) {
-            if (!$arg instanceof Arg || !$arg->value instanceof Variable || $arg->value->name !== $names[$index]) {
+            if (! $arg instanceof Arg || ! $arg->value instanceof Variable || $arg->value->name !== $names[$index]) {
                 return false;
             }
         }
@@ -778,17 +788,35 @@ final class ReportRunHandlersTest extends TestCase
 final class SingleDefinitionRegistry implements ReportDefinitionRegistry
 {
     public int $publishedCalls = 0;
+
     public function __construct(private readonly PublishedReportDefinition $definition) {}
-    public function published(string $code): PublishedReportDefinition { ++$this->publishedCalls; return $this->definition; }
-    public function publishedCodes(): array { return [$this->definition->code]; }
-    public function manifestSha256(): Sha256Hash { return $this->definition->definitionHash; }
+
+    public function published(string $code): PublishedReportDefinition
+    {
+        $this->publishedCalls++;
+
+        return $this->definition;
+    }
+
+    public function publishedCodes(): array
+    {
+        return [$this->definition->code];
+    }
+
+    public function manifestSha256(): Sha256Hash
+    {
+        return $this->definition->definitionHash;
+    }
 }
 
 final class RecordingSavedViewResolver implements ReportSavedViewReferenceResolver
 {
     public readonly ReportSavedViewRef $reference;
+
     public ?ReportSavedViewRef $asserted = null;
+
     public bool $rejectResolve = false;
+
     public bool $rejectCurrent = false;
 
     public function __construct()
@@ -801,8 +829,10 @@ final class RecordingSavedViewResolver implements ReportSavedViewReferenceResolv
         if ($this->rejectResolve) {
             throw new InvalidArgumentException('saved_view_invalid');
         }
+
         return $this->reference;
     }
+
     public function assertCurrent(ReportExecutionContext $context, ReportSavedViewRef $reference): void
     {
         if ($this->rejectCurrent) {
@@ -815,8 +845,15 @@ final class RecordingSavedViewResolver implements ReportSavedViewReferenceResolv
 final class RecordingActorLoader implements ReportActorLoader
 {
     public int $loads = 0;
+
     public function __construct(private readonly ReportActor $actor) {}
-    public function loadActive(int $actorId): ReportActor { ++$this->loads; return $this->actor; }
+
+    public function loadActive(int $actorId): ReportActor
+    {
+        $this->loads++;
+
+        return $this->actor;
+    }
 }
 
 final class PermissiveSourceResolver implements ReportSourceAccessResolver
@@ -827,28 +864,42 @@ final class PermissiveSourceResolver implements ReportSourceAccessResolver
 final class FixedClock implements ReportExecutionClock
 {
     public function __construct(private readonly DateTimeImmutable $instant) {}
-    public function now(): DateTimeImmutable { return $this->instant; }
+
+    public function now(): DateTimeImmutable
+    {
+        return $this->instant;
+    }
 }
 
 final class RecordingRunStore implements ReportRunStore
 {
     public ?ReportQuery $lastQuery = null;
+
     public ?ReportSavedViewRef $lastSavedView = null;
+
     public ?IdempotencyKey $lastKey = null;
+
     public ?DateTimeImmutable $cancelledAt = null;
+
     public ?ReportRunRetrySource $retrySource = null;
+
     public int $createCalls = 0;
+
     public int $cancelCalls = 0;
+
     public int $getCalls = 0;
+
     public int $queryCalls = 0;
+
     public bool $cancelRace = false;
+
     private array $idempotency = [];
 
     public function __construct(public readonly ReportQuery $query, public readonly ReportRun $run) {}
 
     public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey): ReportRun
     {
-        ++$this->createCalls;
+        $this->createCalls++;
         $this->lastQuery = $query;
         $this->lastSavedView = $savedView;
         $this->lastKey = $idempotencyKey;
@@ -861,27 +912,66 @@ final class RecordingRunStore implements ReportRunStore
             ],
         ]));
         $existing = $this->idempotency[$idempotencyKey->hash] ?? null;
-        if (is_string($existing) && !hash_equals($existing, $fingerprint)) {
+        if (is_string($existing) && ! hash_equals($existing, $fingerprint)) {
             throw ReportContractException::fromCode(\App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT);
         }
         $this->idempotency[$idempotencyKey->hash] = $fingerprint;
+
         return $this->run;
     }
-    public function get(ReportExecutionContext $context, string $runId): ReportRun { ++$this->getCalls; return $this->run; }
-    public function queryForRun(ReportExecutionContext $context, string $runId): ReportQuery { ++$this->queryCalls; return $this->query; }
-    public function retrySource(ReportExecutionContext $context, string $runId): ReportRunRetrySource { return $this->retrySource ?? throw new \LogicException('retry source missing'); }
-    public function exportSource(ReportExecutionContext $context, string $runId): ReportRunExportSource { throw new \LogicException('unused'); }
-    public function claimMaterialization(ReportExecutionContext $context, string $runId, string $leaseToken, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun { return $this->run; }
-    public function persistProgress(ReportExecutionContext $context, string $runId, string $leaseToken, ReportProgress $progress, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun { return $this->run; }
-    public function sealReady(ReportExecutionContext $context, string $runId, string $leaseToken, ReportSnapshotRef $snapshot, ReportResult $result, Sha256Hash $sourceHash, DateTimeImmutable $occurredAt): ReportRun { return $this->run; }
-    public function fail(ReportExecutionContext $context, string $runId, ?string $leaseToken, \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): ReportRun { return $this->run; }
+
+    public function get(ReportExecutionContext $context, string $runId): ReportRun
+    {
+        $this->getCalls++;
+
+        return $this->run;
+    }
+
+    public function queryForRun(ReportExecutionContext $context, string $runId): ReportQuery
+    {
+        $this->queryCalls++;
+
+        return $this->query;
+    }
+
+    public function retrySource(ReportExecutionContext $context, string $runId): ReportRunRetrySource
+    {
+        return $this->retrySource ?? throw new \LogicException('retry source missing');
+    }
+
+    public function exportSource(ReportExecutionContext $context, string $runId): ReportRunExportSource
+    {
+        throw new \LogicException('unused');
+    }
+
+    public function claimMaterialization(ReportExecutionContext $context, string $runId, string $leaseToken, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun
+    {
+        return $this->run;
+    }
+
+    public function persistProgress(ReportExecutionContext $context, string $runId, string $leaseToken, ReportProgress $progress, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun
+    {
+        return $this->run;
+    }
+
+    public function sealReady(ReportExecutionContext $context, string $runId, string $leaseToken, ReportSnapshotRef $snapshot, ReportResult $result, Sha256Hash $sourceHash, DateTimeImmutable $occurredAt): ReportRun
+    {
+        return $this->run;
+    }
+
+    public function fail(ReportExecutionContext $context, string $runId, ?string $leaseToken, \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): ReportRun
+    {
+        return $this->run;
+    }
+
     public function cancel(ReportExecutionContext $context, string $runId, DateTimeImmutable $occurredAt): ReportRun
     {
-        ++$this->cancelCalls;
+        $this->cancelCalls++;
         $this->cancelledAt = $occurredAt;
         if ($this->cancelRace) {
             throw ReportContractException::fromCode(\App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
+
         return $this->run;
     }
 }

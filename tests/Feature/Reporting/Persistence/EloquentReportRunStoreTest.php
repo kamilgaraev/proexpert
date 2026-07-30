@@ -6,9 +6,12 @@ namespace Tests\Feature\Reporting\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotIdentityValidator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotIdentityBuilder;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
@@ -1592,9 +1595,12 @@ final class EloquentReportRunStoreTest extends TestCase
         return new EloquentReportRunStore(
             new FakeReportExecutionClock($now ?? new DateTimeImmutable('2026-07-26T00:00:00.111111Z')),
             $audit,
-            new ReportRunHydrator,
+            new ReportRunHydrator(
+                new AcceptingReportSnapshotSealVerifier,
+                new AcceptingReportSnapshotIdentityValidator,
+            ),
             new ReportSnapshotSealValidator(new AcceptingReportSnapshotSealVerifier),
-            new AcceptingReportSnapshotSealVerifier,
+            new ReportSnapshotIdentityBuilder(new CanonicalReportSourceHashBuilder),
             new EloquentReportDispatchIntentStore($audit),
             3600,
             1250,
@@ -1717,4 +1723,14 @@ final class EloquentReportRunStoreTest extends TestCase
 final class AcceptingReportSnapshotSealVerifier implements ReportSnapshotSealVerifier
 {
     public function assertTrusted(ReportSnapshotSealVerificationInput $input): void {}
+}
+
+final class AcceptingReportSnapshotIdentityValidator implements ReportSnapshotIdentityValidator
+{
+    public function assertMatches(
+        ReportQuery $query,
+        ReportSnapshotRef $snapshot,
+        ReportResult $result,
+        mixed $persistedIdentity,
+    ): void {}
 }

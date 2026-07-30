@@ -28,12 +28,16 @@ final class ReportSnapshotSealBackfillContractTest extends TestCase
 
     public function test_source_hash_builder_separates_authoritative_source_from_snapshot_identity(): void
     {
-        $source = (string) file_get_contents(
+        $canonical = (string) file_get_contents(
             dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/Application/Execution/CanonicalReportSourceHashBuilder.php',
         );
+        $identity = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/Application/Execution/ReportSnapshotIdentityBuilder.php',
+        );
 
-        self::assertStringContainsString('report_source_hash_identity_mismatch', $source);
-        self::assertStringContainsString('return $snapshot->sourceHash;', $source);
-        self::assertStringContainsString('public function snapshotIdentity(', $source);
+        self::assertSame(1, substr_count($canonical, 'public function '));
+        self::assertStringContainsString('public function build(', $canonical);
+        self::assertStringContainsString('report_source_hash_identity_mismatch', $identity);
+        self::assertStringContainsString('$this->canonical->build(', $identity);
     }
 }

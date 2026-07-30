@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotIdentityValidator;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
@@ -43,6 +46,11 @@ use Throwable;
 
 final class ReportRunHydrator
 {
+    public function __construct(
+        private readonly ReportSnapshotSealVerifier $sealVerifier,
+        private readonly ReportSnapshotIdentityValidator $snapshotIdentities,
+    ) {}
+
     private const DEFINITION_KEYS = [
         'code', 'definition_hash', 'contract_version', 'formula_version',
         'source_schema_version', 'renderer_version', 'filters', 'columns',
@@ -62,7 +70,7 @@ final class ReportRunHydrator
                 ? $pollAfterMs
                 : null;
             $persistedSealed = in_array($status, [ReportRunStatus::READY, ReportRunStatus::EXPIRED], true)
-                ? $this->sealed($record, $query->scope)
+                ? $this->sealed($record, $query)
                 : null;
             if ($persistedSealed === null) {
                 $this->assertUnsealed($record);
@@ -278,7 +286,7 @@ final class ReportRunHydrator
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
             $query = $this->query($record);
-            $sealed = $this->sealed($record, $query->scope);
+            $sealed = $this->sealed($record, $query);
 
             return new ReportRunExportSource(
                 $run,
@@ -300,7 +308,7 @@ final class ReportRunHydrator
         }
     }
 
-    private function sealed(ReportRunRecord $record, ReportScope $scope): array
+    private function sealed(ReportRunRecord $record, ReportQuery $query): array
     {
         $sourceHash = new Sha256Hash($this->string($record->source_hash));
         $classification = ReportSnapshotClassification::from($this->string($record->snapshot_classification));
@@ -308,7 +316,7 @@ final class ReportRunHydrator
         $snapshot = new ReportSnapshotRef(
             $this->string($record->snapshot_kind),
             $this->string($record->snapshot_id),
-            $scope,
+            $query->scope,
             new Sha256Hash($this->string($record->definition_hash)),
             $this->string($record->formula_version),
             $sourceHash,
@@ -342,6 +350,25 @@ final class ReportRunHydrator
         $rowSchema = $this->array($record->row_schema);
         $capabilities = $this->array($record->capabilities);
         $result = new ReportResult($metadata, $totals, $freshness, $quality, $provenance, $rowSchema, $capabilities);
+        if ($snapshot->classification === ReportSnapshotClassification::OFFICIAL) {
+            if ($snapshot->seal === null) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED);
+            }
+            $this->sealVerifier->assertTrusted(new ReportSnapshotSealVerificationInput(
+                $snapshot->seal,
+                $snapshot->id,
+                $snapshot->kind,
+                $snapshot->classification,
+                $snapshot->generatedAt,
+                $sourceHash,
+            ));
+        }
+        $this->snapshotIdentities->assertMatches(
+            $query,
+            $snapshot,
+            $result,
+            $this->raw($record, 'snapshot_identity_hash'),
+        );
 
         if ($this->integer($record->row_count) !== $result->metadata->rowCount
             || ! hash_equals($sourceHash->value, $result->provenance->sourceHash->value)) {

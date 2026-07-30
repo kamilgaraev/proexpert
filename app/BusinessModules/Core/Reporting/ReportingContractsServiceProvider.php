@@ -19,10 +19,13 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRun
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunAttemptLifecycleStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunExecutionContextRehydrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotIdentityValidator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorResponseFactory;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSnapshotIdentityValidator;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotIdentityBuilder;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
@@ -78,6 +81,11 @@ final class ReportingContractsServiceProvider extends ServiceProvider
         );
         $this->app->singleton(ReportSnapshotSealStore::class, EloquentReportSnapshotSealStore::class);
         $this->app->singleton(ReportSnapshotSealValidator::class);
+        $this->app->singleton(ReportSnapshotIdentityBuilder::class);
+        $this->app->singleton(
+            ReportSnapshotIdentityValidator::class,
+            CanonicalReportSnapshotIdentityValidator::class,
+        );
         $this->app->singleton(ReportSnapshotSealBackfill::class);
         $this->app->singleton(CandidateReportDefinitionRegistry::class, ProductionCandidateReportDefinitionRegistry::class);
         $this->app->singleton(ReportDefinitionBindingAssembler::class, ProductionReportDefinitionBindingAssembler::class);

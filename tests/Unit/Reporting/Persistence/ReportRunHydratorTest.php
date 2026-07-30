@@ -5,6 +5,12 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotIdentityValidator;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator;
@@ -20,6 +26,14 @@ use ReflectionClass;
 
 final class ReportRunHydratorTest extends TestCase
 {
+    private function hydrator(): ReportRunHydrator
+    {
+        return new ReportRunHydrator(
+            new HydratorAcceptingSealVerifier,
+            new HydratorAcceptingIdentityValidator,
+        );
+    }
+
     public function test_store_contract_has_exact_typed_surface(): void
     {
         $reflection = new ReflectionClass(ReportRunStore::class);
@@ -85,7 +99,7 @@ final class ReportRunHydratorTest extends TestCase
         self::assertSame($expected, $methods);
     }
 
-    public function test_store_constructor_and_dependency_free_hydrator_surface_are_exact(): void
+    public function test_store_and_hydrator_surfaces_are_exact(): void
     {
         $storeConstructor = (new ReflectionClass(EloquentReportRunStore::class))->getConstructor();
         self::assertNotNull($storeConstructor);
@@ -93,6 +107,8 @@ final class ReportRunHydratorTest extends TestCase
             ['clock', 'App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock'],
             ['audit', 'App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit'],
             ['hydrator', 'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator'],
+            ['sealValidator', 'App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator'],
+            ['snapshotIdentities', 'App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotIdentityBuilder'],
             ['dispatchIntents', 'App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore'],
             ['runTtlSeconds', 'int'],
             ['pollAfterMs', 'int'],
@@ -102,13 +118,21 @@ final class ReportRunHydratorTest extends TestCase
         ));
 
         $hydrator = new ReflectionClass(ReportRunHydrator::class);
-        self::assertNull($hydrator->getConstructor());
+        $hydratorConstructor = $hydrator->getConstructor();
+        self::assertNotNull($hydratorConstructor);
+        self::assertSame([
+            ['sealVerifier', 'App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier'],
+            ['snapshotIdentities', 'App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotIdentityValidator'],
+        ], array_map(
+            static fn ($parameter): array => [$parameter->getName(), (string) $parameter->getType()],
+            $hydratorConstructor->getParameters(),
+        ));
         $methods = array_map(
             static fn ($method): string => $method->getName(),
             $hydrator->getMethods(\ReflectionMethod::IS_PUBLIC),
         );
         sort($methods);
-        self::assertSame(['exportSource', 'hydrate', 'query', 'retrySource'], $methods);
+        self::assertSame(['__construct', 'exportSource', 'hydrate', 'query', 'retrySource'], $methods);
         self::assertSame(
             [
                 ['record', 'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord'],
@@ -156,7 +180,7 @@ final class ReportRunHydratorTest extends TestCase
     public function test_hydrates_queued_run_and_reconstructs_exact_query(): void
     {
         $record = $this->record();
-        $hydrator = new ReportRunHydrator;
+        $hydrator = $this->hydrator();
 
         $query = $hydrator->query($record);
         $run = $hydrator->hydrate($record, 'created', 1250);
@@ -237,7 +261,7 @@ final class ReportRunHydratorTest extends TestCase
         $mutate($record);
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
+        $this->hydrator()->hydrate($record, 'reused', 1250);
     }
 
     public static function errorCodeCorruptions(): iterable
@@ -264,7 +288,7 @@ final class ReportRunHydratorTest extends TestCase
         $record->definition_snapshot = $snapshot;
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator)->query($record);
+        $this->hydrator()->query($record);
     }
 
     public static function definitionMemberMutations(): iterable
@@ -295,12 +319,12 @@ final class ReportRunHydratorTest extends TestCase
         $record->row_schema = [['id' => 'mutated']];
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
+        $this->hydrator()->hydrate($record, 'reused', 1250);
     }
 
     public function test_ready_fixture_hydrates_before_integrity_mutations(): void
     {
-        $run = (new ReportRunHydrator)->hydrate($this->readyRecord(), 'reused', 1250);
+        $run = $this->hydrator()->hydrate($this->readyRecord(), 'reused', 1250);
 
         self::assertSame('ready', $run->status->value);
         self::assertSame(1, $run->rowCount);
@@ -310,7 +334,7 @@ final class ReportRunHydratorTest extends TestCase
     {
         $record = $this->readyRecord();
 
-        $source = (new ReportRunHydrator)->exportSource($record, 1250);
+        $source = $this->hydrator()->exportSource($record, 1250);
 
         self::assertSame('ready', $source->run->status->value);
         self::assertSame($record->result_hash, $source->resultHash->value);
@@ -330,7 +354,7 @@ final class ReportRunHydratorTest extends TestCase
         $attributes['updated_at'] = '2026-07-26T00:10:00.000000Z';
         $record->setRawAttributes($attributes);
 
-        $source = (new ReportRunHydrator)->retrySource($record, 1250);
+        $source = $this->hydrator()->retrySource($record, 1250);
 
         self::assertSame('failed', $source->run->status->value);
         self::assertSame('REPORT_SOURCE_UNAVAILABLE', $source->errorCode?->value);
@@ -344,7 +368,7 @@ final class ReportRunHydratorTest extends TestCase
         $mutate($record);
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
+        $this->hydrator()->hydrate($record, 'reused', 1250);
     }
 
     public static function leaseCorruptions(): iterable
@@ -375,7 +399,7 @@ final class ReportRunHydratorTest extends TestCase
         $record->capabilities = ['unexpected'];
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
+        $this->hydrator()->hydrate($record, 'reused', 1250);
     }
 
     #[DataProvider('sealedResultMutations')]
@@ -385,7 +409,7 @@ final class ReportRunHydratorTest extends TestCase
         $record->{$attribute} = $replacement;
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
+        $this->hydrator()->hydrate($record, 'reused', 1250);
     }
 
     public static function sealedResultMutations(): iterable
@@ -437,7 +461,7 @@ final class ReportRunHydratorTest extends TestCase
         $mutate($record);
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator)->query($record);
+        $this->hydrator()->query($record);
     }
 
     public static function corruptions(): iterable
@@ -691,4 +715,19 @@ final class ReportRunHydratorTest extends TestCase
 
         return $record;
     }
+}
+
+final class HydratorAcceptingSealVerifier implements ReportSnapshotSealVerifier
+{
+    public function assertTrusted(ReportSnapshotSealVerificationInput $input): void {}
+}
+
+final class HydratorAcceptingIdentityValidator implements ReportSnapshotIdentityValidator
+{
+    public function assertMatches(
+        ReportQuery $query,
+        ReportSnapshotRef $snapshot,
+        ReportResult $result,
+        mixed $persistedIdentity,
+    ): void {}
 }
