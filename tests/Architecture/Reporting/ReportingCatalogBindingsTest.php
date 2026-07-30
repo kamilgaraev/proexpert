@@ -8,6 +8,8 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitio
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -42,10 +44,23 @@ final class ReportingCatalogBindingsTest extends TestCase
             ReportDefinitionBindingAssembler::class,
             ReportDefinitionCandidateValidator::class,
             ReportDefinitionBindingMap::class,
+            ReportSavedViewReferenceResolver::class,
         ] as $contract) {
             self::assertTrue($app->bound($contract), $contract);
             self::assertTrue($app->isShared($contract), $contract);
         }
+    }
+
+    public function test_saved_view_reference_resolver_is_container_resolvable_without_database_access(): void
+    {
+        $app = new Application(dirname(__DIR__, 3));
+        (new ReportingCatalogServiceProvider($app))->register();
+        $app->instance(ReportSavedViewStore::class, $this->createStub(ReportSavedViewStore::class));
+
+        self::assertInstanceOf(
+            ReportSavedViewReferenceResolver::class,
+            $app->make(ReportSavedViewReferenceResolver::class),
+        );
     }
 
     public function test_empty_map_resolution_is_same_singleton_instance(): void

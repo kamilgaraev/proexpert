@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExe
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionCoordinator;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionScheduleCalculator;
+use App\BusinessModules\Core\Reporting\Application\SavedViews\StoredReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\InAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
@@ -19,6 +20,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingA
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionCursorCodec;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
@@ -76,6 +78,10 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             EloquentReportWorkspacePreferencesStore::class,
         );
         $this->app->singleton(ReportSavedViewStore::class, EloquentReportSavedViewStore::class);
+        $this->app->singleton(
+            ReportSavedViewReferenceResolver::class,
+            StoredReportSavedViewReferenceResolver::class,
+        );
         $this->app->singleton(ReportSubscriptionStore::class, EloquentReportSubscriptionStore::class);
         $this->app->singleton(ReportSubscriptionDeliveryStore::class, EloquentReportSubscriptionDeliveryStore::class);
         $this->app->singleton(ReportSubscriptionDeliveryDispatcher::class, LaravelReportSubscriptionDeliveryDispatcher::class);
