@@ -117,6 +117,7 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
             'artifact_deletion_lease_token' => '00000000-0000-4000-8000-000000000001',
             'artifact_deletion_lease_expires_at' => new DateTimeImmutable('2026-07-30T09:00:00Z'),
             'artifact_deletion_attempt_count' => 1,
+            'artifact_deletion_state' => 'deleting',
         ]);
 
         $files = $this->mock(FileService::class);
@@ -160,7 +161,7 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
             'canonical_query_json' => '{}',
             'scope_holding_organization_ids' => "[$organizationId]",
             'scope_project_ids' => '[]',
-            'scope_resources' => '[]',
+            'scope_resource_ids' => '[]',
             'scope_timezone' => 'UTC',
             'filters' => '[]',
             'comparison' => '[]',
