@@ -2964,7 +2964,7 @@ Task 14 is implemented at its local canonical commit boundary. The Draft 2020-12
 
 Local non-database evidence:
 
-- the exact amended Task 14 PHPUnit gate passes with `31 tests, 425 assertions`;
+- the exact amended Task 14 PHPUnit gate passes with `38 tests, 495 assertions`;
 - PHPStan reports no errors for the two changed production PHP files;
 - Pint completed for all six changed PHP files;
 - `build/reports/plan-1b-completion.json` remains ignored, absent, and untracked.
@@ -2980,3 +2980,13 @@ The builder accepts only paths and expected SHA-256 values for real gate artifac
 The ownership test scans every `Create` entry in the whole canonical plan, including entries containing several backtick paths. It locks the complete path count and proves that none of the exact Plan 1a symbols is recreated. All amended tests use the production Composer autoloader.
 
 Local validation for this amendment is intentionally limited to the amended Task 14 non-database gate, changed production-file static analysis, formatting, and diff hygiene. PostgreSQL, S3, queue, authorization, performance, complete-module, and deployment gates remain isolated CI or deployment evidence and are not represented as locally executed results.
+
+### Task 14 review amendment — round 2
+
+The completion schema now fixes both minimum and maximum cardinality at exactly 28 ordered gates and exactly one artifact per gate. Every performance measurement has an exact identifier, unit and limit, and its value has the same schema-level maximum enforced by the PHP validator. The shared mutation corpus therefore gives the same verdict for every JSON-representable invariant.
+
+Every accepted CI gate artifact now has a closed executable envelope with `evidence_scope=ci`, exact repository revision, fixed producer identity, an existing PHPUnit test path, a canonical `build/reports/gates/<gate>.json` producer path, and an exact ordered set of typed passed case records corresponding one-to-one with the canonical required checks. The builder validates those bytes before using their result. Missing, failed or reordered records, impossible commands, incorrect producer paths, and fixture documents used as CI artifacts fail closed.
+
+The deterministic committed completion fixture uses `evidence_scope=fixture`; the builder can only produce `evidence_scope=ci`. Gate commands no longer reference undeclared suites: each exact command invokes an existing test file as `php vendor/bin/phpunit <path> --no-coverage`.
+
+The isolated Windows worktree uses its own untracked Composer vendor directory generated from the lock file. This prevents concurrent worktrees from replacing its production autoload classmap. The amended Task 14 non-database gate passes with `38 tests, 495 assertions`; database-backed, S3, queue, authorization, performance and deployment commands remain CI boundaries and were not executed locally.

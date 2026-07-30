@@ -66,6 +66,24 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
         self::assertSame($declared, $fixture['ownership']['plan_1b_symbols']);
     }
 
+    public function test_every_locked_gate_command_targets_an_existing_phpunit_test_path(): void
+    {
+        $fixture = $this->decode($this->root().'/tests/Fixtures/Reporting/plan-1b-completion.valid.json');
+
+        foreach ($fixture['gates'] as $gate) {
+            self::assertMatchesRegularExpression(
+                '/^php vendor\/bin\/phpunit (tests\/[A-Za-z0-9_\/]+Test\.php) --no-coverage$/D',
+                $gate['command'],
+            );
+            preg_match(
+                '/^php vendor\/bin\/phpunit (tests\/[A-Za-z0-9_\/]+Test\.php) --no-coverage$/D',
+                $gate['command'],
+                $matches,
+            );
+            self::assertFileExists($this->root().'/'.$matches[1]);
+        }
+    }
+
     public function test_canonical_plan_is_tracked_and_all_create_paths_exclude_plan_one_a_symbols(): void
     {
         $relativePath = 'docs/superpowers/plans/2026-07-26-reports-plan-1b-execution-exports.md';

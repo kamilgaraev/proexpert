@@ -44,17 +44,63 @@ final readonly class PlanOneBEvidenceValidator
 
     private const MEASUREMENT_SPECS = [
         'pdf_renderer_budget' => [
-            ['pdf_detail_rows', 'rows'],
-            ['pdf_pages', 'pages'],
-            ['pdf_html_bytes', 'bytes'],
-            ['pdf_output_bytes', 'bytes'],
-            ['pdf_memory_delta_bytes', 'bytes'],
+            ['pdf_detail_rows', 'rows', 5000],
+            ['pdf_pages', 'pages', 20],
+            ['pdf_html_bytes', 'bytes', 2000000],
+            ['pdf_output_bytes', 'bytes', 2000000],
+            ['pdf_memory_delta_bytes', 'bytes', 134217728],
         ],
         'streaming_budget' => [
-            ['stream_chunk_rows', 'rows'],
-            ['stream_peak_memory_bytes', 'bytes'],
-            ['stream_artifact_bytes', 'bytes'],
+            ['stream_chunk_rows', 'rows', 5000],
+            ['stream_peak_memory_bytes', 'bytes', 134217728],
+            ['stream_artifact_bytes', 'bytes', 524288000],
         ],
+    ];
+
+    private const GATE_TEST_PATHS = [
+        'plan1a_handoff' => 'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
+        'ownership_boundary' => 'tests/Architecture/Reporting/PlanOneBOwnershipBoundaryTest.php',
+        'run_state_machine' => 'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
+        'run_idempotency' => 'tests/Unit/Reporting/Actions/ReportRunHandlersTest.php',
+        'snapshot_identity' => 'tests/Unit/Reporting/Execution/CanonicalReportSourceHashBuilderTest.php',
+        'snapshot_seal_trust' => 'tests/Unit/Reporting/Execution/TrustedReportSnapshotSealVerifierTest.php',
+        'typed_data_classification' => 'tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php',
+        'rows_cursor_drill_parity' => 'tests/Contract/Reporting/ReportRowsParityContractTest.php',
+        'row_stream_shape' => 'tests/Unit/Reporting/Rows/ReportRowChunkReaderTest.php',
+        'export_state_machine' => 'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
+        'export_idempotency' => 'tests/Unit/Reporting/Actions/ReportExportHandlersTest.php',
+        'dispatch_outbox_atomicity' => 'tests/Unit/Reporting/Dispatch/ReportAuditIntentContractTest.php',
+        'dispatch_lease_recovery' => 'tests/Unit/Reporting/Dispatch/ReportDispatchIntentPublisherTest.php',
+        'dispatch_dead_letter' => 'tests/Unit/Reporting/Dispatch/ReportDispatchBackoffPolicyTest.php',
+        'audit_outbox_delivery' => 'tests/Integration/Reporting/Audit/CoreReportAuditIntentConsumerTest.php',
+        'current_async_authorization' => 'tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php',
+        'execution_attempt_leases' => 'tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php',
+        'renderer_parity' => 'tests/Contract/Reporting/ReportExportParityContractTest.php',
+        'pdf_renderer_budget' => 'tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php',
+        'streaming_budget' => 'tests/Performance/Reporting/ReportExportStreamingBudgetTest.php',
+        'file_service_call_graph' => 'tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php',
+        's3_version_race' => 'tests/Integration/Reporting/Exports/S3ReportArtifactIntegrationTest.php',
+        'audit_fail_closed' => 'tests/Unit/Reporting/Audit/ReportAuditOutboxSchedulerTest.php',
+        'retention_exact_version' => 'tests/Unit/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php',
+        'action_bindings' => 'tests/Architecture/Reporting/ReportingExecutionBindingsTest.php',
+        'error_retryability' => 'tests/Unit/Reporting/Errors/ReportExecutionErrorMappingTest.php',
+        'run_export_observability' => 'tests/Unit/Reporting/Evidence/PlanOneBEvidenceValidatorTest.php',
+        'static_analysis' => 'tests/Unit/Reporting/Evidence/PlanOneBEvidenceValidatorTest.php',
+    ];
+
+    private const RECORD_KINDS = [
+        'contract_json' => 'contract_case',
+        'architecture_json' => 'architecture_rule',
+        'unit_json' => 'unit_case',
+        'postgresql_json' => 'postgresql_case',
+        'cryptographic_json' => 'cryptographic_case',
+        'authorization_json' => 'authorization_case',
+        'queue_json' => 'queue_case',
+        'parity_json' => 'parity_case',
+        'performance_json' => 'performance_case',
+        's3_json' => 's3_case',
+        'observability_json' => 'observability_case',
+        'phpstan_json' => 'static_analysis_case',
     ];
 
     private const PLAN_ONE_A_SYMBOLS = [
@@ -118,7 +164,7 @@ final readonly class PlanOneBEvidenceValidator
         ])
             || $document['schema_version'] !== '1.0.0'
             || $document['plan_id'] !== '1b'
-            || ! in_array($document['evidence_scope'], ['deterministic_fixture', 'ci'], true)
+            || ! in_array($document['evidence_scope'], ['fixture', 'ci'], true)
             || $document['status'] !== 'passed'
             || ! $this->isTimestamp($document['generated_at'])
             || ! $this->isSha1($document['repository_revision'])
@@ -135,6 +181,53 @@ final readonly class PlanOneBEvidenceValidator
         $this->validateOwnership($document['ownership']);
         $this->validateRisks($document['unresolved_risks']);
         $this->validateHandoff($document['handoff']);
+    }
+
+    public function validateGateArtifactEnvelope(
+        array $envelope,
+        string $repositoryRevision,
+        string $sourcePath,
+    ): array {
+        if (! $this->hasExactKeys($envelope, [
+            'schema_version',
+            'evidence_scope',
+            'artifact_id',
+            'artifact_type',
+            'repository_revision',
+            'producer',
+            'gate',
+            'records',
+        ])
+            || $envelope['schema_version'] !== '1.0.0'
+            || $envelope['evidence_scope'] !== 'ci'
+            || $envelope['repository_revision'] !== $repositoryRevision
+            || ! is_array($envelope['gate'])
+            || array_is_list($envelope['gate'])
+            || ! is_string($envelope['gate']['id'] ?? null)
+            || ! isset(self::GATE_SPECS[$envelope['gate']['id']])) {
+            $this->fail();
+        }
+
+        $gateId = $envelope['gate']['id'];
+        [$artifactType, $requiredChecks] = self::GATE_SPECS[$gateId];
+        $testPath = self::GATE_TEST_PATHS[$gateId];
+        $artifactPath = 'build/reports/gates/'.$gateId.'.json';
+        if ($envelope['artifact_id'] !== 'plan1b.gate.'.$gateId
+            || $envelope['artifact_type'] !== $artifactType
+            || ! str_ends_with(str_replace('\\', '/', $sourcePath), '/'.$artifactPath)
+            || ! is_array($envelope['producer'])
+            || array_is_list($envelope['producer'])
+            || ! $this->hasExactKeys($envelope['producer'], ['id', 'test_path', 'artifact_path'])
+            || $envelope['producer']['id'] !== 'phpunit-11'
+            || $envelope['producer']['test_path'] !== $testPath
+            || $envelope['producer']['artifact_path'] !== $artifactPath) {
+            $this->fail();
+        }
+
+        $this->validateArtifactGate($envelope['gate'], $gateId, $artifactType, $requiredChecks);
+        $this->validateRecords($envelope['records'], $requiredChecks, self::RECORD_KINDS[$artifactType]);
+
+        return $envelope['gate'];
     }
 
     private function validatePlanOneAReference(mixed $reference): void
@@ -164,7 +257,7 @@ final readonly class PlanOneBEvidenceValidator
         foreach (array_keys(self::GATE_SPECS) as $index => $gateId) {
             $gate = $gates[$index];
             [$artifactType, $requiredChecks] = self::GATE_SPECS[$gateId];
-            $command = $this->command($gateId, $artifactType);
+            $command = $this->command($gateId);
             if (! is_array($gate)
                 || array_is_list($gate)
                 || ! $this->hasExactKeys($gate, ['id', 'status', 'command', 'result', 'duration_ms', 'artifacts', 'measurements'])
@@ -225,7 +318,7 @@ final readonly class PlanOneBEvidenceValidator
         if (! is_array($measurements) || ! array_is_list($measurements) || count($measurements) !== count($specs)) {
             $this->fail();
         }
-        foreach ($specs as $index => [$id, $unit]) {
+        foreach ($specs as $index => [$id, $unit, $limit]) {
             $measurement = $measurements[$index];
             if (! is_array($measurement)
                 || array_is_list($measurement)
@@ -234,9 +327,8 @@ final readonly class PlanOneBEvidenceValidator
                 || ! is_int($measurement['value'])
                 || $measurement['value'] < 0
                 || $measurement['unit'] !== $unit
-                || ! is_int($measurement['limit'])
-                || $measurement['limit'] < 1
-                || $measurement['value'] > $measurement['limit']
+                || $measurement['limit'] !== $limit
+                || $measurement['value'] > $limit
                 || $measurement['status'] !== 'passed') {
                 $this->fail();
             }
@@ -289,15 +381,51 @@ final readonly class PlanOneBEvidenceValidator
         }
     }
 
-    private function command(string $gateId, string $artifactType): string
+    private function validateArtifactGate(
+        mixed $gate,
+        string $gateId,
+        string $artifactType,
+        array $requiredChecks,
+    ): void {
+        if (! is_array($gate)
+            || array_is_list($gate)
+            || ! $this->hasExactKeys($gate, ['id', 'status', 'command', 'result', 'duration_ms', 'measurements'])
+            || $gate['id'] !== $gateId
+            || $gate['status'] !== 'passed'
+            || $gate['command'] !== $this->command($gateId)
+            || ! is_int($gate['duration_ms'])
+            || $gate['duration_ms'] < 0) {
+            $this->fail();
+        }
+        $this->validateResult($gate['result'], $requiredChecks);
+        $this->validateMeasurements($gate['measurements'], $gateId);
+    }
+
+    private function validateRecords(mixed $records, array $requiredChecks, string $kind): void
     {
-        return match ($artifactType) {
-            'postgresql_json' => 'vendor/bin/phpunit --testsuite reports_'.$gateId.'_postgresql',
-            's3_json' => 'vendor/bin/phpunit --testsuite reports_'.$gateId.'_s3',
-            'performance_json' => 'vendor/bin/phpunit --testsuite reports_'.$gateId.'_performance',
-            'phpstan_json' => 'vendor/bin/phpstan analyse --configuration=phpstan.neon.dist',
-            default => 'vendor/bin/phpunit --testsuite reports_'.$gateId,
-        };
+        if (! is_array($records) || ! array_is_list($records) || count($records) !== count($requiredChecks)) {
+            $this->fail();
+        }
+        foreach ($requiredChecks as $index => $check) {
+            $record = $records[$index];
+            if (! is_array($record)
+                || array_is_list($record)
+                || ! $this->hasExactKeys($record, ['id', 'kind', 'status', 'tests', 'assertions'])
+                || $record['id'] !== $check
+                || $record['kind'] !== $kind
+                || $record['status'] !== 'passed'
+                || ! is_int($record['tests'])
+                || $record['tests'] < 1
+                || ! is_int($record['assertions'])
+                || $record['assertions'] < 1) {
+                $this->fail();
+            }
+        }
+    }
+
+    private function command(string $gateId): string
+    {
+        return 'php vendor/bin/phpunit '.self::GATE_TEST_PATHS[$gateId].' --no-coverage';
     }
 
     private function containsNoSubscriptionTelemetry(mixed $value): bool

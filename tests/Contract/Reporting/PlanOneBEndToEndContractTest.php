@@ -29,14 +29,37 @@ final class PlanOneBEndToEndContractTest extends TestCase
         $artifact = $directory.'/plan-1b-completion.json';
 
         try {
+            $recordKinds = [
+                'contract_json' => 'contract_case',
+                'architecture_json' => 'architecture_rule',
+                'unit_json' => 'unit_case',
+                'postgresql_json' => 'postgresql_case',
+                'cryptographic_json' => 'cryptographic_case',
+                'authorization_json' => 'authorization_case',
+                'queue_json' => 'queue_case',
+                'parity_json' => 'parity_case',
+                'performance_json' => 'performance_case',
+                's3_json' => 's3_case',
+                'observability_json' => 'observability_case',
+                'phpstan_json' => 'static_analysis_case',
+            ];
+            $gateDirectory = $directory.'/build/reports/gates';
+            self::assertTrue(mkdir($gateDirectory, 0777, true));
             $gateArtifacts = [];
             foreach ($fixture['gates'] as $gate) {
-                $gatePath = $directory.'/'.$gate['id'].'.json';
+                $gatePath = $gateDirectory.'/'.$gate['id'].'.json';
+                $testPath = substr($gate['command'], strlen('php vendor/bin/phpunit '), -strlen(' --no-coverage'));
                 $envelope = [
                     'schema_version' => $fixture['schema_version'],
+                    'evidence_scope' => 'ci',
                     'artifact_id' => $gate['artifacts'][0]['id'],
                     'artifact_type' => $gate['artifacts'][0]['type'],
                     'repository_revision' => $fixture['repository_revision'],
+                    'producer' => [
+                        'id' => 'phpunit-11',
+                        'test_path' => $testPath,
+                        'artifact_path' => 'build/reports/gates/'.$gate['id'].'.json',
+                    ],
                     'gate' => [
                         'id' => $gate['id'],
                         'status' => $gate['status'],
@@ -45,6 +68,16 @@ final class PlanOneBEndToEndContractTest extends TestCase
                         'duration_ms' => $gate['duration_ms'],
                         'measurements' => $gate['measurements'],
                     ],
+                    'records' => array_map(
+                        static fn (string $check): array => [
+                            'id' => $check,
+                            'kind' => $recordKinds[$gate['artifacts'][0]['type']],
+                            'status' => 'passed',
+                            'tests' => 1,
+                            'assertions' => 1,
+                        ],
+                        $gate['result']['required_checks'],
+                    ),
                 ];
                 $bytes = CanonicalJson::encode($envelope)."\n";
                 file_put_contents($gatePath, $bytes);
@@ -73,11 +106,17 @@ final class PlanOneBEndToEndContractTest extends TestCase
                 self::assertSame($gateArtifacts[$index]['sha256'], $gate['artifacts'][0]['sha256']);
             }
         } finally {
-            foreach (glob($directory.'/*') ?: [] as $path) {
+            foreach (glob($directory.'/build/reports/gates/*') ?: [] as $path) {
                 if (is_file($path)) {
                     unlink($path);
                 }
             }
+            if (is_file($artifact)) {
+                unlink($artifact);
+            }
+            rmdir($directory.'/build/reports/gates');
+            rmdir($directory.'/build/reports');
+            rmdir($directory.'/build');
             rmdir($directory);
         }
     }

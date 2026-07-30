@@ -19,11 +19,11 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
     {
         $document = $this->fixture();
 
-        self::assertSame('deterministic_fixture', $document['evidence_scope']);
+        self::assertSame('fixture', $document['evidence_scope']);
         self::assertTrue($this->schemaAccepts($document));
         $this->validator($document)->validate($document);
         self::assertSame(
-            '7f1510b8e5dcbde60557fa405ef1543b24d8977e39350da14c148d0532d12fa2',
+            '507022367f5609ac901800dc0c419edadef8e4ba201c7b78c4fb1ad064045f88',
             hash('sha256', CanonicalJson::encode($document)),
         );
     }
@@ -61,6 +61,9 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
             'extra gate' => ['extra gate', static function (array &$document): void {
                 $document['gates'][] = $document['gates'][0];
             }],
+            'missing gate' => ['missing gate', static function (array &$document): void {
+                array_pop($document['gates']);
+            }],
             'arbitrary command' => ['arbitrary command', static function (array &$document): void {
                 $document['gates'][2]['command'] = 'vendor/bin/phpunit';
             }],
@@ -72,6 +75,9 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
             }],
             'extra artifact' => ['extra artifact', static function (array &$document): void {
                 $document['gates'][2]['artifacts'][] = $document['gates'][2]['artifacts'][0];
+            }],
+            'missing artifact' => ['missing artifact', static function (array &$document): void {
+                $document['gates'][2]['artifacts'] = [];
             }],
             'wrong required results' => ['wrong required results', static function (array &$document): void {
                 array_pop($document['gates'][4]['result']['required_checks']);
@@ -95,6 +101,12 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
             'row limit exceeded' => ['row limit exceeded', static function (array &$document): void {
                 $document['gates'][18]['measurements'][0]['value'] = 5001;
             }],
+            'value exceeds exact limit' => ['value exceeds exact limit', static function (array &$document): void {
+                $document['gates'][18]['measurements'][1]['value'] = 21;
+            }],
+            'arbitrary measurement limit' => ['arbitrary measurement limit', static function (array &$document): void {
+                $document['gates'][18]['measurements'][1]['limit'] = 21;
+            }],
             'noncanonical digest' => ['noncanonical digest', static function (array &$document): void {
                 $document['gates'][2]['artifacts'][0]['sha256'] = str_repeat('A', 64);
             }],
@@ -104,7 +116,7 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
         ];
     }
 
-    public function test_php_validator_additionally_binds_cross_field_reference_revision_and_limits(): void
+    public function test_php_validator_additionally_binds_cross_field_references(): void
     {
         $mutations = [
             static function (array &$document): void {
@@ -112,9 +124,6 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
             },
             static function (array &$document): void {
                 $document['gates'][2]['artifacts'][0]['repository_revision'] = str_repeat('f', 40);
-            },
-            static function (array &$document): void {
-                $document['gates'][18]['measurements'][1]['value'] = 21;
             },
             static function (array &$document): void {
                 $document['performance_measurements'][0]['value'] = 4999;

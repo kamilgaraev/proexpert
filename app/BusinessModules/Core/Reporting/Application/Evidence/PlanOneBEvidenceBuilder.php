@@ -45,10 +45,15 @@ final readonly class PlanOneBEvidenceBuilder
             throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
         }
 
+        $validator = new PlanOneBEvidenceValidator($planOneA);
         $gates = [];
         $performance = [];
         foreach ($checks['gate_artifacts'] as $artifactInput) {
-            [$gate, $artifact] = $this->readGateArtifact($artifactInput, $checks['repository_revision']);
+            [$gate, $artifact] = $this->readGateArtifact(
+                $artifactInput,
+                $checks['repository_revision'],
+                $validator,
+            );
             $gate['artifacts'] = [$artifact];
             $gates[] = $gate;
             array_push($performance, ...$gate['measurements']);
@@ -81,7 +86,6 @@ final readonly class PlanOneBEvidenceBuilder
             ],
         ];
 
-        $validator = new PlanOneBEvidenceValidator($planOneA);
         $validator->validate($document);
         $bytes = CanonicalJson::encode($document)."\n";
         $expectedSha256 = hash('sha256', $bytes);
@@ -90,8 +94,11 @@ final readonly class PlanOneBEvidenceBuilder
         return $this->validatedDocument($this->artifactPath, $bytes, $expectedSha256, $validator);
     }
 
-    private function readGateArtifact(mixed $artifactInput, string $repositoryRevision): array
-    {
+    private function readGateArtifact(
+        mixed $artifactInput,
+        string $repositoryRevision,
+        PlanOneBEvidenceValidator $validator,
+    ): array {
         if (! is_array($artifactInput)
             || array_is_list($artifactInput)
             || ! $this->hasExactKeys($artifactInput, ['path', 'sha256'])
@@ -110,26 +117,14 @@ final readonly class PlanOneBEvidenceBuilder
             throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
         }
         $envelope = $this->decode($bytes);
-        if (! $this->hasExactKeys(
+        $gate = $validator->validateGateArtifactEnvelope(
             $envelope,
-            ['schema_version', 'artifact_id', 'artifact_type', 'repository_revision', 'gate'],
-        )
-            || $envelope['schema_version'] !== '1.0.0'
-            || ! is_string($envelope['artifact_id'])
-            || ! is_string($envelope['artifact_type'])
-            || $envelope['repository_revision'] !== $repositoryRevision
-            || ! is_array($envelope['gate'])
-            || array_is_list($envelope['gate'])
-            || ! $this->hasExactKeys(
-                $envelope['gate'],
-                ['id', 'status', 'command', 'result', 'duration_ms', 'measurements'],
-            )
-            || $envelope['artifact_id'] !== 'plan1b.gate.'.$envelope['gate']['id']) {
-            throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
-        }
+            $repositoryRevision,
+            $artifactInput['path'],
+        );
 
         return [
-            $envelope['gate'],
+            $gate,
             [
                 'id' => $envelope['artifact_id'],
                 'type' => $envelope['artifact_type'],
