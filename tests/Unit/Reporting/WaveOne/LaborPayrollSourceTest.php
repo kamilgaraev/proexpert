@@ -10,26 +10,28 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Contracts\ManagementPnlComponentSource;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Support\ManagementPnlSourceTupleGuard;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\EffectiveLaborRateSource;
 use App\BusinessModules\Features\TimeTracking\Reporting\DTO\EffectiveLaborRateFact;
 use App\BusinessModules\Features\TimeTracking\Reporting\DTO\ProjectLaborEntryFact;
 use App\BusinessModules\Features\TimeTracking\Reporting\EffectiveLaborRateResolver;
 use App\BusinessModules\Features\TimeTracking\Reporting\Formulas\ProjectLaborCostFormula;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostManagementPnlComponentSource;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostProvider;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostQueryService;
-use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostManagementPnlComponentSource;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollIssueMatcher;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessProvider;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessManagementPnlComponentSource;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessProvider;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessQueryService;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollVersionTransitionResolver;
 use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Support\Collection;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -101,7 +103,7 @@ final class LaborPayrollSourceTest extends TestCase
             $source,
         );
         self::assertStringContainsString(
-            "\$this->assertScopedResource(",
+            '$this->assertScopedResource(',
             $source,
         );
         self::assertStringContainsString('PAYROLL_VALIDATION_ISSUE_SOURCE_SCOPE_MISMATCH', $source);
@@ -126,9 +128,16 @@ final class LaborPayrollSourceTest extends TestCase
             $root.'/app/BusinessModules/Features/WorkforceManagement/Reporting/'
             .'Infrastructure/DatabasePayrollReadinessAdapter.php',
         );
+        $tupleGuard = file_get_contents(
+            $root.'/app/BusinessModules/Features/Budgeting/Reporting/ManagementPnl/Support/'
+            .'ManagementPnlSourceTupleGuard.php',
+        );
 
         foreach ([$labor, $payroll] as $source) {
             self::assertIsString($source);
+            self::assertStringContainsString('ReportDefinitionRegistry', $source);
+            self::assertStringContainsString('->published($this->sourceReportCode())', $source);
+            self::assertStringContainsString("->where('definition_hash', \$expected->definitionHash->value)", $source);
             self::assertStringContainsString("->where('scope_hash', \$scopeHash)", $source);
             self::assertStringContainsString("->where('period_from', \$periodFrom)", $source);
             self::assertStringContainsString("->where('period_to', \$periodTo)", $source);
@@ -136,8 +145,14 @@ final class LaborPayrollSourceTest extends TestCase
             self::assertStringContainsString("->where('management_pnl_eligible', true)", $source);
             self::assertStringContainsString("->where('quality_status', 'complete')", $source);
             self::assertStringContainsString("->where('reconciliation_status', 'matched')", $source);
-            self::assertStringContainsString("\$snapshots->count() !== 1", $source);
+            self::assertStringContainsString('$snapshots->count() !== 1', $source);
+            self::assertStringContainsString('assertRequestedGroupCoverage', $source);
         }
+        self::assertIsString($tupleGuard);
+        self::assertStringContainsString('management_pnl_requested_group_coverage_gap', $tupleGuard);
+        self::assertStringContainsString("->where('query_hash', \$snapshot->query_hash)", $tupleGuard);
+        self::assertStringContainsString("->where('source_hash', \$snapshot->source_hash)", $tupleGuard);
+        self::assertStringContainsString("->where('snapshot_id', \$snapshot->id)", $tupleGuard);
         self::assertIsString($payrollAdapter);
         self::assertStringContainsString("'employee_name' => \$row['employee_name']", $payrollAdapter);
         self::assertStringContainsString("'project_name' => \$row['project_name']", $payrollAdapter);
@@ -185,6 +200,50 @@ final class LaborPayrollSourceTest extends TestCase
                 'project_id' => 21,
                 'employee_id' => 7,
             ],
+        );
+    }
+
+    #[Test]
+    public function management_pnl_group_coverage_rejects_a_missing_project_currency_pair(): void
+    {
+        $guard = new ManagementPnlSourceTupleGuard($this->createMock(ConnectionInterface::class));
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('management_pnl_requested_group_coverage_gap');
+
+        $guard->assertRequestedGroupCoverage(
+            new Collection([
+                (object) ['project_id' => 20, 'currency' => 'RUB'],
+                (object) ['project_id' => 21, 'currency' => 'RUB'],
+                (object) ['project_id' => 20, 'currency' => 'USD'],
+            ]),
+            [20, 21],
+            ['RUB', 'USD'],
+        );
+    }
+
+    #[Test]
+    public function management_pnl_group_coverage_counts_requested_projects_per_currency(): void
+    {
+        $guard = new ManagementPnlSourceTupleGuard($this->createMock(ConnectionInterface::class));
+
+        self::assertSame(
+            [
+                'projects' => [20, 21],
+                'currencies' => ['RUB', 'USD'],
+                'covered_by_currency' => ['RUB' => 2, 'USD' => 2],
+                'denominator_per_currency' => 2,
+            ],
+            $guard->assertRequestedGroupCoverage(
+                new Collection([
+                    (object) ['project_id' => 20, 'currency' => 'RUB'],
+                    (object) ['project_id' => 21, 'currency' => 'RUB'],
+                    (object) ['project_id' => 20, 'currency' => 'USD'],
+                    (object) ['project_id' => 21, 'currency' => 'USD'],
+                ]),
+                [21, 20],
+                ['USD', 'RUB'],
+            ),
         );
     }
 

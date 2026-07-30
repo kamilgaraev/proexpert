@@ -188,6 +188,51 @@ final class WorkforcePayrollContentImmutabilityPostgresTest extends TestCase
         );
     }
 
+    public function test_concurrent_owner_updates_receive_distinct_monotonic_sequences(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $harness = new PostgresProcessRaceHarness(
+            sys_get_temp_dir().DIRECTORY_SEPARATOR.'owner-sequence-'.bin2hex(random_bytes(6)),
+        );
+        $children = [];
+
+        try {
+            foreach ([1 => 'Первое изменение', 2 => 'Второе изменение'] as $worker => $name) {
+                $children[] = $harness->spawn(
+                    $worker,
+                    static function () use ($project, $name): array {
+                        DB::table('projects')->where('id', $project->id)->update([
+                            'name' => $name,
+                            'updated_at' => now(),
+                        ]);
+
+                        return ['updated' => true];
+                    },
+                );
+            }
+            $harness->release(1);
+            $harness->release(2);
+            $harness->waitForChildren($children);
+            $children = [];
+
+            self::assertSame(
+                [1, 2, 3],
+                DB::table('workforce_report_owner_facts')
+                    ->where('organization_id', $organization->id)
+                    ->where('source_table', 'projects')
+                    ->where('source_id', $project->id)
+                    ->orderBy('sequence')
+                    ->pluck('sequence')
+                    ->map(static fn (mixed $sequence): int => (int) $sequence)
+                    ->all(),
+            );
+        } finally {
+            $harness->terminateAndReap($children);
+            $harness->cleanup();
+        }
+    }
+
     private function fixture(): array
     {
         $organization = Organization::factory()->create();

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\WaveOne;
 
-use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactResolver;
 use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactLease;
+use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactResolver;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
@@ -158,6 +158,8 @@ final class TemporalOwnerFactTest extends TestCase
         self::assertIsString($laborAdapter);
         self::assertStringContainsString("\$table->unsignedBigInteger('sequence')", $migration);
         self::assertStringContainsString('workforce_owner_facts_sequence_unique', $migration);
+        self::assertStringContainsString('pg_advisory_xact_lock', $migration);
+        self::assertStringContainsString("owner_org::text || ':' || TG_TABLE_NAME || ':' || owner_id::text", $migration);
         self::assertStringContainsString('workforce_report_owner_facts_append_only', $migration);
         self::assertStringContainsString('workforce_report_owner_fact_eligibility_append_only', $migration);
         self::assertStringContainsString("'project_schedules'", $migration);

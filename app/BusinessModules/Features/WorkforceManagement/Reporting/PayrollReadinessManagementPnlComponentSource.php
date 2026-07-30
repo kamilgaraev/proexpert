@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -11,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Contracts\ManagementPnlComponentSource;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementPnlComponentSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementSourceFact;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Support\ManagementPnlSourceTupleGuard;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DomainException;
@@ -19,7 +21,10 @@ use Illuminate\Support\Collection;
 
 final readonly class PayrollReadinessManagementPnlComponentSource implements ManagementPnlComponentSource
 {
-    public function __construct(private ConnectionInterface $connection) {}
+    public function __construct(
+        private ConnectionInterface $connection,
+        private ReportDefinitionRegistry $definitions,
+    ) {}
 
     public function componentCode(): string
     {
@@ -29,6 +34,8 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
     public function snapshots(ReportScope $scope, ReportQuery $query): iterable
     {
         [$periodFrom, $periodTo, $scenario] = $this->scope($query);
+        $guard = new ManagementPnlSourceTupleGuard($this->connection);
+        $expected = $this->definitions->published($this->sourceReportCode());
         $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
         $snapshots = $this->connection->table('workforce_report_snapshots')
             ->where('organization_id', $scope->organizationId)
@@ -38,8 +45,9 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
             ->where('period_to', $periodTo)
             ->where('as_of', $query->asOf->format('Y-m-d H:i:sP'))
             ->where('management_pnl_eligible', true)
-            ->where('formula_version', 'payroll-readiness.v1')
-            ->where('source_schema_version', 'workforce-payroll-calculation.v1')
+            ->where('definition_hash', $expected->definitionHash->value)
+            ->where('formula_version', $expected->definition->formulaVersion)
+            ->where('source_schema_version', $expected->definition->sourceSchemaVersion)
             ->where('quality_status', 'complete')
             ->where('reconciliation_status', 'matched')
             ->orderBy('id')
@@ -48,11 +56,16 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
             throw new DomainException('management_pnl_payroll_readiness_tuple_ambiguous');
         }
         $snapshot = $snapshots->first();
-        if ($snapshot === null
-            || preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->query_hash) !== 1
-            || preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->definition_hash) !== 1) {
+        if ($snapshot === null) {
             throw new DomainException('management_pnl_payroll_readiness_unsealed');
         }
+        $run = $guard->assertReadyRun(
+            $scope->organizationId,
+            $this->sourceReportCode(),
+            'payroll_readiness',
+            $snapshot,
+            $expected,
+        );
         $currencies = $this->currencies($query);
         $rows = $this->connection->table('payroll_readiness_snapshot_rows')
             ->where('organization_id', $scope->organizationId)
@@ -86,6 +99,7 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
         if ($persistedRowCount !== (int) $snapshot->row_count) {
             throw new DomainException('management_pnl_payroll_readiness_unsealed');
         }
+        $coverage = $guard->assertRequestedGroupCoverage($rows, $scope->projectIds, $currencies);
         foreach ($rows->groupBy('currency')->sortKeys() as $currency => $currencyRows) {
             yield $this->component(
                 $scope,
@@ -97,6 +111,9 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
                 $periodTo,
                 $scenario,
                 $scopeHash,
+                $run,
+                (int) $coverage['covered_by_currency'][(string) $currency],
+                (int) $coverage['denominator_per_currency'],
             );
         }
     }
@@ -111,6 +128,9 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
         string $periodTo,
         string $scenario,
         string $scopeHash,
+        object $run,
+        int $coverageNumerator,
+        int $coverageDenominator,
     ): ManagementPnlComponentSnapshot {
         $identities = $rows->map(static fn (object $row): array => [
             'calculation_version_id' => (int) $row->calculation_version_id,
@@ -151,13 +171,18 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
             currency: $currency,
             facts: $facts,
             scopeHash: $scopeHash,
-            queryHash: $query->queryHash->value,
-            definitionHash: $query->definition->definitionHash->value,
+            queryHash: (string) $run->query_hash,
+            definitionHash: (string) $run->definition_hash,
             asOf: $query->asOf->format(DATE_ATOM),
             rowCount: $rows->count(),
-            coverageNumerator: count($facts),
-            coverageDenominator: $rows->count(),
+            coverageNumerator: $coverageNumerator,
+            coverageDenominator: $coverageDenominator,
         );
+    }
+
+    private function sourceReportCode(): string
+    {
+        return 'payroll_readiness';
     }
 
     private function uniqueSourceRows(Collection $rows): Collection

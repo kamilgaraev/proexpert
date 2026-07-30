@@ -206,6 +206,9 @@ BEGIN
     owner_project := NULLIF(owner_row->>'project_id', '')::bigint;
     owner_operation := CASE WHEN TG_OP = 'DELETE' THEN 'delete' ELSE 'upsert' END;
     owner_recorded_at := clock_timestamp();
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(owner_org::text || ':' || TG_TABLE_NAME || ':' || owner_id::text, 0)
+    );
     SELECT COALESCE(MAX(sequence), 0) + 1
       INTO owner_sequence
       FROM workforce_report_owner_facts

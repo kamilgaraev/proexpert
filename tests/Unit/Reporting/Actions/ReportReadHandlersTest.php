@@ -54,15 +54,18 @@ final class ReportReadHandlersTest extends TestCase
     private const RUN_ID = '01J00000000000000000000000';
 
     private DateTimeImmutable $now;
+
     private FakeReportExecutionClock $clock;
+
     private ReportExecutionContext $context;
+
     private ReportWindowSort $sort;
 
     protected function setUp(): void
     {
         $this->now = new DateTimeImmutable('2030-01-01T00:00:00+00:00');
         $this->clock = new FakeReportExecutionClock($this->now);
-        $this->context = (new ReportExecutionContextBuilder())->build();
+        $this->context = (new ReportExecutionContextBuilder)->build();
         $this->sort = new ReportWindowSort('name', ReportSortDirection::ASC);
     }
 
@@ -99,6 +102,38 @@ final class ReportReadHandlersTest extends TestCase
         self::assertSame($this->sort, $fixture['rowQuery']->pageCalls()[0][2]);
         self::assertNull($fixture['rowQuery']->pageCalls()[0][3]);
         self::assertSame(50, $fixture['rowQuery']->pageCalls()[0][4]);
+    }
+
+    public function test_rows_sign_and_accept_the_typed_keyset_for_the_next_page(): void
+    {
+        $fixture = $this->fixture(
+            rows: [['row_key' => 'row-1', 'name' => 'Первая строка']],
+            hasMore: true,
+            limit: 1,
+        );
+        $operations = [];
+        $handler = $this->rowsHandler($fixture, $this->authorizer($operations));
+
+        $first = $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow(null, 1, $this->sort),
+        );
+        self::assertTrue($first->hasMore);
+        self::assertNotNull($first->nextCursor);
+
+        $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow($first->nextCursor, 1, $this->sort),
+        );
+
+        self::assertCount(2, $fixture['rowQuery']->pageCalls());
+        $decoded = $fixture['rowQuery']->pageCalls()[1][3];
+        self::assertNotNull($decoded);
+        self::assertSame('Первая строка', $decoded->keyset->lastSortValue);
+        self::assertSame('row-1', $decoded->keyset->lastStableRowKey);
+        self::assertSame($this->sort, $decoded->sort);
     }
 
     public function test_column_values_and_empty_permission_lists_do_not_drive_classification(): void
@@ -191,7 +226,7 @@ final class ReportReadHandlersTest extends TestCase
                 $fixture,
                 'row-1',
                 'name',
-                snapshot: (new ReportRunBuilder())
+                snapshot: (new ReportRunBuilder)
                     ->sourceHash(new Sha256Hash(str_repeat('d', 64)))
                     ->ready()
                     ->resultMetadata
@@ -225,7 +260,7 @@ final class ReportReadHandlersTest extends TestCase
     public function test_rows_reject_expired_status_before_authorization_or_provider_call(): void
     {
         $fixture = $this->fixture();
-        $expired = (new ReportRunBuilder())
+        $expired = (new ReportRunBuilder)
             ->id(self::RUN_ID)
             ->status(ReportRunStatus::EXPIRED)
             ->createdAt($this->now->modify('-2 hours'))
@@ -315,8 +350,10 @@ final class ReportReadHandlersTest extends TestCase
         array $columns = [['id' => 'name']],
         ?ReportPermissionPolicy $permissions = null,
         array $rows = [['row_key' => 'row-1', 'name' => 'Строка']],
+        bool $hasMore = false,
+        int $limit = 50,
     ): array {
-        $definition = (new ReportDefinitionBuilder())
+        $definition = (new ReportDefinitionBuilder)
             ->columns($columns)
             ->permissionPolicy($permissions ?? new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []))
             ->outputClassification($classification ?? new ReportOutputClassification(
@@ -351,8 +388,8 @@ final class ReportReadHandlersTest extends TestCase
                 [],
             ),
             null,
-            50,
-            false,
+            $limit,
+            $hasMore,
             $this->sort,
         );
         $rowQuery = new FakeReportRowQuery($page, []);
@@ -390,7 +427,7 @@ final class ReportReadHandlersTest extends TestCase
 
     private function readyRun(ReportQuery $query, DateTimeImmutable $expiresAt): ReportRun
     {
-        return (new ReportRunBuilder())
+        return (new ReportRunBuilder)
             ->id(self::RUN_ID)
             ->reportCode($query->definition->code)
             ->definitionHash($query->definition->definitionHash)
@@ -435,7 +472,7 @@ final class ReportReadHandlersTest extends TestCase
             $fixture['registry'],
             $fixture['assembler'],
             $authorizer,
-            new ReportExecutionContextFactory(),
+            new ReportExecutionContextFactory,
             new SignedReportCursorCodec(
                 ['cursor-v1' => str_repeat('a', 64)],
                 'cursor-v1',
@@ -455,7 +492,7 @@ final class ReportReadHandlersTest extends TestCase
             $fixture['registry'],
             $fixture['assembler'],
             $authorizer,
-            new ReportExecutionContextFactory(),
+            new ReportExecutionContextFactory,
             $this->codec(),
             $this->clock,
         );
