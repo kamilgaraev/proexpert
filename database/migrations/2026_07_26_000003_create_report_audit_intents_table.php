@@ -22,6 +22,7 @@ return new class extends Migration
             $table->smallInteger('attempt_count')->default(0);
             $table->timestampTz('occurred_at', 6);
             $table->timestampTz('available_at', 6);
+            $table->timestampTz('dispatch_reserved_until', 6)->nullable();
             $table->uuid('lease_token')->nullable();
             $table->timestampTz('lease_expires_at', 6)->nullable();
             $table->timestampTz('delivered_at', 6)->nullable();
@@ -39,9 +40,9 @@ return new class extends Migration
             "ALTER TABLE report_audit_intents ADD CONSTRAINT report_audit_intents_status_check CHECK (status IN ('pending','leased','delivered','dead_letter'))",
             'ALTER TABLE report_audit_intents ADD CONSTRAINT report_audit_intents_attempt_check CHECK (attempt_count BETWEEN 0 AND 12)',
             "ALTER TABLE report_audit_intents ADD CONSTRAINT report_audit_intents_subject_object_check CHECK (jsonb_typeof(subject)='object')",
-            "ALTER TABLE report_audit_intents ADD CONSTRAINT report_audit_intents_lease_shape_check CHECK ((status='leased' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL) OR (status<>'leased' AND lease_token IS NULL AND lease_expires_at IS NULL))",
+            "ALTER TABLE report_audit_intents ADD CONSTRAINT report_audit_intents_lease_shape_check CHECK ((status='leased' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND dispatch_reserved_until IS NULL) OR (status='pending' AND lease_token IS NULL AND lease_expires_at IS NULL) OR (status IN ('delivered','dead_letter') AND lease_token IS NULL AND lease_expires_at IS NULL AND dispatch_reserved_until IS NULL))",
             "ALTER TABLE report_audit_intents ADD CONSTRAINT report_audit_intents_terminal_shape_check CHECK ((status='delivered' AND delivered_at IS NOT NULL AND dead_lettered_at IS NULL AND last_error_code IS NULL) OR (status='dead_letter' AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL AND last_error_code IS NOT NULL) OR (status IN ('pending','leased') AND delivered_at IS NULL AND dead_lettered_at IS NULL))",
-            "CREATE INDEX report_audit_intents_due_idx ON report_audit_intents (available_at,id) WHERE status='pending'",
+            "CREATE INDEX report_audit_intents_due_idx ON report_audit_intents (dispatch_reserved_until,available_at,id) WHERE status='pending'",
             "CREATE INDEX report_audit_intents_lease_expiry_idx ON report_audit_intents (lease_expires_at,id) WHERE status='leased'",
             'CREATE INDEX report_audit_intents_organization_event_idx ON report_audit_intents (organization_id,event_type,occurred_at,id)',
         ] as $statement) {

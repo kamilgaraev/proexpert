@@ -93,6 +93,16 @@ final class ExpireReportsServiceTest extends TestCase
         self::assertStringNotContainsString("'source_hash' => null", $source);
         self::assertStringNotContainsString("'artifact_version_id' => null", $source);
     }
+
+    public function test_failed_head_candidates_are_deferred_before_the_next_bounded_batch(): void
+    {
+        $source = (string) file_get_contents((new ReflectionClass(ExpireReportsService::class))->getFileName());
+
+        self::assertSame(2, substr_count($source, "->whereNull('retention_next_attempt_at')"));
+        self::assertStringContainsString('$this->deferCandidate($candidate, $occurredAt)', $source);
+        self::assertStringContainsString("'retention_attempt_count' => \$attempt", $source);
+        self::assertStringContainsString("'retention_next_attempt_at' => \$this->timestamp", $source);
+    }
 }
 
 final class RecordingRetentionAudit implements ReportTransitionAudit

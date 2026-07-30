@@ -43,6 +43,41 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
         self::assertSame(3, DB::table('report_exports')->whereNotNull('artifact_deleted_at')->count());
     }
 
+    public function test_permanently_failing_head_row_is_deferred_and_does_not_starve_later_batches(): void
+    {
+        $organization = Organization::factory()->create();
+        $this->insertRun((int) $organization->id);
+        foreach ([1, 2, 3] as $sequence) {
+            $this->insertExpiredExport((int) $organization->id, $sequence);
+        }
+        DB::table('report_exports')
+            ->where('id', '01J00000000000000000000001')
+            ->update(['artifact_path' => 'org-999/reports/wrong-tenant.csv']);
+
+        $files = $this->mock(FileService::class);
+        $files->shouldReceive('deleteVersion')->twice();
+        $service = new DeleteExpiredReportArtifactsService(
+            $files,
+            new RetentionAuditFake,
+            new ReportExportHydrator,
+            3600,
+        );
+        $now = new DateTimeImmutable('2026-07-30T10:00:00.123456Z');
+
+        $first = $service->delete(2, $now);
+        $second = $service->delete(2, $now);
+
+        self::assertSame(1, $first['failed']);
+        self::assertSame(1, $first['deleted']);
+        self::assertSame(1, $second['deleted']);
+        self::assertSame(2, DB::table('report_exports')->whereNotNull('artifact_deleted_at')->count());
+        self::assertNotNull(
+            DB::table('report_exports')
+                ->where('id', '01J00000000000000000000001')
+                ->value('artifact_deletion_next_attempt_at'),
+        );
+    }
+
     public function test_audit_failure_after_exact_version_delete_releases_fence_and_retries_safely(): void
     {
         $organization = Organization::factory()->create();
@@ -52,7 +87,7 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
 
         $files = $this->mock(FileService::class);
         $files->shouldReceive('deleteVersion')
-            ->twice()
+            ->once()
             ->with($path, 'version-1');
         $audit = new RetentionAuditFake(1);
         $service = new DeleteExpiredReportArtifactsService(
@@ -66,8 +101,9 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
         self::assertSame(1, $service->delete(1, $now)['failed']);
         self::assertNull(DB::table('report_exports')->value('artifact_deleted_at'));
         self::assertNull(DB::table('report_exports')->value('artifact_deletion_lease_token'));
+        self::assertNotNull(DB::table('report_exports')->value('artifact_deletion_storage_accepted_at'));
 
-        self::assertSame(1, $service->delete(1, $now->modify('+1 second'))['deleted']);
+        self::assertSame(1, $service->delete(1, $now->modify('+3 seconds'))['deleted']);
         self::assertNotNull(DB::table('report_exports')->value('artifact_deleted_at'));
         self::assertCount(1, $audit->events);
     }

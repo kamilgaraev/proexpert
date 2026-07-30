@@ -152,6 +152,26 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
             ),
         );
     }
+
+    public function test_deletion_uses_a_closed_durable_state_machine(): void
+    {
+        $service = (string) file_get_contents(
+            (new \ReflectionClass(DeleteExpiredReportArtifactsService::class))->getFileName(),
+        );
+        $migration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/database/migrations/2026_07_26_000005_create_report_exports_table.php',
+        );
+
+        foreach (['pending', 'deleting', 'storage_accepted', 'deleted'] as $state) {
+            self::assertStringContainsString("'{$state}'", $service.$migration);
+        }
+        self::assertStringContainsString('artifact_deletion_state IN', $migration);
+        self::assertStringContainsString('artifact_deletion_storage_accepted_at', $migration);
+        self::assertStringContainsString(
+            'artifact_deleted_at >= artifact_deletion_storage_accepted_at',
+            $migration,
+        );
+    }
 }
 
 final class RecordingArtifactDeletionAudit implements ReportTransitionAudit

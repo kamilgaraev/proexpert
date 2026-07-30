@@ -37,6 +37,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
             'attempt_count' => 0,
             'occurred_at' => $timestamp,
             'available_at' => $timestamp,
+            'dispatch_reserved_until' => null,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
@@ -45,7 +46,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
         }
         $existing = ReportAuditIntentRecord::query()->where('event_key', $eventKey)->lockForUpdate()->first();
         if (
-            !$existing instanceof ReportAuditIntentRecord
+            ! $existing instanceof ReportAuditIntentRecord
             || $existing->event_type !== $eventType
             || (int) $existing->organization_id !== $context->scope->organizationId
             || (int) $existing->actor_id !== $context->actor->id
@@ -59,21 +60,47 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
     {
         $this->assertBatch($limit);
 
-        return ReportAuditIntentRecord::query()
-            ->where('status', 'pending')
-            ->where('attempt_count', '<', 12)
-            ->where('available_at', '<=', $this->timestamp($now))
-            ->orderBy('available_at')
-            ->orderBy('id')
-            ->limit($limit)
-            ->pluck('id')
-            ->map(static fn (mixed $id): string => (string) $id)
-            ->all();
+        return DB::transaction(function () use ($limit, $now): array {
+            $timestamp = $this->timestamp($now);
+            $ids = ReportAuditIntentRecord::query()
+                ->where('status', 'pending')
+                ->where('attempt_count', '<', 12)
+                ->where('available_at', '<=', $timestamp)
+                ->where(static function ($query) use ($timestamp): void {
+                    $query->whereNull('dispatch_reserved_until')
+                        ->orWhere('dispatch_reserved_until', '<=', $timestamp);
+                })
+                ->orderBy('available_at')
+                ->orderBy('id')
+                ->limit($limit)
+                ->lock('FOR UPDATE SKIP LOCKED')
+                ->pluck('id')
+                ->map(static fn (mixed $id): string => (string) $id)
+                ->all();
+            if ($ids === []) {
+                return [];
+            }
+
+            $reservedUntil = $this->timestamp($now->modify('+5 minutes'));
+            $updated = ReportAuditIntentRecord::query()
+                ->whereIn('id', $ids)
+                ->where('status', 'pending')
+                ->where('available_at', '<=', $timestamp)
+                ->update([
+                    'dispatch_reserved_until' => $reservedUntil,
+                    'updated_at' => $timestamp,
+                ]);
+            if ($updated !== count($ids)) {
+                throw new LogicException('report_audit_dispatch_reservation_cas_failed');
+            }
+
+            return $ids;
+        });
     }
 
     public function claim(string $intentId, string $leaseToken, DateTimeImmutable $now, DateTimeImmutable $leasedUntil): ?ReportAuditIntentLease
     {
-        if (!Str::isUuid($leaseToken) || $leasedUntil <= $now) {
+        if (! Str::isUuid($leaseToken) || $leasedUntil <= $now) {
             throw new InvalidArgumentException('report_audit_lease_invalid');
         }
 
@@ -84,7 +111,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                 ->where('available_at', '<=', $this->timestamp($now))
                 ->lockForUpdate()
                 ->first();
-            if (!$record instanceof ReportAuditIntentRecord || (int) $record->attempt_count >= 12) {
+            if (! $record instanceof ReportAuditIntentRecord || (int) $record->attempt_count >= 12) {
                 return null;
             }
             $attempt = (int) $record->attempt_count + 1;
@@ -97,6 +124,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                     'attempt_count' => $attempt,
                     'lease_token' => $leaseToken,
                     'lease_expires_at' => $this->timestamp($leasedUntil),
+                    'dispatch_reserved_until' => null,
                     'updated_at' => $this->timestamp($now),
                 ]);
 
@@ -113,7 +141,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
             ->where('status', 'leased')
             ->where('lease_token', $leaseToken)
             ->first();
-        if (!$record instanceof ReportAuditIntentRecord) {
+        if (! $record instanceof ReportAuditIntentRecord) {
             throw new LogicException('report_audit_lease_not_found');
         }
 
@@ -140,6 +168,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                 'status' => 'delivered',
                 'lease_token' => null,
                 'lease_expires_at' => null,
+                'dispatch_reserved_until' => null,
                 'delivered_at' => $this->timestamp($deliveredAt),
                 'last_error_code' => null,
                 'updated_at' => $this->timestamp($deliveredAt),
@@ -155,7 +184,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                 ->where('lease_token', $leaseToken)
                 ->lockForUpdate()
                 ->first();
-            if (!$record instanceof ReportAuditIntentRecord) {
+            if (! $record instanceof ReportAuditIntentRecord) {
                 return;
             }
             $terminal = (int) $record->attempt_count === 12;
@@ -167,6 +196,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                     'status' => $terminal ? 'dead_letter' : 'pending',
                     'lease_token' => null,
                     'lease_expires_at' => null,
+                    'dispatch_reserved_until' => null,
                     'available_at' => $terminal ? $record->available_at : $this->timestamp($nextAttemptAt),
                     'dead_lettered_at' => $terminal ? $this->timestamp($occurredAt) : null,
                     'last_error_code' => $errorCode->value,
@@ -200,6 +230,7 @@ final class EloquentReportAuditIntentStore implements ReportAuditIntentStore
                         'status' => $terminal ? 'dead_letter' : 'pending',
                         'lease_token' => null,
                         'lease_expires_at' => null,
+                        'dispatch_reserved_until' => null,
                         'available_at' => $terminal ? $record->available_at : $this->timestamp($occurredAt),
                         'dead_lettered_at' => $terminal ? $this->timestamp($occurredAt) : null,
                         'last_error_code' => $terminal ? ReportErrorCode::REPORT_DEPENDENCY_FAILED->value : $record->last_error_code,

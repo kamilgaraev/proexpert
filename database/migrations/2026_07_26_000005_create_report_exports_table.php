@@ -76,9 +76,14 @@ return new class extends Migration
             $table->timestampTz('cancel_requested_at', 6)->nullable();
             $table->timestampTz('cancelled_at', 6)->nullable();
             $table->timestampTz('expired_at', 6)->nullable();
+            $table->unsignedSmallInteger('retention_attempt_count')->default(0);
+            $table->timestampTz('retention_next_attempt_at', 6)->nullable();
             $table->uuid('artifact_deletion_lease_token')->nullable();
             $table->timestampTz('artifact_deletion_lease_expires_at', 6)->nullable();
             $table->unsignedSmallInteger('artifact_deletion_attempt_count')->default(0);
+            $table->timestampTz('artifact_deletion_next_attempt_at', 6)->nullable();
+            $table->string('artifact_deletion_state', 24)->default('pending');
+            $table->timestampTz('artifact_deletion_storage_accepted_at', 6)->nullable();
             $table->timestampTz('artifact_deleted_at', 6)->nullable();
             $table->timestampTz('created_at', 6);
             $table->timestampTz('updated_at', 6);
@@ -101,15 +106,16 @@ return new class extends Migration
             "ALTER TABLE report_exports ADD CONSTRAINT report_exports_error_code_check CHECK ((status = 'failed' AND error_code IN ('REPORT_NOT_FOUND','REPORT_SCOPE_FORBIDDEN','REPORT_REQUEST_INVALID','REPORT_FILTER_UNSUPPORTED','REPORT_FILTER_VALUE_NOT_FOUND','REPORT_FILTER_RANGE_INVALID','REPORT_SORT_UNSUPPORTED','REPORT_CURSOR_INVALID','REPORT_IDEMPOTENCY_KEY_INVALID','REPORT_IDEMPOTENCY_CONFLICT','REPORT_SNAPSHOT_NOT_READY','REPORT_EXPORT_NOT_READY','REPORT_OFFICIAL_SNAPSHOT_UNSEALED','REPORT_SNAPSHOT_EXPIRED','REPORT_EXPORT_EXPIRED','REPORT_EXPORT_LIMIT_EXCEEDED','REPORT_RATE_LIMITED','REPORT_SOURCE_UNAVAILABLE','REPORT_DEPENDENCY_FAILED','REPORT_INTERNAL_ERROR')) OR (status <> 'failed' AND error_code IS NULL))",
             "ALTER TABLE report_exports ADD CONSTRAINT report_exports_terminal_timestamps_check CHECK ((status = 'failed') = (failed_at IS NOT NULL) AND (status = 'cancelled') = (cancelled_at IS NOT NULL) AND (status = 'expired') = (expired_at IS NOT NULL) AND (status IN ('cancelled','expired')) = (cancel_requested_at IS NOT NULL OR status = 'expired'))",
             'ALTER TABLE report_exports ADD CONSTRAINT report_exports_expiry_order_check CHECK (expires_at > created_at AND (expired_at IS NULL OR expired_at >= expires_at))',
-            "ALTER TABLE report_exports ADD CONSTRAINT report_exports_artifact_deletion_check CHECK ((artifact_deletion_lease_token IS NULL) = (artifact_deletion_lease_expires_at IS NULL) AND artifact_deletion_attempt_count >= 0 AND (artifact_deleted_at IS NULL OR (status = 'expired' AND artifact_deletion_lease_token IS NULL AND artifact_deletion_lease_expires_at IS NULL AND artifact_deleted_at >= expired_at)))",
+            "ALTER TABLE report_exports ADD CONSTRAINT report_exports_retention_retry_check CHECK (retention_attempt_count >= 0 AND ((status = 'ready') OR (retention_next_attempt_at IS NULL)))",
+            "ALTER TABLE report_exports ADD CONSTRAINT report_exports_artifact_deletion_check CHECK ((artifact_deletion_lease_token IS NULL) = (artifact_deletion_lease_expires_at IS NULL) AND artifact_deletion_attempt_count >= 0 AND artifact_deletion_state IN ('pending','deleting','storage_accepted','deleted') AND ((status <> 'expired' AND artifact_deletion_state = 'pending' AND artifact_deletion_attempt_count = 0 AND artifact_deletion_lease_token IS NULL AND artifact_deletion_next_attempt_at IS NULL AND artifact_deletion_storage_accepted_at IS NULL AND artifact_deleted_at IS NULL) OR (status = 'expired' AND ((artifact_deletion_state = 'pending' AND artifact_deleted_at IS NULL AND artifact_deletion_storage_accepted_at IS NULL AND artifact_deletion_lease_token IS NULL) OR (artifact_deletion_state = 'deleting' AND artifact_deleted_at IS NULL AND artifact_deletion_storage_accepted_at IS NULL AND artifact_deletion_lease_token IS NOT NULL AND artifact_deletion_next_attempt_at IS NULL AND artifact_deletion_attempt_count >= 1) OR (artifact_deletion_state = 'storage_accepted' AND artifact_deleted_at IS NULL AND artifact_deletion_storage_accepted_at IS NOT NULL AND artifact_deletion_attempt_count >= 1 AND ((artifact_deletion_lease_token IS NOT NULL AND artifact_deletion_next_attempt_at IS NULL) OR artifact_deletion_lease_token IS NULL)) OR (artifact_deletion_state = 'deleted' AND artifact_deleted_at IS NOT NULL AND artifact_deletion_storage_accepted_at IS NOT NULL AND artifact_deletion_lease_token IS NULL AND artifact_deletion_next_attempt_at IS NULL AND artifact_deletion_attempt_count >= 1)))) AND (artifact_deletion_storage_accepted_at IS NULL OR artifact_deletion_storage_accepted_at >= expired_at) AND (artifact_deleted_at IS NULL OR artifact_deleted_at >= artifact_deletion_storage_accepted_at))",
             'CREATE UNIQUE INDEX report_exports_org_idempotency_unique ON report_exports (organization_id, idempotency_key_hash)',
             'CREATE UNIQUE INDEX report_exports_execution_lease_token_unique ON report_exports (execution_lease_token) WHERE execution_lease_token IS NOT NULL',
             'CREATE UNIQUE INDEX report_exports_artifact_deletion_lease_token_unique ON report_exports (artifact_deletion_lease_token) WHERE artifact_deletion_lease_token IS NOT NULL',
             'CREATE INDEX report_exports_org_id_lookup ON report_exports (organization_id, id)',
             'CREATE INDEX report_exports_run_status_idx ON report_exports (run_id, status)',
             "CREATE INDEX report_exports_queued_idx ON report_exports (queued_at, id) WHERE status = 'queued'",
-            "CREATE INDEX report_exports_retention_idx ON report_exports (expires_at, id) WHERE status IN ('ready','expired')",
-            "CREATE INDEX report_exports_artifact_deletion_due_idx ON report_exports (expired_at, id) WHERE status = 'expired' AND artifact_deleted_at IS NULL",
+            "CREATE INDEX report_exports_retention_idx ON report_exports (retention_next_attempt_at,expires_at,id) WHERE status = 'ready'",
+            "CREATE INDEX report_exports_artifact_deletion_due_idx ON report_exports (artifact_deletion_next_attempt_at,expired_at,id) WHERE status = 'expired' AND artifact_deleted_at IS NULL",
         ] as $statement) {
             DB::statement($statement);
         }

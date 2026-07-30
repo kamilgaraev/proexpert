@@ -31,6 +31,61 @@ final class CoreReportAuditIntentConsumerTest extends TestCase
             $consumer,
             $this->intent('report.run.ready', [...$this->readySubject(), 'unknown' => 'member']),
         );
+        $this->assertRejectedBeforeCoreIo(
+            $consumer,
+            $this->intent('report.run.ready', [
+                ...$this->readySubject(),
+                'snapshot' => [...$this->readySubject()['snapshot'], 'unknown' => 'member'],
+            ]),
+        );
+        $this->assertRejectedBeforeCoreIo(
+            $consumer,
+            $this->intent('report.run.queued', [
+                'run_id' => '01J00000000000000000000002',
+                'report_code' => 'cost_control',
+                'status' => 'queued',
+                'definition_hash' => str_repeat('a', 64),
+                'query_hash' => str_repeat('b', 64),
+                'contract_version' => '1',
+                'formula_version' => '1',
+                'source_schema_version' => '1',
+                'renderer_version' => '1',
+                'saved_view' => [
+                    'id' => '01J00000000000000000000003',
+                    'revision' => 1,
+                    'hash' => str_repeat('c', 64),
+                    'unknown' => 'member',
+                ],
+            ]),
+        );
+        $this->assertRejectedBeforeCoreIo(
+            $consumer,
+            $this->intent('report.export.queued', [
+                'export_id' => '01J00000000000000000000004',
+                'run_id' => '01J00000000000000000000002',
+                'report_code' => 'cost_control',
+                'status' => 'queued',
+                'definition_hash' => str_repeat('a', 64),
+                'query_hash' => str_repeat('b', 64),
+                'source_hash' => str_repeat('c', 64),
+                'result_hash' => str_repeat('d', 64),
+                'snapshot_id' => 'snapshot-one',
+                'snapshot_classification' => 'operational',
+                'data_classification' => 'standard',
+                'format' => 'xlsx',
+                'columns' => ['z', 'a'],
+                'locale' => 'ru',
+                'timezone' => 'UTC',
+                'renderer_version' => '1',
+            ]),
+        );
+        $this->assertRejectedBeforeCoreIo(
+            $consumer,
+            $this->intent('report.run.ready', [
+                ...$this->readySubject(),
+                'snapshot' => [...$this->readySubject()['snapshot'], 'seal_digest' => 'not-a-hash'],
+            ]),
+        );
     }
 
     public function test_closed_ready_payload_contains_hashes_versions_count_and_no_rows(): void
@@ -105,7 +160,12 @@ final class CoreReportAuditIntentConsumerTest extends TestCase
     ): void {
         self::assertContains(
             $intent->eventType,
-            ['report.subscription.ready', 'report.run.ready'],
+            [
+                'report.subscription.ready',
+                'report.run.ready',
+                'report.run.queued',
+                'report.export.queued',
+            ],
         );
 
         try {

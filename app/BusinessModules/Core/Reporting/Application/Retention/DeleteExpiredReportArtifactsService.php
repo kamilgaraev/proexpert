@@ -52,6 +52,10 @@ final readonly class DeleteExpiredReportArtifactsService
             ->where('expired_at', '<=', $this->timestamp($cutoff))
             ->whereNull('artifact_deleted_at')
             ->where(static function ($query) use ($occurredAt): void {
+                $query->whereNull('artifact_deletion_next_attempt_at')
+                    ->orWhere('artifact_deletion_next_attempt_at', '<=', $occurredAt->format('Y-m-d H:i:s.uP'));
+            })
+            ->where(static function ($query) use ($occurredAt): void {
                 $query
                     ->whereNull('artifact_deletion_lease_token')
                     ->orWhere('artifact_deletion_lease_expires_at', '<=', $occurredAt->format('Y-m-d H:i:s.uP'));
@@ -79,6 +83,19 @@ final readonly class DeleteExpiredReportArtifactsService
                 $summary[$deleted ? 'deleted' : 'skipped']++;
             } catch (Throwable $throwable) {
                 $summary['failed']++;
+                try {
+                    $this->deferUnclaimedCandidate(
+                        (string) $record->id,
+                        (int) $record->organization_id,
+                        $occurredAt,
+                    );
+                } catch (Throwable $deferFailure) {
+                    Log::error('report_artifact_retention_deferral_failed', [
+                        'export_id' => (string) $record->id,
+                        'organization_id' => (int) $record->organization_id,
+                        'error_type' => $deferFailure::class,
+                    ]);
+                }
                 Log::error('report_artifact_retention_deletion_failed', [
                     'export_id' => (string) $record->id,
                     'organization_id' => (int) $record->organization_id,
@@ -108,12 +125,21 @@ final readonly class DeleteExpiredReportArtifactsService
             return false;
         }
 
-        try {
-            $this->files->deleteVersion($claim['path'], $claim['version_id']);
-        } catch (Throwable $throwable) {
-            $this->releaseClaim($exportId, $organizationId, $leaseToken);
+        if (! $claim['storage_accepted']) {
+            try {
+                $this->files->deleteVersion($claim['path'], $claim['version_id']);
+                $this->markStorageAccepted(
+                    $exportId,
+                    $organizationId,
+                    $leaseToken,
+                    $claim,
+                    $occurredAt,
+                );
+            } catch (Throwable $throwable) {
+                $this->releaseClaim($exportId, $organizationId, $leaseToken, $occurredAt);
 
-            throw $throwable;
+                throw $throwable;
+            }
         }
 
         try {
@@ -125,14 +151,14 @@ final readonly class DeleteExpiredReportArtifactsService
                 $occurredAt,
             );
         } catch (Throwable $throwable) {
-            $this->releaseClaim($exportId, $organizationId, $leaseToken);
+            $this->releaseClaim($exportId, $organizationId, $leaseToken, $occurredAt);
 
             throw $throwable;
         }
     }
 
     /**
-     * @return array{path:string,version_id:string,run_id:string,report_code:string,format:string,actor_id:int}|null
+     * @return array{path:string,version_id:string,run_id:string,report_code:string,format:string,actor_id:int,storage_accepted:bool}|null
      */
     private function claimArtifact(
         string $exportId,
@@ -188,6 +214,10 @@ final readonly class DeleteExpiredReportArtifactsService
                     'artifact_deletion_lease_token' => $leaseToken,
                     'artifact_deletion_lease_expires_at' => $this->timestamp($leaseExpiresAt),
                     'artifact_deletion_attempt_count' => DB::raw('artifact_deletion_attempt_count + 1'),
+                    'artifact_deletion_next_attempt_at' => null,
+                    'artifact_deletion_state' => $record->artifact_deletion_storage_accepted_at === null
+                        ? 'deleting'
+                        : 'storage_accepted',
                 ]);
             if ($updated !== 1) {
                 return null;
@@ -200,12 +230,13 @@ final readonly class DeleteExpiredReportArtifactsService
                 'report_code' => (string) $record->report_code,
                 'format' => (string) $record->format,
                 'actor_id' => (int) $record->requester_actor_id,
+                'storage_accepted' => $record->artifact_deletion_storage_accepted_at !== null,
             ];
         });
     }
 
     /**
-     * @param  array{path:string,version_id:string,run_id:string,report_code:string,format:string,actor_id:int}  $claim
+     * @param  array{path:string,version_id:string,run_id:string,report_code:string,format:string,actor_id:int,storage_accepted:bool}  $claim
      */
     private function finalizeDeletion(
         string $exportId,
@@ -230,6 +261,7 @@ final readonly class DeleteExpiredReportArtifactsService
                 || $record->status !== ReportExportStatus::EXPIRED->value
                 || $record->artifact_deleted_at !== null
                 || $record->artifact_deletion_lease_token !== $leaseToken
+                || $record->artifact_deletion_storage_accepted_at === null
                 || $record->artifact_path !== $claim['path']
                 || $record->artifact_version_id !== $claim['version_id']) {
                 return false;
@@ -263,26 +295,81 @@ final readonly class DeleteExpiredReportArtifactsService
                 ->whereNull('artifact_deleted_at')
                 ->update([
                     'artifact_deleted_at' => $this->timestamp($occurredAt),
+                    'artifact_deletion_state' => 'deleted',
                     'artifact_deletion_lease_token' => null,
                     'artifact_deletion_lease_expires_at' => null,
+                    'artifact_deletion_next_attempt_at' => null,
                 ]) === 1;
         });
+    }
+
+    /**
+     * @param  array{path:string,version_id:string,run_id:string,report_code:string,format:string,actor_id:int,storage_accepted:bool}  $claim
+     */
+    private function markStorageAccepted(
+        string $exportId,
+        int $organizationId,
+        string $leaseToken,
+        array $claim,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $updated = ReportExportRecord::query()
+            ->whereKey($exportId)
+            ->where('organization_id', $organizationId)
+            ->where('status', ReportExportStatus::EXPIRED->value)
+            ->where('artifact_deletion_lease_token', $leaseToken)
+            ->where('artifact_path', $claim['path'])
+            ->where('artifact_version_id', $claim['version_id'])
+            ->whereNull('artifact_deleted_at')
+            ->update([
+                'artifact_deletion_storage_accepted_at' => $this->timestamp($occurredAt),
+                'artifact_deletion_state' => 'storage_accepted',
+            ]);
+        if ($updated !== 1) {
+            throw new RuntimeException('report_artifact_storage_acceptance_cas_failed');
+        }
     }
 
     private function releaseClaim(
         string $exportId,
         int $organizationId,
         string $leaseToken,
+        DateTimeImmutable $occurredAt,
     ): void {
-        ReportExportRecord::query()
-            ->whereKey($exportId)
-            ->where('organization_id', $organizationId)
-            ->where('artifact_deletion_lease_token', $leaseToken)
-            ->whereNull('artifact_deleted_at')
-            ->update([
-                'artifact_deletion_lease_token' => null,
-                'artifact_deletion_lease_expires_at' => null,
-            ]);
+        DB::transaction(function () use ($exportId, $organizationId, $leaseToken, $occurredAt): void {
+            $record = ReportExportRecord::query()
+                ->whereKey($exportId)
+                ->where('organization_id', $organizationId)
+                ->where('artifact_deletion_lease_token', $leaseToken)
+                ->whereNull('artifact_deleted_at')
+                ->lockForUpdate()
+                ->first([
+                    'id',
+                    'artifact_deletion_attempt_count',
+                    'artifact_deletion_storage_accepted_at',
+                ]);
+            if (! $record instanceof ReportExportRecord) {
+                return;
+            }
+
+            $attempt = (int) $record->artifact_deletion_attempt_count;
+            $seconds = min(3600, 2 ** min($attempt, 11));
+            ReportExportRecord::query()
+                ->whereKey($exportId)
+                ->where('organization_id', $organizationId)
+                ->where('artifact_deletion_lease_token', $leaseToken)
+                ->whereNull('artifact_deleted_at')
+                ->update([
+                    'artifact_deletion_state' => $record->artifact_deletion_storage_accepted_at === null
+                        ? 'pending'
+                        : 'storage_accepted',
+                    'artifact_deletion_lease_token' => null,
+                    'artifact_deletion_lease_expires_at' => null,
+                    'artifact_deletion_next_attempt_at' => $this->timestamp(
+                        $occurredAt->modify("+{$seconds} seconds"),
+                    ),
+                ]);
+        });
     }
 
     private function markAlreadyRecordedDeletion(
@@ -295,9 +382,52 @@ final readonly class DeleteExpiredReportArtifactsService
             ->whereNull('artifact_deleted_at')
             ->update([
                 'artifact_deleted_at' => $this->timestamp($occurredAt),
+                'artifact_deletion_state' => 'deleted',
                 'artifact_deletion_lease_token' => null,
                 'artifact_deletion_lease_expires_at' => null,
+                'artifact_deletion_next_attempt_at' => null,
+                'artifact_deletion_storage_accepted_at' => $record->artifact_deletion_storage_accepted_at
+                    ?? $this->timestamp($occurredAt),
             ]);
+    }
+
+    private function deferUnclaimedCandidate(
+        string $exportId,
+        int $organizationId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        DB::transaction(function () use ($exportId, $organizationId, $occurredAt): void {
+            $record = ReportExportRecord::query()
+                ->whereKey($exportId)
+                ->where('organization_id', $organizationId)
+                ->where('status', ReportExportStatus::EXPIRED->value)
+                ->whereNull('artifact_deleted_at')
+                ->whereNull('artifact_deletion_lease_token')
+                ->where(static function ($query) use ($occurredAt): void {
+                    $query->whereNull('artifact_deletion_next_attempt_at')
+                        ->orWhere('artifact_deletion_next_attempt_at', '<=', $occurredAt->format('Y-m-d H:i:s.uP'));
+                })
+                ->lockForUpdate()
+                ->first(['id', 'artifact_deletion_attempt_count']);
+            if (! $record instanceof ReportExportRecord) {
+                return;
+            }
+
+            $attempt = (int) $record->artifact_deletion_attempt_count + 1;
+            $seconds = min(3600, 2 ** min($attempt, 11));
+            ReportExportRecord::query()
+                ->whereKey($exportId)
+                ->where('organization_id', $organizationId)
+                ->whereNull('artifact_deleted_at')
+                ->whereNull('artifact_deletion_lease_token')
+                ->where('artifact_deletion_attempt_count', $attempt - 1)
+                ->update([
+                    'artifact_deletion_attempt_count' => $attempt,
+                    'artifact_deletion_next_attempt_at' => $this->timestamp(
+                        $occurredAt->modify("+{$seconds} seconds"),
+                    ),
+                ]);
+        });
     }
 
     private function assertDeletable(ReportExportRecord $record, DateTimeImmutable $cutoff): void

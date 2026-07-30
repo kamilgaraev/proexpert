@@ -63,6 +63,7 @@ final class EloquentReportAuditIntentStoreTest extends TestCase
         self::assertSame([
             'occurred_at' => 6,
             'available_at' => 6,
+            'dispatch_reserved_until' => 6,
             'lease_expires_at' => 6,
             'delivered_at' => 6,
             'dead_lettered_at' => 6,
@@ -71,10 +72,44 @@ final class EloquentReportAuditIntentStoreTest extends TestCase
         ], $precisions);
     }
 
+    public function test_due_reservations_advance_beyond_a_permanently_unclaimed_head_batch(): void
+    {
+        $store = new EloquentReportAuditIntentStore;
+        $context = (new ReportExecutionContextBuilder)->build();
+        $now = new DateTimeImmutable('2026-07-28T10:00:00.123456Z');
+        $subject = [
+            'run_id' => '01J00000000000000000000001',
+            'report_code' => 'cost_control',
+            'status' => 'cancelled',
+            'definition_hash' => str_repeat('a', 64),
+            'query_hash' => str_repeat('b', 64),
+        ];
+        foreach (range(1, 5) as $sequence) {
+            DB::transaction(fn () => $store->add(
+                "event:cancelled:{$sequence}",
+                'report.run.cancelled',
+                $context,
+                $subject,
+                $now,
+            ));
+        }
+
+        $first = $store->dueIds(2, $now);
+        $second = $store->dueIds(2, $now);
+        $third = $store->dueIds(2, $now);
+
+        self::assertCount(2, $first);
+        self::assertCount(2, $second);
+        self::assertCount(1, $third);
+        self::assertCount(5, array_unique([...$first, ...$second, ...$third]));
+        self::assertSame([], $store->dueIds(2, $now));
+        self::assertSame($first, $store->dueIds(2, $now->modify('+5 minutes')));
+    }
+
     public function test_transaction_required_replay_lease_fencing_reclaim_and_dead_letter(): void
     {
-        $store = new EloquentReportAuditIntentStore();
-        $context = (new ReportExecutionContextBuilder())->build();
+        $store = new EloquentReportAuditIntentStore;
+        $context = (new ReportExecutionContextBuilder)->build();
         $now = new DateTimeImmutable('2026-07-28T10:00:00.123456Z');
         $subject = [
             'run_id' => '01J00000000000000000000001',
@@ -120,8 +155,8 @@ final class EloquentReportAuditIntentStoreTest extends TestCase
 
     public function test_reclaiming_expired_twelfth_lease_dead_letters_without_permanent_due_loop(): void
     {
-        $store = new EloquentReportAuditIntentStore();
-        $context = (new ReportExecutionContextBuilder())->build();
+        $store = new EloquentReportAuditIntentStore;
+        $context = (new ReportExecutionContextBuilder)->build();
         $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
         $subject = [
             'run_id' => '01J00000000000000000000001',

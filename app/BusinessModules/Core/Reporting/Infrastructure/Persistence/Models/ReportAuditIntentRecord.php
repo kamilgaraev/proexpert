@@ -25,6 +25,7 @@ final class ReportAuditIntentRecord extends Model
         'attempt_count' => 'integer',
         'occurred_at' => 'immutable_datetime',
         'available_at' => 'immutable_datetime',
+        'dispatch_reserved_until' => 'immutable_datetime',
         'lease_expires_at' => 'immutable_datetime',
         'delivered_at' => 'immutable_datetime',
         'dead_lettered_at' => 'immutable_datetime',

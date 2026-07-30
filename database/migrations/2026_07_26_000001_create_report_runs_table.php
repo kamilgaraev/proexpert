@@ -78,6 +78,8 @@ return new class extends Migration
             $table->timestampTz('created_at', 6);
             $table->timestampTz('updated_at', 6);
             $table->timestampTz('expires_at', 6);
+            $table->unsignedSmallInteger('retention_attempt_count')->default(0);
+            $table->timestampTz('retention_next_attempt_at', 6)->nullable();
         });
 
         foreach ([
@@ -100,11 +102,12 @@ return new class extends Migration
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_ready_identity_check CHECK (status <> 'ready' OR (source_hash IS NOT NULL AND result_hash IS NOT NULL AND snapshot_kind IS NOT NULL AND snapshot_id IS NOT NULL AND snapshot_generated_at IS NOT NULL AND snapshot_watermarks IS NOT NULL AND row_count IS NOT NULL AND result_metadata IS NOT NULL AND freshness IS NOT NULL AND quality IS NOT NULL AND provenance IS NOT NULL AND row_schema IS NOT NULL AND capabilities IS NOT NULL AND ready_at IS NOT NULL AND progress = 100 AND error_code IS NULL AND (snapshot_stale_at IS NULL OR snapshot_stale_at >= snapshot_generated_at)))",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_terminal_timestamps_check CHECK ((status = 'failed') = (failed_at IS NOT NULL) AND (status = 'cancelled') = (cancelled_at IS NOT NULL) AND (status = 'expired') = (expired_at IS NOT NULL))",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_expired_seal_check CHECK (status <> 'expired' OR (source_hash IS NOT NULL AND result_hash IS NOT NULL AND snapshot_kind IS NOT NULL AND snapshot_id IS NOT NULL AND snapshot_generated_at IS NOT NULL AND snapshot_watermarks IS NOT NULL AND row_count IS NOT NULL AND result_metadata IS NOT NULL AND freshness IS NOT NULL AND quality IS NOT NULL AND provenance IS NOT NULL AND row_schema IS NOT NULL AND capabilities IS NOT NULL AND ready_at IS NOT NULL AND progress = 100 AND expired_at >= expires_at))",
+            "ALTER TABLE report_runs ADD CONSTRAINT report_runs_retention_retry_check CHECK (retention_attempt_count >= 0 AND ((status = 'ready') OR (retention_next_attempt_at IS NULL)))",
             'CREATE UNIQUE INDEX report_runs_org_idempotency_unique ON report_runs (organization_id, idempotency_key_hash)',
             'CREATE INDEX report_runs_org_id_lookup ON report_runs (organization_id, id)',
             "CREATE INDEX report_runs_queued_idx ON report_runs (queued_at, id) WHERE status = 'queued'",
             "CREATE INDEX report_runs_execution_lease_idx ON report_runs (execution_lease_expires_at, id) WHERE status = 'materializing'",
-            "CREATE INDEX report_runs_retention_idx ON report_runs (expires_at, id) WHERE status IN ('ready','expired')",
+            "CREATE INDEX report_runs_retention_idx ON report_runs (retention_next_attempt_at,expires_at,id) WHERE status = 'ready'",
         ] as $statement) {
             DB::statement($statement);
         }

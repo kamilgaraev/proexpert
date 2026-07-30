@@ -106,6 +106,18 @@ final readonly class CoreReportAuditIntentConsumer
         }
 
         $this->assertNoForbiddenMembers($intent->subject);
+        if (array_key_exists('snapshot', $intent->subject)) {
+            $this->assertSnapshot($intent->subject['snapshot']);
+        }
+        if (array_key_exists('artifact', $intent->subject)) {
+            $this->assertArtifact($intent->subject['artifact']);
+        }
+        if (array_key_exists('saved_view', $intent->subject)) {
+            $this->assertSavedView($intent->subject['saved_view']);
+        }
+        if (array_key_exists('columns', $intent->subject)) {
+            $this->assertColumns($intent->subject['columns']);
+        }
         $expectedStatus = $intent->eventType === 'report.export.artifact_deleted'
             ? 'expired'
             : substr($intent->eventType, (int) strrpos($intent->eventType, '.') + 1);
@@ -133,6 +145,104 @@ final readonly class CoreReportAuditIntentConsumer
         }
 
         return $intent->subject;
+    }
+
+    private function assertSnapshot(mixed $snapshot): void
+    {
+        if (! is_array($snapshot) || array_is_list($snapshot)) {
+            throw new InvalidArgumentException('report_core_audit_snapshot_invalid');
+        }
+        $this->assertExactKeys($snapshot, ['kind', 'id', 'classification', 'seal_digest']);
+        if (
+            ! is_string($snapshot['kind']) || $snapshot['kind'] === ''
+            || ! is_string($snapshot['id']) || $snapshot['id'] === ''
+            || ! is_string($snapshot['classification'])
+            || ! in_array($snapshot['classification'], ['operational', 'official'], true)
+            || ($snapshot['seal_digest'] !== null
+                && (! is_string($snapshot['seal_digest'])
+                    || preg_match('/\A[a-f0-9]{64}\z/D', $snapshot['seal_digest']) !== 1))
+            || ($snapshot['classification'] === 'official' && $snapshot['seal_digest'] === null)
+            || ($snapshot['classification'] === 'operational' && $snapshot['seal_digest'] !== null)
+        ) {
+            throw new InvalidArgumentException('report_core_audit_snapshot_invalid');
+        }
+    }
+
+    private function assertArtifact(mixed $artifact): void
+    {
+        if (! is_array($artifact) || array_is_list($artifact)) {
+            throw new InvalidArgumentException('report_core_audit_artifact_invalid');
+        }
+        $this->assertExactKeys($artifact, ['version_id', 'etag', 'checksum', 'size', 'mime']);
+        if (
+            ! $this->boundedText($artifact['version_id'], 255)
+            || ! $this->boundedText($artifact['etag'], 255)
+            || ! is_string($artifact['checksum'])
+            || preg_match('/\A[a-f0-9]{64}\z/D', $artifact['checksum']) !== 1
+            || ! is_int($artifact['size'])
+            || $artifact['size'] < 1
+            || ! $this->boundedText($artifact['mime'], 255)
+        ) {
+            throw new InvalidArgumentException('report_core_audit_artifact_invalid');
+        }
+    }
+
+    private function assertSavedView(mixed $savedView): void
+    {
+        if ($savedView === null) {
+            return;
+        }
+        if (! is_array($savedView) || array_is_list($savedView)) {
+            throw new InvalidArgumentException('report_core_audit_saved_view_invalid');
+        }
+        $this->assertExactKeys($savedView, ['id', 'revision', 'hash']);
+        if (
+            ! is_string($savedView['id'])
+            || preg_match('/\A[0-7][0-9A-HJKMNP-TV-Z]{25}\z/D', $savedView['id']) !== 1
+            || ! is_int($savedView['revision'])
+            || $savedView['revision'] < 1
+            || ! is_string($savedView['hash'])
+            || preg_match('/\A[a-f0-9]{64}\z/D', $savedView['hash']) !== 1
+        ) {
+            throw new InvalidArgumentException('report_core_audit_saved_view_invalid');
+        }
+    }
+
+    private function assertColumns(mixed $columns): void
+    {
+        if (! is_array($columns) || ! array_is_list($columns)) {
+            throw new InvalidArgumentException('report_core_audit_columns_invalid');
+        }
+        $normalized = [];
+        foreach ($columns as $column) {
+            if (! is_string($column) || preg_match('/\A[a-z][a-z0-9_.-]{0,127}\z/D', $column) !== 1) {
+                throw new InvalidArgumentException('report_core_audit_columns_invalid');
+            }
+            $normalized[] = $column;
+        }
+        $canonical = array_values(array_unique($normalized));
+        sort($canonical, SORT_STRING);
+        if ($normalized !== $canonical) {
+            throw new InvalidArgumentException('report_core_audit_columns_invalid');
+        }
+    }
+
+    private function assertExactKeys(array $value, array $expected): void
+    {
+        $actual = array_keys($value);
+        sort($actual, SORT_STRING);
+        sort($expected, SORT_STRING);
+        if ($actual !== $expected) {
+            throw new InvalidArgumentException('report_core_audit_nested_shape_invalid');
+        }
+    }
+
+    private function boundedText(mixed $value, int $maxLength): bool
+    {
+        return is_string($value)
+            && $value !== ''
+            && strlen($value) <= $maxLength
+            && preg_match('/[[:cntrl:]]/', $value) !== 1;
     }
 
     private function assertNoForbiddenMembers(array $value): void

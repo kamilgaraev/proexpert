@@ -53,6 +53,16 @@ final readonly class ExpireReportsService
                 $summary[$transitioned ? 'transitioned' : 'skipped']++;
             } catch (Throwable $throwable) {
                 $summary['failed']++;
+                try {
+                    $this->deferCandidate($candidate, $occurredAt);
+                } catch (Throwable $deferFailure) {
+                    Log::error('report_retention_expiry_deferral_failed', [
+                        'kind' => $candidate['kind'],
+                        'report_id' => $candidate['id'],
+                        'organization_id' => $candidate['organization_id'],
+                        'error_type' => $deferFailure::class,
+                    ]);
+                }
                 Log::error('report_retention_expiry_failed', [
                     'kind' => $candidate['kind'],
                     'report_id' => $candidate['id'],
@@ -73,6 +83,10 @@ final readonly class ExpireReportsService
             'run' => ReportRunRecord::query()
                 ->where('status', ReportRunStatus::READY->value)
                 ->where('expires_at', '<=', $timestamp)
+                ->where(static function ($query) use ($timestamp): void {
+                    $query->whereNull('retention_next_attempt_at')
+                        ->orWhere('retention_next_attempt_at', '<=', $timestamp);
+                })
                 ->orderBy('expires_at')
                 ->orderBy('id')
                 ->limit($limit)
@@ -80,6 +94,10 @@ final readonly class ExpireReportsService
             'export' => ReportExportRecord::query()
                 ->where('status', ReportExportStatus::READY->value)
                 ->where('expires_at', '<=', $timestamp)
+                ->where(static function ($query) use ($timestamp): void {
+                    $query->whereNull('retention_next_attempt_at')
+                        ->orWhere('retention_next_attempt_at', '<=', $timestamp);
+                })
                 ->orderBy('expires_at')
                 ->orderBy('id')
                 ->limit($limit)
@@ -170,6 +188,7 @@ final readonly class ExpireReportsService
                     'status' => ReportRunStatus::EXPIRED->value,
                     'expired_at' => $this->timestamp($occurredAt),
                     'updated_at' => $this->timestamp($occurredAt),
+                    'retention_next_attempt_at' => null,
                 ]);
             if ($updated !== 1) {
                 throw new RuntimeException('report_run_expiry_cas_failed');
@@ -236,6 +255,7 @@ final readonly class ExpireReportsService
                     'status' => ReportExportStatus::EXPIRED->value,
                     'expired_at' => $this->timestamp($occurredAt),
                     'updated_at' => $this->timestamp($occurredAt),
+                    'retention_next_attempt_at' => null,
                 ]);
             if ($updated !== 1) {
                 throw new RuntimeException('report_export_expiry_cas_failed');
@@ -272,6 +292,39 @@ final readonly class ExpireReportsService
         if ($limit < 1 || $limit > 500) {
             throw new InvalidArgumentException('report_retention_batch_size_invalid');
         }
+    }
+
+    /**
+     * @param  array{kind:string,id:string,organization_id:int,expires_at:DateTimeImmutable}  $candidate
+     */
+    private function deferCandidate(array $candidate, DateTimeImmutable $occurredAt): void
+    {
+        $model = $candidate['kind'] === 'run'
+            ? ReportRunRecord::query()
+            : ReportExportRecord::query();
+        $status = $candidate['kind'] === 'run'
+            ? ReportRunStatus::READY->value
+            : ReportExportStatus::READY->value;
+        $record = $model
+            ->whereKey($candidate['id'])
+            ->where('organization_id', $candidate['organization_id'])
+            ->where('status', $status)
+            ->first(['retention_attempt_count']);
+        if ($record === null) {
+            return;
+        }
+
+        $attempt = (int) $record->retention_attempt_count + 1;
+        $seconds = min(3600, 2 ** min($attempt, 11));
+        $model
+            ->whereKey($candidate['id'])
+            ->where('organization_id', $candidate['organization_id'])
+            ->where('status', $status)
+            ->where('retention_attempt_count', $attempt - 1)
+            ->update([
+                'retention_attempt_count' => $attempt,
+                'retention_next_attempt_at' => $this->timestamp($occurredAt->modify("+{$seconds} seconds")),
+            ]);
     }
 
     private function timestamp(DateTimeImmutable $value): string

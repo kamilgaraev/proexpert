@@ -25,6 +25,7 @@ final class ReportRunRecord extends Model
         'saved_view_revision' => 'integer',
         'progress' => 'integer',
         'row_count' => 'integer',
+        'retention_attempt_count' => 'integer',
         'scope_holding_organization_ids' => 'array',
         'scope_project_ids' => 'array',
         'scope_resources' => 'array',
@@ -55,5 +56,6 @@ final class ReportRunRecord extends Model
         'created_at' => 'immutable_datetime',
         'updated_at' => 'immutable_datetime',
         'expires_at' => 'immutable_datetime',
+        'retention_next_attempt_at' => 'immutable_datetime',
     ];
 }
