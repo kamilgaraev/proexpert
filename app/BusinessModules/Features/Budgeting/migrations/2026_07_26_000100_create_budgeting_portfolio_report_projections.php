@@ -77,6 +77,7 @@ SQL);
             $table->unsignedBigInteger('organization_id');
             $table->string('source_type', 64);
             $table->unsignedBigInteger('source_cursor')->default(0);
+            $table->unsignedBigInteger('source_upper_bound')->nullable();
             $table->string('status', 16)->default('pending');
             $table->uuid('lease_token')->nullable();
             $table->dateTimeTz('lease_expires_at')->nullable();

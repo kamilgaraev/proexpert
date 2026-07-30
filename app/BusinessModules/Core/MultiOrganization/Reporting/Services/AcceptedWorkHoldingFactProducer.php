@@ -126,6 +126,7 @@ final readonly class AcceptedWorkHoldingFactProducer
             'currency_source' => $currencySource,
             'tax_basis' => 'approved_act_amount',
             'recognized_on' => $recognizedAt->format('Y-m-d'),
+            'business_effective_at' => $recognizedAt,
             'source_refs' => [
                 ...$sourceRefs,
             ],

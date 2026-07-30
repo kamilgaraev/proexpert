@@ -67,6 +67,9 @@ final readonly class IntercompanyContractFlowReadinessProbe implements ReportDef
             && $schemaVersions === [HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION]
             && hash_equals($hierarchy->version, (string) $snapshot->hierarchy_watermark)
             && hash_equals($allocationWatermark, (string) $snapshot->allocation_watermark)
+            && preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->quality_gap_watermark) === 1
+            && (int) $snapshot->quality_gap_count === 0
+            && $snapshot->recorded_cutoff !== null
             && (int) $allocationWatermark > 0
             && (int) $snapshot->row_count > 0
             && HoldingAllocationFactVersion::query()

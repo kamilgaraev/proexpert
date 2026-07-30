@@ -41,17 +41,21 @@ final readonly class PortfolioLiquidityBackfillRunner
                 throw new RuntimeException('portfolio_liquidity_backfill_lease_busy');
             }
             $ingestionStartedAt = $checkpoint->ingestion_started_at ?? $now;
+            $sourceUpperBound = $checkpoint->source_upper_bound
+                ?? $this->backfill->sourceUpperBound($sourceType, $organizationId);
             $checkpoint->forceFill([
                 'status' => 'running',
                 'lease_token' => $leaseToken,
                 'lease_expires_at' => $now->clone()->addSeconds(self::LEASE_SECONDS),
                 'ingestion_started_at' => $ingestionStartedAt,
+                'source_upper_bound' => $sourceUpperBound,
                 'failure_code' => null,
             ])->save();
 
             return [
                 'cursor' => (int) $checkpoint->source_cursor,
                 'ingestion_started_at' => DateTimeImmutable::createFromInterface($ingestionStartedAt),
+                'source_upper_bound' => (int) $sourceUpperBound,
             ];
         });
 
@@ -62,6 +66,7 @@ final readonly class PortfolioLiquidityBackfillRunner
                 $claim['cursor'],
                 $limit,
                 $claim['ingestion_started_at'],
+                $claim['source_upper_bound'],
             );
             DB::transaction(function () use ($organizationId, $sourceType, $leaseToken, $result): void {
                 $checkpoint = PortfolioLiquidityBackfillCheckpoint::query()

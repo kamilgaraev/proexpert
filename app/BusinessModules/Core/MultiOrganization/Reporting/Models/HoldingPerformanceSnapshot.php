@@ -23,7 +23,9 @@ final class HoldingPerformanceSnapshot extends Model
             'totals' => 'array',
             'source_refs' => 'array',
             'row_count' => 'integer',
+            'quality_gap_count' => 'integer',
             'generated_at' => 'immutable_datetime',
+            'recorded_cutoff' => 'immutable_datetime',
             'stale_at' => 'immutable_datetime',
         ];
     }

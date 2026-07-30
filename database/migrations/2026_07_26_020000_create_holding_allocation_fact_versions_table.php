@@ -52,6 +52,7 @@ SQL);
             $table->string('status', 32);
             $table->dateTimeTz('occurred_at');
             $table->dateTimeTz('recorded_at');
+            $table->boolean('history_complete')->default(false);
             $table->char('source_hash', 64);
             $table->index(
                 ['organization_id', 'performance_act_id', 'id'],
@@ -95,19 +96,20 @@ SQL);
             $table->char('currency', 3)->nullable();
             $table->string('currency_source', 32);
             $table->date('recognized_on');
+            $table->dateTimeTz('business_effective_at');
             $table->string('flow_class', 16);
             $table->bigInteger('allocated_amount_minor')->nullable();
             $table->decimal('allocated_percentage', 20, 8)->nullable();
             $table->bigInteger('contract_amount_minor')->nullable();
             $table->jsonb('source_refs');
             $table->char('source_hash', 64);
-            $table->dateTimeTz('projected_at');
+            $table->dateTimeTz('recorded_at');
             $table->unique(
                 ['organization_id', 'source_type', 'source_id', 'source_version', 'monetary_basis'],
                 'holding_allocation_fact_source_unique',
             );
             $table->index(
-                ['organization_id', 'holding_id', 'recognized_on', 'currency', 'monetary_basis', 'id'],
+                ['organization_id', 'holding_id', 'business_effective_at', 'recorded_at', 'id'],
                 'holding_allocation_fact_report_lookup',
             );
         });

@@ -17,6 +17,7 @@ final class PortfolioLiquidityBackfillCheckpoint extends Model
         return [
             'organization_id' => 'integer',
             'source_cursor' => 'integer',
+            'source_upper_bound' => 'integer',
             'lease_expires_at' => 'immutable_datetime',
             'ingestion_started_at' => 'immutable_datetime',
             'completed_at' => 'immutable_datetime',

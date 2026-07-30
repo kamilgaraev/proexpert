@@ -6,7 +6,7 @@ namespace App\BusinessModules\Core\MultiOrganization\Reporting\Backfill;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\Listeners\ProjectHoldingAllocationFacts;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
-use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
@@ -18,7 +18,6 @@ final readonly class HoldingPerformanceBackfill
 {
     public function __construct(
         private HoldingAllocationFactProjector $projector,
-        private AcceptedWorkHoldingFactProducer $acceptedWorkFacts,
         private ProjectHoldingAllocationFacts $paymentFacts,
     ) {}
 
@@ -81,37 +80,46 @@ final readonly class HoldingPerformanceBackfill
         $factIds = [];
         $gapSourceIds = [];
         foreach ($acts as $act) {
-            $active = (bool) $act->is_approved
-                && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true);
-            if (! $active) {
-                if ($act->approval_date !== null
-                    || $act->approved_by_user_id !== null
-                    || $act->signed_at !== null) {
+            $events = HoldingAcceptedWorkEventVersion::query()
+                ->where('performance_act_id', $act->getKey())
+                ->orderBy('occurred_at')
+                ->orderBy('recorded_at')
+                ->orderBy('id')
+                ->get();
+            $historyComplete = $events->isNotEmpty()
+                && $events->every(static fn (HoldingAcceptedWorkEventVersion $event): bool => $event->history_complete);
+            if (! $historyComplete) {
+                $this->projector->recordGap([
+                    'organization_id' => $organizationId,
+                    'source_type' => 'performance_act',
+                    'source_id' => (int) $act->getKey(),
+                    'source_version' => (int) ($events->max('id') ?? $act->getKey()),
+                    'monetary_basis' => 'accepted_accrual',
+                ], ['accepted_work_event_history'], $act->approval_date ?? $act->created_at ?? now());
+                $gapSourceIds[] = (int) $act->getKey();
+
+                continue;
+            }
+            foreach ($events as $event) {
+                $fact = HoldingAllocationFactVersion::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('source_type', 'performance_act')
+                    ->where('source_id', $act->getKey())
+                    ->where('source_version', $event->getKey())
+                    ->where('monetary_basis', 'accepted_accrual')
+                    ->first();
+                if (! $fact instanceof HoldingAllocationFactVersion) {
                     $this->projector->recordGap([
                         'organization_id' => $organizationId,
                         'source_type' => 'performance_act',
                         'source_id' => (int) $act->getKey(),
-                        'source_version' => (int) $act->getKey(),
+                        'source_version' => (int) $event->getKey(),
                         'monetary_basis' => 'accepted_accrual',
-                    ], ['accepted_work_event_history'], $act->approval_date ?? $act->created_at ?? now());
+                    ], ['accepted_work_fact'], $event->occurred_at ?? now());
                     $gapSourceIds[] = (int) $act->getKey();
-                }
 
-                continue;
-            }
-            $occurredAt = $act->approval_date ?? $act->signed_at ?? $act->created_at ?? now();
-            $event = HoldingAcceptedWorkEventVersion::record(
-                $act,
-                true,
-                $occurredAt,
-            );
-            $fact = $this->acceptedWorkFacts->project(
-                $act,
-                $occurredAt,
-                true,
-                (int) $event->getKey(),
-            );
-            if ($fact !== null) {
+                    continue;
+                }
                 $factIds[] = (int) $fact->getKey();
             }
         }

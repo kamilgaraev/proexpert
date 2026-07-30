@@ -138,6 +138,7 @@ final readonly class HoldingAllocationFactProjector
             'currency_source' => $currencySource,
             'tax_basis' => 'contract_total',
             'recognized_on' => $history->created_at->format('Y-m-d'),
+            'business_effective_at' => $history->created_at,
             'source_refs' => [[
                 'type' => 'contract_allocation',
                 'id' => (int) $allocation->getKey(),
@@ -255,13 +256,15 @@ final readonly class HoldingAllocationFactProjector
                     'currency' => $fact->currency,
                     'currency_source' => $fact->currencySource,
                     'recognized_on' => $fact->recognizedOn,
+                    'business_effective_at' => $allocationEvidence['business_effective_at']
+                        ?? $fact->recognizedOn.' 00:00:00+00:00',
                     'flow_class' => $fact->flowClass,
                     'allocated_amount_minor' => $allocationEvidence['allocated_amount_minor'] ?? null,
                     'allocated_percentage' => $allocationEvidence['allocated_percentage'] ?? null,
                     'contract_amount_minor' => $allocationEvidence['contract_amount_minor'] ?? null,
                     'source_refs' => $fact->sourceRefs,
                     'source_hash' => $sourceHash,
-                    'projected_at' => now(),
+                    'recorded_at' => now(),
                 ],
             );
             if (! hash_equals((string) $record->source_hash, $sourceHash)) {

@@ -29,6 +29,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
             'active' => 'boolean',
             'occurred_at' => 'immutable_datetime',
             'recorded_at' => 'immutable_datetime',
+            'history_complete' => 'boolean',
         ];
     }
 
@@ -43,6 +44,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
         bool $active,
         DateTimeInterface $occurredAt,
         ?string $idempotencyKey = null,
+        bool $historyComplete = false,
     ): self {
         $act->loadMissing('contract');
         $contract = $act->contract;
@@ -58,6 +60,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
             'amount' => (string) $act->amount,
             'status' => (string) $act->status,
             'occurred_at' => $occurredAt->format(DateTimeInterface::ATOM),
+            'history_complete' => $historyComplete,
         ];
         $sourceHash = hash('sha256', CanonicalJson::encode($payload));
         $eventKey = $idempotencyKey ?? self::deterministicEventKey(
@@ -69,6 +72,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
             (string) $act->amount,
             (string) $act->status,
             $occurredAt->format(DateTimeInterface::ATOM),
+            $historyComplete,
         );
         $record = self::query()->firstOrCreate(
             ['event_key' => $eventKey],
@@ -94,6 +98,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
         string $amount,
         string $status,
         string $occurredAt,
+        bool $historyComplete = false,
     ): string {
         if (min($performanceActId, $contractId, $projectId, $organizationId) < 1
             || trim($amount) === ''
@@ -111,6 +116,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
             'performance_act_id' => $performanceActId,
             'project_id' => $projectId,
             'status' => $status,
+            'history_complete' => $historyComplete,
         ]));
     }
 }

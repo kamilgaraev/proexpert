@@ -32,6 +32,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
@@ -53,7 +54,14 @@ final readonly class HoldingPerformanceSnapshotMaterializer
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
         $hierarchy = $this->hierarchy($context);
-        $facts = $this->facts($context, $query, $hierarchy->holdingId, $hierarchy->organizationIds)
+        $recordedCutoff = now()->toImmutable();
+        $facts = $this->facts(
+            $context,
+            $query,
+            $hierarchy->holdingId,
+            $hierarchy->organizationIds,
+            $recordedCutoff,
+        )
             ->orderBy('id')
             ->get();
         $metricRows = [];
@@ -84,10 +92,10 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         $projectionGaps = HoldingAllocationProjectionGap::query()
             ->where('holding_id', $hierarchy->holdingId)
             ->whereIn('organization_id', $hierarchy->organizationIds)
-            ->where('observed_at', '<=', $query->asOf)
+            ->where('observed_at', '<=', $recordedCutoff)
             ->where(static fn (Builder $builder): Builder => $builder
                 ->whereNull('resolved_at')
-                ->orWhere('resolved_at', '>', $query->asOf))
+                ->orWhere('resolved_at', '>', $recordedCutoff))
             ->orderBy('id')
             ->get(['id', 'source_hash', 'missing_fields']);
         $projectionGapCount = $projectionGaps->count();
@@ -98,6 +106,17 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                 'missing_fields' => $gap->missing_fields,
             ];
         }
+        $qualityGapPayload = $projectionGaps
+            ->map(static fn (HoldingAllocationProjectionGap $gap): array => [
+                'id' => (int) $gap->getKey(),
+                'source_hash' => (string) $gap->source_hash,
+                'missing_fields' => $gap->missing_fields,
+            ])
+            ->all();
+        $qualityGapWatermark = hash('sha256', CanonicalJson::encode([
+            'recorded_cutoff' => $recordedCutoff->format(DateTimeInterface::ATOM),
+            'gaps' => $qualityGapPayload,
+        ]));
         $totals['quality']['hierarchy_gap_count'] = $hierarchyGapCount;
         $totals['quality']['projection_gap_count'] = $projectionGapCount;
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($sourcePayload)));
@@ -108,10 +127,17 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             'allocation' => (string) ($facts->where('monetary_basis', 'contracted')->max('id') ?? 0),
             'act' => (string) ($facts->where('monetary_basis', 'accepted_accrual')->max('id') ?? 0),
             'payment' => (string) ($facts->where('monetary_basis', 'cash')->max('id') ?? 0),
+            'quality_gaps' => $qualityGapWatermark,
+            'recorded_cutoff' => $recordedCutoff->format(DateTimeInterface::ATOM),
         ];
-        $sourceRef = $this->sourceRef($snapshotId, count($sourcePayload), implode('_', $watermarks), $sourceHash);
+        $sourceRef = $this->sourceRef(
+            $snapshotId,
+            count($sourcePayload),
+            substr(hash('sha256', CanonicalJson::encode($watermarks)), 0, 40),
+            $sourceHash,
+        );
 
-        DB::transaction(function () use ($context, $query, $snapshotId, $generatedAt, $sourceHash, $watermarks, $totals, $unknown, $hierarchyGapCount, $projectionGapCount, $sourceRef, $projectionRows, $hierarchy): void {
+        DB::transaction(function () use ($context, $query, $snapshotId, $generatedAt, $sourceHash, $watermarks, $totals, $unknown, $hierarchyGapCount, $projectionGapCount, $sourceRef, $projectionRows, $hierarchy, $qualityGapWatermark, $recordedCutoff): void {
             HoldingPerformanceSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $context->scope->organizationId,
@@ -125,6 +151,9 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                 'allocation_watermark' => $watermarks['allocation'],
                 'act_watermark' => $watermarks['act'],
                 'payment_watermark' => $watermarks['payment'],
+                'quality_gap_watermark' => $qualityGapWatermark,
+                'quality_gap_count' => $projectionGapCount,
+                'recorded_cutoff' => $recordedCutoff,
                 'totals' => $totals,
                 'source_refs' => [$this->serializeSourceRef($sourceRef)],
                 'quality_status' => $unknown === 0 && $hierarchyGapCount === 0 && $projectionGapCount === 0 && $projectionRows !== []
@@ -253,13 +282,15 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         ReportQuery $query,
         int $holdingId,
         array $organizationIds,
+        DateTimeInterface $recordedCutoff,
     ): Builder {
         $builder = HoldingAllocationFactVersion::query()
             ->where('holding_id', $holdingId)
             ->whereIn('organization_id', $organizationIds)
             ->whereIn('contributor_organization_id', $organizationIds)
-            ->whereDate('recognized_on', '<=', $query->asOf->format('Y-m-d'))
-            ->whereNotExists(function (QueryBuilder $newer) use ($query): void {
+            ->where('business_effective_at', '<=', $query->asOf)
+            ->where('recorded_at', '<=', $recordedCutoff)
+            ->whereNotExists(function (QueryBuilder $newer) use ($query, $recordedCutoff): void {
                 $newer
                     ->selectRaw('1')
                     ->from('holding_allocation_fact_versions as newer_fact')
@@ -268,8 +299,46 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                     ->whereColumn('newer_fact.source_type', 'holding_allocation_fact_versions.source_type')
                     ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id')
                     ->whereColumn('newer_fact.monetary_basis', 'holding_allocation_fact_versions.monetary_basis')
-                    ->whereDate('newer_fact.recognized_on', '<=', $query->asOf->format('Y-m-d'))
-                    ->whereColumn('newer_fact.source_version', '>', 'holding_allocation_fact_versions.source_version');
+                    ->where('newer_fact.business_effective_at', '<=', $query->asOf)
+                    ->where('newer_fact.recorded_at', '<=', $recordedCutoff)
+                    ->where(static fn (QueryBuilder $tuple): QueryBuilder => $tuple
+                        ->whereColumn(
+                            'newer_fact.business_effective_at',
+                            '>',
+                            'holding_allocation_fact_versions.business_effective_at',
+                        )
+                        ->orWhere(static fn (QueryBuilder $sameBusiness): QueryBuilder => $sameBusiness
+                            ->whereColumn(
+                                'newer_fact.business_effective_at',
+                                'holding_allocation_fact_versions.business_effective_at',
+                            )
+                            ->where(static fn (QueryBuilder $recorded): QueryBuilder => $recorded
+                                ->whereColumn(
+                                    'newer_fact.recorded_at',
+                                    '>',
+                                    'holding_allocation_fact_versions.recorded_at',
+                                )
+                                ->orWhere(static fn (QueryBuilder $sameRecorded): QueryBuilder => $sameRecorded
+                                    ->whereColumn(
+                                        'newer_fact.recorded_at',
+                                        'holding_allocation_fact_versions.recorded_at',
+                                    )
+                                    ->where(static fn (QueryBuilder $tieBreak): QueryBuilder => $tieBreak
+                                        ->whereColumn(
+                                            'newer_fact.source_version',
+                                            '>',
+                                            'holding_allocation_fact_versions.source_version',
+                                        )
+                                        ->orWhere(static fn (QueryBuilder $sameVersion): QueryBuilder => $sameVersion
+                                            ->whereColumn(
+                                                'newer_fact.source_version',
+                                                'holding_allocation_fact_versions.source_version',
+                                            )
+                                            ->whereColumn(
+                                                'newer_fact.id',
+                                                '>',
+                                                'holding_allocation_fact_versions.id',
+                                            )))))));
             });
         if ($context->scope->projectIds !== []) {
             $builder->whereIn('project_id', $context->scope->projectIds);
@@ -427,6 +496,9 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                 'allocation' => (string) $record->allocation_watermark,
                 'act' => (string) $record->act_watermark,
                 'payment' => (string) $record->payment_watermark,
+                'quality_gaps' => (string) $record->quality_gap_watermark,
+                'quality_gap_count' => (int) $record->quality_gap_count,
+                'recorded_cutoff' => $record->recorded_cutoff?->format(DateTimeInterface::ATOM),
             ],
             ReportSnapshotClassification::OPERATIONAL,
             null,

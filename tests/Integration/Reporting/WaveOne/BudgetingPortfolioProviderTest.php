@@ -19,6 +19,8 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfoli
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityAsOfSource;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBackfillRunner;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionBackfill;
+use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
+use App\Models\Organization;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Database\QueryException;
@@ -26,6 +28,7 @@ use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
+use Tests\Support\Reporting\PostgresProcessRaceHarness;
 
 #[Group('postgres')]
 final class BudgetingPortfolioProviderTest extends TestCase
@@ -220,6 +223,7 @@ final class BudgetingPortfolioProviderTest extends TestCase
                 'organization_id' => $organizationId,
                 'source_type' => $sourceType,
                 'source_cursor' => 900000000,
+                'source_upper_bound' => 900000000,
                 'status' => 'failed',
                 'lease_token' => null,
                 'lease_expires_at' => null,
@@ -248,6 +252,157 @@ final class BudgetingPortfolioProviderTest extends TestCase
                     ->where('source_type', $sourceType)
                     ->value('status'),
             );
+        }
+    }
+
+    #[Test]
+    public function durable_backfill_freezes_upper_bound_and_preserves_actual_run_ingestion_time(): void
+    {
+        if (config('database.default') !== 'pgsql') {
+            self::markTestSkipped('PostgreSQL integration only.');
+        }
+
+        $organization = Organization::factory()->create();
+        $first = CashGapOpeningBalance::query()->create([
+            'organization_id' => $organization->getKey(),
+            'balance_date' => '2026-07-01',
+            'currency' => 'RUB',
+            'amount' => '100.00',
+            'status' => CashGapOpeningBalance::STATUS_APPROVED,
+            'approved_at' => '2026-07-01 10:00:00+00',
+        ]);
+        $runner = app(PortfolioLiquidityBackfillRunner::class);
+        $firstChunk = $runner->runChunk((int) $organization->getKey(), 'opening_balance', 1);
+        $checkpoint = DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')
+            ->where('organization_id', $organization->getKey())
+            ->where('source_type', 'opening_balance')
+            ->first();
+
+        $second = CashGapOpeningBalance::query()->create([
+            'organization_id' => $organization->getKey(),
+            'balance_date' => '2026-07-02',
+            'currency' => 'RUB',
+            'amount' => '200.00',
+            'status' => CashGapOpeningBalance::STATUS_APPROVED,
+            'approved_at' => '2026-07-02 10:00:00+00',
+        ]);
+        $runner->runChunk((int) $organization->getKey(), 'opening_balance', 1);
+
+        self::assertTrue($firstChunk['has_more']);
+        self::assertSame((int) $first->getKey(), (int) $checkpoint->source_upper_bound);
+        self::assertSame(
+            (string) $checkpoint->ingestion_started_at,
+            (string) DB::table('budgeting_portfolio_liquidity_source_versions')
+                ->where('source_type', 'opening_balance')
+                ->where('source_id', (string) $first->getKey())
+                ->value('recorded_at'),
+        );
+        self::assertFalse(
+            DB::table('budgeting_portfolio_liquidity_source_versions')
+                ->where('source_type', 'opening_balance')
+                ->where('source_id', (string) $second->getKey())
+                ->exists(),
+        );
+    }
+
+    #[Test]
+    public function durable_backfill_rejects_live_lease_and_reclaims_expired_lease(): void
+    {
+        if (config('database.default') !== 'pgsql') {
+            self::markTestSkipped('PostgreSQL integration only.');
+        }
+
+        $organization = Organization::factory()->create();
+        DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')->insert([
+            'organization_id' => $organization->getKey(),
+            'source_type' => 'opening_balance',
+            'source_cursor' => 0,
+            'source_upper_bound' => 0,
+            'status' => 'running',
+            'lease_token' => (string) str()->uuid(),
+            'lease_expires_at' => now()->addMinute(),
+            'ingestion_started_at' => now()->subMinute(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $runner = app(PortfolioLiquidityBackfillRunner::class);
+
+        try {
+            $runner->runChunk((int) $organization->getKey(), 'opening_balance', 1);
+            self::fail('Live lease must reject a competing runner.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('portfolio_liquidity_backfill_lease_busy', $exception->getMessage());
+        }
+
+        DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')
+            ->where('organization_id', $organization->getKey())
+            ->where('source_type', 'opening_balance')
+            ->update(['lease_expires_at' => now()->subSecond()]);
+        $result = $runner->runChunk((int) $organization->getKey(), 'opening_balance', 1);
+
+        self::assertFalse($result['has_more']);
+        self::assertSame(
+            'completed',
+            DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')
+                ->where('organization_id', $organization->getKey())
+                ->where('source_type', 'opening_balance')
+                ->value('status'),
+        );
+    }
+
+    #[Test]
+    public function durable_backfill_runner_converges_under_process_race(): void
+    {
+        if (config('database.default') !== 'pgsql') {
+            self::markTestSkipped('PostgreSQL integration only.');
+        }
+
+        $organization = Organization::factory()->create();
+        $suffix = bin2hex(random_bytes(6));
+        $harness = new PostgresProcessRaceHarness(
+            sys_get_temp_dir().DIRECTORY_SEPARATOR.'portfolio-backfill-race-'.$suffix,
+        );
+        $children = [];
+
+        try {
+            foreach ([1, 2] as $worker) {
+                $children[] = $harness->spawn($worker, static function () use ($organization): array {
+                    try {
+                        $result = app(PortfolioLiquidityBackfillRunner::class)->runChunk(
+                            (int) $organization->getKey(),
+                            'opening_balance',
+                            1,
+                        );
+
+                        return ['completed' => $result['has_more'] === false, 'busy' => false];
+                    } catch (\RuntimeException $exception) {
+                        return [
+                            'completed' => false,
+                            'busy' => $exception->getMessage() === 'portfolio_liquidity_backfill_lease_busy',
+                        ];
+                    }
+                });
+            }
+            $harness->release(1);
+            $harness->release(2);
+            $harness->waitForChildren($children);
+            $children = [];
+
+            $results = [$harness->result(1), $harness->result(2)];
+            self::assertNotEmpty(array_filter(
+                $results,
+                static fn (array $result): bool => $result['completed'],
+            ));
+            self::assertSame(
+                1,
+                DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')
+                    ->where('organization_id', $organization->getKey())
+                    ->where('source_type', 'opening_balance')
+                    ->count(),
+            );
+        } finally {
+            $harness->terminateAndReap($children);
+            $harness->cleanup();
         }
     }
 

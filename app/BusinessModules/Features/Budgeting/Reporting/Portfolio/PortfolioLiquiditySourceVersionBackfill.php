@@ -39,6 +39,7 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
         int $afterId = 0,
         int $limit = 500,
         ?DateTimeInterface $ingestedAt = null,
+        ?int $throughId = null,
     ): array {
         $model = self::SOURCES[$sourceType] ?? null;
         if (! is_string($model) || $organizationId < 1) {
@@ -47,8 +48,12 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
 
         $query = $model::query();
         $idColumn = $query->getModel()->qualifyColumn('id');
-        $rows = $this->scope($query, $sourceType, $organizationId)
-            ->where($idColumn, '>', $afterId)
+        $rowsQuery = $this->scope($query, $sourceType, $organizationId)
+            ->where($idColumn, '>', $afterId);
+        if ($throughId !== null) {
+            $rowsQuery->where($idColumn, '<=', $throughId);
+        }
+        $rows = $rowsQuery
             ->orderBy($idColumn)
             ->limit($this->limit($limit))
             ->get();
@@ -83,6 +88,18 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
             'has_more' => count($sourceIds) === $this->limit($limit),
             'ingestion_watermark' => $ingestedAt->format(DateTimeInterface::ATOM),
         ];
+    }
+
+    public function sourceUpperBound(string $sourceType, int $organizationId): int
+    {
+        $model = self::SOURCES[$sourceType] ?? null;
+        if (! is_string($model) || $organizationId < 1) {
+            throw new InvalidArgumentException('portfolio_liquidity_backfill_source_invalid');
+        }
+        $query = $model::query();
+        $idColumn = $query->getModel()->qualifyColumn('id');
+
+        return (int) ($this->scope($query, $sourceType, $organizationId)->max($idColumn) ?? 0);
     }
 
     private function scope(Builder $query, string $sourceType, int $organizationId): Builder

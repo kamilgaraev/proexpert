@@ -65,6 +65,9 @@ final readonly class HoldingPerformanceReadinessProbe implements ReportDefinitio
             && preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->definition_hash) === 1
             && preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->query_hash) === 1
             && preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->hierarchy_watermark) === 1
+            && preg_match('/^[a-f0-9]{64}$/D', (string) $snapshot->quality_gap_watermark) === 1
+            && $snapshot->recorded_cutoff !== null
+            && (int) $snapshot->quality_gap_count === 0
             && ($definition === null || hash_equals($definition->definitionHash->value, (string) $snapshot->definition_hash))
             && ($definition === null || hash_equals($definition->formulaVersion, (string) $snapshot->formula_version))
             && hash_equals($expectedSchema, (string) $snapshot->source_schema_version)

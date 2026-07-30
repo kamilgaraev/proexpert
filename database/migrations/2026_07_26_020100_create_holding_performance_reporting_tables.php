@@ -23,6 +23,9 @@ return new class extends Migration
             $table->string('allocation_watermark', 64);
             $table->string('act_watermark', 64);
             $table->string('payment_watermark', 64);
+            $table->char('quality_gap_watermark', 64);
+            $table->unsignedInteger('quality_gap_count');
+            $table->dateTimeTz('recorded_cutoff');
             $table->jsonb('totals');
             $table->jsonb('source_refs');
             $table->string('quality_status', 16);

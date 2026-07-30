@@ -110,6 +110,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
             'currency_source' => 'payment_document',
             'tax_basis' => 'payment_amount',
             'recognized_on' => $recognizedAt->format('Y-m-d'),
+            'business_effective_at' => $recognizedAt,
             'source_refs' => [[
                 'type' => 'payment_transaction',
                 'id' => $sourceId,

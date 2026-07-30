@@ -24,7 +24,7 @@ class ContractPerformanceActObserver
         if ($act->is_approved
             && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true)) {
             $occurredAt = $act->approval_date ?? $act->created_at ?? now();
-            $event = HoldingAcceptedWorkEventVersion::record($act, true, $occurredAt);
+            $event = HoldingAcceptedWorkEventVersion::record($act, true, $occurredAt, historyComplete: true);
             $this->acceptedWorkFacts->project($act, $occurredAt, true, (int) $event->getKey());
         }
 
@@ -47,7 +47,12 @@ class ContractPerformanceActObserver
                 $occurredAt = $active
                     ? ($act->approval_date ?? $act->updated_at ?? now())
                     : ($act->updated_at ?? now());
-                $event = HoldingAcceptedWorkEventVersion::record($act, $active, $occurredAt);
+                $event = HoldingAcceptedWorkEventVersion::record(
+                    $act,
+                    $active,
+                    $occurredAt,
+                    historyComplete: $this->historyComplete($act),
+                );
                 $this->acceptedWorkFacts->project(
                     $act,
                     $occurredAt,
@@ -75,7 +80,12 @@ class ContractPerformanceActObserver
                 true,
             )) {
             $occurredAt = now();
-            $event = HoldingAcceptedWorkEventVersion::record($act, false, $occurredAt);
+            $event = HoldingAcceptedWorkEventVersion::record(
+                $act,
+                false,
+                $occurredAt,
+                historyComplete: $this->historyComplete($act),
+            );
             $this->acceptedWorkFacts->project($act, $occurredAt, false, (int) $event->getKey());
         }
 
@@ -173,6 +183,14 @@ class ContractPerformanceActObserver
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function historyComplete(ContractPerformanceAct $act): bool
+    {
+        return HoldingAcceptedWorkEventVersion::query()
+            ->where('performance_act_id', $act->getKey())
+            ->where('history_complete', true)
+            ->exists();
     }
 
     private function changeFingerprint(ContractPerformanceAct $act, string $reason): string

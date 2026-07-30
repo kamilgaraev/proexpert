@@ -37,7 +37,8 @@ final class HoldingAllocationFactVersion extends Model
             'contract_amount_minor' => 'integer',
             'allocated_percentage' => 'decimal:8',
             'recognized_on' => 'immutable_date',
-            'projected_at' => 'immutable_datetime',
+            'business_effective_at' => 'immutable_datetime',
+            'recorded_at' => 'immutable_datetime',
             'source_refs' => 'array',
         ];
     }

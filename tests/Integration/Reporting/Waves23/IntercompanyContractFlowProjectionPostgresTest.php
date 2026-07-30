@@ -42,13 +42,14 @@ final class IntercompanyContractFlowProjectionPostgresTest extends TestCase
             'currency' => 'RUB',
             'currency_source' => 'payment_document_consensus',
             'recognized_on' => '2026-07-30',
+            'business_effective_at' => '2026-07-30 12:00:00+00',
             'flow_class' => 'external',
             'allocated_amount_minor' => 10000,
             'allocated_percentage' => null,
             'contract_amount_minor' => 10000,
             'source_refs' => json_encode([], JSON_THROW_ON_ERROR),
             'source_hash' => hash('sha256', 'holding-fact'),
-            'projected_at' => '2026-07-30 12:00:00+00',
+            'recorded_at' => '2026-07-30 12:00:00+00',
         ]);
 
         $this->expectException(QueryException::class);
