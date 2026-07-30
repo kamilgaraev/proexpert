@@ -105,6 +105,25 @@ final class LookaheadResourceScopeTest extends TestCase
         ));
     }
 
+    #[Test]
+    public function authorized_unconstrained_task_remains_in_the_candidate_universe(): void
+    {
+        $scope = $this->scope([
+            new ReportScopedResource('task', 41, 7),
+        ]);
+
+        self::assertSame(
+            [],
+            (new LookaheadResourceScope)->filterConstraints(
+                $scope,
+                7,
+                11,
+                41,
+                [],
+            ),
+        );
+    }
+
     private function scope(array $resources): ReportScope
     {
         return new ReportScope(

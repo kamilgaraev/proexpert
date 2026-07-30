@@ -10,6 +10,17 @@ use PHPUnit\Framework\TestCase;
 final class ProductionResourceBoundaryTest extends TestCase
 {
     #[Test]
+    public function modular_gate_includes_postgresql_feature_contracts(): void
+    {
+        $configuration = $this->source('phpunit.waves23.xml');
+
+        self::assertStringContainsString(
+            '<directory>tests/Feature/Reporting/Waves23</directory>',
+            $configuration,
+        );
+    }
+
+    #[Test]
     public function accepted_production_filters_resources_before_hash_totals_and_rows(): void
     {
         $source = $this->source(
@@ -54,7 +65,8 @@ final class ProductionResourceBoundaryTest extends TestCase
         self::assertStringContainsString('$this->universe->stream($scope, $query)', $materializer);
         self::assertStringContainsString('ProductionAcceptanceOwnerVersion::query()', $universe);
         self::assertStringContainsString('$ownerQuery->lazyById(100)', $universe);
-        self::assertStringContainsString('$eventQuery->lazyById(500)', $universe);
+        self::assertStringContainsString('foreach ($eventQuery->cursor() as $event)', $universe);
+        self::assertStringNotContainsString('$eventsByKey', $universe);
         self::assertTrue(
             strpos($universe, '$ownerQuery = $this->ownerQuery(')
                 < strpos($universe, '$eventQuery = ProductionAcceptanceEvent::query()'),
@@ -232,7 +244,19 @@ final class ProductionResourceBoundaryTest extends TestCase
         self::assertStringContainsString("orderByDesc('version')", $service);
         self::assertStringNotContainsString("->lockForUpdate()\n                ->max('version')", $service);
         self::assertStringContainsString("->where('captured_at', \$capturedAt)", $service);
-        self::assertStringContainsString('$duplicate instanceof ScheduleBaselineVersion', $service);
+        self::assertStringContainsString('foreach ($duplicateQuery->cursor() as $candidate)', $service);
+        self::assertStringContainsString('new DeterministicObjectSpool', $service);
+        self::assertStringContainsString(
+            "DB::table('schedule_baseline_task_rows')->insert(\$rowBatch)",
+            $service,
+        );
+        self::assertStringContainsString(
+            "DB::table('baseline_schedule_variance_rows')->insert(\$rowBatch)",
+            $service,
+        );
+        foreach (['->pluck(', '->get(', '->groupBy('] as $unboundedOperation) {
+            self::assertStringNotContainsString($unboundedOperation, $service);
+        }
 
         $dropTaskRows = strpos($migration, "Schema::dropIfExists('schedule_baseline_task_rows')");
         $dropVersions = strpos($migration, "Schema::dropIfExists('schedule_baseline_versions')");

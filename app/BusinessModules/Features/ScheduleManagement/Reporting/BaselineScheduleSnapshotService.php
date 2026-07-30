@@ -14,10 +14,9 @@ use App\BusinessModules\Features\ScheduleManagement\Models\ScheduleBaselineVersi
 use App\BusinessModules\Features\ScheduleManagement\Reporting\DTO\BaselineScheduleTaskSource;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\DTO\BaselineScheduleVarianceRow;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\BaselineScheduleSnapshot;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\BaselineScheduleVarianceRecord;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
-use App\Models\TaskDependency;
+use App\Support\Reporting\DeterministicObjectSpool;
 use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
@@ -53,35 +52,38 @@ final readonly class BaselineScheduleSnapshotService
                 ->orderByDesc('version')
                 ->first();
             $latestVersion = $latest === null ? 0 : (int) $latest->version;
+            $taskSpool = new DeterministicObjectSpool;
             $tasks = $schedule->tasks()
-                ->orderBy('id')
-                ->get();
-            $dependencies = $schedule->dependencies()
-                ->where('is_active', true)
-                ->orderBy('id')
-                ->get()
-                ->map(static fn (TaskDependency $dependency): array => [
-                    'dependency_id' => (int) $dependency->id,
-                    'dependency_type' => $dependency->dependency_type instanceof \BackedEnum
-                        ? (string) $dependency->dependency_type->value
-                        : (string) $dependency->dependency_type,
-                    'lag_days' => (int) ($dependency->lag_days ?? 0),
-                    'predecessor_task_id' => (int) $dependency->predecessor_task_id,
-                    'successor_task_id' => (int) $dependency->successor_task_id,
-                ])
-                ->all();
-            $payload = $tasks->map(static function (ScheduleTask $task) use ($dependencies): array {
-                $taskDependencies = array_values(array_filter(
-                    $dependencies,
-                    static fn (array $dependency): bool => $dependency['predecessor_task_id'] === (int) $task->id
-                        || $dependency['successor_task_id'] === (int) $task->id,
-                ));
-
-                return [
+                ->select('schedule_tasks.*')
+                ->selectRaw(
+                    "COALESCE((
+                        SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'dependency_id', dependency.id,
+                                'dependency_type', dependency.dependency_type,
+                                'lag_days', COALESCE(dependency.lag_days, 0),
+                                'predecessor_task_id', dependency.predecessor_task_id,
+                                'successor_task_id', dependency.successor_task_id
+                            )
+                            ORDER BY dependency.id
+                        )
+                        FROM task_dependencies dependency
+                        WHERE dependency.schedule_id = schedule_tasks.schedule_id
+                          AND dependency.is_active = true
+                          AND (
+                            dependency.predecessor_task_id = schedule_tasks.id
+                            OR dependency.successor_task_id = schedule_tasks.id
+                          )
+                    ), '[]'::jsonb) AS dependency_refs"
+                )
+                ->orderBy('schedule_tasks.id')
+                ->lazyById(500, 'schedule_tasks.id', 'id');
+            foreach ($tasks as $task) {
+                $payload = [
                     'baseline_duration_days' => $task->baseline_duration_days,
                     'baseline_end' => $task->baseline_end_date?->format('Y-m-d'),
                     'baseline_start' => $task->baseline_start_date?->format('Y-m-d'),
-                    'dependency_refs' => $taskDependencies,
+                    'dependency_refs' => $this->jsonArray($task->dependency_refs),
                     'free_float_days' => (int) ($task->free_float_days ?? 0),
                     'is_critical' => (bool) $task->is_critical,
                     'task_id' => (int) $task->id,
@@ -89,30 +91,34 @@ final readonly class BaselineScheduleSnapshotService
                     'total_float_days' => (int) ($task->total_float_days ?? 0),
                     'wbs_code' => $task->wbs_code,
                 ];
-            })->all();
+                $taskSpool->append(new \ArrayObject($payload), $payload);
+            }
             $criticalPathWatermark = $schedule->critical_path_updated_at?->format(DATE_ATOM)
                 ?? 'not_calculated';
-            $payloadHash = hash('sha256', CanonicalJson::encode($payload));
-            $duplicate = ScheduleBaselineVersion::query()
+            $payloadHash = $taskSpool->sha256();
+            $duplicateQuery = ScheduleBaselineVersion::query()
                 ->where('organization_id', $schedule->organization_id)
                 ->where('schedule_id', $schedule->id)
                 ->where('captured_at', $capturedAt)
                 ->where('captured_by', $actorId)
                 ->where('critical_path_watermark', $criticalPathWatermark)
-                ->orderByDesc('version')
-                ->get()
-                ->first(static fn (ScheduleBaselineVersion $candidate): bool => hash_equals(
-                    hash('sha256', CanonicalJson::encode((array) $candidate->source_payload)),
-                    $payloadHash,
-                ));
-            if ($duplicate instanceof ScheduleBaselineVersion) {
-                return $duplicate;
+                ->orderByDesc('version');
+            foreach ($duplicateQuery->cursor() as $candidate) {
+                $manifest = (array) $candidate->source_payload;
+                if (($manifest['schema_version'] ?? null) === 'schedule_baseline_task_rows.v1'
+                    && ($manifest['task_row_count'] ?? null) === $taskSpool->count()
+                    && is_string($manifest['task_rows_hash'] ?? null)
+                    && hash_equals($manifest['task_rows_hash'], $payloadHash)
+                ) {
+                    return $candidate;
+                }
             }
             $sourceHash = hash('sha256', CanonicalJson::encode([
                 'captured_at' => $capturedAt->format(DATE_ATOM),
                 'critical_path_watermark' => $criticalPathWatermark,
                 'schedule_id' => (int) $schedule->id,
-                'tasks' => $payload,
+                'task_row_count' => $taskSpool->count(),
+                'task_rows_hash' => $payloadHash,
                 'version' => $latestVersion + 1,
             ]));
 
@@ -125,11 +131,20 @@ final readonly class BaselineScheduleSnapshotService
                 'captured_by' => $actorId,
                 'critical_path_watermark' => $criticalPathWatermark,
                 'source_hash' => $sourceHash,
-                'source_payload' => $payload,
+                'source_payload' => [
+                    'schema_version' => 'schedule_baseline_task_rows.v1',
+                    'task_row_count' => $taskSpool->count(),
+                    'task_rows_hash' => $payloadHash,
+                ],
             ]);
 
-            foreach ($payload as $task) {
-                DB::table('schedule_baseline_task_rows')->insert([
+            $rowBatch = [];
+            foreach ($taskSpool->items() as $taskPayload) {
+                if (! $taskPayload instanceof \ArrayObject) {
+                    throw new InvalidArgumentException('schedule_baseline_task_spool_invalid');
+                }
+                $task = $taskPayload->getArrayCopy();
+                $rowBatch[] = [
                     'organization_id' => (int) $schedule->organization_id,
                     'baseline_version_id' => (int) $version->id,
                     'schedule_id' => (int) $schedule->id,
@@ -143,7 +158,14 @@ final readonly class BaselineScheduleSnapshotService
                     'free_float_days' => $task['free_float_days'],
                     'is_critical' => $task['is_critical'],
                     'dependency_refs' => CanonicalJson::encode($task['dependency_refs']),
-                ]);
+                ];
+                if (count($rowBatch) === 500) {
+                    DB::table('schedule_baseline_task_rows')->insert($rowBatch);
+                    $rowBatch = [];
+                }
+            }
+            if ($rowBatch !== []) {
+                DB::table('schedule_baseline_task_rows')->insert($rowBatch);
             }
 
             return $version;
@@ -152,6 +174,21 @@ final readonly class BaselineScheduleSnapshotService
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
+        if (DB::transactionLevel() > 0) {
+            return $this->materializeWithinSnapshot($scope, $query);
+        }
+
+        return DB::transaction(function () use ($scope, $query): ReportSnapshotRef {
+            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+
+            return $this->materializeWithinSnapshot($scope, $query);
+        }, 3);
+    }
+
+    private function materializeWithinSnapshot(
+        ReportScope $scope,
+        ReportQuery $query,
+    ): ReportSnapshotRef {
         if ($scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
             || $query->definition->snapshotClassification !== ReportSnapshotClassification::OPERATIONAL
         ) {
@@ -184,134 +221,166 @@ final readonly class BaselineScheduleSnapshotService
             ['task', 'schedule_task'],
             $projectIds,
         );
-
         $scheduleIds = $this->positiveIntegerFilter($query, 'schedule_ids');
-        $allowedScheduleIds = ProjectSchedule::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('project_id', $projectIds)
-            ->where('created_at', '<=', $query->asOf)
-            ->where('is_template', false)
-            ->when(
-                $scopedScheduleIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $scopedScheduleIds),
-            )
-            ->when($scheduleIds !== [], fn ($builder) => $builder->whereIn('id', $scheduleIds))
-            ->pluck('id')
-            ->map('intval')
-            ->all();
-        $states = $this->historicalTasks
-            ->latestForProjects($scope->organizationId, $projectIds, $query->asOf)
-            ->whereIn('scheduleId', $allowedScheduleIds)
-            ->when(
-                $scopedTaskIds !== null,
-                static fn ($items) => $items->whereIn('taskId', $scopedTaskIds),
-            )
-            ->values();
-        $eligibleTaskIds = ScheduleTask::withTrashed()
+        $allowedScheduleIds = $this->intersectNullableIds(
+            $scopedScheduleIds,
+            $scheduleIds === [] ? null : $scheduleIds,
+        );
+        $missingStateExists = ScheduleTask::withTrashed()
             ->where('organization_id', $scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
-            ->whereIn('schedule_id', $allowedScheduleIds)
+            ->whereHas('schedule', static function ($builder) use (
+                $projectIds,
+                $query,
+                $allowedScheduleIds,
+            ): void {
+                $builder
+                    ->whereIn('project_id', $projectIds)
+                    ->where('created_at', '<=', $query->asOf)
+                    ->where('is_template', false)
+                    ->when(
+                        $allowedScheduleIds !== null,
+                        static fn ($scheduleBuilder) => $scheduleBuilder
+                            ->whereIn('id', $allowedScheduleIds),
+                    );
+            })
             ->when(
                 $scopedTaskIds !== null,
                 static fn ($builder) => $builder->whereIn('id', $scopedTaskIds),
             )
-            ->pluck('id')
-            ->map('intval')
-            ->all();
-        $versionedTaskIds = $states
-            ->when(
-                $scheduleIds !== [],
-                static fn ($items) => $items->whereIn('scheduleId', $scheduleIds),
-            )
-            ->pluck('taskId')
-            ->map('intval')
-            ->all();
-        if (array_diff($eligibleTaskIds, $versionedTaskIds) !== []) {
+            ->whereNotExists(static function ($builder) use ($scope, $query): void {
+                $builder
+                    ->selectRaw('1')
+                    ->from('schedule_task_state_versions as state_coverage')
+                    ->whereColumn('state_coverage.task_id', 'schedule_tasks.id')
+                    ->where('state_coverage.organization_id', $scope->organizationId)
+                    ->where('state_coverage.effective_at', '<=', $query->asOf);
+            })
+            ->exists();
+        if ($missingStateExists) {
             throw new InvalidArgumentException('historical_schedule_task_state_incomplete');
         }
 
-        $states = $states
+        $states = $this->historicalTasks
+            ->latestForLookaheadCursor(
+                $scope->organizationId,
+                $projectIds,
+                $query->asOf,
+                $allowedScheduleIds,
+                $scopedTaskIds,
+            )
             ->filter(fn ($state): bool => $state->active
-                && $this->matchesTaskFilters($query, $state))
-            ->values();
-        $sourceRows = [];
-        $watermarks = [];
-        foreach ($states->groupBy('scheduleId') as $scheduleId => $scheduleStates) {
-            $scheduleId = (int) $scheduleId;
-            $baseline = ScheduleBaselineVersion::query()
+                && $this->matchesTaskFilters($query, $state));
+        $sourceSpool = new DeterministicObjectSpool;
+        $baselineWatermark = 0;
+        $missingBaselineRows = 0;
+        foreach ($states->chunk(500) as $statePage) {
+            $pageTaskIds = [];
+            $pageScheduleIds = [];
+            foreach ($statePage as $state) {
+                $pageTaskIds[] = (int) $state->taskId;
+                $pageScheduleIds[(int) $state->scheduleId] = true;
+            }
+            $baselineBySchedule = [];
+            $baselineQuery = ScheduleBaselineVersion::query()
                 ->where('organization_id', $scope->organizationId)
-                ->where('schedule_id', $scheduleId)
+                ->whereIn('schedule_id', array_keys($pageScheduleIds))
                 ->where('captured_at', '<=', $query->asOf)
-                ->orderByDesc('version')
-                ->first();
-            $watermarks['schedule_'.$scheduleId] = $baseline === null
-                ? 'missing'
-                : 'version_'.(int) $baseline->version;
-            $baselineTasks = $baseline === null
-                ? []
-                : collect((array) $baseline->source_payload)->keyBy('task_id')->all();
-            foreach ($scheduleStates as $state) {
-                $saved = $baselineTasks[$state->taskId] ?? null;
-                $sourceRows[] = [
+                ->whereRaw(
+                    'NOT EXISTS (
+                        SELECT 1 FROM schedule_baseline_versions baseline_later
+                        WHERE baseline_later.organization_id = schedule_baseline_versions.organization_id
+                          AND baseline_later.schedule_id = schedule_baseline_versions.schedule_id
+                          AND baseline_later.captured_at <= ?
+                          AND baseline_later.version > schedule_baseline_versions.version
+                    )',
+                    [$query->asOf->format(DATE_ATOM)],
+                )
+                ->orderBy('id');
+            foreach ($baselineQuery->cursor() as $baseline) {
+                $baselineBySchedule[(int) $baseline->schedule_id] = $baseline;
+                $baselineWatermark = max($baselineWatermark, (int) $baseline->id);
+            }
+            $baselineRows = [];
+            $baselineIds = array_map(
+                static fn (ScheduleBaselineVersion $baseline): int => (int) $baseline->id,
+                $baselineBySchedule,
+            );
+            if ($baselineIds !== []) {
+                $rowQuery = DB::table('schedule_baseline_task_rows')
+                    ->where('organization_id', $scope->organizationId)
+                    ->whereIn('baseline_version_id', $baselineIds)
+                    ->whereIn('task_id', $pageTaskIds)
+                    ->orderBy('id');
+                foreach ($rowQuery->cursor() as $row) {
+                    $baselineRows[(int) $row->baseline_version_id.':'.(int) $row->task_id] = $row;
+                }
+            }
+            foreach ($statePage as $state) {
+                $scheduleId = (int) $state->scheduleId;
+                $baseline = $baselineBySchedule[$scheduleId] ?? null;
+                $saved = $baseline === null
+                    ? null
+                    : ($baselineRows[(int) $baseline->id.':'.(int) $state->taskId] ?? null);
+                if ($saved === null) {
+                    $missingBaselineRows++;
+                }
+                $dependencyRefs = $saved === null
+                    ? []
+                    : $this->jsonArray($saved->dependency_refs);
+                $source = new BaselineScheduleTaskSource(
+                    taskId: $state->taskId,
+                    baselineStart: $saved?->baseline_start === null
+                        ? null
+                        : new DateTimeImmutable((string) $saved->baseline_start),
+                    baselineEnd: $saved?->baseline_end === null
+                        ? null
+                        : new DateTimeImmutable((string) $saved->baseline_end),
+                    plannedStart: $state->plannedStart,
+                    plannedEnd: $state->plannedEnd,
+                    baselineDurationDays: $saved?->baseline_duration_days === null
+                        ? null
+                        : (int) $saved->baseline_duration_days,
+                    plannedDurationDays: $state->plannedDurationDays,
+                    totalFloatDays: (int) ($saved?->total_float_days ?? $state->totalFloatDays),
+                    freeFloatDays: (int) ($saved?->free_float_days ?? $state->freeFloatDays),
+                    critical: (bool) ($saved?->is_critical ?? $state->critical),
+                    status: $state->status,
+                    scheduleId: $scheduleId,
+                    wbsCode: $state->wbsCode,
+                    taskName: $state->taskName,
+                );
+                $sourceRow = [
                     'baseline_version_id' => $baseline?->id,
-                    'dependency_refs' => (array) ($saved['dependency_refs'] ?? []),
+                    'dependency_refs' => $dependencyRefs,
                     'project_id' => $state->projectId,
                     'schedule_id' => $scheduleId,
                     'state_hash' => $state->sourceHash,
-                    'source' => new BaselineScheduleTaskSource(
-                        taskId: $state->taskId,
-                        baselineStart: isset($saved['baseline_start'])
-                            ? new DateTimeImmutable($saved['baseline_start'])
-                            : null,
-                        baselineEnd: isset($saved['baseline_end'])
-                            ? new DateTimeImmutable($saved['baseline_end'])
-                            : null,
-                        plannedStart: $state->plannedStart,
-                        plannedEnd: $state->plannedEnd,
-                        baselineDurationDays: isset($saved['baseline_duration_days'])
-                            ? (int) $saved['baseline_duration_days']
-                            : null,
-                        plannedDurationDays: $state->plannedDurationDays,
-                        totalFloatDays: (int) ($saved['total_float_days'] ?? $state->totalFloatDays),
-                        freeFloatDays: (int) ($saved['free_float_days'] ?? $state->freeFloatDays),
-                        critical: (bool) ($saved['is_critical'] ?? $state->critical),
-                        status: $state->status,
-                        scheduleId: $scheduleId,
-                        wbsCode: $state->wbsCode,
-                        taskName: $state->taskName,
-                    ),
+                    'source' => $source,
                 ];
+                $sourceSpool->append(
+                    new \ArrayObject($sourceRow),
+                    $this->sourceIdentity($sourceRow),
+                );
             }
         }
 
-        $canonicalSource = array_map(
-            static fn (array $item): array => [
-                'baseline_version_id' => $item['baseline_version_id'],
-                'dependency_refs' => $item['dependency_refs'],
-                'project_id' => $item['project_id'],
-                'schedule_id' => $item['schedule_id'],
-                'state_hash' => $item['state_hash'],
-                'source' => [
-                    'baseline_duration_days' => $item['source']->baselineDurationDays,
-                    'baseline_end' => $item['source']->baselineEnd?->format(DATE_ATOM),
-                    'baseline_start' => $item['source']->baselineStart?->format(DATE_ATOM),
-                    'critical' => $item['source']->critical,
-                    'free_float_days' => $item['source']->freeFloatDays,
-                    'planned_duration_days' => $item['source']->plannedDurationDays,
-                    'planned_end' => $item['source']->plannedEnd->format(DATE_ATOM),
-                    'planned_start' => $item['source']->plannedStart->format(DATE_ATOM),
-                    'status' => $item['source']->status,
-                    'task_id' => $item['source']->taskId,
-                    'total_float_days' => $item['source']->totalFloatDays,
-                ],
-            ],
-            $sourceRows,
+        $watermarks = [
+            'baseline_version_id' => $baselineWatermark,
+            'missing_baseline_rows' => $missingBaselineRows,
+            'source_rows_hash' => $sourceSpool->sha256(),
+        ];
+        $sourceHashContext = hash_init('sha256');
+        hash_update(
+            $sourceHashContext,
+            '{"as_of":'.CanonicalJson::encode($query->asOf->format(DATE_ATOM)).',"rows":',
         );
-        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
-            'as_of' => $query->asOf->format(DATE_ATOM),
-            'rows' => $canonicalSource,
-            'watermarks' => $watermarks,
-        ])));
+        $sourceSpool->updateCanonicalArrayHash($sourceHashContext);
+        hash_update(
+            $sourceHashContext,
+            ',"watermarks":'.CanonicalJson::encode($watermarks).'}',
+        );
+        $sourceHash = new Sha256Hash(hash_final($sourceHashContext));
         $existing = BaselineScheduleSnapshot::query()
             ->where('organization_id', $scope->organizationId)
             ->where('query_hash', $query->queryHash->value)
@@ -321,40 +390,59 @@ final readonly class BaselineScheduleSnapshotService
             return $this->reference($scope, $query, $existing);
         }
 
+        $metricSpool = new DeterministicObjectSpool;
+        $criticalDelayedTasks = 0;
+        $overdueTasks = 0;
+        $unknown = false;
+        foreach ($sourceSpool->items() as $sourcePayload) {
+            if (! $sourcePayload instanceof \ArrayObject) {
+                throw new InvalidArgumentException('baseline_schedule_source_spool_invalid');
+            }
+            $sourceRow = $sourcePayload->getArrayCopy();
+            $metric = BaselineScheduleVarianceRow::fromSource(
+                $sourceRow['source'],
+                $query->asOf,
+            );
+            $criticalDelayedTasks += (int) (
+                $metric->critical && ($metric->endVarianceDays ?? 0) > 0
+            );
+            $overdueTasks += (int) $metric->overdue;
+            $unknown = $unknown || $metric->warningCodes !== [];
+            $metricSpool->append(
+                new \ArrayObject([$sourceRow, $metric]),
+                [
+                    'row_key' => implode(':', [
+                        $sourceRow['schedule_id'],
+                        $metric->taskId,
+                        $sourceRow['baseline_version_id'] ?? 'missing',
+                    ]),
+                    'state_hash' => $sourceRow['state_hash'],
+                ],
+            );
+        }
+        $totals = [
+            'critical_delayed_tasks' => $criticalDelayedTasks,
+            'overdue_tasks' => $overdueTasks,
+            'unknown_metrics' => $unknown ? ['baseline_variance'] : [],
+        ];
+
         try {
-            return DB::transaction(function () use ($scope, $query, $sourceRows, $sourceHash, $watermarks): ReportSnapshotRef {
+            return DB::transaction(function () use (
+                $scope,
+                $query,
+                $sourceHash,
+                $watermarks,
+                $metricSpool,
+                $totals,
+            ): ReportSnapshotRef {
                 $snapshotId = (string) Str::ulid();
-                $metrics = [];
-                $unknown = [];
-                foreach ($sourceRows as $sourceRow) {
-                    $metric = BaselineScheduleVarianceRow::fromSource(
-                        $sourceRow['source'],
-                        $query->asOf,
-                    );
-                    $metrics[] = [$sourceRow, $metric];
-                    foreach ($metric->warningCodes as $warningCode) {
-                        $unknown[$warningCode] = true;
-                    }
-                }
-                $totals = [
-                    'critical_delayed_tasks' => count(array_filter(
-                        $metrics,
-                        static fn (array $item): bool => $item[1]->critical
-                            && ($item[1]->endVarianceDays ?? 0) > 0,
-                    )),
-                    'overdue_tasks' => count(array_filter(
-                        $metrics,
-                        static fn (array $item): bool => $item[1]->overdue,
-                    )),
-                    'unknown_metrics' => $unknown === [] ? [] : ['baseline_variance'],
-                ];
                 $sourceRef = [[
                     'source' => 'schedule',
                     'snapshot_kind' => 'baseline_schedule',
                     'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
                     'schema_version' => 'schedule_baseline_v1',
                     'watermark' => 'source_'.substr($sourceHash->value, 0, 24),
-                    'row_count' => count($metrics),
+                    'row_count' => $metricSpool->count(),
                     'hash' => $sourceHash->value,
                 ]];
                 $rowSchema = $this->rowSchema();
@@ -372,10 +460,15 @@ final readonly class BaselineScheduleSnapshotService
                     'totals' => $totals,
                     'source_refs' => $sourceRef,
                     'row_schema' => $rowSchema,
-                    'row_count' => count($metrics),
+                    'row_count' => $metricSpool->count(),
                 ]);
 
-                foreach ($metrics as [$sourceRow, $metric]) {
+                $rowBatch = [];
+                foreach ($metricSpool->items() as $metricPayload) {
+                    if (! $metricPayload instanceof \ArrayObject) {
+                        throw new InvalidArgumentException('baseline_schedule_metric_spool_invalid');
+                    }
+                    [$sourceRow, $metric] = $metricPayload->getArrayCopy();
                     $payload = $metric->toArray() + [
                         'project_id' => $sourceRow['project_id'],
                         'baseline_version_id' => $sourceRow['baseline_version_id'],
@@ -385,7 +478,19 @@ final readonly class BaselineScheduleSnapshotService
                         'planned_end' => $sourceRow['source']->plannedEnd->format('Y-m-d'),
                         'unknown_metrics' => $metric->warningCodes === [] ? [] : ['baseline_variance'],
                     ];
-                    BaselineScheduleVarianceRecord::query()->create([
+                    $sourceRefs = [
+                        ['type' => 'schedule_task', 'id' => $metric->taskId, 'project_id' => $sourceRow['project_id']],
+                        ['type' => 'schedule', 'id' => $sourceRow['schedule_id'], 'project_id' => $sourceRow['project_id']],
+                        ...array_map(
+                            static fn (array $dependency): array => [
+                                'type' => 'task_dependency',
+                                'id' => $dependency['dependency_id'],
+                                'project_id' => $sourceRow['project_id'],
+                            ],
+                            $sourceRow['dependency_refs'],
+                        ),
+                    ];
+                    $rowBatch[] = [
                         'organization_id' => $scope->organizationId,
                         'snapshot_id' => $snapshotId,
                         'row_key' => implode(':', [
@@ -404,20 +509,16 @@ final readonly class BaselineScheduleSnapshotService
                         'total_float_days' => $metric->totalFloatDays,
                         'is_critical' => $metric->critical,
                         'status' => $metric->status,
-                        'payload' => $payload,
-                        'source_refs' => [
-                            ['type' => 'schedule_task', 'id' => $metric->taskId, 'project_id' => $sourceRow['project_id']],
-                            ['type' => 'schedule', 'id' => $sourceRow['schedule_id'], 'project_id' => $sourceRow['project_id']],
-                            ...array_map(
-                                static fn (array $dependency): array => [
-                                    'type' => 'task_dependency',
-                                    'id' => $dependency['dependency_id'],
-                                    'project_id' => $sourceRow['project_id'],
-                                ],
-                                $sourceRow['dependency_refs'],
-                            ),
-                        ],
-                    ]);
+                        'payload' => CanonicalJson::encode($payload),
+                        'source_refs' => CanonicalJson::encode($sourceRefs),
+                    ];
+                    if (count($rowBatch) === 500) {
+                        DB::table('baseline_schedule_variance_rows')->insert($rowBatch);
+                        $rowBatch = [];
+                    }
+                }
+                if ($rowBatch !== []) {
+                    DB::table('baseline_schedule_variance_rows')->insert($rowBatch);
                 }
 
                 return $this->reference($scope, $query, $snapshot);
@@ -487,6 +588,59 @@ final readonly class BaselineScheduleSnapshotService
             && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
             && $this->matches($values['statuses'] ?? [], $state->status)
             && (! array_key_exists('critical', $values) || (bool) $values['critical'] === $state->critical);
+    }
+
+    private function sourceIdentity(array $sourceRow): array
+    {
+        $source = $sourceRow['source'];
+        if (! $source instanceof BaselineScheduleTaskSource) {
+            throw new InvalidArgumentException('baseline_schedule_source_invalid');
+        }
+
+        return [
+            'baseline_version_id' => $sourceRow['baseline_version_id'],
+            'dependency_refs' => $sourceRow['dependency_refs'],
+            'project_id' => $sourceRow['project_id'],
+            'schedule_id' => $sourceRow['schedule_id'],
+            'state_hash' => $sourceRow['state_hash'],
+            'source' => [
+                'baseline_duration_days' => $source->baselineDurationDays,
+                'baseline_end' => $source->baselineEnd?->format(DATE_ATOM),
+                'baseline_start' => $source->baselineStart?->format(DATE_ATOM),
+                'critical' => $source->critical,
+                'free_float_days' => $source->freeFloatDays,
+                'planned_duration_days' => $source->plannedDurationDays,
+                'planned_end' => $source->plannedEnd->format(DATE_ATOM),
+                'planned_start' => $source->plannedStart->format(DATE_ATOM),
+                'status' => $source->status,
+                'task_id' => $source->taskId,
+                'total_float_days' => $source->totalFloatDays,
+            ],
+        ];
+    }
+
+    private function jsonArray(mixed $value): array
+    {
+        if (is_string($value)) {
+            $value = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        }
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidArgumentException('schedule_baseline_dependency_refs_invalid');
+        }
+
+        return $value;
+    }
+
+    private function intersectNullableIds(?array $left, ?array $right): ?array
+    {
+        if ($left === null) {
+            return $right;
+        }
+        if ($right === null) {
+            return $left;
+        }
+
+        return array_values(array_intersect($left, $right));
     }
 
     private function positiveIntegerFilter(ReportQuery $query, string $key): array

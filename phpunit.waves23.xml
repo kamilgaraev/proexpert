@@ -6,6 +6,7 @@
         <testsuite name="Waves23">
             <directory>tests/Unit/Reporting/Waves23</directory>
             <file>tests/Architecture/Reporting/Waves23ProductionContractsTest.php</file>
+            <directory>tests/Feature/Reporting/Waves23</directory>
         </testsuite>
     </testsuites>
 </phpunit>

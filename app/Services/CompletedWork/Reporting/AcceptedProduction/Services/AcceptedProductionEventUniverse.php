@@ -57,6 +57,7 @@ final readonly class AcceptedProductionEventUniverse
                     $actIds,
                     $actLineIds,
                     $entries,
+                    $gaps,
                     &$eventWatermark,
                 ): void {
                     $candidates = [];
@@ -91,43 +92,20 @@ final readonly class AcceptedProductionEventUniverse
                     if ($candidates === []) {
                         return;
                     }
-                    $eventsByKey = [];
-                    $eventQuery = ProductionAcceptanceEvent::query()
-                        ->where('organization_id', $scope->organizationId)
-                        ->where('performance_act_id', (int) $owner->performance_act_id)
-                        ->where('recognized_at', '<=', $query->asOf)
-                        ->whereIn(
-                            'source_line_id',
-                            array_values(array_unique(array_map(
-                                static fn (array $candidate): int => (int) $candidate['source_line_id'],
-                                $candidates,
-                            ))),
-                        );
-                    $this->applyEventScalarFilters($eventQuery, $query, $workIds, $actIds, $actLineIds);
-                    foreach ($eventQuery->lazyById(500) as $event) {
-                        $eventWatermark = max($eventWatermark, (int) $event->id);
-                        $key = $this->key([
-                            'performance_act_id' => (int) $event->performance_act_id,
-                            'source_line_id' => (int) $event->source_line_id,
-                            'source_line_type' => (string) $event->source_line_type,
-                        ]);
-                        if (isset($candidates[$key])) {
-                            $eventsByKey[$key][] = $event;
-                        }
-                    }
-                    foreach ($candidates as $key => $candidate) {
-                        $lineEvents = $eventsByKey[$key] ?? [];
-                        usort($lineEvents, static fn (
-                            ProductionAcceptanceEvent $left,
-                            ProductionAcceptanceEvent $right,
-                        ): int => [(int) $left->transition_version, (int) $left->id]
-                            <=> [(int) $right->transition_version, (int) $right->id]);
-                        $entry = new AcceptedProductionUniverseEntry($candidate, $lineEvents);
-                        $entries->append($entry, [
-                            'candidate' => $candidate,
-                            'events' => array_map([$this, 'eventIdentity'], $lineEvents),
-                        ]);
-                    }
+                    $eventWatermark = max(
+                        $eventWatermark,
+                        $this->appendCandidateEntries(
+                            $scope,
+                            $query,
+                            (int) $owner->performance_act_id,
+                            $candidates,
+                            $workIds,
+                            $actIds,
+                            $actLineIds,
+                            $entries,
+                            $gaps,
+                        ),
+                    );
                 });
             $orphanQuery = ProductionAcceptanceEvent::query()
                 ->where('organization_id', $scope->organizationId)
@@ -211,6 +189,109 @@ final readonly class AcceptedProductionEventUniverse
             $gaps,
             $eventWatermark,
             $ownerWatermark,
+        );
+    }
+
+    private function appendCandidateEntries(
+        ReportScope $scope,
+        ReportQuery $query,
+        int $performanceActId,
+        array $candidates,
+        ?array $workIds,
+        ?array $actIds,
+        ?array $actLineIds,
+        DeterministicObjectSpool $entries,
+        DeterministicObjectSpool $gaps,
+    ): int {
+        uasort(
+            $candidates,
+            static fn (array $left, array $right): int => [
+                $left['source_line_type'],
+                $left['source_line_id'],
+            ] <=> [
+                $right['source_line_type'],
+                $right['source_line_id'],
+            ],
+        );
+        $eventQuery = ProductionAcceptanceEvent::query()
+            ->where('organization_id', $scope->organizationId)
+            ->where('performance_act_id', $performanceActId)
+            ->where('recognized_at', '<=', $query->asOf)
+            ->whereIn(
+                'source_line_id',
+                array_values(array_unique(array_map(
+                    static fn (array $candidate): int => (int) $candidate['source_line_id'],
+                    $candidates,
+                ))),
+            );
+        $this->applyEventScalarFilters($eventQuery, $query, $workIds, $actIds, $actLineIds);
+        $eventQuery
+            ->orderBy('performance_act_id')
+            ->orderBy('source_line_type')
+            ->orderBy('source_line_id')
+            ->orderBy('transition_version')
+            ->orderBy('id');
+
+        $currentKey = null;
+        $currentEvents = [];
+        $watermark = 0;
+        foreach ($eventQuery->cursor() as $event) {
+            $watermark = max($watermark, (int) $event->id);
+            if (! $this->eventMatchesState($event, $query)) {
+                continue;
+            }
+            $key = $this->key([
+                'performance_act_id' => (int) $event->performance_act_id,
+                'source_line_id' => (int) $event->source_line_id,
+                'source_line_type' => (string) $event->source_line_type,
+            ]);
+            if (! isset($candidates[$key])) {
+                continue;
+            }
+            if ($currentKey !== null && $currentKey !== $key) {
+                $this->appendEntry(
+                    $entries,
+                    $candidates[$currentKey],
+                    $currentEvents,
+                );
+                unset($candidates[$currentKey]);
+                $currentEvents = [];
+            }
+            $currentKey = $key;
+            $currentEvents[] = $event;
+        }
+        if ($currentKey !== null) {
+            $this->appendEntry(
+                $entries,
+                $candidates[$currentKey],
+                $currentEvents,
+            );
+            unset($candidates[$currentKey]);
+        }
+        foreach ($candidates as $candidate) {
+            $this->appendGap($gaps, [
+                'kind' => 'acceptance_event_missing',
+                'owner_version_id' => (int) $candidate['owner_version_id'],
+                'performance_act_id' => (int) $candidate['performance_act_id'],
+                'source_line_id' => (int) $candidate['source_line_id'],
+                'source_line_type' => (string) $candidate['source_line_type'],
+            ]);
+        }
+
+        return $watermark;
+    }
+
+    private function appendEntry(
+        DeterministicObjectSpool $entries,
+        array $candidate,
+        array $events,
+    ): void {
+        $entries->append(
+            new AcceptedProductionUniverseEntry($candidate, $events),
+            [
+                'candidate' => $candidate,
+                'events' => array_map($this->eventIdentity(...), $events),
+            ],
         );
     }
 

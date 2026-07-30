@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectC
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Exceptions\ProjectControlSourceGapException;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectControlSourceAssembler;
 use App\Support\Reporting\ReportSourceReadinessFactory;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final readonly class ProjectControlReadinessProbe implements ReportSourceReadinessProbe
@@ -38,6 +39,34 @@ final readonly class ProjectControlReadinessProbe implements ReportSourceReadine
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
+        if (DB::transactionLevel() > 0) {
+            return $this->inspectWithinStableView($context, $query);
+        }
+
+        return DB::transaction(function () use ($context, $query): ReportSourceReadiness {
+            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+
+            return $this->inspectWithinStableView($context, $query);
+        }, 5);
+    }
+
+    private function inspectWithinStableView(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+    ): ReportSourceReadiness {
+        if (count($context->scope->projectIds) !== 1) {
+            throw new InvalidArgumentException('project_control_single_project_scope_required');
+        }
+        DB::select(
+            'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+            [
+                'project-control-materialize:'
+                .$context->scope->organizationId
+                .':'
+                .$context->scope->projectIds[0],
+            ],
+        );
+
         try {
             $source = $this->sources->assemble($context->scope, $query);
         } catch (ProjectControlSourceGapException $exception) {

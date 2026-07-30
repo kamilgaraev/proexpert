@@ -14,6 +14,7 @@ use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadEligibilityInput;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\LookaheadResourceCandidateQuery;
 use App\Models\ScheduleTask;
 use App\Support\Reporting\DeterministicObjectSpool;
 use App\Support\Reporting\ReportScopedResourceFilter;
@@ -33,6 +34,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         private HistoricalScheduleTaskStateQuery $historicalTasks,
         private LookaheadResourceScope $resourceScope,
         private LookaheadConstraintHistoryStream $constraintHistory,
+        private LookaheadResourceCandidateQuery $resourceCandidates,
     ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
@@ -80,7 +82,13 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ['constraint', 'work_constraint'],
             $projectIds,
         );
-        $resourceTaskIds = $scopedTaskIds;
+        $constraintTaskIds = $this->resourceCandidates->taskIds(
+            $scope,
+            $projectIds,
+            $scopedScheduleIds,
+            $query->asOf,
+        );
+        $resourceTaskIds = $this->intersectNullableIds($scopedTaskIds, $constraintTaskIds);
         $states = $this->historicalTasks
             ->latestForLookaheadCursor(
                 $scope->organizationId,

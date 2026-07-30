@@ -71,6 +71,10 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             reversesEventId: $foreignAccepted,
             transitionVersion: 2,
         );
+        $this->insertOwnerVersion(3, 7, 'accepted', '2026-07-28T08:00:00Z', 1);
+        $this->insertOwnerVersion(3, 7, 'reversed', '2026-07-30T06:15:00Z', 2);
+        $this->insertOwnerVersion(4, 8, 'accepted', '2026-07-30T07:00:00Z', 1);
+        $this->insertOwnerVersion(4, 8, 'reversed', '2026-07-30T07:01:00Z', 2);
         $scope = new ReportScope(3, [3], [7], [], new DateTimeZone('UTC'));
         $definition = (new ReportDefinitionBuilder)
             ->code('accepted_production_progress')
@@ -134,6 +138,28 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             static fn (): int => DB::table('production_acceptance_events')
                 ->where('id', $eventId)
                 ->update(['accepted_quantity_delta' => '3.000']),
+        );
+    }
+
+    public function test_owner_versions_and_members_are_append_only_in_postgresql(): void
+    {
+        [$ownerId, $memberId] = $this->insertOwnerVersion(
+            3,
+            7,
+            'accepted',
+            '2026-07-30T06:15:00Z',
+            1,
+        );
+
+        $this->assertMutationRejected(
+            static fn (): int => DB::table('production_acceptance_owner_versions')
+                ->where('id', $ownerId)
+                ->update(['event_type' => 'reversed']),
+        );
+        $this->assertMutationRejected(
+            static fn (): int => DB::table('production_acceptance_owner_members')
+                ->where('id', $memberId)
+                ->delete(),
         );
     }
 
@@ -331,5 +357,69 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             (int) $project->id,
             (int) $organization->id,
         ];
+    }
+
+    private function insertOwnerVersion(
+        int $organizationId,
+        int $projectId,
+        string $eventType,
+        string $effectiveAt,
+        int $version,
+    ): array {
+        $member = [
+            'contractor_id' => 19,
+            'source_line_id' => 91,
+            'source_line_type' => 'performance_act_line',
+            'unit_code' => 'm3',
+            'work_id' => 77,
+            'zone' => 'A',
+        ];
+        $ownerId = (int) DB::table('production_acceptance_owner_versions')->insertGetId([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'contract_id' => 21,
+            'performance_act_id' => 51,
+            'version' => $version,
+            'event_type' => $eventType,
+            'effective_at' => $effectiveAt,
+            'source_event_id' => implode(':', [
+                'test-owner',
+                $organizationId,
+                $projectId,
+                $version,
+            ]),
+            'source_hash' => hash('sha256', implode(':', [
+                $organizationId,
+                $projectId,
+                $eventType,
+                $effectiveAt,
+                $version,
+            ])),
+            'members' => json_encode([$member], JSON_THROW_ON_ERROR),
+        ]);
+        $memberId = (int) DB::table('production_acceptance_owner_members')->insertGetId([
+            'owner_version_id' => $ownerId,
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'performance_act_id' => 51,
+            'source_line_type' => $member['source_line_type'],
+            'source_line_id' => $member['source_line_id'],
+            'work_id' => $member['work_id'],
+            'contractor_id' => $member['contractor_id'],
+            'unit_code' => $member['unit_code'],
+            'zone' => $member['zone'],
+        ]);
+
+        return [$ownerId, $memberId];
+    }
+
+    private function assertMutationRejected(callable $mutation): void
+    {
+        try {
+            DB::transaction($mutation);
+            self::fail('Expected append-only owner history mutation to be rejected.');
+        } catch (QueryException $exception) {
+            self::assertSame('55000', $exception->getCode());
+        }
     }
 }

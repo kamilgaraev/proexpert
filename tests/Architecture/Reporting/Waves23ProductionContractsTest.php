@@ -248,6 +248,20 @@ final class Waves23ProductionContractsTest extends TestCase
             "throw new InvalidArgumentException('lookahead_project_filter_empty')",
             $lookaheadMaterializer,
         );
+        foreach ([$lookaheadReadiness, $lookaheadMaterializer] as $lookaheadSource) {
+            self::assertStringContainsString(
+                '$this->resourceCandidates->taskIds(',
+                $lookaheadSource,
+            );
+            self::assertStringContainsString(
+                '$this->intersectNullableIds($scopedTaskIds, $constraintTaskIds)',
+                $lookaheadSource,
+            );
+            self::assertStringContainsString(
+                '$this->resourceScope->filterConstraints(',
+                $lookaheadSource,
+            );
+        }
         foreach ([
             $baselineReadiness,
             $baselineMaterializer,
@@ -326,6 +340,9 @@ final class Waves23ProductionContractsTest extends TestCase
         );
 
         self::assertStringContainsString('$this->sources->assemble($context->scope, $query)', $readiness);
+        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $readiness);
+        self::assertStringContainsString('project-control-materialize:', $readiness);
+        self::assertStringContainsString('pg_advisory_xact_lock', $readiness);
         self::assertStringContainsString('project_control_wip_line_without_baseline', $assembler);
         self::assertStringContainsString('$baselineTaskIds', $assembler);
     }
