@@ -19,6 +19,17 @@ final class ReportCatalogActivationService
     public function activate(LoadedReportManifest $current, LoadedReportManifest $candidate, ReportCandidateValidationResult $validation, iterable $candidateBindings, iterable $conformanceEvidence, array $planEvidenceDocuments, string $releaseSha, DateTimeImmutable $activatedAt): ReportCatalogActivation
     {
         $codes = array_map(static fn (array $row): string => (string) $row['code'], $candidate->definitions);
+        $currentCodes = array_map(static fn (array $row): string => (string) $row['code'], $current->definitions);
+        foreach ($candidate->definitions as $definition) {
+            $readiness = $definition['readiness'] ?? null;
+            if (! is_array($readiness)
+                || ($readiness['source'] ?? null) !== 'ready'
+                || ($readiness['formula'] ?? null) !== 'ready'
+                || ($readiness['delivery'] ?? null) !== 'verified'
+                || ($readiness['publication'] ?? null) !== 'candidate') {
+                throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
+            }
+        }
         $bindingCodes = [];
         foreach ($candidateBindings as $binding) {
             if (! $binding instanceof ReportDefinitionBinding) {
@@ -36,7 +47,7 @@ final class ReportCatalogActivationService
         if (count($codes) !== 28 || count(array_unique($codes)) !== 28 || count($bindingCodes) !== 28
             || count(array_unique($bindingCodes)) !== 28 || count($conformance) !== 28
             || ! $validation->passed() || count($validation->items) !== 28
-            || ! $this->sameSet($codes, $bindingCodes) || ! $this->sameSet($codes, array_keys($conformance))
+            || ! $this->sameSet($codes, $currentCodes) || ! $this->sameSet($codes, $bindingCodes) || ! $this->sameSet($codes, array_keys($conformance))
             || ! $this->sameSet($codes, array_map(static fn ($item): string => $item->code, $validation->items))) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::BINDING_SET_MISMATCH);
         }
