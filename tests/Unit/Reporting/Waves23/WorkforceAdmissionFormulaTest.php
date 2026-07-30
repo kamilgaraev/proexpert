@@ -142,6 +142,30 @@ final class WorkforceAdmissionFormulaTest extends TestCase
     }
 
     #[Test]
+    public function person_is_counted_once_across_multiple_sites_using_the_worst_status(): void
+    {
+        $formula = new WorkforceAdmissionFormula;
+        $admitted = $formula->evaluate(1, 20, 30, '2026-07-26', [[
+            'code' => 'training',
+            'status' => 'fulfilled',
+            'mandatory' => true,
+            'verified' => true,
+        ]]);
+        $blocked = $formula->evaluate(2, 20, 31, '2026-07-26', [[
+            'code' => 'medical',
+            'status' => 'missing',
+            'mandatory' => true,
+            'verified' => false,
+        ]]);
+
+        $summary = $formula->summarize([$admitted, $blocked]);
+
+        self::assertSame(1, $summary->personDenominator);
+        self::assertSame(0, $summary->admittedPeople);
+        self::assertSame(1, $summary->notAdmittedPeople);
+    }
+
+    #[Test]
     public function missing_status_is_not_silently_replaced_by_a_fallback(): void
     {
         $this->expectException(InvalidArgumentException::class);

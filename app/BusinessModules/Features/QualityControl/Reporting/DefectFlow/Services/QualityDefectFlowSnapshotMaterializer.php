@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Jobs\ReportingSourceBackfillJob;
 use Throwable;
 
 final readonly class QualityDefectFlowSnapshotMaterializer
@@ -29,6 +30,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
     public function materialize(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
     {
         $organizationId = $context->scope->organizationId;
+        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
         $events = $this->events(
@@ -51,6 +53,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         $ownerTransitionCount = $this->ownerTransitionCount(
             $organizationId,
             $context->scope->projectIds,
+            $context->scope->resources,
             $asOf,
             $query,
         );
@@ -407,7 +410,10 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
         $opening = count(array_filter($openingState));
         $closing = $this->formula->rollForward($opening, $created, $reopened, $closed);
-        $actualClosing = count(array_filter($state));
+        $actualClosing = count(array_filter(
+            $states,
+            static fn (array $entityState): bool => (bool) $entityState['current_open'],
+        ));
         if ($closing !== $actualClosing) {
             $gaps += abs($closing - $actualClosing);
         }
@@ -440,7 +446,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $lastRowByDefect[$row['quality_defect_id']] = $index;
         }
         foreach ($lastRowByDefect as $defectId => $index) {
-            $rows[$index]['closing_flag'] = $state[$defectId] ?? false;
+            $rows[$index]['closing_flag'] = (bool) ($states[$defectId]['current_open'] ?? false);
             $rows[$index]['opening_flag'] = $openingState[$defectId] ?? false;
         }
 
@@ -475,6 +481,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
     private function ownerTransitionCount(
         int $organizationId,
         array $projectIds,
+        array $resources,
         CarbonImmutable $asOf,
         ReportQuery $query,
     ): int {
@@ -484,6 +491,27 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             ->where('history.changed_at', '<=', $asOf);
         if ($projectIds !== []) {
             $builder->whereIn('defect.project_id', $projectIds);
+        }
+        if ($resources !== []) {
+            $builder->where(function ($builder) use ($resources): void {
+                foreach ($resources as $resource) {
+                    if (! $resource instanceof ReportScopedResource) {
+                        continue;
+                    }
+                    $builder->orWhere(function ($builder) use ($resource): void {
+                        match ($resource->kind) {
+                            'project' => $builder->where('defect.project_id', $resource->id),
+                            'contractor' => $builder->where('defect.contractor_id', $resource->id),
+                            'quality_defect' => $builder->where('defect.id', $resource->id),
+                            'schedule_task', 'task' => $builder->where('defect.schedule_task_id', $resource->id),
+                            default => $builder->whereRaw('1 = 0'),
+                        };
+                        if ($resource->projectId !== null) {
+                            $builder->where('defect.project_id', $resource->projectId);
+                        }
+                    });
+                }
+            });
         }
         foreach ([
             'contractor_id' => 'defect.contractor_id',

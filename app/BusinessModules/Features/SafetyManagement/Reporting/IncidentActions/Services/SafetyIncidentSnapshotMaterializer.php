@@ -12,8 +12,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DTO\SafetyTransitionFact;
-use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyExposureBackfill;
-use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyIncidentBackfill;
+use App\Jobs\ReportingSourceBackfillJob;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentRow;
@@ -29,17 +28,13 @@ use Throwable;
 
 final readonly class SafetyIncidentSnapshotMaterializer
 {
-    public function __construct(
-        private SafetyIncidentFormula $formula,
-        private SafetyIncidentBackfill $incidentBackfill,
-        private SafetyExposureBackfill $exposureBackfill,
-    ) {}
+    public function __construct(private SafetyIncidentFormula $formula) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
     {
         $organizationId = $context->scope->organizationId;
-        $this->incidentBackfill->synchronize($organizationId);
-        $this->exposureBackfill->synchronize($organizationId);
+        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::SAFETY_INCIDENTS);
+        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::SAFETY_EXPOSURE);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
         $events = $this->events(
@@ -74,7 +69,13 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $periodTo,
         );
         $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies, $sites);
-        $ownerSubjectCount = $this->ownerSubjectCount($organizationId, $context->scope->projectIds, $asOf, $query);
+        $ownerSubjectCount = $this->ownerSubjectCount(
+            $organizationId,
+            $context->scope->projectIds,
+            $context->scope->resources,
+            $asOf,
+            $query,
+        );
         $projectedSubjectCount = $events
             ->map(static fn (SafetyTransitionEvent $event): string => $event->subject_type.':'.$event->subject_id)
             ->unique()
@@ -538,7 +539,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $lastRow[$row['subject_type'].':'.$row['subject_id']] = $index;
         }
         foreach ($lastRow as $key => $index) {
-            $rows[$index]['closing_flag'] = $state[$key] ?? false;
+            $rows[$index]['closing_flag'] = (bool) ($states[$key]['current_open'] ?? false);
             $rows[$index]['opening_flag'] = $openingState[$key] ?? false;
         }
 
@@ -552,7 +553,10 @@ final readonly class SafetyIncidentSnapshotMaterializer
             'action_overdue_count' => $actionOverdue,
             'action_closed_on_time_count' => $actionClosedOnTime,
             'opening_backlog_count' => count(array_filter($openingState)),
-            'closing_backlog_count' => count(array_filter($state)),
+            'closing_backlog_count' => count(array_filter(
+                $states,
+                static fn (array $entityState): bool => (bool) $entityState['current_open'],
+            )),
         ];
     }
 
@@ -617,6 +621,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
     private function ownerSubjectCount(
         int $organizationId,
         array $projectIds,
+        array $resources,
         CarbonImmutable $asOf,
         ReportQuery $query,
     ): int {
@@ -636,6 +641,46 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 ->where('created_at', '<=', $asOf);
             if ($projectIds !== []) {
                 $builder->whereIn('project_id', $projectIds);
+            }
+            if ($resources !== []) {
+                $builder->where(function ($builder) use ($resources, $subjectType, $table, $asOf, $organizationId): void {
+                    foreach ($resources as $resource) {
+                        if (! $resource instanceof ReportScopedResource) {
+                            continue;
+                        }
+                        $builder->orWhere(function ($builder) use ($resource, $subjectType, $table, $asOf, $organizationId): void {
+                            match ($resource->kind) {
+                                'project' => $builder->where($table.'.project_id', $resource->id),
+                                'safety_incident' => $subjectType === 'incident'
+                                    ? $builder->where($table.'.id', $resource->id)
+                                    : $builder->whereRaw('1 = 0'),
+                                'safety_violation' => $subjectType === 'violation'
+                                    ? $builder->where($table.'.id', $resource->id)
+                                    : $builder->whereRaw('1 = 0'),
+                                'safety_corrective_action' => $subjectType === 'corrective_action'
+                                    ? $builder->where($table.'.id', $resource->id)
+                                    : $builder->whereRaw('1 = 0'),
+                                'safety_site', 'contractor' => $builder->whereExists(function ($subquery) use ($resource, $subjectType, $table, $asOf, $organizationId): void {
+                                    $subquery->selectRaw('1')->from('safety_transition_events as resource_event')
+                                        ->whereColumn('resource_event.subject_id', $table.'.id')
+                                        ->where('resource_event.organization_id', $organizationId)
+                                        ->where('resource_event.subject_type', $subjectType)
+                                        ->where('resource_event.occurred_at', '<=', $asOf)
+                                        ->where(
+                                            $resource->kind === 'safety_site'
+                                                ? 'resource_event.safety_site_id'
+                                                : 'resource_event.contractor_id',
+                                            $resource->id,
+                                        );
+                                }),
+                                default => $builder->whereRaw('1 = 0'),
+                            };
+                            if ($resource->projectId !== null) {
+                                $builder->where($table.'.project_id', $resource->projectId);
+                            }
+                        });
+                    }
+                });
             }
             $siteIds = $this->filterValues(
                 $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null,

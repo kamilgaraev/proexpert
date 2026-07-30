@@ -83,7 +83,7 @@ final readonly class WorkforceAdmissionFormula
                 throw new InvalidArgumentException('workforce_admission_summary_row_invalid');
             }
 
-            $key = $row->siteId.':'.$row->personId;
+            $key = (string) $row->personId;
             $current = $people[$key] ?? null;
             if (! $current instanceof WorkforceAdmissionMetric || $this->rank($row->status) > $this->rank($current->status)) {
                 $people[$key] = $row;

@@ -80,6 +80,17 @@ class SafetyExposureBackfill
             static fn (object $row): string => $row->project_id.':'.$row->safety_site_id.':'.$row->work_date,
         );
         foreach ($keys as $rows) {
+            $ambiguous = $rows->unique('id')->filter(
+                fn (object $row): bool => ! $this->hasUnambiguousAttribution(
+                    $organizationId,
+                    (int) $row->id,
+                    (string) $row->work_date,
+                ),
+            );
+            if ($ambiguous->isNotEmpty()) {
+                $gaps += $ambiguous->count();
+                continue;
+            }
             $seed = $rows->first();
             if ($seed === null) {
                 $gaps++;
@@ -160,5 +171,23 @@ class SafetyExposureBackfill
             ->map(static fn (Collection $corrections): object => $corrections->last())
             ->filter(static fn (object $correction): bool => $correction->status === 'at_work' && $correction->hours !== null)
             ->values();
+    }
+
+    private function hasUnambiguousAttribution(int $organizationId, int $correctionId, string $workDate): bool
+    {
+        return DB::table('workforce_attendance_corrections as attendance')
+            ->join('safety_site_workforce_assignments as mapping', function ($join) use ($workDate): void {
+                $join->on('mapping.organization_id', '=', 'attendance.organization_id')
+                    ->on('mapping.employee_id', '=', 'attendance.employee_id')
+                    ->on('mapping.project_id', '=', 'attendance.project_id')
+                    ->whereDate('mapping.valid_from', '<=', $workDate)
+                    ->where(static function ($query) use ($workDate): void {
+                        $query->whereNull('mapping.valid_to')->orWhereDate('mapping.valid_to', '>=', $workDate);
+                    });
+            })
+            ->where('attendance.organization_id', $organizationId)
+            ->where('attendance.id', $correctionId)
+            ->distinct()
+            ->count('mapping.safety_site_id') === 1;
     }
 }

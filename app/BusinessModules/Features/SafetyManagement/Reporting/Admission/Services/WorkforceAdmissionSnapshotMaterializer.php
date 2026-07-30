@@ -14,7 +14,7 @@ use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceRequirementResult;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DTO\AdmissionRequirementState;
-use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Backfill\WorkforceAdmissionBackfill;
+use App\Jobs\ReportingSourceBackfillJob;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionRow;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionSnapshot;
@@ -35,13 +35,12 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
     public function __construct(
         private SafetyComplianceService $compliance,
         private WorkforceAdmissionFormula $formula,
-        private WorkforceAdmissionBackfill $assignmentBackfill,
     ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
     {
         $organizationId = $context->scope->organizationId;
-        $this->assignmentBackfill->synchronize($organizationId);
+        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
         $asOf = CarbonImmutable::instance($query->asOf);
         $date = $asOf->startOfDay();
         $assignments = $this->assignments(

@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DTO\WorkforceAdmissionReadiness;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionSnapshot;
 use DateTimeImmutable;
+use Illuminate\Support\Facades\DB;
 
 final readonly class WorkforceAdmissionReadinessProbe implements ReportDefinitionReadinessProbe
 {
@@ -37,7 +38,15 @@ final readonly class WorkforceAdmissionReadinessProbe implements ReportDefinitio
         if (! $snapshot instanceof SafetyAdmissionSnapshot) {
             return new WorkforceAdmissionReadiness('unavailable', 0, 0, 0, 0, null, null, null);
         }
-        $ready = (int) $snapshot->eligible_count === (int) $snapshot->projected_count
+        $sourceReady = DB::table('report_source_sync_ledgers')
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('source_code', 'safety_site_workforce_assignments')
+            ->where('status', 'ready')
+            ->where('gap_count', 0)
+            ->where('unknown_count', 0)
+            ->exists();
+        $ready = $sourceReady
+            && (int) $snapshot->eligible_count === (int) $snapshot->projected_count
             && (int) $snapshot->gap_count === 0
             && (int) $snapshot->unknown_count === 0
             && $snapshot->stale_at > now();

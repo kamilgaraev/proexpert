@@ -78,6 +78,9 @@ final readonly class SafetyIncidentBackfill
             'unknown_count' => count(array_filter($events, static fn ($event): bool => $event->safety_site_id === null)),
             'input_hash' => hash('sha256', CanonicalJson::encode($inputFacts)),
             'output_hash' => hash('sha256', implode('', array_map(static fn ($event): string => (string) $event->event_hash, $events))),
+            'source_watermark' => collect($batch)
+                ->flatten(1)
+                ->max('updated_at'),
         ];
     }
 

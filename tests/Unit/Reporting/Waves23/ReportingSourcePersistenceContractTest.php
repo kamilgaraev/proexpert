@@ -1,0 +1,85 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\Reporting\Waves23;
+
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+final class ReportingSourcePersistenceContractTest extends TestCase
+{
+    #[Test]
+    public function postgres_overlap_constraint_is_partitioned_by_site(): void
+    {
+        $migration = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/migrations/'
+            .'2026_07_26_080000_create_workforce_admission_reporting_tables.php',
+        );
+
+        self::assertIsString($migration);
+        self::assertStringContainsString(
+            'workforce_assignment_id WITH =, safety_site_id WITH =, (daterange',
+            $migration,
+        );
+    }
+
+    #[Test]
+    public function source_sync_has_a_durable_cursor_and_readiness_ledger(): void
+    {
+        $migration = file_get_contents(
+            dirname(__DIR__, 4).'/database/migrations/2026_07_30_000001_create_report_source_sync_ledgers.php',
+        );
+        $job = file_get_contents(dirname(__DIR__, 4).'/app/Jobs/ReportingSourceBackfillJob.php');
+
+        self::assertIsString($migration);
+        self::assertIsString($job);
+        self::assertStringContainsString("Schema::create('report_source_sync_ledgers'", $migration);
+        self::assertStringContainsString("->jsonb('cursor')", $migration);
+        self::assertStringContainsString('lockForUpdate()', $job);
+        self::assertStringContainsString('ShouldBeUniqueUntilProcessing', $job);
+    }
+
+    #[Test]
+    public function materializers_dispatch_chunk_jobs_without_full_scan_calls(): void
+    {
+        foreach ([
+            'app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/QualityDefectFlowSnapshotMaterializer.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Services/SafetyIncidentSnapshotMaterializer.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Services/WorkforceAdmissionSnapshotMaterializer.php',
+        ] as $relativePath) {
+            $source = file_get_contents(dirname(__DIR__, 4).'/'.$relativePath);
+            self::assertIsString($source);
+            self::assertStringContainsString('ReportingSourceBackfillJob::dispatch', $source);
+            self::assertStringNotContainsString('->synchronize(', $source);
+        }
+    }
+
+    #[Test]
+    public function exposure_projection_fails_closed_for_ambiguous_site_attribution(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Backfill/SafetyExposureBackfill.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString('hasUnambiguousAttribution', $source);
+        self::assertStringContainsString("count('mapping.safety_site_id') === 1", $source);
+        self::assertStringContainsString('$gaps += $ambiguous->count()', $source);
+    }
+
+    #[Test]
+    public function closing_flags_read_each_entity_current_state(): void
+    {
+        foreach ([
+            'app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/QualityDefectFlowSnapshotMaterializer.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Services/SafetyIncidentSnapshotMaterializer.php',
+        ] as $relativePath) {
+            $source = file_get_contents(dirname(__DIR__, 4).'/'.$relativePath);
+            self::assertIsString($source);
+            self::assertStringContainsString("['current_open'] ?? false", $source);
+            self::assertStringNotContainsString("'closing_flag'] = \$state[", $source);
+        }
+    }
+}

@@ -80,6 +80,7 @@ final readonly class QualityDefectFlowBackfill
             'unknown_count' => 0,
             'input_hash' => hash('sha256', implode('', $inputHashes)),
             'output_hash' => hash('sha256', implode('', $outputHashes)),
+            'source_watermark' => $batch->max('changed_at'),
         ];
     }
 }
