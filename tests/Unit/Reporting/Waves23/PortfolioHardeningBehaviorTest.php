@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\Waves23;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\HoldingPerformanceRowQuery;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceFormula;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceSnapshotMaterializer;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
@@ -19,6 +20,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfoli
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\BudgetingPortfolioSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionBackfill;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
+use DateTimeImmutable;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Filesystem\Filesystem;
@@ -292,6 +294,41 @@ final class PortfolioHardeningBehaviorTest extends TestCase
         self::assertSame(
             [['code' => 'opening_balance_missing', 'currency' => 'RUB']],
             $partial['payload']['source_gaps'],
+        );
+    }
+
+    #[Test]
+    public function unknown_history_gap_uses_stable_sentinel_closed_by_first_real_version(): void
+    {
+        self::assertSame([0, 73], HoldingAllocationFactProjector::resolvableGapSourceVersions(73));
+        self::assertSame([0], HoldingAllocationFactProjector::resolvableGapSourceVersions(0));
+    }
+
+    #[Test]
+    public function gap_business_time_uses_source_evidence_and_fails_closed_when_unknown(): void
+    {
+        self::assertSame(
+            '2026-04-03T12:00:00+00:00',
+            HoldingAllocationFactProjector::gapBusinessEffectiveAt([
+                'business_effective_at' => '2026-04-03T12:00:00+00:00',
+            ])->format(DateTimeImmutable::ATOM),
+        );
+        self::assertSame(
+            '2026-04-04T00:00:00+00:00',
+            HoldingAllocationFactProjector::gapBusinessEffectiveAt([
+                'recognized_on' => '2026-04-04',
+            ])->format(DateTimeImmutable::ATOM),
+        );
+        self::assertSame(
+            '2026-04-05T10:00:00+00:00',
+            HoldingAllocationFactProjector::gapBusinessEffectiveAt(
+                [],
+                new DateTimeImmutable('2026-04-05T10:00:00+00:00'),
+            )->format(DateTimeImmutable::ATOM),
+        );
+        self::assertSame(
+            '0001-01-01T00:00:00+00:00',
+            HoldingAllocationFactProjector::gapBusinessEffectiveAt([])->format(DateTimeImmutable::ATOM),
         );
     }
 }

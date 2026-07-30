@@ -66,6 +66,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
                 'source_id' => $sourceId,
                 'source_version' => $sourceVersion,
                 'monetary_basis' => 'cash',
+                'business_effective_at' => $recognizedAt ?? $document->created_at,
             ], array_values(array_filter([
                 $recognizedAt === null ? 'recognized_on' : null,
                 ! is_string($document->currency) ? 'currency' : null,
@@ -82,6 +83,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
                 'source_id' => $sourceId,
                 'source_version' => $sourceVersion,
                 'monetary_basis' => 'cash',
+                'business_effective_at' => $recognizedAt,
             ], ['hierarchy']);
 
             return;

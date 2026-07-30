@@ -17,11 +17,15 @@ use App\Models\ContractProjectAllocation;
 use Brick\Math\BigDecimal;
 use Brick\Math\Exception\MathException;
 use Brick\Math\RoundingMode;
+use DateTimeImmutable;
+use DateTimeInterface;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final readonly class HoldingAllocationFactProjector
 {
+    private const UNKNOWN_SOURCE_VERSION = 0;
+
     public function __construct(private HoldingHierarchyResolver $hierarchies) {}
 
     public function recordContractAllocation(
@@ -37,8 +41,9 @@ final readonly class HoldingAllocationFactProjector
                 'organization_id' => (int) $contract->organization_id,
                 'source_type' => 'contract',
                 'source_id' => (int) $allocation->getKey(),
-                'source_version' => 1,
+                'source_version' => self::UNKNOWN_SOURCE_VERSION,
                 'monetary_basis' => 'contracted',
+                'business_effective_at' => $allocation->created_at,
             ], ['allocation_history']);
 
             return null;
@@ -68,6 +73,7 @@ final readonly class HoldingAllocationFactProjector
                 'source_id' => (int) $allocation->getKey(),
                 'source_version' => (int) $history->getKey(),
                 'monetary_basis' => 'contracted',
+                'business_effective_at' => $history->created_at,
             ], ['contract_version_evidence']);
 
             return null;
@@ -87,6 +93,7 @@ final readonly class HoldingAllocationFactProjector
                 'source_id' => (int) $allocation->getKey(),
                 'source_version' => (int) $history->getKey(),
                 'monetary_basis' => 'contracted',
+                'business_effective_at' => $history->created_at,
             ], ['hierarchy']);
 
             return null;
@@ -99,6 +106,7 @@ final readonly class HoldingAllocationFactProjector
                 'source_id' => (int) $allocation->getKey(),
                 'source_version' => (int) $history->getKey(),
                 'monetary_basis' => 'contracted',
+                'business_effective_at' => $history->created_at,
             ], ['currency']);
 
             return null;
@@ -275,7 +283,7 @@ final readonly class HoldingAllocationFactProjector
                 ->where('organization_id', $fact->organizationId)
                 ->where('source_type', $fact->sourceType)
                 ->where('source_id', $fact->sourceId)
-                ->where('source_version', $fact->sourceVersion)
+                ->whereIn('source_version', self::resolvableGapSourceVersions($fact->sourceVersion))
                 ->where('monetary_basis', $fact->monetaryBasis)
                 ->whereNull('resolved_at')
                 ->update(['resolved_at' => now()]);
@@ -327,12 +335,12 @@ final readonly class HoldingAllocationFactProjector
     public function recordGap(
         array $source,
         array $missingFields,
-        ?\DateTimeInterface $observedAt = null,
+        ?DateTimeInterface $observedAt = null,
     ): void {
         $organizationId = (int) ($source['organization_id'] ?? 0);
         $sourceId = (int) ($source['source_id'] ?? 0);
-        $sourceVersion = (int) ($source['source_version'] ?? 0);
-        if (min($organizationId, $sourceId, $sourceVersion) < 1 || $missingFields === []) {
+        $sourceVersion = (int) ($source['source_version'] ?? self::UNKNOWN_SOURCE_VERSION);
+        if ($organizationId < 1 || $sourceId < 1 || $sourceVersion < 0 || $missingFields === []) {
             return;
         }
         try {
@@ -344,10 +352,7 @@ final readonly class HoldingAllocationFactProjector
             $hierarchyVersion = (string) ($source['hierarchy_version'] ?? 'unresolved');
         }
         sort($missingFields, SORT_STRING);
-        $businessEffectiveAt = $observedAt
-            ?? ($source['business_effective_at'] ?? null)
-            ?? ($source['recognized_on'] ?? null)
-            ?? now();
+        $businessEffectiveAt = self::gapBusinessEffectiveAt($source, $observedAt);
         $recordedAt = now();
         $identity = [
             'organization_id' => $organizationId,
@@ -368,6 +373,30 @@ final readonly class HoldingAllocationFactProjector
                 'resolved_at' => null,
             ],
         );
+    }
+
+    public static function resolvableGapSourceVersions(int $sourceVersion): array
+    {
+        if ($sourceVersion < 0) {
+            throw new InvalidArgumentException('holding_allocation_source_version_invalid');
+        }
+
+        return $sourceVersion === self::UNKNOWN_SOURCE_VERSION
+            ? [self::UNKNOWN_SOURCE_VERSION]
+            : [self::UNKNOWN_SOURCE_VERSION, $sourceVersion];
+    }
+
+    public static function gapBusinessEffectiveAt(
+        array $source,
+        ?DateTimeInterface $observedAt = null,
+    ): DateTimeImmutable {
+        $value = $source['business_effective_at']
+            ?? $source['recognized_on']
+            ?? $observedAt;
+
+        return $value instanceof DateTimeInterface
+            ? DateTimeImmutable::createFromInterface($value)
+            : new DateTimeImmutable(is_string($value) && $value !== '' ? $value : '0001-01-01T00:00:00+00:00');
     }
 
     public function classify(int $contributorOrganizationId, ?int $counterpartyOrganizationId, array $hierarchyOrganizationIds): string

@@ -87,6 +87,7 @@ final readonly class AcceptedWorkHoldingFactProducer
                 'source_id' => (int) $act->getKey(),
                 'source_version' => $sourceVersion,
                 'monetary_basis' => 'accepted_accrual',
+                'business_effective_at' => $recognizedAt,
             ], $missing);
 
             return null;
