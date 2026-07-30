@@ -72,6 +72,7 @@ return new class extends Migration
             $table->unsignedInteger('event_version');
             $table->string('evidence_type', 40)->nullable();
             $table->string('evidence_id', 120)->nullable();
+            $table->char('evidence_content_hash', 64)->nullable();
             $table->char('event_hash', 64);
             $table->timestampTz('recorded_at');
 
@@ -181,6 +182,7 @@ return new class extends Migration
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_version_check CHECK (event_version > 0)');
         DB::statement("ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_hash_check CHECK (event_hash ~ '^[a-f0-9]{64}$')");
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_timestamps_check CHECK ((resolved_at IS NULL OR resolved_at <= occurred_at) AND (verified_at IS NULL OR (resolved_at IS NOT NULL AND verified_at >= resolved_at AND verified_at <= occurred_at)))');
+        DB::statement("ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_evidence_hash_check CHECK (evidence_content_hash IS NULL OR evidence_content_hash ~ '^[a-f0-9]{64}$')");
         DB::statement('ALTER TABLE safety_sites ADD CONSTRAINT safety_site_active_dates_check CHECK (active_until IS NULL OR active_until >= active_from)');
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_evidence_check CHECK ((evidence_type IS NULL) = (evidence_id IS NULL))');
         DB::statement("ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_evidence_id_check CHECK (evidence_id IS NULL OR evidence_id ~ '^[1-9][0-9]*$')");

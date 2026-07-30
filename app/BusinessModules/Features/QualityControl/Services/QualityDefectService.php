@@ -302,10 +302,24 @@ final class QualityDefectService
             'reporting_evidence_refs' => $defect->photos()
                 ->where('organization_id', $defect->organization_id)
                 ->orderBy('id')
-                ->get(['id', 'type'])
+                ->get(['id', 'type', 'url', 'caption', 'metadata', 'uploaded_by', 'created_at'])
                 ->map(static fn ($photo): array => [
+                    'caption' => $photo->caption,
+                    'content_hash' => hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode([
+                        'caption' => $photo->caption,
+                        'created_at' => $photo->created_at?->toAtomString(),
+                        'metadata' => $photo->metadata,
+                        'storage_identity' => (string) $photo->url,
+                        'type' => (string) $photo->type,
+                        'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
+                    ])),
+                    'created_at' => $photo->created_at?->toAtomString(),
                     'id' => (int) $photo->id,
+                    'metadata' => $photo->metadata,
+                    'photo_type' => (string) $photo->type,
+                    'storage_identity' => (string) $photo->url,
                     'type' => 'quality_defect_photo',
+                    'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
                 ])
                 ->all(),
         ]);

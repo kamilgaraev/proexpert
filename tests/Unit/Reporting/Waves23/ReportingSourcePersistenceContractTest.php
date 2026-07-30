@@ -47,10 +47,11 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString("'status' => 'pending'", $job);
         self::assertStringContainsString("'completed_owner_checksum' => null", $job);
         self::assertStringContainsString('->afterCommit()', $job);
-        self::assertStringContainsString("'content_hash' => hash_final(\$hash)", $generation);
-        self::assertStringContainsString("'versions' => \$versions", $generation);
-        self::assertStringContainsString("'watermarks' => \$watermarks", $generation);
-        self::assertStringContainsString('...self::dependentTables($sourceCode)', $generation);
+        self::assertStringContainsString("Schema::create('report_source_generations'", $migration);
+        self::assertStringContainsString('bump_report_source_generation', $migration);
+        self::assertStringContainsString("'revision' => (int) \$generation->revision", $generation);
+        self::assertStringNotContainsString('LOCK TABLE', $generation);
+        self::assertStringNotContainsString('chunkById', $generation);
         self::assertStringContainsString('ownerCutoff($this->organizationId, $this->sourceCode)', $job);
         self::assertStringContainsString("':missing_target:'", $job);
     }

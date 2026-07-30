@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Access;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
 final class ProductionReportScopedResourceAuthorizers
@@ -25,10 +28,15 @@ final class ProductionReportScopedResourceAuthorizers
             $this->workforceEmployee(),
             $this->workforceSnapshotRelation(),
             $this->workforceSnapshotEvidence(),
-            $this->direct('incident_closure', 'safety_incidents'),
-            $this->direct('incident_cancellation', 'safety_incidents'),
+            $this->safetyEvidence('incident_closure', 'safety_incidents', 'incident', 'closed'),
+            $this->safetyEvidence('incident_cancellation', 'safety_incidents', 'incident', 'cancelled'),
             $this->violationResolution(),
-            $this->direct('corrective_action_verification', 'safety_corrective_actions'),
+            $this->safetyEvidence(
+                'corrective_action_verification',
+                'safety_corrective_actions',
+                'corrective_action',
+                'verified',
+            ),
             $this->workforceEvidence('employee_requirement', 'safety_employee_requirements'),
             $this->workforceEvidence('training', 'safety_training_records'),
             $this->workforceEvidence('medical_exam', 'safety_medical_exams'),
@@ -103,14 +111,60 @@ final class ProductionReportScopedResourceAuthorizers
     {
         return new QueryReportScopedResourceAuthorizer(
             'quality_defect_photo',
-            static fn (int $organizationId, int $projectId, int $id): bool => DB::table('quality_defect_photos as photo')
-                ->join('quality_defects as defect', 'defect.id', '=', 'photo.quality_defect_id')
-                ->where('photo.id', $id)
-                ->where('photo.organization_id', $organizationId)
-                ->where('defect.organization_id', $organizationId)
-                ->where('defect.project_id', $projectId)
-                ->exists(),
+            static fn (int $organizationId, int $projectId, int $id): bool => self::qualityPhotoIsCurrent(
+                $organizationId,
+                $projectId,
+                $id,
+            ),
         );
+    }
+
+    private static function qualityPhotoIsCurrent(int $organizationId, int $projectId, int $id): bool
+    {
+        $photo = DB::table('quality_defect_photos as photo')
+            ->join('quality_defects as defect', 'defect.id', '=', 'photo.quality_defect_id')
+            ->where('photo.id', $id)
+            ->where('photo.organization_id', $organizationId)
+            ->where('defect.organization_id', $organizationId)
+            ->where('defect.project_id', $projectId)
+            ->first([
+                'photo.caption',
+                'photo.created_at',
+                'photo.metadata',
+                'photo.quality_defect_id',
+                'photo.type',
+                'photo.uploaded_by',
+                'photo.url',
+            ]);
+        if ($photo === null) {
+            return false;
+        }
+        $contentHash = hash('sha256', CanonicalJson::encode([
+            'caption' => $photo->caption,
+            'created_at' => CarbonImmutable::parse((string) $photo->created_at)->toAtomString(),
+            'metadata' => $photo->metadata === null ? null : json_decode((string) $photo->metadata, true, 512, JSON_THROW_ON_ERROR),
+            'storage_identity' => (string) $photo->url,
+            'type' => (string) $photo->type,
+            'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
+        ]));
+        $events = DB::table('quality_defect_transition_events')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('quality_defect_id', $photo->quality_defect_id)
+            ->get(['evidence_refs']);
+        foreach ($events as $event) {
+            $references = json_decode((string) $event->evidence_refs, true, 512, JSON_THROW_ON_ERROR);
+            foreach (is_array($references) ? $references : [] as $reference) {
+                if (($reference['type'] ?? null) === 'quality_defect_photo'
+                    && (int) ($reference['id'] ?? 0) === $id
+                    && is_string($reference['content_hash'] ?? null)
+                    && hash_equals($reference['content_hash'], $contentHash)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function qualityStatusComment(): QueryReportScopedResourceAuthorizer
@@ -185,25 +239,29 @@ final class ProductionReportScopedResourceAuthorizers
     {
         return new QueryReportScopedResourceAuthorizer(
             $kind,
-            static fn (int $organizationId, int $projectId, int $id): bool => DB::table($table.' as evidence')
-                ->join('safety_site_workforce_assignments as mapping', 'mapping.employee_id', '=', 'evidence.employee_id')
-                ->join('workforce_employee_assignments as assignment', 'assignment.id', '=', 'mapping.workforce_assignment_id')
-                ->join('safety_sites as site', 'site.id', '=', 'mapping.safety_site_id')
-                ->where('evidence.id', $id)
-                ->where('evidence.organization_id', $organizationId)
-                ->where('mapping.organization_id', $organizationId)
-                ->where('mapping.project_id', $projectId)
-                ->where('assignment.organization_id', $organizationId)
-                ->where('assignment.project_id', $projectId)
-                ->whereColumn('assignment.employee_id', 'evidence.employee_id')
-                ->where('assignment.status', 'active')
-                ->whereNull('assignment.deleted_at')
-                ->whereDate('mapping.valid_from', '<=', now()->toDateString())
-                ->where(static fn ($query) => $query->whereNull('mapping.valid_to')->orWhereDate('mapping.valid_to', '>=', now()->toDateString()))
-                ->where('site.organization_id', $organizationId)
-                ->where('site.project_id', $projectId)
-                ->where('site.is_active', true)
-                ->exists(),
+            static function (int $organizationId, int $projectId, int $id) use ($kind, $table): bool {
+                $query = DB::table($table.' as evidence')
+                    ->join('safety_site_workforce_assignments as mapping', 'mapping.employee_id', '=', 'evidence.employee_id')
+                    ->join('workforce_employee_assignments as assignment', 'assignment.id', '=', 'mapping.workforce_assignment_id')
+                    ->join('safety_sites as site', 'site.id', '=', 'mapping.safety_site_id')
+                    ->where('evidence.id', $id)
+                    ->where('evidence.organization_id', $organizationId)
+                    ->where('mapping.organization_id', $organizationId)
+                    ->where('mapping.project_id', $projectId)
+                    ->where('assignment.organization_id', $organizationId)
+                    ->where('assignment.project_id', $projectId)
+                    ->whereColumn('assignment.employee_id', 'evidence.employee_id')
+                    ->where('assignment.status', 'active')
+                    ->whereNull('assignment.deleted_at')
+                    ->whereDate('mapping.valid_from', '<=', now()->toDateString())
+                    ->where(static fn ($query) => $query->whereNull('mapping.valid_to')->orWhereDate('mapping.valid_to', '>=', now()->toDateString()))
+                    ->where('site.organization_id', $organizationId)
+                    ->where('site.project_id', $projectId)
+                    ->where('site.is_active', true);
+                self::applyWorkforceEvidenceValidity($query, $kind);
+
+                return $query->exists();
+            },
         );
     }
 
@@ -255,6 +313,9 @@ final class ProductionReportScopedResourceAuthorizers
                 'employee_id',
                 'evidence_id',
                 'evidence_type',
+                'requirement_code',
+                'status',
+                'valid_until',
                 'safety_site_id',
                 'site_assignment_id',
                 'workforce_assignment_id',
@@ -292,6 +353,9 @@ final class ProductionReportScopedResourceAuthorizers
                 ->where('participant.employee_id', $row->employee_id)
                 ->where('briefing.organization_id', $organizationId)
                 ->where('briefing.project_id', $projectId)
+                ->whereNotNull('participant.signed_at')
+                ->whereNull('briefing.deleted_at')
+                ->whereNull('briefing.cancelled_at')
                 ->exists();
         }
         $table = match ($row->evidence_type) {
@@ -302,11 +366,53 @@ final class ProductionReportScopedResourceAuthorizers
             default => null,
         };
 
-        return $table !== null && DB::table($table)
-            ->where('id', $row->evidence_id)
-            ->where('organization_id', $organizationId)
-            ->where('employee_id', $row->employee_id)
-            ->exists();
+        if ($table === null) {
+            return false;
+        }
+        $query = DB::table($table.' as evidence')
+            ->where('evidence.id', $row->evidence_id)
+            ->where('evidence.organization_id', $organizationId)
+            ->where('evidence.employee_id', $row->employee_id);
+        self::applyWorkforceEvidenceValidity($query, (string) $row->evidence_type, $row);
+
+        return $query->exists();
+    }
+
+    private static function applyWorkforceEvidenceValidity(Builder $query, string $type, ?object $row = null): void
+    {
+        $query->whereNull('evidence.deleted_at');
+        match ($type) {
+            'employee_requirement' => $query
+                ->when($row !== null, static fn ($builder) => $builder
+                    ->where('evidence.requirement_code', $row->requirement_code))
+                ->whereIn('evidence.status', $row?->status === 'waived'
+                    ? ['waived'] : ['fulfilled', 'valid', 'approved', 'completed'])
+                ->where(static fn ($builder) => $builder
+                    ->whereNull('evidence.valid_until')
+                    ->orWhereDate('evidence.valid_until', '>=', now()->toDateString())),
+            'training' => $query
+                ->when($row !== null, static fn ($builder) => $builder
+                    ->where('evidence.program_code', $row->requirement_code))
+                ->where('evidence.result', 'passed')
+                ->where(static fn ($builder) => $builder
+                    ->whereNull('evidence.valid_until')
+                    ->orWhereDate('evidence.valid_until', '>=', now()->toDateString())),
+            'medical_exam' => $query
+                ->when($row !== null, static fn ($builder) => $builder
+                    ->where('evidence.exam_type', $row->requirement_code))
+                ->whereIn('evidence.result', ['fit', 'fit_with_restrictions'])
+                ->where(static fn ($builder) => $builder
+                    ->whereNull('evidence.valid_until')
+                    ->orWhereDate('evidence.valid_until', '>=', now()->toDateString())),
+            'ppe' => $query
+                ->when($row !== null, static fn ($builder) => $builder
+                    ->where('evidence.ppe_code', $row->requirement_code))
+                ->where('evidence.status', 'issued')
+                ->where(static fn ($builder) => $builder
+                    ->whereNull('evidence.valid_until')
+                    ->orWhereDate('evidence.valid_until', '>=', now()->toDateString())),
+            default => null,
+        };
     }
 
     private function briefingEvidence(): QueryReportScopedResourceAuthorizer
@@ -318,6 +424,9 @@ final class ProductionReportScopedResourceAuthorizers
                 ->where('participant.id', $id)
                 ->where('briefing.organization_id', $organizationId)
                 ->where('briefing.project_id', $projectId)
+                ->whereNotNull('participant.signed_at')
+                ->whereNull('briefing.deleted_at')
+                ->whereNull('briefing.cancelled_at')
                 ->exists(),
         );
     }
@@ -326,16 +435,106 @@ final class ProductionReportScopedResourceAuthorizers
     {
         return new QueryReportScopedResourceAuthorizer(
             'violation_resolution',
-            static fn (int $organizationId, int $projectId, int $id): bool => DB::table('safety_violations')
-                ->where('id', $id)
-                ->where('organization_id', $organizationId)
-                ->where('project_id', $projectId)
-                ->where('status', 'resolved')
-                ->whereNotNull('resolved_at')
-                ->whereNotNull('resolution_comment')
-                ->whereRaw("btrim(resolution_comment) <> ''")
-                ->exists(),
+            static fn (int $organizationId, int $projectId, int $id): bool => self::safetyEvidenceIsCurrent(
+                $organizationId,
+                $projectId,
+                $id,
+                'safety_violations',
+                'violation',
+                'resolved',
+                'violation_resolution',
+            ),
         );
+    }
+
+    private function safetyEvidence(
+        string $kind,
+        string $table,
+        string $subjectType,
+        string $status,
+    ): QueryReportScopedResourceAuthorizer {
+        return new QueryReportScopedResourceAuthorizer(
+            $kind,
+            static fn (int $organizationId, int $projectId, int $id): bool => self::safetyEvidenceIsCurrent(
+                $organizationId,
+                $projectId,
+                $id,
+                $table,
+                $subjectType,
+                $status,
+                $kind,
+            ),
+        );
+    }
+
+    private static function safetyEvidenceIsCurrent(
+        int $organizationId,
+        int $projectId,
+        int $id,
+        string $table,
+        string $subjectType,
+        string $status,
+        string $evidenceType,
+    ): bool {
+        $subject = DB::table($table)
+            ->where('id', $id)
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('status', $status)
+            ->first();
+        $event = DB::table('safety_transition_events')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('subject_type', $subjectType)
+            ->where('subject_id', $id)
+            ->where('to_status', $status)
+            ->where('evidence_type', $evidenceType)
+            ->where('evidence_id', (string) $id)
+            ->orderByDesc('event_version')
+            ->first();
+        if ($subject === null || $event === null) {
+            return false;
+        }
+        $evidence = match ($evidenceType) {
+            'incident_closure' => $subject->closed_at !== null && trim((string) $subject->root_cause) !== ''
+                ? [
+                    'closed_at' => CarbonImmutable::parse((string) $subject->closed_at)->format(DATE_ATOM),
+                    'corrective_actions' => trim((string) $subject->corrective_actions),
+                    'root_cause' => trim((string) $subject->root_cause),
+                ] : null,
+            'incident_cancellation' => $subject->cancelled_at !== null
+                && trim((string) $subject->cancellation_reason) !== ''
+                ? [
+                    'cancelled_at' => CarbonImmutable::parse((string) $subject->cancelled_at)->format(DATE_ATOM),
+                    'cancellation_reason' => trim((string) $subject->cancellation_reason),
+                ] : null,
+            'violation_resolution' => $subject->resolved_at !== null
+                && trim((string) $subject->resolution_comment) !== ''
+                ? [
+                    'resolution_comment' => trim((string) $subject->resolution_comment),
+                    'resolved_at' => CarbonImmutable::parse((string) $subject->resolved_at)->format(DATE_ATOM),
+                ] : null,
+            'corrective_action_verification' => $subject->resolved_at !== null
+                && $subject->verified_at !== null
+                && trim((string) $subject->resolution_comment) !== ''
+                && trim((string) $subject->verification_comment) !== ''
+                ? [
+                    'resolution_comment' => trim((string) $subject->resolution_comment),
+                    'resolved_at' => CarbonImmutable::parse((string) $subject->resolved_at)->format(DATE_ATOM),
+                    'verification_comment' => trim((string) $subject->verification_comment),
+                    'verified_at' => CarbonImmutable::parse((string) $subject->verified_at)->format(DATE_ATOM),
+                ] : null,
+            default => null,
+        };
+        if ($evidence === null) {
+            return false;
+        }
+
+        return is_string($event->evidence_content_hash)
+            && hash_equals(
+                $event->evidence_content_hash,
+                hash('sha256', CanonicalJson::encode($evidence)),
+            );
     }
 
     private static function safetySubjectUsesContractor(

@@ -4,12 +4,19 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\Waves23;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\CurrentReportAuthorizationFacts;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\ProductionReportScopedResourceAuthorizers;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
 use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use Carbon\CarbonImmutable;
+use DateTimeImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -96,6 +103,173 @@ final class WorkforceAdmissionPostgresTest extends TestCase
 
         self::assertSame('missing', $results[0]->status);
         self::assertSame([], $service->pinnedLifecycleFlags($context));
+    }
+
+    #[Test]
+    public function admission_row_persists_the_real_site_mapping_primary_key(): void
+    {
+        $this->requirePostgres();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $actor = User::factory()->create();
+        $employeeId = DB::table('workforce_employees')->insertGetId([
+            'organization_id' => $organization->id,
+            'personnel_number' => 'MAP-'.Str::random(8),
+            'last_name' => 'Тестов',
+            'first_name' => 'Сотрудник',
+            'employment_status' => 'active',
+            'hire_date' => '2026-07-01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        [$departmentId, $positionId, $staffUnitId] = $this->structure((int) $organization->id);
+        $assignmentId = DB::table('workforce_employee_assignments')->insertGetId([
+            'organization_id' => $organization->id,
+            'employee_id' => $employeeId,
+            'staff_unit_id' => $staffUnitId,
+            'department_id' => $departmentId,
+            'position_id' => $positionId,
+            'project_id' => $project->id,
+            'valid_from' => '2026-07-01',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $siteId = DB::table('safety_sites')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'code' => 'SITE-'.Str::random(8),
+            'name' => 'Площадка',
+            'timezone' => 'Europe/Moscow',
+            'is_active' => true,
+            'active_from' => '2026-07-01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $mappingId = DB::table('safety_site_workforce_assignments')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'safety_site_id' => $siteId,
+            'workforce_assignment_id' => $assignmentId,
+            'employee_id' => $employeeId,
+            'valid_from' => '2026-07-01',
+            'mapping_source' => 'workforce_employee_assignments',
+            'source_hash' => str_repeat('a', 64),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $snapshotId = (string) Str::ulid();
+        DB::table('safety_admission_snapshots')->insert([
+            'id' => $snapshotId,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'safety_site_id' => $siteId,
+            'policy_version_ids' => '[]',
+            'scope_hash' => str_repeat('a', 64),
+            'definition_hash' => str_repeat('b', 64),
+            'formula_version' => 'test',
+            'query_hash' => str_repeat('c', 64),
+            'input_hash' => str_repeat('d', 64),
+            'output_hash' => str_repeat('e', 64),
+            'source_hash' => str_repeat('f', 64),
+            'snapshot_date' => '2026-07-30',
+            'source_watermark' => now(),
+            'source_ledger_binding' => '{}',
+            'generated_at' => now(),
+            'stale_at' => now()->addMinute(),
+        ]);
+        $rowId = DB::table('safety_admission_rows')->insertGetId([
+            'organization_id' => $organization->id,
+            'snapshot_id' => $snapshotId,
+            'project_id' => $project->id,
+            'safety_site_id' => $siteId,
+            'site_assignment_id' => $mappingId,
+            'workforce_assignment_id' => $assignmentId,
+            'employee_id' => $employeeId,
+            'snapshot_date' => '2026-07-30',
+            'row_type' => 'requirement',
+            'row_key' => 'mapping-'.$mappingId,
+            'requirement_code' => 'training',
+            'requirement_type' => 'training',
+            'status' => 'missing',
+            'mandatory' => true,
+            'blocked' => true,
+            'verified' => false,
+            'blocker_codes' => '[]',
+        ]);
+
+        self::assertSame($mappingId, (int) DB::table('safety_admission_rows')->find($rowId)->site_assignment_id);
+
+        $trainingId = DB::table('safety_training_records')->insertGetId([
+            'organization_id' => $organization->id,
+            'employee_id' => $employeeId,
+            'program_code' => 'training',
+            'program_name' => 'Обязательное обучение',
+            'training_type' => 'mandatory',
+            'completed_at' => '2026-07-29',
+            'valid_until' => now()->addYear()->toDateString(),
+            'result' => 'passed',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('safety_admission_rows')->where('id', $rowId)->update([
+            'status' => 'fulfilled',
+            'blocked' => false,
+            'verified' => true,
+            'evidence_type' => 'training',
+            'evidence_id' => $trainingId,
+        ]);
+        $resource = new ReportScopedResource('workforce_snapshot_evidence', $rowId, (int) $project->id);
+        $facts = new CurrentReportAuthorizationFacts(
+            'queue',
+            (int) $actor->id,
+            (int) $organization->id,
+            (int) $project->id,
+            $resource,
+            new DateTimeImmutable,
+        );
+        $authorizer = collect((new ProductionReportScopedResourceAuthorizers)->handlers())
+            ->first(static fn ($handler): bool => $handler->kind() === 'workforce_snapshot_evidence');
+        self::assertNotNull($authorizer);
+        self::assertTrue($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
+
+        DB::table('safety_training_records')->where('id', $trainingId)->update(['result' => 'failed']);
+
+        self::assertFalse($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
+    }
+
+    private function structure(int $organizationId): array
+    {
+        $departmentId = DB::table('workforce_departments')->insertGetId([
+            'organization_id' => $organizationId,
+            'code' => 'DEP-'.Str::random(8),
+            'name' => 'Участок',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $positionId = DB::table('workforce_positions')->insertGetId([
+            'organization_id' => $organizationId,
+            'code' => 'POS-'.Str::random(8),
+            'name' => 'Монтажник',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $staffUnitId = DB::table('workforce_staff_units')->insertGetId([
+            'organization_id' => $organizationId,
+            'department_id' => $departmentId,
+            'position_id' => $positionId,
+            'code' => 'UNIT-'.Str::random(8),
+            'headcount' => 1,
+            'rate' => 1,
+            'valid_from' => '2026-07-01',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [$departmentId, $positionId, $staffUnitId];
     }
 
     private function requirePostgres(): void

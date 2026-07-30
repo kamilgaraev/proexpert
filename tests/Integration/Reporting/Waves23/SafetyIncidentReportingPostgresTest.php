@@ -234,6 +234,13 @@ SQL);
             'resolved_at' => now(),
             'resolution_comment' => 'Verified resolution',
         ]);
+        app(SafetyTransitionRecorder::class)->record(
+            $violation,
+            'open',
+            'resolved',
+            (int) $actor->id,
+            $violation->resolved_at,
+        );
         $resource = new ReportScopedResource(
             'violation_resolution',
             (int) $violation->id,
@@ -252,7 +259,7 @@ SQL);
         self::assertNotNull($authorizer);
         self::assertTrue($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
 
-        $violation->update(['status' => 'open']);
+        $violation->update(['resolution_comment' => 'Changed after snapshot']);
 
         self::assertFalse($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
     }

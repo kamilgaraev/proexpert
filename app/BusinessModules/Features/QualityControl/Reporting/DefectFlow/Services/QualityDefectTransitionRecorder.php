@@ -68,6 +68,22 @@ final readonly class QualityDefectTransitionRecorder
                 || ! in_array($evidence['type'] ?? null, ['quality_defect_photo', 'status_comment'], true)) {
                 throw new LogicException('quality_defect_transition_evidence_invalid');
             }
+            if ($evidence['type'] === 'quality_defect_photo') {
+                $required = ['caption', 'content_hash', 'created_at', 'metadata', 'photo_type', 'storage_identity', 'uploaded_by'];
+                if (array_filter($required, static fn (string $key): bool => ! array_key_exists($key, $evidence)) !== []
+                    || ! is_string($evidence['content_hash'])
+                    || ! is_string($evidence['storage_identity'])
+                    || ! hash_equals($evidence['content_hash'], hash('sha256', CanonicalJson::encode([
+                        'caption' => $evidence['caption'],
+                        'created_at' => $evidence['created_at'],
+                        'metadata' => $evidence['metadata'],
+                        'storage_identity' => $evidence['storage_identity'],
+                        'type' => $evidence['photo_type'],
+                        'uploaded_by' => $evidence['uploaded_by'],
+                    ])))) {
+                    throw new LogicException('quality_defect_transition_evidence_invalid');
+                }
+            }
             $evidenceRefs[] = $evidence;
         }
         if (trim((string) $history->comment) !== '') {

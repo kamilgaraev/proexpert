@@ -19,7 +19,6 @@ return new class extends Migration
             $table->foreignId('organization_id')->constrained()->restrictOnDelete();
             $table->foreignId('project_id')->constrained()->restrictOnDelete();
             $table->foreignId('safety_site_id')->constrained('safety_sites')->restrictOnDelete();
-            $table->foreignId('site_assignment_id')->constrained('safety_site_workforce_assignments')->restrictOnDelete();
             $table->foreignId('workforce_assignment_id')->constrained('workforce_employee_assignments')->restrictOnDelete();
             $table->foreignId('employee_id')->constrained('workforce_employees')->restrictOnDelete();
             $table->date('valid_from');
@@ -130,6 +129,7 @@ return new class extends Migration
             $table->foreign('snapshot_id')->references('id')->on('safety_admission_snapshots')->cascadeOnDelete();
             $table->foreignId('project_id')->constrained()->cascadeOnDelete();
             $table->foreignId('safety_site_id')->constrained('safety_sites')->restrictOnDelete();
+            $table->foreignId('site_assignment_id')->constrained('safety_site_workforce_assignments')->restrictOnDelete();
             $table->foreignId('workforce_assignment_id')->constrained('workforce_employee_assignments')->restrictOnDelete();
             $table->foreignId('employee_id')->constrained('workforce_employees')->restrictOnDelete();
             $table->date('snapshot_date');

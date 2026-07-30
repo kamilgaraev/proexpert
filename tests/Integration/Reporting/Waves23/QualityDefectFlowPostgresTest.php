@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\Waves23;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\CurrentReportAuthorizationFacts;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\ProductionReportScopedResourceAuthorizers;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectTransitionRecorder;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -56,6 +61,85 @@ final class QualityDefectFlowPostgresTest extends TestCase
             'quality_defect_flow_policies_immutable',
             'quality_defect_transition_events_immutable',
         ], $triggers);
+    }
+
+    #[Test]
+    public function photo_authorization_requires_the_exact_pinned_storage_content(): void
+    {
+        $this->requirePostgres();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $actor = User::factory()->create();
+        $defect = QualityDefect::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'created_by' => $actor->id,
+            'defect_number' => 'Q-PHOTO-EXACT-1',
+            'title' => 'Photo exact identity',
+            'severity' => 'major',
+            'status' => 'open',
+            'inspection_required' => true,
+        ]);
+        $createdAt = now();
+        $photoId = DB::table('quality_defect_photos')->insertGetId([
+            'quality_defect_id' => $defect->id,
+            'organization_id' => $organization->id,
+            'uploaded_by' => $actor->id,
+            'type' => 'evidence',
+            'url' => 'org-'.$organization->id.'/quality/exact.jpg',
+            'caption' => 'Original',
+            'metadata' => json_encode(['sha256' => str_repeat('a', 64)], JSON_THROW_ON_ERROR),
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ]);
+        $pinned = [
+            'caption' => 'Original',
+            'created_at' => $createdAt->toAtomString(),
+            'metadata' => ['sha256' => str_repeat('a', 64)],
+            'storage_identity' => 'org-'.$organization->id.'/quality/exact.jpg',
+            'type' => 'evidence',
+            'uploaded_by' => (int) $actor->id,
+        ];
+        $history = QualityDefectStatusHistory::query()->create([
+            'quality_defect_id' => $defect->id,
+            'organization_id' => $organization->id,
+            'from_status' => null,
+            'to_status' => 'open',
+            'changed_by' => $actor->id,
+            'changed_at' => $createdAt,
+            'reporting_dimensions' => [
+                'contractor_id' => null,
+                'due_date' => null,
+                'project_id' => (int) $project->id,
+                'schedule_task_id' => null,
+                'severity' => 'major',
+            ],
+            'reporting_evidence_refs' => [[
+                ...$pinned,
+                'content_hash' => hash('sha256', CanonicalJson::encode($pinned)),
+                'id' => $photoId,
+                'photo_type' => $pinned['type'],
+                'type' => 'quality_defect_photo',
+            ]],
+        ]);
+        app(QualityDefectTransitionRecorder::class)->record($defect, $history);
+        $resource = new ReportScopedResource('quality_defect_photo', $photoId, (int) $project->id);
+        $facts = new CurrentReportAuthorizationFacts(
+            'queue',
+            (int) $actor->id,
+            (int) $organization->id,
+            (int) $project->id,
+            $resource,
+            new DateTimeImmutable,
+        );
+        $authorizer = collect((new ProductionReportScopedResourceAuthorizers)->handlers())
+            ->first(static fn ($handler): bool => $handler->kind() === 'quality_defect_photo');
+        self::assertNotNull($authorizer);
+        self::assertTrue($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
+
+        DB::table('quality_defect_photos')->where('id', $photoId)->update(['caption' => 'Changed']);
+
+        self::assertFalse($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
     }
 
     #[Test]
@@ -162,7 +246,7 @@ final class QualityDefectFlowPostgresTest extends TestCase
                 'schedule_task_id' => null,
                 'severity' => 'major',
             ], JSON_THROW_ON_ERROR),
-            'reporting_evidence_refs' => json_encode([['id' => 1, 'type' => 'quality_defect_photo']], JSON_THROW_ON_ERROR),
+            'reporting_evidence_refs' => '[]',
         ]);
     }
 

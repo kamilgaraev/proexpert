@@ -91,6 +91,7 @@ final readonly class SafetyTransitionRecorder
                 );
 
                 return SafetyTransitionEvent::query()->create($payload + [
+                    'evidence_content_hash' => $this->evidence($subject, $toStatus)[2],
                     'event_hash' => $this->eventHash($payload, $subject, $toStatus),
                     'recorded_at' => now(),
                 ]);
