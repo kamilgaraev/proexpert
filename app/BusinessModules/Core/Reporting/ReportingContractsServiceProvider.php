@@ -8,6 +8,8 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorResponseFactory;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
+use App\BusinessModules\Core\Reporting\Infrastructure\Definitions\ProductionReportDefinitionBindingAssembler;
 use Illuminate\Support\ServiceProvider;
 
 final class ReportingContractsServiceProvider extends ServiceProvider
@@ -18,6 +20,10 @@ final class ReportingContractsServiceProvider extends ServiceProvider
         $this->app->singleton(ReportErrorResponseFactory::class);
         $this->app->singleton(ReportAccessService::class);
         $this->app->singleton(ReportExecutionContextFactory::class);
+        $this->app->singleton(
+            ReportDefinitionBindingAssembler::class,
+            ProductionReportDefinitionBindingAssembler::class,
+        );
     }
 
     public function boot(): void

@@ -18,6 +18,18 @@ final class SupplyReliabilityPostgresTest extends Waves23PostgresTestCase
         self::assertSame('boolean', $this->column('supply_reliability_rows', 'stable_in_full')->data_type);
         self::assertNotNull($this->column('supply_reliability_rows', 'quantity_otif_denominator'));
         self::assertNotNull($this->column('supply_reliability_rows', 'value_otif_denominator_minor'));
+        self::assertSame(
+            'timestamp with time zone',
+            $this->column('purchase_orders', 'sent_at')->data_type,
+        );
+        self::assertSame(
+            'timestamp with time zone',
+            $this->column('purchase_orders', 'confirmed_at')->data_type,
+        );
+        self::assertSame(
+            'timestamp with time zone',
+            $this->column('purchase_orders', 'cancelled_at')->data_type,
+        );
         self::assertTrue(DB::table('pg_constraint')
             ->where('conname', 'supply_promise_source_version_unique')
             ->exists());

@@ -198,6 +198,32 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             ->orderBy('occurred_at')
             ->orderBy('id')
             ->get();
+        $eventsByLine = $events->groupBy('purchase_order_item_id');
+        if (isset($query->filters->values['delay'])) {
+            $promises = $promises->filter(function (PurchaseOrderPromiseVersion $promise) use (
+                $eventsByLine,
+                $policy,
+                $query,
+            ): bool {
+                $qualifyingReceipt = $this->qualifyingReceipt(
+                    $promise,
+                    $eventsByLine->get($promise->purchase_order_item_id, collect()),
+                    (string) $policy->quantity_tolerance,
+                );
+
+                return $this->matchesDelayFilter($this->delayBucket($promise, $qualifyingReceipt), $query);
+            })->values();
+            $includedItemIds = $promises->pluck('purchase_order_item_id')->all();
+            $promisedOwnerIds = $promiseQuery->pluck('purchase_order_item_id')->all();
+            $includeUnreceived = $this->matchesDelayFilter('unreceived', $query);
+            $ownerItems = $ownerItems->filter(
+                static fn ($item): bool => in_array($item->id, $includedItemIds, true)
+                    || ($includeUnreceived && ! in_array($item->id, $promisedOwnerIds, true)),
+            )->values();
+            $includedPromiseIds = $promises->pluck('id')->all();
+            $events = $events->whereIn('promise_version_id', $includedPromiseIds)->values();
+            $eventsByLine = $events->groupBy('purchase_order_item_id');
+        }
         $sourceHash = $this->sourceHashes->make(
             $query->canonicalJson,
             [
@@ -221,7 +247,6 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             return $this->snapshotRef($query, $existing);
         }
 
-        $eventsByLine = $events->groupBy('purchase_order_item_id');
         $ownerItemsById = $ownerItems->keyBy('id');
         $snapshot = DB::transaction(function () use (
             $eventsByLine,

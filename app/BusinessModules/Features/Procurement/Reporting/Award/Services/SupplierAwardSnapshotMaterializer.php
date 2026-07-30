@@ -89,6 +89,12 @@ final readonly class SupplierAwardSnapshotMaterializer
                 'supplier_award_decision_versions.purchase_request_id',
             )
             ->leftJoin(
+                'site_requests as award_filter_site_request',
+                'award_filter_site_request.id',
+                '=',
+                'award_filter_request.site_request_id',
+            )
+            ->leftJoin(
                 'supplier_proposal_versions as award_filter_version',
                 'award_filter_version.id',
                 '=',
@@ -100,6 +106,18 @@ final readonly class SupplierAwardSnapshotMaterializer
                 '=',
                 'award_filter_version.supplier_proposal_id',
             )
+            ->leftJoin(
+                'supplier_proposal_lines as award_filter_line',
+                'award_filter_line.supplier_proposal_id',
+                '=',
+                'award_filter_proposal.id',
+            )
+            ->leftJoin(
+                'materials as award_filter_material',
+                'award_filter_material.id',
+                '=',
+                'award_filter_line.material_id',
+            )
             ->where('supplier_award_decision_versions.organization_id', $organizationId)
             ->where('supplier_award_decision_versions.selected_at', '<=', $query->asOf)
             ->when(
@@ -110,22 +128,23 @@ final readonly class SupplierAwardSnapshotMaterializer
                 ),
             );
         if ($context->scope->projectIds !== []) {
-            $purchaseRequestIds = PurchaseRequest::query()
-                ->where('organization_id', $organizationId)
-                ->whereIn('project_id', $context->scope->projectIds)
-                ->pluck('id')
-                ->all();
-            $decisionQuery->whereIn('purchase_request_id', $purchaseRequestIds);
+            $decisionQuery->whereIn(
+                'award_filter_site_request.project_id',
+                $context->scope->projectIds,
+            );
         }
         $this->filters->apply($decisionQuery, $query->filters, [
-            'project' => 'award_filter_request.project_id',
-            'category' => DB::raw("NULLIF(award_filter_version.commercial_snapshot->>'category_id', '')::bigint"),
-            'material' => DB::raw("NULLIF(award_filter_version.commercial_snapshot->>'material_id', '')::bigint"),
+            'project' => 'award_filter_site_request.project_id',
+            'category' => 'award_filter_material.category',
+            'material' => 'award_filter_line.material_id',
             'buyer' => 'supplier_award_decision_versions.selected_by',
             'supplier' => 'award_filter_proposal.supplier_id',
             'decision' => 'supplier_award_decision_versions.decision_id',
-            'method' => DB::raw("award_filter_version.commercial_snapshot->>'procurement_method'"),
-            'currency' => DB::raw("award_filter_version.commercial_snapshot->>'currency'"),
+            'method' => DB::raw(
+                "CASE WHEN jsonb_array_length(supplier_award_decision_versions.invited_supplier_ids) > 1 "
+                ."THEN 'competitive' ELSE 'single_source' END",
+            ),
+            'currency' => 'award_filter_proposal.currency',
             'non_lowest' => [
                 'column' => 'supplier_award_decision_versions.is_lowest_price_selected',
                 'invert_boolean' => true,
@@ -134,10 +153,12 @@ final readonly class SupplierAwardSnapshotMaterializer
         ]);
         $decisions = $decisionQuery
             ->select('supplier_award_decision_versions.*')
+            ->distinct()
             ->orderBy('decision_id')
             ->orderBy('decision_version')
             ->get();
         $purchaseRequests = PurchaseRequest::query()
+            ->with('siteRequest')
             ->where('organization_id', $organizationId)
             ->whereIn('id', $decisions->pluck('purchase_request_id')->filter()->unique()->all())
             ->get()
@@ -170,7 +191,7 @@ final readonly class SupplierAwardSnapshotMaterializer
                 ...$purchaseRequests->map(
                     static fn (PurchaseRequest $request): string => hash(
                         'sha256',
-                        $request->id.':'.$request->project_id,
+                        $request->id.':'.$request->siteRequest?->project_id,
                     ),
                 )->values()->all(),
             ],
@@ -241,7 +262,7 @@ final readonly class SupplierAwardSnapshotMaterializer
                     'row_key' => 'award_'.$decision->decision_id.'_'.$decision->decision_version,
                     'project_id' => $decision->purchase_request_id === null
                         ? null
-                        : $purchaseRequests->get($decision->purchase_request_id)?->project_id,
+                        : $purchaseRequests->get($decision->purchase_request_id)?->siteRequest?->project_id,
                     'material_id' => isset($firstLine['material_id']) ? (int) $firstLine['material_id'] : null,
                     'decision_id' => $decision->decision_id,
                     'decision_version' => $decision->decision_version,
