@@ -15,19 +15,37 @@ use RuntimeException;
 
 final class PlanOneCPlatformEvidenceBuilderTest extends TestCase
 {
-    public function test_build_uses_repository_commit_blobs_instead_of_working_tree_sources(): void
+    private const TARGET_COMMIT = 'db5c9979a4865bdae1d7e0502b2af2f3a2648818';
+
+    public function test_build_is_bound_to_the_fixed_repository_commit_instead_of_snapshot_files(): void
     {
         $sourceRoot = dirname(__DIR__, 4);
         $repositoryRoot = sys_get_temp_dir().'/plan-one-c-evidence-'.bin2hex(random_bytes(8));
         self::assertTrue(mkdir($repositoryRoot, 0777, true));
 
         try {
-            $targetCommit = $this->currentCommit($sourceRoot);
-            $this->createLinkedWorkingTreeSnapshot($sourceRoot, $repositoryRoot, $targetCommit);
+            $targetCommit = self::TARGET_COMMIT;
+            self::assertNotSame($this->currentCommit($sourceRoot), $targetCommit);
+            $this->createCommitBoundSnapshot($sourceRoot, $repositoryRoot, $targetCommit);
 
             $targetSourceHashes = $this->sourceHashes($repositoryRoot, $targetCommit);
-            $translationPath = $repositoryRoot.'/'.$this->sourceHashPaths()['translation'];
-            self::assertNotFalse(file_put_contents($translationPath, "\nreturn ['snapshot' => 'changed'];\n", FILE_APPEND));
+            $mutatedPaths = [
+                'lang/ru/reports.php',
+                'docs/reports/contracts/plan-1c-contract-lock.json',
+                'docs/reports/contracts/report-platform-gates.v1.json',
+                'docs/reports/contracts/plan-1c-platform-completion.schema.json',
+                'docs/reports/contracts/report-quality-evidence.schema.json',
+            ];
+            $targetHashes = [];
+            $snapshotHashes = [];
+            foreach ($mutatedPaths as $path) {
+                $targetHashes[$path] = $this->gitBlobHash($repositoryRoot, $targetCommit, $path);
+                self::assertNotFalse(file_put_contents($repositoryRoot.'/'.$path, "\nmutated snapshot\n", FILE_APPEND));
+                $snapshotHash = hash_file('sha256', $repositoryRoot.'/'.$path);
+                self::assertIsString($snapshotHash);
+                $snapshotHashes[$path] = $snapshotHash;
+                self::assertNotSame($targetHashes[$path], $snapshotHash);
+            }
 
             $workingTreeSourceHashes = $this->workingTreeSourceHashes($repositoryRoot);
             self::assertNotSame(
@@ -51,23 +69,33 @@ final class PlanOneCPlatformEvidenceBuilderTest extends TestCase
             );
 
             self::assertSame(
-                $this->gitBlobHash(
-                    $repositoryRoot,
-                    $targetCommit,
-                    'docs/reports/contracts/plan-1c-contract-lock.json',
-                ),
+                $targetHashes['docs/reports/contracts/plan-1c-contract-lock.json'],
+                $document['plan_1c_lock_sha256'],
+            );
+            self::assertNotSame(
+                $snapshotHashes['docs/reports/contracts/plan-1c-contract-lock.json'],
                 $document['plan_1c_lock_sha256'],
             );
             self::assertSame(
-                $this->gitBlobHash(
-                    $repositoryRoot,
-                    $targetCommit,
-                    'docs/reports/contracts/report-platform-gates.v1.json',
-                ),
+                $targetHashes['docs/reports/contracts/report-platform-gates.v1.json'],
+                $document['platform_quality_catalog_sha256'],
+            );
+            self::assertNotSame(
+                $snapshotHashes['docs/reports/contracts/report-platform-gates.v1.json'],
                 $document['platform_quality_catalog_sha256'],
             );
             self::assertSame($targetSourceHashes, $document['source_hashes']);
             self::assertNotSame($workingTreeSourceHashes, $document['source_hashes']);
+            self::assertSame($targetHashes['lang/ru/reports.php'], $document['source_hashes']['translation']);
+            self::assertNotSame($snapshotHashes['lang/ru/reports.php'], $document['source_hashes']['translation']);
+            self::assertSame(
+                $targetHashes['docs/reports/contracts/report-quality-evidence.schema.json'],
+                $document['source_hashes']['platform_quality_ledger'],
+            );
+            self::assertNotSame(
+                $snapshotHashes['docs/reports/contracts/report-quality-evidence.schema.json'],
+                $document['source_hashes']['platform_quality_ledger'],
+            );
         } finally {
             $this->removeDirectory($repositoryRoot);
         }
@@ -363,7 +391,7 @@ final class PlanOneCPlatformEvidenceBuilderTest extends TestCase
         return $hashes;
     }
 
-    private function createLinkedWorkingTreeSnapshot(string $sourceRoot, string $snapshotRoot, string $commit): void
+    private function createCommitBoundSnapshot(string $sourceRoot, string $snapshotRoot, string $commit): void
     {
         $gitDirectory = $this->gitOutput($sourceRoot, ['rev-parse', '--absolute-git-dir']);
         self::assertNotSame('', $gitDirectory);
