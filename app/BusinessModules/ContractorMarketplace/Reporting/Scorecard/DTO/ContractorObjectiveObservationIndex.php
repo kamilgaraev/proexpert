@@ -17,14 +17,63 @@ final readonly class ContractorObjectiveObservationIndex
 
     public function categoryIds(int $profileId): array
     {
-        return array_map('intval', array_keys($this->categoriesByProfile[$profileId] ?? []));
+        $categoryIds = array_map('intval', array_keys($this->categoriesByProfile[$profileId] ?? []));
+        foreach ($this->rows as $sources) {
+            foreach ($sources[$profileId] ?? [] as $rows) {
+                foreach ($rows as $row) {
+                    if (is_array($row['_category_ids'] ?? null)) {
+                        $categoryIds = [...$categoryIds, ...array_map('intval', $row['_category_ids'])];
+                    }
+                }
+            }
+        }
+        $categoryIds = array_values(array_unique(array_filter($categoryIds)));
+        sort($categoryIds, SORT_NUMERIC);
+
+        return $categoryIds;
     }
 
     public function profileOrganizationId(int $profileId): ?int
     {
         $organizationId = $this->profileOrganizationById[$profileId] ?? null;
+        if (! is_int($organizationId)) {
+            foreach ($this->rows as $sources) {
+                foreach ($sources[$profileId] ?? [] as $rows) {
+                    foreach ($rows as $row) {
+                        $candidate = $row['_profile_organization_id'] ?? null;
+                        if (is_int($candidate)) {
+                            return $candidate;
+                        }
+                    }
+                }
+            }
+        }
 
         return is_int($organizationId) ? $organizationId : null;
+    }
+
+    public function categoryIdsForDimension(
+        int $profileId,
+        int $projectId,
+        string $cohortKey,
+        string $cohortPeriod,
+    ): array {
+        $categoryIds = [];
+        foreach ($this->rows as $sources) {
+            foreach ($sources[$profileId][$projectId] ?? [] as $row) {
+                if (
+                    is_array($row)
+                    && hash_equals($this->cohortKey($row, $cohortPeriod), $cohortKey)
+                    && is_array($row['_category_ids'] ?? null)
+                ) {
+                    $categoryIds = [...$categoryIds, ...array_map('intval', $row['_category_ids'])];
+                }
+            }
+        }
+        $categoryIds = array_values(array_unique(array_filter($categoryIds)));
+        sort($categoryIds, SORT_NUMERIC);
+
+        return $categoryIds;
     }
 
     public function observations(

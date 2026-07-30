@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Backfill;
 
-use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOfferReview;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorMembershipEvidenceResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceBackfill;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillBatch;
@@ -12,6 +11,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillResult;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final readonly class ContractorScorecardBackfill implements ReportSourceBackfill
@@ -47,17 +48,24 @@ final readonly class ContractorScorecardBackfill implements ReportSourceBackfill
             throw new InvalidArgumentException('contractor_scorecard_backfill_cursor_invalid');
         }
         $afterId = (int) ($cursor->position['review_id'] ?? 0);
-        $ids = MarketplaceHiringOfferReview::query()
-            ->where('reviewer_organization_id', $context->organizationId)
-            ->where('id', '>', $afterId)
-            ->where('created_at', '<=', $context->asOf)
+        $latestEvents = DB::table('contractor_scorecard_review_events')
+            ->selectRaw('DISTINCT ON (review_id) review_id, project_id, is_deleted')
+            ->where('organization_id', $context->organizationId)
+            ->where('observed_at', '<=', $context->asOf)
+            ->orderBy('review_id')
+            ->orderByDesc('observed_at')
+            ->orderByDesc('id');
+        $ids = DB::query()
+            ->fromSub($latestEvents, 'latest_review_events')
+            ->where('review_id', '>', $afterId)
+            ->where('is_deleted', false)
             ->when(
                 $context->scope->projectIds !== [],
                 fn ($builder) => $builder->whereIn('project_id', $context->scope->projectIds),
             )
-            ->orderBy('id')
+            ->orderBy('review_id')
             ->limit($limit)
-            ->pluck('id')
+            ->pluck('review_id')
             ->map(static fn (mixed $id): int => (int) $id)
             ->all();
         $lastId = $ids === [] ? $afterId : $ids[array_key_last($ids)];
@@ -86,45 +94,80 @@ final readonly class ContractorScorecardBackfill implements ReportSourceBackfill
         ReportSourceBackfillBatch $batch,
     ): ReportSourceBackfillResult {
         $this->assertBatch($context, $batch);
-        $reviews = MarketplaceHiringOfferReview::query()
-            ->where('reviewer_organization_id', $context->organizationId)
-            ->whereIn('id', $batch->sourceKeys)
-            ->where('created_at', '<=', $context->asOf)
-            ->when(
-                $context->scope->projectIds !== [],
-                fn ($builder) => $builder->whereIn('project_id', $context->scope->projectIds),
-            )
+        $events = DB::table('contractor_scorecard_review_events')
+            ->where('organization_id', $context->organizationId)
+            ->whereIn('review_id', $batch->sourceKeys)
+            ->where('observed_at', '<=', $context->asOf)
+            ->orderBy('review_id')
+            ->orderBy('observed_at')
             ->orderBy('id')
             ->get();
-        $memberships = $this->memberships->resolve($context->organizationId, $context->asOf);
+        $reviews = [];
+        foreach ($events as $event) {
+            $payload = is_string($event->payload) ? json_decode($event->payload, true) : $event->payload;
+            if (! is_array($payload)) {
+                continue;
+            }
+            $reviews[(int) $event->review_id] = [
+                'evidence_hash' => (string) $event->evidence_hash,
+                'is_deleted' => (bool) $event->is_deleted,
+                'payload' => $payload,
+            ];
+        }
         $projection = [];
         $projected = 0;
         $unknown = 0;
-        foreach ($reviews as $review) {
-            $profileOrganizationId = $memberships
-                ->profileOrganizationById[(int) $review->contractor_profile_id] ?? null;
+        foreach ($batch->sourceKeys as $reviewId) {
+            $review = $reviews[$reviewId] ?? null;
+            if (! is_array($review) || $review['is_deleted']) {
+                $unknown++;
+
+                continue;
+            }
+            $payload = $review['payload'];
+            $projectId = (int) ($payload['project_id'] ?? 0);
+            if (
+                (int) ($payload['reviewer_organization_id'] ?? 0) !== $context->organizationId
+                || ($context->scope->projectIds !== []
+                    && ! in_array($projectId, $context->scope->projectIds, true))
+            ) {
+                $unknown++;
+
+                continue;
+            }
+            try {
+                $createdAt = CarbonImmutable::parse((string) ($payload['created_at'] ?? ''));
+                $membership = $this->memberships->resolve($context->organizationId, $createdAt);
+            } catch (\Throwable) {
+                $unknown++;
+
+                continue;
+            }
+            $profileId = (int) ($payload['contractor_profile_id'] ?? 0);
+            $categoryId = (int) ($payload['category_id'] ?? 0);
+            $profileOrganizationId = $membership->profileOrganizationById[$profileId] ?? null;
             if (
                 $profileOrganizationId === null
-                || (int) $review->contractor_organization_id !== (int) $profileOrganizationId
-                || (int) $review->category_id < 1
-                || (int) $review->project_id < 1
+                || (int) ($payload['contractor_organization_id'] ?? 0) !== $profileOrganizationId
+                || ! isset($membership->categoriesByProfile[$profileId][$categoryId])
+                || $projectId < 1
             ) {
                 $unknown++;
 
                 continue;
             }
             $projection[] = [
-                'category_id' => (int) $review->category_id,
-                'contractor_organization_id' => (int) $review->contractor_organization_id,
-                'profile_id' => (int) $review->contractor_profile_id,
-                'project_id' => (int) $review->project_id,
-                'review_id' => (int) $review->id,
+                'category_id' => $categoryId,
+                'contractor_organization_id' => $profileOrganizationId,
+                'membership_evidence_hash' => $membership->sourceHash,
+                'profile_id' => $profileId,
+                'project_id' => $projectId,
+                'review_evidence_hash' => $review['evidence_hash'],
+                'review_id' => $reviewId,
             ];
             $projected++;
         }
         $eligible = count($batch->sourceKeys);
-        $missingRows = max(0, $eligible - $reviews->count());
-        $unknown += $missingRows;
         $gap = max(0, $eligible - $projected - $unknown);
 
         return new ReportSourceBackfillResult(
@@ -134,7 +177,6 @@ final readonly class ContractorScorecardBackfill implements ReportSourceBackfill
             $gap,
             $unknown,
             hash('sha256', CanonicalJson::encode([
-                'membership_evidence_hash' => $memberships->sourceHash,
                 'projection' => $projection,
             ])),
             $batch->final,

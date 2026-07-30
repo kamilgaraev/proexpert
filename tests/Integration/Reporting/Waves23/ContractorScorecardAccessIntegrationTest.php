@@ -20,11 +20,54 @@ use App\Services\Project\UserProjectAccessService;
 use DateTimeZone;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 final class ContractorScorecardAccessIntegrationTest extends TestCase
 {
     use DatabaseTransactions;
+
+    #[DataProvider('objectiveSources')]
+    public function test_objective_source_reader_and_redactor_fail_closed_for_missing_rows(
+        string $sourceType,
+        string $domainPermission,
+    ): void {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $actor = User::factory()->create();
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturn(true);
+        $projectAccess = $this->createMock(UserProjectAccessService::class);
+        $projectAccess->method('canAccessProject')->willReturn(true);
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $this->app->instance(UserProjectAccessService::class, $projectAccess);
+
+        $context = $this->context(
+            $actor,
+            $organization,
+            $project,
+            ['contractor_marketplace.profile.view', $domainPermission],
+        );
+        $sourceId = PHP_INT_MAX;
+        $availability = $this->app->make(ReportSourceObjectAuthorizer::class)->availability(
+            $context,
+            $sourceType,
+            $sourceId,
+            (int) $organization->id,
+            (int) $project->id,
+        );
+        $reference = $this->app->make(ReportEvidenceRedactor::class)->reference(
+            ['source_row_id' => $sourceId, 'source_row_key' => 'objective-secret'],
+            $sourceType,
+            $sourceId,
+            $availability,
+        );
+
+        self::assertSame('missing', $availability);
+        self::assertSame('redacted', $reference['availability']);
+        self::assertArrayNotHasKey('source_row_id', $reference);
+        self::assertArrayNotHasKey('source_row_key', $reference);
+    }
 
     public function test_container_reader_abac_and_redaction_keep_foreign_source_identity_closed(): void
     {
@@ -55,7 +98,12 @@ final class ContractorScorecardAccessIntegrationTest extends TestCase
         $this->app->instance(AuthorizationService::class, $authorization);
         $this->app->instance(UserProjectAccessService::class, $projectAccess);
 
-        $context = $this->context($actor, $organization, $project);
+        $context = $this->context(
+            $actor,
+            $organization,
+            $project,
+            ['reports.project_readiness.view'],
+        );
         $authorizer = $this->app->make(ReportSourceObjectAuthorizer::class);
         $redactor = $this->app->make(ReportEvidenceRedactor::class);
         self::assertInstanceOf(
@@ -102,9 +150,10 @@ final class ContractorScorecardAccessIntegrationTest extends TestCase
         User $actor,
         Organization $organization,
         Project $project,
+        array $permissions,
     ): ReportExecutionContext {
         return new ReportExecutionContext(
-            new ReportActor((int) $actor->id, 'active', ['reports.project_readiness.view']),
+            new ReportActor((int) $actor->id, 'active', $permissions),
             new ReportScope(
                 (int) $organization->id,
                 [(int) $organization->id],
@@ -124,5 +173,15 @@ final class ContractorScorecardAccessIntegrationTest extends TestCase
                 null,
             ),
         );
+    }
+
+    public static function objectiveSources(): array
+    {
+        return [
+            'R06 schedule' => ['baseline_schedule_variance', 'schedule.view'],
+            'R17 procurement' => ['supply_reliability', 'procurement.purchase_orders.view'],
+            'R23 quality' => ['quality_defect_flow', 'quality-control.defects.view'],
+            'R24 safety' => ['safety_incident_actions', 'safety-management.view'],
+        ];
     }
 }

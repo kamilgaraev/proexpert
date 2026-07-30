@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Readiness;
 
-use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOfferReview;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardPolicyVersion;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorScorecardObservationReader;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorScorecardSourceResolver;
@@ -16,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceReadinessStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final readonly class ContractorScorecardReadinessProbe implements ReportSourceReadinessProbe
@@ -55,31 +55,17 @@ final readonly class ContractorScorecardReadinessProbe implements ReportSourceRe
             if (! $policy instanceof ContractorScorecardPolicyVersion) {
                 throw new \RuntimeException('contractor_scorecard_policy_unavailable');
             }
-            $reviews = MarketplaceHiringOfferReview::query()
-                ->where('reviewer_organization_id', $context->scope->organizationId)
-                ->where('created_at', '<=', $query->asOf)
-                ->when(
-                    $query->scope->projectIds !== [],
-                    fn ($builder) => $builder->whereIn('project_id', $query->scope->projectIds),
-                )
-                ->orderBy('id')
+            $reviews = DB::table('contractor_scorecard_review_snapshot_rows')
+                ->where('organization_id', $context->scope->organizationId)
+                ->where('snapshot_id', $tuple->marketplaceReviews->id)
+                ->orderBy('review_id')
                 ->get();
             $objectiveObservations = $this->observations->load($tuple);
-            $validReviews = $reviews->filter(
-                static fn (MarketplaceHiringOfferReview $review): bool => $objectiveObservations
-                    ->profileOrganizationId((int) $review->contractor_profile_id)
-                        === (int) $review->contractor_organization_id
-                    && in_array(
-                        (int) $review->category_id,
-                        $objectiveObservations->categoryIds((int) $review->contractor_profile_id),
-                        true,
-                    )
-                    && (int) $review->category_id > 0
-                    && (int) $review->project_id > 0,
-            );
+            $validReviews = $reviews;
             $projected = $validReviews->count();
             $eligible = $reviews->count();
-            $unknown = $eligible - $projected;
+            $unknown = $eligible - $projected
+                + (int) ($tuple->marketplaceReviews->watermarks['unknown_count'] ?? 0);
             $objectiveDimensions = $objectiveObservations->profileProjects();
             foreach ($objectiveDimensions as $profileId => $projects) {
                 foreach (array_keys($projects) as $projectId) {
@@ -93,7 +79,7 @@ final readonly class ContractorScorecardReadinessProbe implements ReportSourceRe
                 }
             }
             $input = [
-                'review_ids' => $reviews->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all(),
+                'review_ids' => $reviews->pluck('review_id')->map(static fn (mixed $id): int => (int) $id)->all(),
                 'policy_source_hash' => (string) $policy->source_hash,
                 'tuple_hash' => $tuple->hash(),
             ];
@@ -109,7 +95,7 @@ final readonly class ContractorScorecardReadinessProbe implements ReportSourceRe
                 $tuple->hash(),
                 hash('sha256', CanonicalJson::encode($input)),
                 hash('sha256', CanonicalJson::encode([
-                    'projected_review_ids' => $validReviews->pluck('id')
+                    'projected_review_ids' => $validReviews->pluck('review_id')
                         ->map(static fn (mixed $id): int => (int) $id)
                         ->values()
                         ->all(),

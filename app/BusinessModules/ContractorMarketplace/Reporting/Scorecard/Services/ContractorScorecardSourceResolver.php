@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services;
 
-use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOfferReview;
-use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorMembershipEvidence;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorScorecardSourceTuple;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -30,17 +28,15 @@ final readonly class ContractorScorecardSourceResolver
         'safety_incident_actions',
     ];
 
-    public function __construct(private ContractorMembershipEvidenceResolver $memberships) {}
+    public function __construct(
+        private ContractorReviewSnapshotResolver $reviews,
+    ) {}
 
     public function resolve(
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ContractorScorecardSourceTuple {
         try {
-            $membershipEvidence = $this->memberships->resolve(
-                $query->scope->organizationId,
-                CarbonImmutable::instance($query->asOf),
-            );
             $refs = [];
             foreach (self::REPORT_CODES as $code) {
                 $refs[$code] = $this->reportSnapshot($context, $query, $code);
@@ -50,7 +46,7 @@ final readonly class ContractorScorecardSourceResolver
                 $refs['supply_reliability'],
                 $refs['quality_defect_flow'],
                 $refs['safety_incident_actions'],
-                $this->marketplaceReviewsSnapshot($context, $query, $membershipEvidence),
+                $this->reviews->resolve($query),
             );
             $tuple->assertCompatible($context, $query);
 
@@ -129,94 +125,6 @@ final readonly class ContractorScorecardSourceResolver
             ReportSnapshotClassification::OPERATIONAL,
             null,
         );
-    }
-
-    private function marketplaceReviewsSnapshot(
-        ReportExecutionContext $context,
-        ReportQuery $query,
-        ContractorMembershipEvidence $membershipEvidence,
-    ): ReportSnapshotRef {
-        $reviews = MarketplaceHiringOfferReview::query()
-            ->where('reviewer_organization_id', $context->scope->organizationId)
-            ->where('created_at', '<=', $query->asOf)
-            ->when(
-                $query->scope->projectIds !== [],
-                fn ($builder) => $builder->whereIn('project_id', $query->scope->projectIds),
-            )
-            ->orderBy('id')
-            ->get()
-            ->filter(fn (MarketplaceHiringOfferReview $review): bool => $this->reviewMatchesCohort(
-                CarbonImmutable::instance($review->created_at),
-                $query->filters->values['cohort'] ?? null,
-            ));
-        $projection = $reviews->map(static fn (MarketplaceHiringOfferReview $review): array => [
-            'id' => (int) $review->id,
-            'offer_id' => (int) $review->offer_id,
-            'project_id' => (int) $review->project_id,
-            'contractor_profile_id' => (int) $review->contractor_profile_id,
-            'category_id' => (int) $review->category_id,
-            'quality_score' => (string) $review->quality_score,
-            'deadline_score' => (string) $review->deadline_score,
-            'communication_score' => (string) $review->communication_score,
-            'safety_score' => $review->safety_score === null ? null : (string) $review->safety_score,
-            'financial_discipline_score' => $review->financial_discipline_score === null
-                ? null
-                : (string) $review->financial_discipline_score,
-            'created_at' => $review->created_at?->toISOString(),
-        ])->all();
-        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
-            'as_of' => $query->asOf->format(DATE_ATOM),
-            'membership_evidence_hash' => $membershipEvidence->sourceHash,
-            'rows' => $projection,
-            'scope' => $query->scope->canonicalIdentity(),
-        ])));
-        $generatedAt = CarbonImmutable::instance($query->asOf);
-
-        return new ReportSnapshotRef(
-            'marketplace_reviews',
-            'reviews_'.$sourceHash->value,
-            $query->scope,
-            new Sha256Hash(hash('sha256', 'marketplace-reviews.v1')),
-            'marketplace-reviews.v1',
-            $sourceHash,
-            DateTimeImmutable::createFromInterface($generatedAt),
-            null,
-            [
-                'source_schema_version' => 'marketplace-reviews.v1',
-                'as_of' => $query->asOf->format(DATE_ATOM),
-                'cohort_key' => $query->filters->values['cohort'] ?? null,
-                'project_ids' => $query->scope->projectIds,
-                'last_review_id' => (int) ($reviews->max('id') ?? 0),
-                'membership_coverage_started_at' => $membershipEvidence->coverageStartedAt,
-                'membership_evidence_hash' => $membershipEvidence->sourceHash,
-                'row_count' => $reviews->count(),
-            ],
-            ReportSnapshotClassification::OPERATIONAL,
-            null,
-        );
-    }
-
-    private function reviewMatchesCohort(CarbonImmutable $createdAt, mixed $cohort): bool
-    {
-        if ($cohort === null) {
-            return true;
-        }
-        if (! is_string($cohort)) {
-            return false;
-        }
-
-        if (preg_match('/^(\d{4})-(\d{2})$/D', $cohort, $matches) === 1) {
-            return $createdAt->format('Y-m') === $cohort;
-        }
-        if (preg_match('/^(\d{4})-Q([1-4])$/D', $cohort, $matches) === 1) {
-            return (int) $createdAt->format('Y') === (int) $matches[1]
-                && $createdAt->quarter === (int) $matches[2];
-        }
-        if (preg_match('/^\d{4}$/D', $cohort) === 1) {
-            return $createdAt->format('Y') === $cohort;
-        }
-
-        return false;
     }
 
     private function assertOwnerSnapshotReady(

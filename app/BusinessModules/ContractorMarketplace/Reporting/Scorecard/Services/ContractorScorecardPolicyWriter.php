@@ -89,6 +89,23 @@ final readonly class ContractorScorecardPolicyWriter
             if (! DB::table('organizations')->where('id', $organizationId)->lockForUpdate()->exists()) {
                 throw new InvalidArgumentException('contractor_scorecard_policy_organization_invalid');
             }
+            $input = [
+                'cohort_rules' => $cohortRules,
+                'components' => $components,
+                'effective_from' => $effectiveFrom->toISOString(),
+                'effective_to' => $effectiveTo?->toISOString(),
+                'minimum_coverage' => $minimumCoverage,
+                'minimum_sample_size' => $minimumSampleSize,
+                'organization_id' => $organizationId,
+            ];
+            $inputHash = hash('sha256', CanonicalJson::encode($input));
+            $existing = ContractorScorecardPolicyVersion::query()
+                ->where('organization_id', $organizationId)
+                ->where('input_hash', $inputHash)
+                ->first();
+            if ($existing instanceof ContractorScorecardPolicyVersion) {
+                return $existing;
+            }
             $last = ContractorScorecardPolicyVersion::query()
                 ->where('organization_id', $organizationId)
                 ->lockForUpdate()
@@ -99,18 +116,13 @@ final readonly class ContractorScorecardPolicyWriter
                 : ((int) preg_replace('/\D+/', '', (string) $last->version)) + 1;
             $version = 'contractor-scorecard.v'.$sequence;
             $payload = [
-                'cohort_rules' => $cohortRules,
-                'components' => $components,
-                'effective_from' => $effectiveFrom->toISOString(),
-                'effective_to' => $effectiveTo?->toISOString(),
-                'minimum_coverage' => $minimumCoverage,
-                'minimum_sample_size' => $minimumSampleSize,
-                'organization_id' => $organizationId,
+                ...$input,
                 'version' => $version,
             ];
 
             return ContractorScorecardPolicyVersion::query()->create([
                 ...$payload,
+                'input_hash' => $inputHash,
                 'source_hash' => hash('sha256', CanonicalJson::encode($payload)),
             ]);
         }, 3);

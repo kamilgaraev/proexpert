@@ -16,37 +16,123 @@ final readonly class ContractorMembershipEvidenceResolver
 
     public function resolve(int $organizationId, CarbonImmutable $asOf): ContractorMembershipEvidence
     {
-        $coverage = DB::table('contractor_scorecard_membership_coverage')
-            ->whereIn('subject_type', self::SUBJECT_TYPES)
-            ->orderBy('subject_type')
-            ->get(['subject_type', 'coverage_started_at', 'evidence_hash']);
-        if ($coverage->count() !== count(self::SUBJECT_TYPES)) {
-            throw new InvalidArgumentException('contractor_membership_evidence_unavailable');
+        return $this->resolveMany($organizationId, [$asOf])[$asOf->toISOString()];
+    }
+
+    /**
+     * @param list<CarbonImmutable> $timestamps
+     * @return array<string, ContractorMembershipEvidence>
+     */
+    public function resolveMany(int $organizationId, array $timestamps): array
+    {
+        if ($timestamps === []) {
+            return [];
         }
-        $coverageStartedAt = $coverage
-            ->map(static fn (object $row): CarbonImmutable => CarbonImmutable::parse($row->coverage_started_at))
-            ->max();
-        if (! $coverageStartedAt instanceof CarbonImmutable || $asOf->lt($coverageStartedAt)) {
+        $normalized = [];
+        foreach ($timestamps as $timestamp) {
+            if (! $timestamp instanceof CarbonImmutable) {
+                throw new InvalidArgumentException('contractor_membership_evidence_timestamp_invalid');
+            }
+            $normalized[$timestamp->toISOString()] = $timestamp;
+        }
+        uasort($normalized, static fn (CarbonImmutable $left, CarbonImmutable $right): int => $left <=> $right);
+        $coverage = $this->coverage();
+        $coverageStartedAt = $coverage['started_at'];
+        $first = reset($normalized);
+        if (! $first instanceof CarbonImmutable || $first->lt($coverageStartedAt)) {
             throw new InvalidArgumentException('contractor_membership_evidence_historical_gap');
+        }
+        $last = end($normalized);
+        if (! $last instanceof CarbonImmutable) {
+            throw new InvalidArgumentException('contractor_membership_evidence_timestamp_invalid');
         }
 
         $scopedEvents = DB::table('contractor_scorecard_membership_events')
             ->whereIn('subject_type', ['contractor', 'supplier'])
             ->where('organization_id', $organizationId)
-            ->where('observed_at', '<=', $asOf)
-            ->orderBy('subject_type')
-            ->orderBy('subject_id')
+            ->where('observed_at', '<=', $last)
             ->orderBy('observed_at')
             ->orderBy('id')
             ->get();
-        $latest = $this->latest($scopedEvents);
+        [$profileIds, $profileOrganizationIds] = $this->profileReferences($scopedEvents);
+        $profileEvents = ($profileIds === [] && $profileOrganizationIds === [])
+            ? collect()
+            : DB::table('contractor_scorecard_membership_events')
+                ->where('subject_type', 'profile')
+                ->where('observed_at', '<=', $last)
+                ->where(static function ($query) use ($profileIds, $profileOrganizationIds): void {
+                    if ($profileIds !== []) {
+                        $query->whereIn('subject_id', $profileIds);
+                    }
+                    if ($profileOrganizationIds !== []) {
+                        $method = $profileIds === [] ? 'whereIn' : 'orWhereIn';
+                        $query->{$method}('organization_id', $profileOrganizationIds);
+                    }
+                })
+                ->orderBy('observed_at')
+                ->orderBy('id')
+                ->get();
+        $allProfileIds = $profileEvents
+            ->pluck('subject_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $categoryEvents = $allProfileIds === []
+            ? collect()
+            : DB::table('contractor_scorecard_membership_events')
+                ->where('subject_type', 'profile_category')
+                ->where('observed_at', '<=', $last)
+                ->whereIn(DB::raw("(payload->>'profile_id')::bigint"), $allProfileIds)
+                ->orderBy('observed_at')
+                ->orderBy('id')
+                ->get();
+        $events = $scopedEvents->concat($profileEvents)->concat($categoryEvents);
+        $resolved = [];
+        foreach ($normalized as $key => $timestamp) {
+            $resolved[$key] = $this->project(
+                $organizationId,
+                $timestamp,
+                $coverage['rows'],
+                $coverageStartedAt,
+                $events,
+            );
+        }
+
+        return $resolved;
+    }
+
+    private function coverage(): array
+    {
+        $rows = DB::table('contractor_scorecard_membership_coverage')
+            ->whereIn('subject_type', self::SUBJECT_TYPES)
+            ->orderBy('subject_type')
+            ->get(['subject_type', 'coverage_started_at', 'evidence_hash']);
+        if ($rows->count() !== count(self::SUBJECT_TYPES)) {
+            throw new InvalidArgumentException('contractor_membership_evidence_unavailable');
+        }
+        $startedAt = $rows
+            ->map(static fn (object $row): CarbonImmutable => CarbonImmutable::parse($row->coverage_started_at))
+            ->max();
+        if (! $startedAt instanceof CarbonImmutable) {
+            throw new InvalidArgumentException('contractor_membership_evidence_unavailable');
+        }
+
+        return ['rows' => $rows, 'started_at' => $startedAt];
+    }
+
+    private function profileReferences(Collection $events): array
+    {
         $profileIds = [];
         $profileOrganizationIds = [];
-        foreach ($latest['contractor'] ?? [] as $event) {
-            $profileOrganizationIds[] = (int) ($event['payload']['source_organization_id'] ?? 0);
-        }
-        foreach ($latest['supplier'] ?? [] as $event) {
-            $metadata = $event['payload']['additional_info'] ?? null;
+        foreach ($events as $row) {
+            $payload = $this->payload($row);
+            if ((string) $row->subject_type === 'contractor') {
+                $profileOrganizationIds[] = (int) ($payload['source_organization_id'] ?? 0);
+                continue;
+            }
+            $metadata = $payload['additional_info'] ?? null;
             if (is_string($metadata)) {
                 $metadata = json_decode($metadata, true);
             }
@@ -55,20 +141,23 @@ final readonly class ContractorMembershipEvidenceResolver
                 $profileOrganizationIds[] = (int) ($metadata['contractor_organization_id'] ?? 0);
             }
         }
-        $profileIds = array_values(array_filter(array_unique($profileIds)));
-        $profileOrganizationIds = array_values(array_filter(array_unique($profileOrganizationIds)));
-        $profileEvents = DB::table('contractor_scorecard_membership_events')
-            ->where('subject_type', 'profile')
-            ->where('observed_at', '<=', $asOf)
-            ->where(static function ($query) use ($profileIds, $profileOrganizationIds): void {
-                $query->whereIn('subject_id', $profileIds)
-                    ->orWhereIn('organization_id', $profileOrganizationIds);
-            })
-            ->orderBy('subject_id')
-            ->orderBy('observed_at')
-            ->orderBy('id')
-            ->get();
-        $latest += $this->latest($profileEvents);
+
+        return [
+            array_values(array_filter(array_unique($profileIds))),
+            array_values(array_filter(array_unique($profileOrganizationIds))),
+        ];
+    }
+
+    private function project(
+        int $organizationId,
+        CarbonImmutable $asOf,
+        Collection $coverage,
+        CarbonImmutable $coverageStartedAt,
+        Collection $events,
+    ): ContractorMembershipEvidence {
+        $latest = $this->latest($events->filter(
+            static fn (object $row): bool => CarbonImmutable::parse($row->observed_at)->lte($asOf),
+        ));
         $profilesById = [];
         $profileOrganizationById = [];
         $profileByOrganization = [];
@@ -84,7 +173,6 @@ final readonly class ContractorMembershipEvidenceResolver
                 $profileByOrganization[$profileOrganizationId] = $profileId;
             }
         }
-
         $profileByContractor = [];
         foreach ($latest['contractor'] ?? [] as $event) {
             if ($event['is_deleted'] || (int) ($event['payload']['organization_id'] ?? 0) !== $organizationId) {
@@ -118,26 +206,11 @@ final readonly class ContractorMembershipEvidenceResolver
             ...array_values($profileByContractor),
             ...array_values($profileBySupplier),
         ]));
-        $categoryEvents = $resolvedProfileIds === []
-            ? collect()
-            : DB::table('contractor_scorecard_membership_events')
-                ->where('subject_type', 'profile_category')
-                ->where('observed_at', '<=', $asOf)
-                ->whereIn(DB::raw("(payload->>'profile_id')::bigint"), $resolvedProfileIds)
-                ->orderBy('subject_id')
-                ->orderBy('observed_at')
-                ->orderBy('id')
-                ->get();
-        $latest += $this->latest($categoryEvents);
         $categoriesByProfile = [];
         foreach ($latest['profile_category'] ?? [] as $event) {
             $profileId = (int) ($event['payload']['profile_id'] ?? 0);
             $categoryId = (int) ($event['payload']['category_id'] ?? 0);
-            if (
-                ! $event['is_deleted']
-                && in_array($profileId, $resolvedProfileIds, true)
-                && $categoryId > 0
-            ) {
+            if (! $event['is_deleted'] && in_array($profileId, $resolvedProfileIds, true) && $categoryId > 0) {
                 $categoriesByProfile[$profileId][$categoryId] = true;
             }
         }
@@ -149,12 +222,10 @@ final readonly class ContractorMembershipEvidenceResolver
             ksort($categories, SORT_NUMERIC);
         }
         unset($categories);
-        $evidence = $coverage
-            ->map(static fn (object $row): array => [
-                'coverage_hash' => (string) $row->evidence_hash,
-                'subject_type' => (string) $row->subject_type,
-            ])
-            ->all();
+        $evidence = $coverage->map(static fn (object $row): array => [
+            'coverage_hash' => (string) $row->evidence_hash,
+            'subject_type' => (string) $row->subject_type,
+        ])->all();
         foreach ($latest as $eventsBySubject) {
             foreach ($eventsBySubject as $event) {
                 $evidence[] = [
@@ -189,10 +260,7 @@ final readonly class ContractorMembershipEvidenceResolver
     {
         $latest = [];
         foreach ($events as $row) {
-            $payload = is_string($row->payload) ? json_decode($row->payload, true) : $row->payload;
-            if (! is_array($payload)) {
-                throw new InvalidArgumentException('contractor_membership_evidence_invalid');
-            }
+            $payload = $this->payload($row);
             $subjectType = (string) $row->subject_type;
             $subjectId = (int) $row->subject_id;
             $latest[$subjectType][$subjectId] = [
@@ -206,5 +274,15 @@ final readonly class ContractorMembershipEvidenceResolver
         }
 
         return $latest;
+    }
+
+    private function payload(object $row): array
+    {
+        $payload = is_string($row->payload) ? json_decode($row->payload, true) : $row->payload;
+        if (! is_array($payload)) {
+            throw new InvalidArgumentException('contractor_membership_evidence_invalid');
+        }
+
+        return $payload;
     }
 }

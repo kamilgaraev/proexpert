@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services;
 
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorMembershipEvidence;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorObjectiveObservationIndex;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorScorecardSourceTuple;
 use Carbon\CarbonImmutable;
@@ -30,67 +31,95 @@ final readonly class ContractorScorecardObservationReader
         if (! hash_equals($expectedMembershipHash, $membershipEvidence->sourceHash)) {
             throw new InvalidArgumentException('contractor_membership_evidence_changed');
         }
+        $baselineRows = DB::table('baseline_schedule_variance_rows')
+            ->where('organization_id', $organizationId)
+            ->where('snapshot_id', $tuple->baselineScheduleVariance->id)
+            ->get();
+        $supplyRows = DB::table('supply_reliability_rows')
+            ->where('organization_id', $organizationId)
+            ->where('snapshot_id', $tuple->supplyReliability->id)
+            ->get();
+        $qualityRows = DB::table('quality_defect_flow_rows')
+            ->where('organization_id', $organizationId)
+            ->where('snapshot_id', $tuple->qualityDefectFlow->id)
+            ->get();
+        $safetyRows = DB::table('safety_incident_rows')
+            ->where('organization_id', $organizationId)
+            ->where('snapshot_id', $tuple->safetyIncidentActions->id)
+            ->get();
+        $periodRows = [
+            'baseline_schedule_variance' => $baselineRows,
+            'supply_reliability' => $supplyRows,
+            'quality_defect_flow' => $qualityRows,
+            'safety_incident_actions' => $safetyRows,
+        ];
+        $timestamps = [];
+        foreach ($periodRows as $sourceReportCode => $rows) {
+            foreach ($rows as $row) {
+                $payload = (array) $row;
+                if ($sourceReportCode === 'baseline_schedule_variance') {
+                    $decoded = is_string($row->payload ?? null) ? json_decode($row->payload, true) : ($row->payload ?? []);
+                    $payload += is_array($decoded) ? $decoded : [];
+                }
+                $timestamps[] = CarbonImmutable::parse($this->periods->resolve($payload, $sourceReportCode));
+            }
+        }
+        $membershipTimeline = $this->memberships->resolveMany($organizationId, $timestamps);
 
         return new ContractorObjectiveObservationIndex([
             'baseline_schedule_variance' => $this->baselineRows(
-                $organizationId,
-                $tuple->baselineScheduleVariance,
-                $membershipEvidence->profileByContractor,
+                $baselineRows,
+                $membershipTimeline,
                 'baseline_schedule_variance',
             ),
             'supply_reliability' => $this->contractorRows(
-                DB::table('supply_reliability_rows')
-                    ->where('organization_id', $organizationId)
-                    ->where('snapshot_id', $tuple->supplyReliability->id)
-                    ->get(),
-                $membershipEvidence->profileBySupplier,
+                $supplyRows,
+                $membershipTimeline,
                 'supplier_id',
                 'supply_reliability',
             ),
             'quality_defect_flow' => $this->contractorRows(
-                DB::table('quality_defect_flow_rows')
-                    ->where('organization_id', $organizationId)
-                    ->where('snapshot_id', $tuple->qualityDefectFlow->id)
-                    ->get(),
-                $membershipEvidence->profileByContractor,
+                $qualityRows,
+                $membershipTimeline,
                 'contractor_id',
                 'quality_defect_flow',
             ),
             'safety_incident_actions' => $this->contractorRows(
-                DB::table('safety_incident_rows')
-                    ->where('organization_id', $organizationId)
-                    ->where('snapshot_id', $tuple->safetyIncidentActions->id)
-                    ->get(),
-                $membershipEvidence->profileByContractor,
+                $safetyRows,
+                $membershipTimeline,
                 'contractor_id',
                 'safety_incident_actions',
             ),
-        ], $membershipEvidence->categoriesByProfile, $membershipEvidence->profileOrganizationById);
+        ]);
     }
 
     private function baselineRows(
-        int $organizationId,
-        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef $snapshot,
-        array $profileByContractor,
+        Collection $rows,
+        array $membershipTimeline,
         string $sourceReportCode,
     ): array {
         $indexed = [];
-        foreach (
-            DB::table('baseline_schedule_variance_rows')
-                ->where('organization_id', $organizationId)
-                ->where('snapshot_id', $snapshot->id)
-                ->get() as $row
-        ) {
+        foreach ($rows as $row) {
             $payload = is_string($row->payload) ? json_decode($row->payload, true) : $row->payload;
             $projectId = is_array($payload) ? (int) ($payload['project_id'] ?? 0) : 0;
             $contractorId = is_array($payload) ? (int) ($payload['contractor_id'] ?? 0) : 0;
-            $profileId = $profileByContractor[$contractorId] ?? null;
+            $period = $this->periodIdentity((array) $row + (array) $payload, $sourceReportCode);
+            $membership = $membershipTimeline[$period['_observed_at']] ?? null;
+            if (! $membership instanceof ContractorMembershipEvidence) {
+                throw new InvalidArgumentException('contractor_membership_evidence_unpinned');
+            }
+            $profileId = $membership->profileByContractor[$contractorId] ?? null;
             if ($projectId > 0 && $profileId !== null) {
                 $indexed[$profileId][$projectId][] = [
                     ...$payload,
                     ...(array) $row,
                     'project_id' => $projectId,
-                    ...$this->periodIdentity((array) $row + $payload, $sourceReportCode),
+                    '_category_ids' => array_map(
+                        'intval',
+                        array_keys($membership->categoriesByProfile[$profileId] ?? []),
+                    ),
+                    '_profile_organization_id' => $membership->profileOrganizationById[$profileId] ?? null,
+                    ...$period,
                 ];
             }
         }
@@ -100,19 +129,32 @@ final readonly class ContractorScorecardObservationReader
 
     private function contractorRows(
         Collection $rows,
-        array $profileByOwnerId,
+        array $membershipTimeline,
         string $ownerColumn,
         string $sourceReportCode,
     ): array {
         $indexed = [];
         foreach ($rows as $row) {
             $ownerId = (int) ($row->{$ownerColumn} ?? 0);
+            $period = $this->periodIdentity((array) $row, $sourceReportCode);
+            $membership = $membershipTimeline[$period['_observed_at']] ?? null;
+            if (! $membership instanceof ContractorMembershipEvidence) {
+                throw new InvalidArgumentException('contractor_membership_evidence_unpinned');
+            }
+            $profileByOwnerId = $ownerColumn === 'supplier_id'
+                ? $membership->profileBySupplier
+                : $membership->profileByContractor;
             $profileId = $profileByOwnerId[$ownerId] ?? null;
             $projectId = (int) ($row->project_id ?? 0);
             if ($profileId !== null && $projectId > 0) {
                 $indexed[$profileId][$projectId][] = [
                     ...(array) $row,
-                    ...$this->periodIdentity((array) $row, $sourceReportCode),
+                    '_category_ids' => array_map(
+                        'intval',
+                        array_keys($membership->categoriesByProfile[$profileId] ?? []),
+                    ),
+                    '_profile_organization_id' => $membership->profileOrganizationById[$profileId] ?? null,
+                    ...$period,
                 ];
             }
         }

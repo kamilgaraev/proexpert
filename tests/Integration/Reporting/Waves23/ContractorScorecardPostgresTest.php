@@ -4,18 +4,28 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\Waves23;
 
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorScorecardPolicyWriter;
+use App\Models\Organization;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
 use Tests\TestCase;
-use Throwable;
 
 final class ContractorScorecardPostgresTest extends TestCase
 {
     public function test_concurrent_policy_first_writers_are_serialized_by_the_unique_version_identity(): void
     {
         $this->requirePostgresProcessHarness();
-        $organizationId = random_int(700_000_000, 799_999_999);
-        $version = 'contractor-scorecard.race.'.bin2hex(random_bytes(6));
+        $organizationId = (int) Organization::factory()->create()->id;
+        $effectiveFrom = CarbonImmutable::now('UTC')->addMinute()->toISOString();
+        $components = [[
+            'code' => 'quality_cycle',
+            'unit_code' => 'days',
+            'source_report_code' => 'quality_defect_flow',
+            'source_formula_version' => 'quality-defect-flow.v1',
+            'source_schema_version' => 'quality-defect-flow.v1',
+            'source_metric' => 'cycle_days',
+        ]];
         $harness = new PostgresProcessRaceHarness(
             sys_get_temp_dir().DIRECTORY_SEPARATOR.'contractor-policy-race-'.bin2hex(random_bytes(6)),
         );
@@ -23,36 +33,34 @@ final class ContractorScorecardPostgresTest extends TestCase
 
         try {
             foreach ([1, 2] as $worker) {
-                $children[] = $harness->spawn($worker, static function () use ($organizationId, $version): array {
-                    try {
-                        DB::table('contractor_scorecard_policy_versions')->insert([
-                            'organization_id' => $organizationId,
-                            'version' => $version,
-                            'components' => '[]',
-                            'cohort_rules' => '{"period":"quarter"}',
-                            'minimum_coverage' => '1',
-                            'minimum_sample_size' => 1,
-                            'source_hash' => str_repeat('a', 64),
-                            'effective_from' => now(),
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ]);
+                $children[] = $harness->spawn($worker, static function () use (
+                    $organizationId,
+                    $effectiveFrom,
+                    $components,
+                ): array {
+                    $policy = app(ContractorScorecardPolicyWriter::class)->append(
+                        $organizationId,
+                        $components,
+                        ['period' => 'quarter'],
+                        '0.75000000',
+                        3,
+                        CarbonImmutable::parse($effectiveFrom),
+                    );
 
-                        return ['inserted' => true];
-                    } catch (Throwable $exception) {
-                        return ['inserted' => false, 'sql_state' => (string) $exception->getCode()];
-                    }
+                    return ['id' => (int) $policy->id, 'version' => (string) $policy->version];
                 });
+            }
+            foreach ([1, 2] as $worker) {
                 $harness->release($worker);
             }
             $harness->waitForChildren($children);
             $children = [];
             $results = [$harness->result(1), $harness->result(2)];
 
-            self::assertSame(1, count(array_filter($results, static fn (array $row): bool => $row['inserted'])));
+            self::assertSame($results[0]['id'], $results[1]['id']);
+            self::assertSame('contractor-scorecard.v1', $results[0]['version']);
             self::assertSame(1, DB::table('contractor_scorecard_policy_versions')
                 ->where('organization_id', $organizationId)
-                ->where('version', $version)
                 ->count());
         } finally {
             $harness->terminateAndReap($children);

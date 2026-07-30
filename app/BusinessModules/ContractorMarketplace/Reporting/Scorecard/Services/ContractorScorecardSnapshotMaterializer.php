@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services;
 
-use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOfferReview;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorComponentMetric;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorComponentSignal;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorObjectiveObservationIndex;
@@ -70,17 +69,16 @@ final readonly class ContractorScorecardSnapshotMaterializer
         $components = $this->components($policy);
         $this->assertPinnedSources($tuple, $components);
         $objectiveObservations = $this->observations->load($tuple);
-        $reviews = MarketplaceHiringOfferReview::query()
-            ->where('reviewer_organization_id', $query->scope->organizationId)
-            ->where('created_at', '<=', $query->asOf)
-            ->when(
-                $query->scope->projectIds !== [],
-                fn ($builder) => $builder->whereIn('project_id', $query->scope->projectIds),
-            )
-            ->orderBy('id')
+        if ((int) ($tuple->marketplaceReviews->watermarks['unknown_count'] ?? 0) !== 0) {
+            throw new InvalidArgumentException('contractor_scorecard_review_membership_unknown');
+        }
+        $reviews = DB::table('contractor_scorecard_review_snapshot_rows')
+            ->where('organization_id', $query->scope->organizationId)
+            ->where('snapshot_id', $tuple->marketplaceReviews->id)
+            ->orderBy('review_id')
             ->get()
-            ->filter(fn (MarketplaceHiringOfferReview $review): bool => $this->matchesRequestedCohort(
-                CarbonImmutable::instance($review->created_at),
+            ->filter(fn (object $review): bool => $this->matchesRequestedCohort(
+                CarbonImmutable::parse($review->created_at),
                 $policy,
                 $query->filters->values['cohort'] ?? null,
             ));
@@ -282,13 +280,13 @@ final readonly class ContractorScorecardSnapshotMaterializer
             }
 
             return [
-                'signals' => $reviews->map(static fn (MarketplaceHiringOfferReview $review): ContractorComponentSignal => new ContractorComponentSignal(
-                    $review->getAttribute($field) === null ? null : (string) $review->getAttribute($field),
+                'signals' => $reviews->map(static fn (object $review): ContractorComponentSignal => new ContractorComponentSignal(
+                    $review->{$field} === null ? null : (string) $review->{$field},
                     true,
                 ))->all(),
-                'evidence' => $reviews->map(static fn (MarketplaceHiringOfferReview $review): array => [
+                'evidence' => $reviews->map(static fn (object $review): array => [
                     'offer_id' => (int) $review->offer_id,
-                    'review_id' => (int) $review->id,
+                    'review_id' => (int) $review->review_id,
                 ])->values()->all(),
             ];
         }
@@ -358,7 +356,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
         }
         $groups = [];
         foreach ($reviews as $review) {
-            $cohortKey = $this->cohortKey(CarbonImmutable::instance($review->created_at), $period);
+            $cohortKey = $this->cohortKey(CarbonImmutable::parse($review->created_at), $period);
             $key = implode(':', [
                 (int) $review->contractor_profile_id,
                 (int) $review->category_id,
@@ -388,7 +386,12 @@ final readonly class ContractorScorecardSnapshotMaterializer
         foreach ($objectiveDimensions as $profileId => $projects) {
             foreach ($projects as $projectId => $cohorts) {
                 foreach (array_keys($cohorts) as $cohortKey) {
-                    foreach ($objectiveObservations->categoryIds((int) $profileId) as $categoryId) {
+                    foreach ($objectiveObservations->categoryIdsForDimension(
+                        (int) $profileId,
+                        (int) $projectId,
+                        $cohortKey,
+                        $period,
+                    ) as $categoryId) {
                         $key = implode(':', [$profileId, $categoryId, $projectId, $cohortKey]);
                         $groups[$key] ??= [
                             'profile_id' => (int) $profileId,

@@ -19,12 +19,14 @@ return new class extends Migration
             $table->jsonb('cohort_rules');
             $table->decimal('minimum_coverage', 12, 8);
             $table->unsignedInteger('minimum_sample_size');
+            $table->char('input_hash', 64);
             $table->char('source_hash', 64);
             $table->timestampTz('effective_from', 6);
             $table->timestampTz('effective_to', 6)->nullable();
             $table->timestampsTz(6);
 
             $table->unique(['organization_id', 'version'], 'contractor_scorecard_policy_org_version_unique');
+            $table->unique(['organization_id', 'input_hash'], 'contractor_scorecard_policy_input_unique');
             $table->index(['organization_id', 'effective_from', 'id'], 'contractor_scorecard_policy_effective_idx');
         });
 
@@ -100,7 +102,7 @@ return new class extends Migration
         foreach ([
             'ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_coverage_check CHECK (minimum_coverage >= 0 AND minimum_coverage <= 1)',
             'ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_sample_check CHECK (minimum_sample_size > 0)',
-            "ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')",
+            "ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_hash_check CHECK (input_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$')",
             'ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_interval_check CHECK (effective_to IS NULL OR effective_to > effective_from)',
             "ALTER TABLE contractor_scorecard_snapshots ADD CONSTRAINT contractor_scorecard_snapshot_hash_check CHECK (definition_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$' AND source_tuple_hash ~ '^[a-f0-9]{64}$')",
             'ALTER TABLE contractor_scorecard_snapshots ADD CONSTRAINT contractor_scorecard_snapshot_time_check CHECK (stale_at IS NULL OR stale_at >= generated_at)',
