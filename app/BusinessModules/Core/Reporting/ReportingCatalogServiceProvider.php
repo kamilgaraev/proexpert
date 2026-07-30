@@ -9,28 +9,32 @@ use App\BusinessModules\Core\Reporting\Application\Catalog\ImmutableReportDefini
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\InAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionEventRecorder;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportWorkspacePreferencesStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
+use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LogReportSubscriptionEventRecorder;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\PublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSavedViewCursorCodec;
+use App\BusinessModules\Core\Reporting\Infrastructure\Notifications\PersistedInAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewStore;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportWorkspacePreferencesStore;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionStore;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryStore;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionDeliveryStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportWorkspacePreferencesStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
@@ -69,6 +73,8 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
         $this->app->singleton(ReportSubscriptionStore::class, EloquentReportSubscriptionStore::class);
         $this->app->singleton(ReportSubscriptionDeliveryStore::class, EloquentReportSubscriptionDeliveryStore::class);
         $this->app->singleton(ReportSubscriptionDeliveryDispatcher::class, LaravelReportSubscriptionDeliveryDispatcher::class);
+        $this->app->singleton(InAppReportSubscriptionNotifier::class, PersistedInAppReportSubscriptionNotifier::class);
+        $this->app->singleton(ReportSubscriptionEventRecorder::class, LogReportSubscriptionEventRecorder::class);
         $this->app->singleton(SignedReportSavedViewCursorCodec::class, fn (): SignedReportSavedViewCursorCodec => new SignedReportSavedViewCursorCodec((string) config('app.key')));
         $this->app->singleton(
             CandidateReportDefinitionRegistry::class,
