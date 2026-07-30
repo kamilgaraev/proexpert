@@ -60,8 +60,12 @@ final class ReportReleaseEvidenceBuilder
             if (! $gate instanceof \App\BusinessModules\Core\Reporting\Domain\DTO\ReportQualityGateEvidence || $gate->gate !== $expectedGate || $gate->phase !== $phase || $gate->releaseSha !== $releaseSha || $gate->status !== $expectedStatus) {
                 throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
             }
+            if ($allPassed && $gate->ownerPlan !== $this->releaseOwner($index + 1)) {
+                throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+            }
         }
     }
     private function assertReleaseSha(string $value): void { if (preg_match('/^[a-f0-9]{40}$/', $value) !== 1) { throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID); } }
     private function sameSet(array $left, array $right): bool { sort($left, SORT_STRING); sort($right, SORT_STRING); return $left === $right; }
+    private function releaseOwner(int $number): string { return $number <= 9 ? 'backend' : ($number <= 13 ? 'admin' : 'both'); }
 }
