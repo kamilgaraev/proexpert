@@ -1,43 +1,37 @@
 {
-    "assertion_count": 16,
-    "code": "quality_report",
+    "assertion_count": 2,
+    "code": "project_portfolio_health",
     "commit_sha": "1111111111111111111111111111111111111111",
     "component_class_hashes": [
         {
-            "class": "App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDefinition",
-            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            "class": "Tests\\Support\\Reporting\\CatalogTestDataProvider",
+            "sha256": "8aacb749c1d87ad6468ee7312f90b8d213635e36dc7d286b043b658ea7578d98"
+        },
+        {
+            "class": "Tests\\Support\\Reporting\\CatalogTestDrillDownProvider",
+            "sha256": "8aacb749c1d87ad6468ee7312f90b8d213635e36dc7d286b043b658ea7578d98"
+        },
+        {
+            "class": "Tests\\Support\\Reporting\\CatalogTestRowQuery",
+            "sha256": "8aacb749c1d87ad6468ee7312f90b8d213635e36dc7d286b043b658ea7578d98"
         }
     ],
-    "contract_version": "1",
-    "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "digest": "9c0b5d77171a7889b9f76ebc6326eda293e8b656e70bedc74e83ddadc1c3f9d8",
+    "contract_version": "1.0.0",
+    "definition_hash": "16aef1f1449a7eda9e5f218f264a8f5aa5b4cb1ad1f5c50206f8a43cade6a53e",
+    "digest": "155d9ddb9fbb951625dbad3c53a69df509665a8386bf5e21318488fa667439f0",
     "fixture_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "formula": {
         "assertion_codes": [
-            "formula.totals.passed",
-            "formula.version.passed"
+            "formula.identity.passed"
         ],
-        "formula_version": "1",
+        "formula_version": "1.0.0",
         "passed": true,
         "totals_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     },
-    "generated_at": "2026-07-26T12:00:00.000000Z",
+    "generated_at": "2026-07-26T00:00:00.000000Z",
     "source": {
         "assertion_codes": [
-            "source.availability.passed",
-            "source.binding_identity.passed",
-            "source.canonical_values.passed",
-            "source.drill_semantics.passed",
-            "source.page_cursor_semantics.passed",
-            "source.query_identity.passed",
-            "source.resource_links.passed",
-            "source.result_semantics.passed",
-            "source.row_count.passed",
-            "source.scope.passed",
-            "source.sensitive_redaction.passed",
-            "source.snapshot_identity.passed",
-            "source.source_hash.passed",
-            "source.unique_row_keys.passed"
+            "source.identity.passed"
         ],
         "passed": true,
         "row_count": 2,
@@ -46,6 +40,6 @@
         "snapshot_kind": "fixture",
         "source_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     },
-    "source_schema_version": "v1",
+    "source_schema_version": "1.0.0",
     "status": "passed"
 }
