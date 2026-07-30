@@ -106,6 +106,46 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
         $this->builder()->build($this->gates(), $this->qg14Evidence(), str_repeat('a', 40), $sources, new DateTimeImmutable('2026-07-26T00:00:00Z'));
     }
 
+    public function test_release_bundle_cli_requires_primary_artifacts_without_requiring_a_complete_input_bundle(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $command = [
+            PHP_BINARY,
+            $root.'/scripts/reporting/build-report-release-gate-bundle.php',
+            '--release-sha='.str_repeat('a', 40),
+            '--activation-commit='.str_repeat('b', 40),
+            '--admin-evidence-commit='.str_repeat('c', 40),
+            '--generated-at=2026-07-26T00:00:00Z',
+            '--admin-root=C:/admin',
+            '--backend-root=C:/backend',
+            '--output='.$root.'/build/reports/report-release-gate-bundle.json',
+        ];
+        foreach (array_column($this->sourceDefinitions(), 2) as $path) {
+            $command[] = '--'.str_replace('_', '-', pathinfo($path, PATHINFO_FILENAME)).'='.$root.'/'.$path;
+        }
+        $command[11] = '--plan-1c-platform-completion='.$root.'/build/reports/plan-1c-platform-completion.json';
+        $command[12] = '--plan-2-wave-1-evidence='.$root.'/build/reports/plan-2-wave-1-evidence.json';
+        $command[13] = '--waves-2-3-candidate-contribution='.$root.'/build/reports/waves-2-3-candidate-contribution.json';
+        $command[14] = '--plan-3-waves-2-3-evidence='.$root.'/build/reports/plan-3-waves-2-3-evidence.json';
+        $command[15] = '--activation-inputs='.$root.'/build/reports/report-catalog-activation-inputs.json';
+        $command[16] = '--activation='.$root.'/build/reports/report-catalog-activation.json';
+        $command[17] = '--admin-evidence='.$root.'/build/reports/intake/plan-4-admin-evidence.json';
+        $command[18] = '--admin-evidence-schema='.$root.'/build/reports/intake/contracts/report-admin-evidence.schema.json';
+        $command[19] = '--admin-transfer='.$root.'/build/reports/intake/plan-4-admin-evidence.transfer.json';
+        $command[20] = '--active-manifest='.$root.'/app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml';
+        $command[21] = '--active-ledger='.$root.'/app/BusinessModules/Core/Reporting/resources/report-publication-ledger.v1.json';
+
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        self::assertSame(2, proc_close($process));
+        self::assertSame("quality-gate:invalid\n", $stderr);
+    }
+
     /** @return list<ReportQualityGateEvidence> */
     private function gates(): array
     {
