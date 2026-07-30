@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
@@ -23,7 +24,6 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowSnapshot;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectFlowSnapshotMaterializer;
 use DateTimeImmutable;
@@ -32,7 +32,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
 {
     public function __construct(
         private QualityDefectFlowSnapshotMaterializer $materializer,
-        private CanonicalReportSnapshotSealer $sealer,
+        private ReportSnapshotSealStore $seals,
     ) {}
 
     public function materialize(
@@ -106,13 +106,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
             staleAt: DateTimeImmutable::createFromInterface($snapshot->stale_at),
             watermarks: ['quality_defect_transitions' => $snapshot->source_watermark->toAtomString()],
             classification: $classification,
-            seal: $this->sealer->seal(
-                (string) $snapshot->id,
-                'quality_defect_flow',
-                DateTimeImmutable::createFromInterface($snapshot->generated_at),
-                new Sha256Hash((string) $snapshot->source_hash),
-                DateTimeImmutable::createFromInterface($snapshot->sealed_at),
-            ),
+            seal: $this->seals->get('quality_defect_flow', (string) $snapshot->id),
         );
     }
 

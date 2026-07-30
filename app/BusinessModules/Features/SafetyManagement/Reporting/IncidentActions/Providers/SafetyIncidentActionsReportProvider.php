@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Providers;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
@@ -23,7 +24,6 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentSnapshot;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services\SafetyIncidentSnapshotMaterializer;
 use DateTimeImmutable;
@@ -32,7 +32,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
 {
     public function __construct(
         private SafetyIncidentSnapshotMaterializer $materializer,
-        private CanonicalReportSnapshotSealer $sealer,
+        private ReportSnapshotSealStore $seals,
     ) {}
 
     public function materialize(
@@ -54,13 +54,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
             staleAt: DateTimeImmutable::createFromInterface($record->stale_at),
             watermarks: ['safety_transitions' => $record->source_watermark->toAtomString()],
             classification: $query->definition->snapshotClassification,
-            seal: $this->sealer->seal(
-                (string) $record->id,
-                'safety_incident_actions',
-                DateTimeImmutable::createFromInterface($record->generated_at),
-                new Sha256Hash((string) $record->source_hash),
-                DateTimeImmutable::createFromInterface($record->sealed_at),
-            ),
+            seal: $this->seals->get('safety_incident_actions', (string) $record->id),
         );
     }
 

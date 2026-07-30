@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
@@ -26,7 +28,10 @@ use Throwable;
 
 final readonly class QualityDefectFlowSnapshotMaterializer
 {
-    public function __construct(private QualityDefectFlowFormula $formula) {}
+    public function __construct(
+        private QualityDefectFlowFormula $formula,
+        private ReportSnapshotSealStore $seals,
+    ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
     {
@@ -197,6 +202,13 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                     $snapshot->output_hash = (string) DB::table('quality_defect_flow_snapshots')
                         ->where('id', $snapshot->id)->value('output_hash');
                     $snapshot->sealed_at = $generatedAt;
+                    $this->seals->create(
+                        'quality_defect_flow',
+                        (string) $snapshot->id,
+                        $generatedAt->toDateTimeImmutable(),
+                        new Sha256Hash((string) $snapshot->source_hash),
+                        $generatedAt->toDateTimeImmutable(),
+                    );
 
                     return $snapshot;
                 });

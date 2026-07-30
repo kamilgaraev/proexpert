@@ -8,10 +8,13 @@ use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -20,6 +23,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
@@ -37,6 +41,8 @@ final class EloquentReportRunStore implements ReportRunStore
         private readonly ReportExecutionClock $clock,
         private readonly ReportTransitionAudit $audit,
         private readonly ReportRunHydrator $hydrator,
+        private readonly ReportSnapshotSealValidator $sealValidator,
+        private readonly ReportSnapshotSealVerifier $sealVerifier,
         private readonly ReportDispatchIntentStore $dispatchIntents,
         private readonly int $runTtlSeconds,
         private readonly int $pollAfterMs,
@@ -139,8 +145,12 @@ final class EloquentReportRunStore implements ReportRunStore
     public function get(ReportExecutionContext $context, string $runId): ReportRun
     {
         $record = $this->findIncludingExpired($context, $runId);
+        $run = $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
+        if ($run->status === ReportRunStatus::READY) {
+            $this->assertTrustedReadyRecord($record);
+        }
 
-        return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
+        return $run;
     }
 
     public function queryForRun(ReportExecutionContext $context, string $runId): ReportQuery
@@ -165,7 +175,7 @@ final class EloquentReportRunStore implements ReportRunStore
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
         }
 
-        return $this->hydrator->exportSource($record, $this->pollAfterMs);
+        return $this->assertTrustedReadyRecord($record);
     }
 
     public function claimMaterialization(ReportExecutionContext $context, string $runId, string $leaseToken, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun
@@ -246,6 +256,7 @@ final class EloquentReportRunStore implements ReportRunStore
             $record = $this->locked($context, $runId);
             $query = $this->hydrator->query($record);
             $identity = $this->sealedPayload($snapshot, $result, $sourceHash, $occurredAt);
+            $this->sealValidator->assertSealable($query, $snapshot, $result, $sourceHash);
             $this->assertSealedInput($record, $query, $snapshot, $result, $sourceHash);
 
             if ($record->status === ReportRunStatus::READY->value) {
@@ -655,6 +666,37 @@ final class EloquentReportRunStore implements ReportRunStore
             || $snapshot->classification !== $query->definition->snapshotClassification) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
         }
+    }
+
+    private function assertTrustedReadyRecord(ReportRunRecord $record): ReportRunExportSource
+    {
+        $run = $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
+        $snapshot = $run->resultMetadata?->snapshot;
+        if ($snapshot?->classification === ReportSnapshotClassification::OFFICIAL) {
+            if ($snapshot->seal === null || $run->sourceHash === null) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED);
+            }
+            $this->sealVerifier->assertTrusted(new ReportSnapshotSealVerificationInput(
+                $snapshot->seal,
+                $snapshot->id,
+                $snapshot->kind,
+                $snapshot->classification,
+                $snapshot->generatedAt,
+                $run->sourceHash,
+            ));
+        }
+        $source = $this->hydrator->exportSource($record, $this->pollAfterMs);
+        if ($source->run->sourceHash === null) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+        $this->sealValidator->assertSealable(
+            $source->query,
+            $source->snapshot,
+            $source->result,
+            $source->run->sourceHash,
+        );
+
+        return $source;
     }
 
     private function snapshotProjection(ReportSnapshotRef $snapshot): array

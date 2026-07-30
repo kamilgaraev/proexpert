@@ -27,6 +27,9 @@ final class QualityReportsPostgresEndToEndContractTest extends TestCase
             'ReportSnapshotSealVerifier::class',
             'MaterializeReportRunJob',
             'Bus::dispatchSync',
+            'report_snapshot_seals',
+            'quality-contract-v2',
+            'snapshot_seal_signature',
             'SignedReportCursorCodec::class',
         ] as $required) {
             self::assertStringContainsString($required, $source);
@@ -62,6 +65,40 @@ final class QualityReportsPostgresEndToEndContractTest extends TestCase
         self::assertStringContainsString('ReportSnapshotSealVerifier::class', $provider);
         self::assertStringNotContainsString("CanonicalReportSnapshotSealer((string) config('app.key')", $provider);
         self::assertStringContainsString('REPORT_SNAPSHOT_TRUSTED_PUBLIC_KEYS', $configuration);
+    }
+
+    public function test_official_seals_are_persisted_once_and_revalidated_on_every_ready_read(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $store = (string) file_get_contents(
+            $root.'/app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php',
+        );
+        $sealStore = (string) file_get_contents(
+            $root.'/app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportSnapshotSealStore.php',
+        );
+        $migration = (string) file_get_contents(
+            $root.'/database/migrations/2026_07_30_000003_create_immutable_report_snapshot_seals.php',
+        );
+
+        self::assertStringContainsString('ReportSnapshotSealValidator $sealValidator', $store);
+        self::assertStringContainsString('ReportSnapshotSealVerifier $sealVerifier', $store);
+        self::assertGreaterThanOrEqual(2, substr_count($store, 'assertTrustedReadyRecord('));
+        self::assertStringContainsString('lockForUpdate()', $sealStore);
+        self::assertStringContainsString("DB::table('report_snapshot_seals')->insert", $sealStore);
+        self::assertStringContainsString('report_snapshot_seal_immutable', $migration);
+        self::assertStringNotContainsString('updateOrInsert', $sealStore);
+
+        foreach ([
+            'QualityControl/Reporting/DefectFlow/Providers/QualityDefectFlowReportProvider.php',
+            'SafetyManagement/Reporting/IncidentActions/Providers/SafetyIncidentActionsReportProvider.php',
+            'SafetyManagement/Reporting/Admission/Providers/WorkforceAdmissionReportProvider.php',
+        ] as $provider) {
+            $source = (string) file_get_contents(
+                $root.'/app/BusinessModules/Features/'.$provider,
+            );
+            self::assertStringContainsString('ReportSnapshotSealStore $seals', $source);
+            self::assertStringNotContainsString('CanonicalReportSnapshotSealer $sealer', $source);
+        }
     }
 
     public function test_r25_evidence_identity_is_sensitive_for_every_requirement_type(): void

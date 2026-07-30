@@ -5,8 +5,12 @@ declare(strict_types=1);
 namespace Tests\Integration\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactStream;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
@@ -33,10 +37,12 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRen
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\MaterializeReportRunJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\DrillDown\QualityDefectFlowDrillDownProvider;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers\QualityDefectFlowReportProvider;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Queries\QualityDefectFlowRowQuery;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectFlowSnapshotMaterializer;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Backfill\WorkforceAdmissionBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DrillDown\WorkforceAdmissionDrillDownProvider;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Providers\WorkforceAdmissionReportProvider;
@@ -246,6 +252,8 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         self::assertArrayNotHasKey('medical_details', $sensitiveByType['training']);
         self::assertStringContainsString('evidence_id', $admissionSensitive['csv']);
         self::assertStringContainsString('evidence_id', $admissionSensitive['xlsx_xml']);
+
+        $this->assertSealRotationAndRejection($quality['source'], $ordinary, $asOf);
     }
 
     private function execute(
@@ -441,6 +449,102 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             $snapshot->generatedAt,
             $snapshot->sourceHash,
         ));
+    }
+
+    private function assertSealRotationAndRejection(
+        ReportRunExportSource $oldSource,
+        ReportExecutionContext $context,
+        DateTimeImmutable $asOf,
+    ): void {
+        self::assertNotNull($oldSource->snapshot->seal);
+        $oldKeyId = $oldSource->snapshot->seal->keyId;
+        self::assertSame($oldKeyId, DB::table('report_snapshot_seals')
+            ->where('snapshot_kind', $oldSource->snapshot->kind)
+            ->where('snapshot_id', $oldSource->snapshot->id)
+            ->value('key_id'));
+        $trusted = json_decode(
+            (string) config('reporting.snapshot_signing.trusted_public_keys_json'),
+            true,
+            32,
+            JSON_THROW_ON_ERROR,
+        );
+        self::assertIsArray($trusted);
+        $newPair = sodium_crypto_sign_keypair();
+        $encode = static fn (string $value): string => rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+        $trusted['quality-contract-v2'] = [
+            'public_key' => $encode(sodium_crypto_sign_publickey($newPair)),
+            'revoked' => false,
+        ];
+        config([
+            'reporting.snapshot_signing.active_key_id' => 'quality-contract-v2',
+            'reporting.snapshot_signing.active_private_key' => $encode(sodium_crypto_sign_secretkey($newPair)),
+            'reporting.snapshot_signing.trusted_public_keys_json' => json_encode($trusted, JSON_THROW_ON_ERROR),
+        ]);
+        $this->forgetCryptoLifecycleBindings();
+
+        $oldRun = app(ReportRunStore::class)->get($context, $oldSource->run->id);
+        self::assertSame($oldKeyId, $oldRun->resultMetadata?->snapshot->seal?->keyId);
+        $newSource = $this->execute(
+            'quality_defect_flow',
+            QualityDefectFlowReportProvider::class,
+            QualityDefectFlowRowQuery::class,
+            QualityDefectFlowDrillDownProvider::class,
+            'cohort_date',
+            'status',
+            $context,
+            $asOf->modify('+1 second'),
+        )['source'];
+        self::assertInstanceOf(ReportRunExportSource::class, $newSource);
+        self::assertSame('quality-contract-v2', $newSource->snapshot->seal?->keyId);
+        self::assertSame($oldKeyId, $oldSource->snapshot->seal->keyId);
+
+        $originalSignature = $newSource->snapshot->seal?->signature;
+        self::assertIsString($originalSignature);
+        DB::table('report_runs')->where('id', $newSource->run->id)->update([
+            'snapshot_seal_signature' => str_repeat('A', 86),
+        ]);
+        $this->expectUntrustedReadyRun($context, $newSource->run->id);
+        DB::table('report_runs')->where('id', $newSource->run->id)->update([
+            'snapshot_seal_signature' => $originalSignature,
+            'snapshot_seal_key_id' => 'unknown-contract-key',
+        ]);
+        $this->expectUntrustedReadyRun($context, $newSource->run->id);
+        DB::table('report_runs')->where('id', $newSource->run->id)->update([
+            'snapshot_seal_key_id' => 'quality-contract-v2',
+        ]);
+
+        $trusted['quality-contract-v2']['revoked'] = true;
+        config([
+            'reporting.snapshot_signing.trusted_public_keys_json' => json_encode($trusted, JSON_THROW_ON_ERROR),
+        ]);
+        $this->forgetCryptoLifecycleBindings();
+        $this->expectUntrustedReadyRun($context, $newSource->run->id);
+    }
+
+    private function expectUntrustedReadyRun(ReportExecutionContext $context, string $runId): void
+    {
+        try {
+            app(ReportRunStore::class)->get($context, $runId);
+            self::fail('Expected the READY run with an untrusted seal to fail closed.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED, $exception->errorCode);
+        }
+    }
+
+    private function forgetCryptoLifecycleBindings(): void
+    {
+        foreach ([
+            ReportSnapshotSealVerifier::class,
+            ReportSnapshotSealValidator::class,
+            ReportSnapshotSealStore::class,
+            CanonicalReportSnapshotSealer::class,
+            ReportRunStore::class,
+            ReportDefinitionBindingAssembler::class,
+            QualityDefectFlowSnapshotMaterializer::class,
+            QualityDefectFlowReportProvider::class,
+        ] as $abstract) {
+            app()->forgetInstance($abstract);
+        }
     }
 
     private function context(

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
@@ -84,6 +85,57 @@ final class CanonicalReportSnapshotSealerTest extends TestCase
         $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
         $keys['reports-2026-06']['revoked'] = true;
         (new TrustedReportSnapshotSealVerifier($keys))->assertTrusted($input);
+    }
+
+    public function test_unknown_key_and_forged_signature_fail_closed(): void
+    {
+        $pair = sodium_crypto_sign_keypair();
+        $generatedAt = new DateTimeImmutable('2026-07-30T08:00:00Z');
+        $hash = new Sha256Hash(str_repeat('c', 64));
+        $seal = (new CanonicalReportSnapshotSealer(
+            $this->base64Url(sodium_crypto_sign_secretkey($pair)),
+            'reports-2026-07',
+        ))->seal('snapshot-negative', 'quality_defect_flow', $generatedAt, $hash, $generatedAt);
+        $trusted = new TrustedReportSnapshotSealVerifier([
+            'reports-2026-07' => [
+                'public_key' => $this->base64Url(sodium_crypto_sign_publickey($pair)),
+                'revoked' => false,
+            ],
+        ]);
+
+        foreach ([
+            new ReportSnapshotSeal(
+                'unknown-reports-key',
+                $seal->algorithm,
+                $seal->sealedPayloadHash,
+                $seal->signature,
+                $seal->sealedAt,
+            ),
+            new ReportSnapshotSeal(
+                $seal->keyId,
+                $seal->algorithm,
+                $seal->sealedPayloadHash,
+                str_repeat('A', 86),
+                $seal->sealedAt,
+            ),
+        ] as $invalidSeal) {
+            try {
+                $trusted->assertTrusted(new ReportSnapshotSealVerificationInput(
+                    $invalidSeal,
+                    'snapshot-negative',
+                    'quality_defect_flow',
+                    ReportSnapshotClassification::OFFICIAL,
+                    $generatedAt,
+                    $hash,
+                ));
+                self::fail('Expected an untrusted seal to fail closed.');
+            } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+                self::assertSame(
+                    \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED,
+                    $exception->errorCode,
+                );
+            }
+        }
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('invalidSignerConfiguration')]

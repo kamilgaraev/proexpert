@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Services;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
 use App\BusinessModules\Core\Reporting\Support\ReportIdentitySetReconciler;
@@ -37,6 +39,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         private SafetyComplianceService $compliance,
         private WorkforceAdmissionFormula $formula,
         private SafetyEvidenceVersionResolver $evidenceVersions,
+        private ReportSnapshotSealStore $seals,
     ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
@@ -236,6 +239,13 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     $snapshot->output_hash = (string) DB::table('safety_admission_snapshots')
                         ->where('id', $snapshot->id)->value('output_hash');
                     $snapshot->sealed_at = $generatedAt;
+                    $this->seals->create(
+                        'workforce_admission',
+                        (string) $snapshot->id,
+                        $generatedAt->toDateTimeImmutable(),
+                        new Sha256Hash((string) $snapshot->source_hash),
+                        $generatedAt->toDateTimeImmutable(),
+                    );
 
                     return $snapshot;
                 });

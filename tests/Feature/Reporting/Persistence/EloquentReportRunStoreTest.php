@@ -6,8 +6,11 @@ namespace Tests\Feature\Reporting\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -1590,6 +1593,8 @@ final class EloquentReportRunStoreTest extends TestCase
             new FakeReportExecutionClock($now ?? new DateTimeImmutable('2026-07-26T00:00:00.111111Z')),
             $audit,
             new ReportRunHydrator,
+            new ReportSnapshotSealValidator(new AcceptingReportSnapshotSealVerifier),
+            new AcceptingReportSnapshotSealVerifier,
             new EloquentReportDispatchIntentStore($audit),
             3600,
             1250,
@@ -1707,4 +1712,9 @@ final class EloquentReportRunStoreTest extends TestCase
 
         return [$snapshot, $result, $sourceHash];
     }
+}
+
+final class AcceptingReportSnapshotSealVerifier implements ReportSnapshotSealVerifier
+{
+    public function assertTrusted(ReportSnapshotSealVerificationInput $input): void {}
 }
