@@ -11,7 +11,10 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessRow;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
+use App\Support\Reporting\CanonicalLineageSummary;
 use App\Support\Reporting\ImmutableOwnerProjectionReader;
+use App\Support\Reporting\LineageCursorPosition;
 use App\Support\Reporting\ReportSourceObjectAccessAuthorizer;
 
 final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillDownProvider
@@ -65,6 +68,18 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
                 'blocking_constraint_ids' => $row['blocking_constraint_ids'],
             ];
             if (($row['constraint_id'] ?? null) !== null) {
+                $lineage = CanonicalLineageSummary::fromArray(
+                    (array) ($row['transition_lineage'] ?? []),
+                );
+                $lineageAsOf = $row['transition_lineage_as_of'] ?? null;
+                if (! is_string($lineageAsOf)
+                    || \DateTimeImmutable::createFromFormat(
+                        'Y-m-d\TH:i:s.uP',
+                        $lineageAsOf,
+                    )?->format('Y-m-d\TH:i:s.uP') !== $lineageAsOf
+                ) {
+                    throw new \InvalidArgumentException('lookahead_transition_lineage_filter_invalid');
+                }
                 $this->sourceAccess->assertAccessible(
                     $context,
                     'work_constraint',
@@ -77,8 +92,74 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
                     'constraint_id' => $row['constraint_id'],
                     'constraint_type' => $row['constraint_type'],
                     'constraint_status' => $row['constraint_status'],
-                    'transition_lineage' => $row['transition_lineage'] ?? [],
+                    'transition_lineage' => $lineage->canonicalIdentity(),
                 ];
+                $position = LineageCursorPosition::decode($request->cursor);
+                $eventQuery = WorkConstraintTransitionEvent::query()
+                    ->where('organization_id', $context->scope->organizationId)
+                    ->where('project_id', $projectId)
+                    ->where('schedule_id', (int) $row['schedule_id'])
+                    ->where('task_id', (int) $row['task_id'])
+                    ->where('constraint_id', (int) $row['constraint_id'])
+                    ->where('occurred_at', '<=', $lineageAsOf)
+                    ->where(function ($builder) use ($lineage): void {
+                        $builder
+                            ->where('event_version', '>', $lineage->firstVersion)
+                            ->orWhere(function ($lower) use ($lineage): void {
+                                $lower
+                                    ->where('event_version', $lineage->firstVersion)
+                                    ->where('id', '>=', $lineage->firstId);
+                            });
+                    })
+                    ->where(function ($builder) use ($lineage): void {
+                        $builder
+                            ->where('event_version', '<', $lineage->lastVersion)
+                            ->orWhere(function ($upper) use ($lineage): void {
+                                $upper
+                                    ->where('event_version', $lineage->lastVersion)
+                                    ->where('id', '<=', $lineage->lastId);
+                            });
+                    })
+                    ->when(
+                        $position !== null,
+                        static function ($builder) use ($position): void {
+                            $builder->where(function ($after) use ($position): void {
+                                $after
+                                    ->where('event_version', '>', $position->version)
+                                    ->orWhere(function ($tie) use ($position): void {
+                                        $tie
+                                            ->where('event_version', $position->version)
+                                            ->where('id', '>', $position->id);
+                                    });
+                            });
+                        },
+                    )
+                    ->orderBy('event_version')
+                    ->orderBy('id')
+                    ->limit($request->limit + 1)
+                    ->get();
+                $hasMore = $eventQuery->count() > $request->limit;
+                $events = $eventQuery->take($request->limit);
+                foreach ($events as $event) {
+                    $rows[] = [
+                        'row_key' => 'work_constraint_event:'.$event->id,
+                        'constraint_id' => (int) $event->constraint_id,
+                        'event_id' => (int) $event->id,
+                        'event_version' => (int) $event->event_version,
+                        'from_status' => $event->from_status,
+                        'to_status' => (string) $event->to_status,
+                        'occurred_at' => $event->occurred_at->format(DATE_ATOM),
+                        'project_id' => $projectId,
+                        'source_hash' => (string) $event->source_hash,
+                    ];
+                }
+                $lastEvent = $events->last();
+                $nextCursor = $hasMore && $lastEvent instanceof WorkConstraintTransitionEvent
+                    ? (new LineageCursorPosition(
+                        (int) $lastEvent->event_version,
+                        (int) $lastEvent->id,
+                    ))->encode()
+                    : null;
             }
             if (($row['linked_resource_id'] ?? null) !== null) {
                 $this->sourceAccess->assertAccessible(
@@ -96,6 +177,6 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
             }
         }
 
-        return new ReportDrillDownResult($rows, null, []);
+        return new ReportDrillDownResult($rows, $nextCursor ?? null, []);
     }
 }

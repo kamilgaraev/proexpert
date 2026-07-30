@@ -20,7 +20,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services
 use App\Models\ScheduleTask;
 use App\Support\Reporting\DeterministicReadinessAccumulator;
 use App\Support\Reporting\ReportScopedResourceFilter;
-use Illuminate\Support\Facades\DB;
+use App\Support\Reporting\StableReportingSourceView;
 use InvalidArgumentException;
 
 final readonly class LookaheadReadinessProbe implements ReportSourceReadinessProbe
@@ -32,6 +32,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         private LookaheadResourceScope $resourceScope,
         private LookaheadResourceCandidateQuery $resourceCandidates,
         private LookaheadConstraintHistoryStream $constraintHistory,
+        private StableReportingSourceView $stableView,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -49,15 +50,10 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        if (DB::transactionLevel() > 0) {
-            return $this->inspectWithinSnapshot($context, $query);
-        }
-
-        return DB::transaction(function () use ($context, $query): ReportSourceReadiness {
-            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-
-            return $this->inspectWithinSnapshot($context, $query);
-        }, 3);
+        return $this->stableView->capture(
+            fn (): ReportSourceReadiness => $this->inspectWithinSnapshot($context, $query),
+            3,
+        );
     }
 
     private function inspectWithinSnapshot(
@@ -226,8 +222,8 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
                         'source_id' => $constraintState->constraintId,
                     ]);
                     $measurement->projected([
-                        'transition_lineage' => $constraintState->transitionLineage,
                         'kind' => 'constraint',
+                        'transition_lineage' => $constraintState->lineage?->canonicalIdentity(),
                         'source_id' => $constraintState->constraintId,
                     ]);
                 }

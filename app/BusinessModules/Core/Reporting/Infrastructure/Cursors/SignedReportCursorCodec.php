@@ -56,6 +56,23 @@ final readonly class SignedReportCursorCodec
         'token_type',
     ];
 
+    private const DRILL_DOWN_CURSOR_PAYLOAD_FIELDS = [
+        'column_id',
+        'definition_hash',
+        'expires_at',
+        'issued_at',
+        'key_id',
+        'organization_id',
+        'position',
+        'query_hash',
+        'report_code',
+        'row_key',
+        'run_id',
+        'snapshot_id',
+        'source_hash',
+        'token_type',
+    ];
+
     private array $keys;
 
     public function __construct(
@@ -122,6 +139,7 @@ final readonly class SignedReportCursorCodec
         } catch (Throwable $exception) {
             throw $this->invalid('cursor', $exception);
         }
+
         return $this->sign($payload, 'cursor');
     }
 
@@ -257,6 +275,99 @@ final readonly class SignedReportCursorCodec
             }
 
             throw $this->invalid('token', $exception);
+        }
+    }
+
+    public function encodeDrillDownCursor(
+        int $organizationId,
+        string $reportCode,
+        string $runId,
+        ReportSnapshotRef $snapshot,
+        Sha256Hash $queryHash,
+        string $rowKey,
+        string $columnId,
+        string $position,
+        DateTimeImmutable $expiresAt,
+    ): string {
+        $issuedAt = $this->clock->now();
+        if ($organizationId < 1
+            || $organizationId !== $snapshot->scope->organizationId
+            || preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $reportCode) !== 1
+            || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $runId) !== 1
+            || ! self::isCanonicalRowKey($rowKey)
+            || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $columnId) !== 1
+            || preg_match('/^[1-9][0-9]*:[1-9][0-9]*$/D', $position) !== 1
+            || $expiresAt <= $issuedAt
+        ) {
+            throw $this->invalid();
+        }
+
+        try {
+            $payload = CanonicalJson::encode([
+                'column_id' => $columnId,
+                'definition_hash' => $snapshot->definitionHash->value,
+                'expires_at' => $expiresAt->format(DATE_ATOM),
+                'issued_at' => $issuedAt->format(DATE_ATOM),
+                'key_id' => $this->activeKeyId,
+                'organization_id' => $organizationId,
+                'position' => $position,
+                'query_hash' => $queryHash->value,
+                'report_code' => $reportCode,
+                'row_key' => $rowKey,
+                'run_id' => $runId,
+                'snapshot_id' => $snapshot->id,
+                'source_hash' => $snapshot->sourceHash->value,
+                'token_type' => 'report_drill_down_cursor',
+            ]);
+        } catch (Throwable $exception) {
+            throw $this->invalid('cursor', $exception);
+        }
+
+        return $this->sign($payload, 'cursor');
+    }
+
+    public function decodeDrillDownCursor(
+        string $token,
+        int $organizationId,
+        string $reportCode,
+        string $runId,
+        ReportSnapshotRef $snapshot,
+        Sha256Hash $queryHash,
+        string $rowKey,
+        string $columnId,
+    ): string {
+        try {
+            $payload = $this->verifiedPayload($token, self::DRILL_DOWN_CURSOR_PAYLOAD_FIELDS);
+            $this->assertLifetime($payload);
+            if (! is_string($payload['token_type'])
+                || ! is_string($payload['row_key'])
+                || ! is_string($payload['column_id'])
+                || ! is_string($payload['position'])
+                || $payload['token_type'] !== 'report_drill_down_cursor'
+                || $payload['organization_id'] !== $organizationId
+                || $organizationId !== $snapshot->scope->organizationId
+                || ! hash_equals($payload['report_code'], $reportCode)
+                || ! hash_equals($payload['run_id'], $runId)
+                || ! hash_equals($payload['snapshot_id'], $snapshot->id)
+                || ! hash_equals($payload['definition_hash'], $snapshot->definitionHash->value)
+                || ! hash_equals($payload['query_hash'], $queryHash->value)
+                || ! hash_equals($payload['source_hash'], $snapshot->sourceHash->value)
+                || ! hash_equals($payload['row_key'], $rowKey)
+                || ! hash_equals($payload['column_id'], $columnId)
+                || ! self::isCanonicalRowKey($payload['row_key'])
+                || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $payload['column_id']) !== 1
+                || preg_match('/^[1-9][0-9]*:[1-9][0-9]*$/D', $payload['position']) !== 1
+            ) {
+                throw new InvalidArgumentException('report_drill_down_cursor_identity_mismatch');
+            }
+
+            return $payload['position'];
+        } catch (Throwable $exception) {
+            if ($exception instanceof ReportContractException) {
+                throw $exception;
+            }
+
+            throw $this->invalid('cursor', $exception);
         }
     }
 

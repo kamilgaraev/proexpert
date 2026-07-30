@@ -18,6 +18,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\
 use App\Models\ScheduleTask;
 use App\Support\Reporting\DeterministicObjectSpool;
 use App\Support\Reporting\ReportScopedResourceFilter;
+use App\Support\Reporting\StableReportingSourceView;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -35,19 +36,15 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         private LookaheadResourceScope $resourceScope,
         private LookaheadConstraintHistoryStream $constraintHistory,
         private LookaheadResourceCandidateQuery $resourceCandidates,
+        private StableReportingSourceView $stableView,
     ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
-        if (DB::transactionLevel() > 0) {
-            return $this->materializeWithinSnapshot($scope, $query);
-        }
-
-        return DB::transaction(function () use ($scope, $query): ReportSnapshotRef {
-            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-
-            return $this->materializeWithinSnapshot($scope, $query);
-        }, 3);
+        return $this->stableView->capture(
+            fn (): ReportSnapshotRef => $this->materializeWithinSnapshot($scope, $query),
+            3,
+        );
     }
 
     private function materializeWithinSnapshot(
@@ -139,6 +136,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ->values();
         $inputSpool = new DeterministicObjectSpool;
         $effectiveProjectIdMap = [];
+        $eventWatermark = 0;
         foreach ($states->chunk(100) as $statePage) {
             $taskIds = [];
             foreach ($statePage as $state) {
@@ -151,7 +149,12 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 $scopedConstraintIds,
                 $query->asOf,
             ) as $entry) {
-                $constraintsByTask[(int) $entry['task_id']][] = $entry['state'];
+                $constraintState = $entry['state'];
+                $constraintsByTask[(int) $entry['task_id']][] = $constraintState;
+                $eventWatermark = max(
+                    $eventWatermark,
+                    $constraintState->lineage?->lastId ?? 0,
+                );
             }
             $uncapturedConstraints = WorkConstraint::withTrashed()
                 ->where('organization_id', $scope->organizationId)
@@ -260,7 +263,8 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 $policySet,
                 $policyHashes,
                 $inputSpool,
-                $sourceHash
+                $sourceHash,
+                $eventWatermark,
             ): ReportSnapshotRef {
                 $snapshotId = (string) Str::ulid();
                 $projectionRows = new DeterministicObjectSpool;
@@ -323,7 +327,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'stale_at' => $query->asOf->modify('+15 minutes'),
                     'watermarks' => [
                         'policies' => $policyHashes,
-                        'events' => 'source_'.substr($sourceHash->value, 0, 24),
+                        'events' => 'event_'.$eventWatermark,
                     ],
                     'totals' => $totals,
                     'source_refs' => $sourceRefs,
@@ -361,7 +365,10 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                         'waiver_evidence_ref' => $constraint?->waiverEvidenceRef,
                         'linked_resource_type' => $constraint?->linkedResourceType,
                         'linked_resource_id' => $constraint?->linkedResourceId,
-                        'transition_lineage' => $constraint?->transitionLineage ?? [],
+                        'transition_lineage' => $constraint?->lineage?->canonicalIdentity(),
+                        'transition_lineage_as_of' => $constraint === null
+                            ? null
+                            : $query->asOf->format('Y-m-d\TH:i:s.uP'),
                         'warning_code' => $metric->warningCode,
                         'unknown_metrics' => $metric->warningCode === null ? [] : ['waiver_validity'],
                     ];
@@ -379,7 +386,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                             'type' => 'work_constraint',
                             'id' => $constraint->constraintId,
                             'project_id' => $input->projectId,
-                            'transition_lineage' => $constraint->transitionLineage,
+                            'transition_lineage' => $constraint->lineage?->canonicalIdentity(),
                         ]]),
                         ...($constraint?->linkedResourceId === null ? [] : [[
                             'type' => $constraint->linkedResourceType,

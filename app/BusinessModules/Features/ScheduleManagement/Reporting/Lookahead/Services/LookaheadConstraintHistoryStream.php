@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadConstraintState;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
 use DateTimeImmutable;
 use Generator;
@@ -31,81 +30,27 @@ final readonly class LookaheadConstraintHistoryStream
             ->orderBy('id')
             ->cursor();
         $constraintId = null;
-        $first = null;
-        $latest = null;
-        $lineage = [];
+        $reducer = null;
         foreach ($events as $event) {
             if ($constraintId !== null && $constraintId !== (int) $event->constraint_id) {
-                if (! $first instanceof WorkConstraintTransitionEvent
-                    || ! $latest instanceof WorkConstraintTransitionEvent
-                ) {
+                if (! $reducer instanceof LookaheadConstraintHistoryReducer) {
                     throw new \InvalidArgumentException('lookahead_constraint_history_invalid');
                 }
                 yield [
-                    'task_id' => (int) $latest->task_id,
-                    'state' => $this->state($first, $latest, $lineage),
+                    'task_id' => $reducer->taskId(),
+                    'state' => $reducer->finish(),
                 ];
-                $lineage = [];
-                $first = null;
+                $reducer = null;
             }
             $constraintId = (int) $event->constraint_id;
-            $first ??= $event;
-            $latest = $event;
-            $lineage[] = [
-                'id' => (int) $event->id,
-                'version' => (int) $event->event_version,
-                'source_hash' => (string) $event->source_hash,
-            ];
+            $reducer ??= new LookaheadConstraintHistoryReducer;
+            $reducer->append($event);
         }
-        if ($latest instanceof WorkConstraintTransitionEvent) {
-            if (! $first instanceof WorkConstraintTransitionEvent) {
-                throw new \InvalidArgumentException('lookahead_constraint_history_invalid');
-            }
+        if ($reducer instanceof LookaheadConstraintHistoryReducer) {
             yield [
-                'task_id' => (int) $latest->task_id,
-                'state' => $this->state($first, $latest, $lineage),
+                'task_id' => $reducer->taskId(),
+                'state' => $reducer->finish(),
             ];
         }
-    }
-
-    private function state(
-        WorkConstraintTransitionEvent $first,
-        WorkConstraintTransitionEvent $latest,
-        array $lineage,
-    ): LookaheadConstraintState {
-        $linked = $this->linkedResource((array) $latest->evidence_refs);
-
-        return new LookaheadConstraintState(
-            constraintId: (int) $latest->constraint_id,
-            type: (string) $latest->constraint_type,
-            severity: (string) $latest->severity,
-            status: (string) $latest->to_status,
-            waiverUntil: $latest->waiver_until === null
-                ? null
-                : new DateTimeImmutable($latest->waiver_until->format(DATE_ATOM)),
-            waiverEvidenceRef: $latest->waiver_evidence_ref,
-            openedAt: new DateTimeImmutable($first->occurred_at->format(DATE_ATOM)),
-            linkedResourceType: $linked['type'] ?? null,
-            linkedResourceId: $linked['id'] ?? null,
-            transitionLineage: $lineage,
-        );
-    }
-
-    private function linkedResource(array $evidenceRefs): ?array
-    {
-        foreach ($evidenceRefs as $reference) {
-            if (! is_array($reference)
-                || ($reference['type'] ?? null) === 'waiver_evidence'
-                || ! is_string($reference['type'] ?? null)
-                || ! is_numeric($reference['id'] ?? null)
-                || (int) $reference['id'] < 1
-            ) {
-                continue;
-            }
-
-            return ['type' => $reference['type'], 'id' => (int) $reference['id']];
-        }
-
-        return null;
     }
 }

@@ -64,8 +64,47 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
         }
         $authorization = $this->authorizeDrillDown($context, $query, $snapshot);
         $providerContext = $this->contexts->fromCurrentAuthorization($authorization);
+        $providerRequest = $request;
+        if ($request->cursor !== null) {
+            $providerRequest = new ReportDrillDownRequest(
+                token: $request->token,
+                cursor: $this->tokens->decodeDrillDownCursor(
+                    $request->cursor,
+                    $query->scope->organizationId,
+                    $run->reportCode,
+                    $run->id,
+                    $snapshot,
+                    $run->queryHash,
+                    $cell['row_key'],
+                    $cell['column_id'],
+                ),
+                limit: $request->limit,
+            );
+        }
+        $result = $binding->drillDownProvider->drillDown(
+            $providerContext,
+            $snapshot,
+            $providerRequest,
+        );
+        if ($result->nextCursor === null) {
+            return $result;
+        }
 
-        return $binding->drillDownProvider->drillDown($providerContext, $snapshot, $request);
+        return new ReportDrillDownResult(
+            rows: $result->rows,
+            nextCursor: $this->tokens->encodeDrillDownCursor(
+                organizationId: $query->scope->organizationId,
+                reportCode: $run->reportCode,
+                runId: $run->id,
+                snapshot: $snapshot,
+                queryHash: $run->queryHash,
+                rowKey: $cell['row_key'],
+                columnId: $cell['column_id'],
+                position: $result->nextCursor,
+                expiresAt: $run->expiresAt,
+            ),
+            resourceLinks: $result->resourceLinks,
+        );
     }
 
     private function readySnapshot(ReportRun $run): ReportSnapshotRef

@@ -5,18 +5,27 @@ declare(strict_types=1);
 namespace App\Services\CompletedWork\Reporting\AcceptedProduction\DTO;
 
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
+use App\Support\Reporting\CanonicalLineageSummary;
 
 final readonly class AcceptedProductionUniverseEntry
 {
     public function __construct(
         public array $candidate,
-        public array $events,
+        private ProductionAcceptanceEvent $latest,
+        public ProductionAcceptanceFact $fact,
+        public CanonicalLineageSummary $lineage,
     ) {}
 
     public function latestEvent(): ?ProductionAcceptanceEvent
     {
-        $event = $this->events[array_key_last($this->events)] ?? null;
+        return $this->latest;
+    }
 
-        return $event instanceof ProductionAcceptanceEvent ? $event : null;
+    public function canonicalIdentity(): array
+    {
+        return [
+            'candidate' => $this->candidate,
+            'lineage' => $this->lineage->canonicalIdentity(),
+        ];
     }
 }

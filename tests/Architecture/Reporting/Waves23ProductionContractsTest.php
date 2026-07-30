@@ -340,7 +340,7 @@ final class Waves23ProductionContractsTest extends TestCase
         );
 
         self::assertStringContainsString('$this->sources->assemble($context->scope, $query)', $readiness);
-        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $readiness);
+        self::assertStringContainsString('$this->stableView->capture(', $readiness);
         self::assertStringContainsString('project-control-materialize:', $readiness);
         self::assertStringContainsString('pg_advisory_xact_lock', $readiness);
         self::assertStringContainsString('project_control_wip_line_without_baseline', $assembler);
@@ -348,7 +348,7 @@ final class Waves23ProductionContractsTest extends TestCase
     }
 
     #[Test]
-    public function r07_persists_exact_transition_lineage_and_uses_bulk_rows(): void
+    public function r07_persists_bounded_transition_summary_and_pages_exact_lineage(): void
     {
         $state = $this->source(
             'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/DTO/'
@@ -367,13 +367,60 @@ final class Waves23ProductionContractsTest extends TestCase
             .'LookaheadReadinessDrillDownProvider.php',
         );
 
-        self::assertStringContainsString('public array $transitionLineage', $state);
-        foreach (["'id' => (int) \$event->id", "'version' => (int) \$event->event_version", "'source_hash' => (string) \$event->source_hash"] as $identity) {
-            self::assertStringContainsString($identity, $historyStream);
-        }
-        self::assertStringContainsString("'transition_lineage' => \$constraint->transitionLineage", $materializer);
-        self::assertStringContainsString("'transition_lineage' => \$row['transition_lineage']", $drilldown);
+        self::assertStringContainsString('CanonicalLineageSummary', $state);
+        self::assertStringContainsString('LookaheadConstraintHistoryReducer', $historyStream);
+        self::assertStringNotContainsString('$lineage = []', $historyStream);
+        self::assertStringContainsString(
+            "'transition_lineage' => \$constraint?->lineage?->canonicalIdentity()",
+            $materializer,
+        );
+        self::assertStringContainsString("'transition_lineage_as_of'", $materializer);
+        self::assertStringNotContainsString('transitionLineage', $materializer);
+        self::assertStringContainsString('WorkConstraintTransitionEvent::query()', $drilldown);
+        self::assertStringContainsString('LineageCursorPosition::decode($request->cursor)', $drilldown);
+        self::assertStringContainsString("where('occurred_at', '<=', \$lineageAsOf)", $drilldown);
+        self::assertStringContainsString('$lineage->firstVersion', $drilldown);
+        self::assertStringContainsString('$lineage->firstId', $drilldown);
+        self::assertStringContainsString('$lineage->lastVersion', $drilldown);
+        self::assertStringContainsString('$lineage->lastId', $drilldown);
         self::assertStringContainsString("DB::table('lookahead_readiness_rows')->insert(\$rowBatch)", $materializer);
+    }
+
+    #[Test]
+    public function r08_persists_bounded_event_summary_and_pages_exact_abac_lineage(): void
+    {
+        $entry = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/DTO/'
+            .'AcceptedProductionUniverseEntry.php',
+        );
+        $universe = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        );
+        $materializer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionSnapshotMaterializer.php',
+        );
+        $drilldown = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/DrillDown/'
+            .'AcceptedProductionDrillDownProvider.php',
+        );
+
+        self::assertStringContainsString('CanonicalLineageSummary $lineage', $entry);
+        self::assertStringContainsString('AcceptedProductionEventReducer', $universe);
+        self::assertStringNotContainsString('$currentEvents', $universe);
+        self::assertStringNotContainsString('public array $events', $entry);
+        self::assertStringNotContainsString("'event_ids'", $materializer);
+        self::assertStringNotContainsString("'ids' =>", $materializer);
+        self::assertStringContainsString('ProductionAcceptanceEvent::query()', $drilldown);
+        self::assertStringContainsString('LineageCursorPosition::decode($request->cursor)', $drilldown);
+        self::assertStringContainsString('$this->sourceAccess->assertReferencesAccessible(', $drilldown);
+        self::assertStringContainsString("'acceptance_lineage_filter'", $materializer);
+        self::assertStringContainsString('$this->applyLineageFilter(', $drilldown);
+        self::assertStringContainsString('$lineage->firstVersion', $drilldown);
+        self::assertStringContainsString('$lineage->firstId', $drilldown);
+        self::assertStringContainsString('$lineage->lastVersion', $drilldown);
+        self::assertStringContainsString('$lineage->lastId', $drilldown);
     }
 
     #[Test]
@@ -496,8 +543,11 @@ final class Waves23ProductionContractsTest extends TestCase
             'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
             .'AcceptedProductionEventUniverse.php',
         );
+        $stableView = $this->source(
+            'app/Support/Reporting/StableReportingSourceView.php',
+        );
 
-        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $projectControl);
+        self::assertStringContainsString('$this->stableView->capture(', $projectControl);
         self::assertStringContainsString('pg_advisory_xact_lock', $projectControl);
         foreach ([
             "->where('source_hash', \$sourceHash->value)",
@@ -509,8 +559,44 @@ final class Waves23ProductionContractsTest extends TestCase
         }
         self::assertStringContainsString('project_control_baseline_without_wip_line', $assembler);
         self::assertStringContainsString('project_control_wip_line_without_baseline', $assembler);
-        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $lookahead);
-        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $accepted);
+        self::assertStringContainsString('$this->stableView->capture(', $lookahead);
+        self::assertStringContainsString('$this->stableView->capture(', $accepted);
+        self::assertStringContainsString('DB::transactionLevel() > 0', $stableView);
+        self::assertStringContainsString('report_stable_source_nested_transaction', $stableView);
+        self::assertStringContainsString(
+            'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+            $stableView,
+        );
+        self::assertStringNotContainsString(
+            'if (DB::transactionLevel() > 0)',
+            $lookahead,
+        );
+        self::assertStringNotContainsString(
+            'if (DB::transactionLevel() > 0)',
+            $accepted,
+        );
+    }
+
+    #[Test]
+    public function drilldown_lineage_cursor_is_signed_and_bound_before_provider_access(): void
+    {
+        $handler = $this->source(
+            'app/BusinessModules/Core/Reporting/Application/Actions/Handlers/'
+            .'GetReportDrillDownHandler.php',
+        );
+        $codec = $this->source(
+            'app/BusinessModules/Core/Reporting/Infrastructure/Cursors/'
+            .'SignedReportCursorCodec.php',
+        );
+
+        self::assertStringContainsString('decodeDrillDownCursor(', $handler);
+        self::assertStringContainsString('encodeDrillDownCursor(', $handler);
+        self::assertStringContainsString("'token_type' => 'report_drill_down_cursor'", $codec);
+        self::assertStringContainsString("hash_equals(\$payload['row_key'], \$rowKey)", $codec);
+        self::assertStringContainsString(
+            "hash_equals(\$payload['column_id'], \$columnId)",
+            $codec,
+        );
     }
 
     private function source(string $path): string

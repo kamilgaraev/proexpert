@@ -12,12 +12,9 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionMetric;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseEntry;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAcceptanceFact;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -50,6 +47,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         }
         $watermark = $stream->eventWatermark;
         $ownerWatermark = $stream->ownerWatermark;
+        $lineageFilter = AcceptedProductionLineageFilter::fromQuery($query)->canonicalIdentity();
         $hashContext = hash_init('sha256');
         $stream->updateSourceHash($hashContext);
         $sourceHash = new Sha256Hash(hash_final($hashContext));
@@ -81,6 +79,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 $stream,
                 $rowCount,
                 $totals,
+                $lineageFilter,
             ): ReportSnapshotRef {
                 $snapshotId = (string) Str::ulid();
                 $sourceRefs = [[
@@ -143,6 +142,8 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         'currency' => $metric->currency,
                         'approved_rate_minor' => $item['fact']->approvedRateMinor,
                         'accepted_amount_minor' => $metric->acceptedAmountMinor,
+                        'acceptance_lineage' => $entry->lineage->canonicalIdentity(),
+                        'acceptance_lineage_filter' => $lineageFilter,
                         'unknown_metrics' => $metric->acceptedAmountMinor === null ? ['accepted_amount_minor'] : [],
                     ];
                     $sourceRefs = [
@@ -165,8 +166,9 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         ...(array) $event->evidence_refs,
                         [
                             'type' => 'acceptance_event',
-                            'ids' => $item['event_ids'],
+                            'id' => $entry->lineage->firstId,
                             'project_id' => (int) $event->project_id,
+                            'lineage' => $entry->lineage->canonicalIdentity(),
                         ],
                     ];
                     $rowBatch[] = [
@@ -215,58 +217,17 @@ final readonly class AcceptedProductionSnapshotMaterializer
         }
     }
 
-    private function fact(Collection $events, array $owner): array
-    {
-        $first = $events->first();
-        $last = $events->last();
-        if (! $first instanceof ProductionAcceptanceEvent || ! $last instanceof ProductionAcceptanceEvent) {
-            throw new InvalidArgumentException('accepted_production_event_group_invalid');
-        }
-        foreach ($events as $event) {
-            if ($event->unit_dimension !== $first->unit_dimension
-                || $event->unit_code !== $first->unit_code
-                || $event->conversion_version !== $first->conversion_version
-                || $event->currency !== $first->currency
-                || $event->currency_source !== $first->currency_source
-                || $event->approved_rate_minor !== $first->approved_rate_minor
-            ) {
-                throw new InvalidArgumentException('accepted_production_event_identity_changed');
-            }
-            if ($event->approved_rate_minor === null
-                || $event->currency === null
-                || $event->currency_source === null
-            ) {
-                throw new InvalidArgumentException('accepted_production_rate_identity_missing');
-            }
-        }
-        $accepted = $events->reduce(
-            fn (int $carry, ProductionAcceptanceEvent $event): int => $carry + $this->scaled((string) $event->accepted_quantity_delta),
-            0,
-        );
-
-        return [
-            'event' => $last,
-            'event_ids' => $events->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
-            'owner' => $owner,
-            'fact' => new ProductionAcceptanceFact(
-                plannedQuantity: $this->decimal($this->scaled((string) $first->planned_quantity)),
-                reportedQuantity: $this->decimal($this->scaled((string) $first->reported_quantity)),
-                acceptedQuantityDelta: $this->decimal($accepted),
-                unitDimension: (string) $first->unit_dimension,
-                unitCode: (string) $first->unit_code,
-                conversionVersion: (string) $first->conversion_version,
-                approvedRateMinor: $first->approved_rate_minor === null
-                    ? null
-                    : (int) $first->approved_rate_minor,
-                currency: $first->currency,
-                currencySource: $first->currency_source,
-            ),
-        ];
-    }
-
     private function metric(AcceptedProductionUniverseEntry $entry): array
     {
-        $item = $this->fact(collect($entry->events), $entry->candidate);
+        $event = $entry->latestEvent();
+        if ($event === null) {
+            throw new InvalidArgumentException('accepted_production_event_group_invalid');
+        }
+        $item = [
+            'event' => $event,
+            'owner' => $entry->candidate,
+            'fact' => $entry->fact,
+        ];
 
         return [$item, $this->formula->row($item['fact'])];
     }

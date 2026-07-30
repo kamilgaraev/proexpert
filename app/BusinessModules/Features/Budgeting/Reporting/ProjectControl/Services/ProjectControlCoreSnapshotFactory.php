@@ -15,6 +15,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectC
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlBaselineVersion;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlRow;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlSnapshot;
+use App\Support\Reporting\StableReportingSourceView;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -28,6 +29,7 @@ final readonly class ProjectControlCoreSnapshotFactory
     public function __construct(
         private ProjectControlFormula $formula,
         private ProjectControlSourceAssembler $sources,
+        private StableReportingSourceView $stableView,
     ) {}
 
     public function capture(
@@ -219,8 +221,7 @@ final readonly class ProjectControlCoreSnapshotFactory
             throw new InvalidArgumentException('project_control_single_project_scope_required');
         }
 
-        return DB::transaction(function () use ($scope, $query): ReportSnapshotRef {
-            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        return $this->stableView->capture(function () use ($scope, $query): ReportSnapshotRef {
             DB::select(
                 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
                 ['project-control-materialize:'.$scope->organizationId.':'.$scope->projectIds[0]],

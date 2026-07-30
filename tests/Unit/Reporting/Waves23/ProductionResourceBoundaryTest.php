@@ -208,7 +208,8 @@ final class ProductionResourceBoundaryTest extends TestCase
         self::assertStringContainsString('$states->chunk(100)', $materializer);
         self::assertStringContainsString('->whereNotExists(', $materializer);
         self::assertStringContainsString('->cursor()', $history);
-        self::assertStringContainsString('transitionLineage: $lineage', $history);
+        self::assertStringContainsString('new LookaheadConstraintHistoryReducer', $history);
+        self::assertStringNotContainsString('$lineage = []', $history);
     }
 
     #[Test]

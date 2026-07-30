@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectC
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Exceptions\ProjectControlSourceGapException;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectControlSourceAssembler;
 use App\Support\Reporting\ReportSourceReadinessFactory;
+use App\Support\Reporting\StableReportingSourceView;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -22,6 +23,7 @@ final readonly class ProjectControlReadinessProbe implements ReportSourceReadine
     public function __construct(
         private ReportSourceReadinessFactory $readiness,
         private ProjectControlSourceAssembler $sources,
+        private StableReportingSourceView $stableView,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -39,15 +41,10 @@ final readonly class ProjectControlReadinessProbe implements ReportSourceReadine
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        if (DB::transactionLevel() > 0) {
-            return $this->inspectWithinStableView($context, $query);
-        }
-
-        return DB::transaction(function () use ($context, $query): ReportSourceReadiness {
-            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-
-            return $this->inspectWithinStableView($context, $query);
-        }, 5);
+        return $this->stableView->capture(
+            fn (): ReportSourceReadiness => $this->inspectWithinStableView($context, $query),
+            5,
+        );
     }
 
     private function inspectWithinStableView(

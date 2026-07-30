@@ -54,15 +54,18 @@ final class ReportReadHandlersTest extends TestCase
     private const RUN_ID = '01J00000000000000000000000';
 
     private DateTimeImmutable $now;
+
     private FakeReportExecutionClock $clock;
+
     private ReportExecutionContext $context;
+
     private ReportWindowSort $sort;
 
     protected function setUp(): void
     {
         $this->now = new DateTimeImmutable('2030-01-01T00:00:00+00:00');
         $this->clock = new FakeReportExecutionClock($this->now);
-        $this->context = (new ReportExecutionContextBuilder())->build();
+        $this->context = (new ReportExecutionContextBuilder)->build();
         $this->sort = new ReportWindowSort('name', ReportSortDirection::ASC);
     }
 
@@ -186,7 +189,7 @@ final class ReportReadHandlersTest extends TestCase
                 $fixture,
                 'row-1',
                 'name',
-                snapshot: (new ReportRunBuilder())
+                snapshot: (new ReportRunBuilder)
                     ->sourceHash(new Sha256Hash(str_repeat('d', 64)))
                     ->ready()
                     ->resultMetadata
@@ -216,10 +219,41 @@ final class ReportReadHandlersTest extends TestCase
         }
     }
 
+    public function test_drill_down_signs_provider_cursor_and_decodes_it_before_next_page(): void
+    {
+        $fixture = $this->fixture(
+            drillResult: new ReportDrillDownResult(
+                [['row_key' => 'event-1']],
+                '7:91',
+                [],
+            ),
+        );
+        $operations = [];
+        $cellToken = $this->cellToken($fixture, 'row-1', 'name');
+        $handler = $this->drillDownHandler($fixture, $this->authorizer($operations));
+
+        $firstPage = $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportDrillDownRequest($cellToken, null, 25),
+        );
+
+        self::assertNotNull($firstPage->nextCursor);
+        self::assertNotSame('7:91', $firstPage->nextCursor);
+
+        $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportDrillDownRequest($cellToken, $firstPage->nextCursor, 25),
+        );
+
+        self::assertSame('7:91', $fixture['drillDown']->calls()[1][2]->cursor);
+    }
+
     public function test_rows_reject_expired_status_before_authorization_or_provider_call(): void
     {
         $fixture = $this->fixture();
-        $expired = (new ReportRunBuilder())
+        $expired = (new ReportRunBuilder)
             ->id(self::RUN_ID)
             ->status(ReportRunStatus::EXPIRED)
             ->createdAt($this->now->modify('-2 hours'))
@@ -288,9 +322,10 @@ final class ReportReadHandlersTest extends TestCase
         ?ReportOutputClassification $classification = null,
         array $columns = [['id' => 'name']],
         ?ReportPermissionPolicy $permissions = null,
+        ?ReportDrillDownResult $drillResult = null,
         array $rows = [['row_key' => 'row-1', 'name' => 'Строка']],
     ): array {
-        $definition = (new ReportDefinitionBuilder())
+        $definition = (new ReportDefinitionBuilder)
             ->columns($columns)
             ->permissionPolicy($permissions ?? new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []))
             ->outputClassification($classification ?? new ReportOutputClassification(
@@ -330,7 +365,7 @@ final class ReportReadHandlersTest extends TestCase
             $this->sort,
         );
         $rowQuery = new FakeReportRowQuery($page, []);
-        $drillResult = new ReportDrillDownResult($rows, null, []);
+        $drillResult ??= new ReportDrillDownResult($rows, null, []);
         $drillDown = new FakeReportDrillDownProvider($drillResult);
         $binding = new ReportDefinitionBinding(
             $definition->code,
@@ -364,7 +399,7 @@ final class ReportReadHandlersTest extends TestCase
 
     private function readyRun(ReportQuery $query, DateTimeImmutable $expiresAt): ReportRun
     {
-        return (new ReportRunBuilder())
+        return (new ReportRunBuilder)
             ->id(self::RUN_ID)
             ->reportCode($query->definition->code)
             ->definitionHash($query->definition->definitionHash)
@@ -409,7 +444,7 @@ final class ReportReadHandlersTest extends TestCase
             $fixture['registry'],
             $fixture['assembler'],
             $authorizer,
-            new ReportExecutionContextFactory(),
+            new ReportExecutionContextFactory,
             new SignedReportCursorCodec(
                 ['cursor-v1' => str_repeat('a', 64)],
                 'cursor-v1',
@@ -429,7 +464,7 @@ final class ReportReadHandlersTest extends TestCase
             $fixture['registry'],
             $fixture['assembler'],
             $authorizer,
-            new ReportExecutionContextFactory(),
+            new ReportExecutionContextFactory,
             $this->codec(),
             $this->clock,
         );
