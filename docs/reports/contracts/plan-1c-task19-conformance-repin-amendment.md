@@ -35,3 +35,20 @@ Task 5 script повторно валидирует fixture через Task 3 Dr
 пересчитывает digest и запускает concrete Task 4 validator с независимым
 fixture registry. Caller-authored fixture hash, даже с пересчитанным digest,
 отклоняется.
+
+## Review round 1: semantic version evidence
+
+Дополнительные поля в Task 1 manifest schema не вводятся. Semantic version
+policy использует только уже разрешённые поля:
+
+- formula identity — `versions.formula`, подтверждённый typed
+  `ReportFormulaConformanceEvidence::formulaVersion`;
+- source identity — `filters`, `grain`, `versions.source_schema`,
+  подтверждённый typed `ReportDefinitionConformanceEvidence::sourceSchemaVersion`;
+- public contract — `filters`, `columns`, `sorts`, `formats`, `catalog_group`;
+- renderer — `title_key`, `category`, `wave`.
+
+Таким образом, forward-only amendment не добавляет скрытые schema-invalid
+arrays. Filter change осознанно требует одновременно source-schema и contract
+version bump. Formula/source version-only bump допускается только при точном
+typed conformance identity; stale evidence отклоняется.

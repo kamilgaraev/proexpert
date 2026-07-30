@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Tests\Support\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionCanonicalProjector;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCandidateValidationItem;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
 use RuntimeException;
@@ -19,6 +21,8 @@ final readonly class ReportCandidateValidationFixtureBuilder
 
     public function __construct(
         private StrictReportDefinitionCandidateValidator $validator,
+        private ReportDefinitionFactory $definitions,
+        private ReportDefinitionCanonicalProjector $projector,
     ) {}
 
     public function build(
@@ -34,6 +38,24 @@ final readonly class ReportCandidateValidationFixtureBuilder
                 || ! $binding instanceof ReportDefinitionBinding
                 || ! hash_equals($code, $binding->code)) {
                 throw new InvalidArgumentException('report_candidate_fixture_bindings_invalid');
+            }
+        }
+
+        $expected = [];
+        foreach ($manifest->definitions as $row) {
+            $readiness = $row['readiness'] ?? null;
+            if (is_array($readiness) && ($readiness['publication'] ?? null) === 'candidate') {
+                $expected[] = $this->definitions->fromManifest($row);
+            }
+        }
+        $registryCodes = $registry->candidateCodes();
+        if (array_column($expected, 'code') !== $registryCodes) {
+            throw new RuntimeException('report_candidate_fixture_registry_mismatch');
+        }
+        foreach ($expected as $ordinal => $definition) {
+            $candidate = $registry->candidate($registryCodes[$ordinal]);
+            if (! $this->projector->equals($definition, $candidate->payload())) {
+                throw new RuntimeException('report_candidate_fixture_registry_mismatch');
             }
         }
 

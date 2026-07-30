@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionCanonicalProjector;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportManifestPromotionService;
+use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCandidateValidationItem;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCandidateValidationResult;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFormulaConformanceEvidence;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationLock;
@@ -21,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateRepor
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\FilesystemReportPublicationLedger;
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use Opis\JsonSchema\CompliantValidator;
@@ -70,6 +74,43 @@ final class ReportManifestPromotionServiceTest extends TestCase
             $current,
             $changedManifest,
             $candidate,
+            $validation,
+            $conformance,
+            $candidateManifest->bytesHash,
+            str_repeat('1', 40),
+            new DateTimeImmutable('2026-07-26T00:00:00Z'),
+        );
+    }
+
+    public function test_forged_candidate_wrapper_with_real_code_and_hash_is_rejected(): void
+    {
+        [$service, $current, $candidateManifest, $candidate, $validation, $conformance] = $this->validArguments();
+        $payload = $candidate->payload();
+        $forged = new CandidateReportDefinition(new ReportDefinition(
+            $payload->code,
+            $payload->definitionHash,
+            $payload->contractVersion,
+            $payload->formulaVersion,
+            $payload->sourceSchemaVersion,
+            $payload->rendererVersion,
+            [['id' => 'forged_filter']],
+            $payload->columns,
+            $payload->sorts,
+            $payload->formats,
+            $payload->permissionPolicy,
+            $payload->snapshotClassification,
+            $payload->outputClassification,
+            $payload->publicationReadiness,
+            $payload->supportsSubscriptions,
+        ));
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_promotion_candidate_wrapper_mismatch');
+
+        $service->promote(
+            $current,
+            $candidateManifest,
+            $forged,
             $validation,
             $conformance,
             $candidateManifest->bytesHash,
@@ -151,6 +192,150 @@ final class ReportManifestPromotionServiceTest extends TestCase
             foreach ([$outputPath, $lockPath, $ledgerPath, $ledgerPath.'.lock'] as $path) {
                 if (is_file($path)) {
                     unlink($path);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
+    public function test_new_ledger_failure_rolls_back_previously_published_artifacts(): void
+    {
+        $directory = sys_get_temp_dir().'/most-report-new-ledger-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $ledgerPath = $directory.'/ledger.json';
+        $outputPath = $directory.'/published.yaml';
+        $lockPath = $directory.'/lock.json';
+        $renameCalls = 0;
+        $ledger = new FilesystemReportPublicationLedger(
+            new Draft202012SchemaValidator(new CompliantValidator),
+            $this->root().'/docs/reports/contracts/report-publication-ledger.schema.json',
+            static function (string $temporary, string $final) use (&$renameCalls): bool {
+                $renameCalls++;
+
+                return $renameCalls < 3 && rename($temporary, $final);
+            },
+        );
+
+        try {
+            $ledger->publish(
+                $ledgerPath,
+                $this->lock(str_repeat('1', 40), '4'),
+                [$outputPath => "published\n", $lockPath => "{}\n"],
+                static function (): void {},
+            );
+            self::fail('The injected new-ledger rename failure must abort publication.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('report_publication_ledger_replace_failed', $exception->getMessage());
+            self::assertFileDoesNotExist($outputPath);
+            self::assertFileDoesNotExist($lockPath);
+            self::assertFileDoesNotExist($ledgerPath);
+        } finally {
+            foreach ([$outputPath, $lockPath, $ledgerPath, $ledgerPath.'.lock'] as $path) {
+                if (is_file($path)) {
+                    unlink($path);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
+    public function test_existing_ledger_is_restored_when_staged_replace_fails(): void
+    {
+        $directory = sys_get_temp_dir().'/most-report-existing-ledger-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $path = $directory.'/ledger.json';
+        $schemaPath = $this->root().'/docs/reports/contracts/report-publication-ledger.schema.json';
+        $validator = new Draft202012SchemaValidator(new CompliantValidator);
+        (new FilesystemReportPublicationLedger($validator, $schemaPath))
+            ->append($path, $this->lock(str_repeat('1', 40), '4'));
+        $original = (string) file_get_contents($path);
+        $renameCalls = 0;
+        $ledger = new FilesystemReportPublicationLedger(
+            $validator,
+            $schemaPath,
+            static function (string $temporary, string $final) use (&$renameCalls): bool {
+                $renameCalls++;
+                if ($renameCalls === 2) {
+                    return false;
+                }
+
+                return rename($temporary, $final);
+            },
+        );
+
+        try {
+            $ledger->append($path, $this->lock(str_repeat('1', 40), '6'));
+            self::fail('The injected existing-ledger replace failure must abort append.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('report_publication_ledger_replace_failed', $exception->getMessage());
+            self::assertSame($original, file_get_contents($path));
+        } finally {
+            foreach ([$path, $path.'.lock'] as $candidate) {
+                if (is_file($candidate)) {
+                    unlink($candidate);
+                }
+            }
+            foreach (glob($directory.'/.report-*') ?: [] as $candidate) {
+                if (is_file($candidate)) {
+                    unlink($candidate);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
+    public function test_ledger_rejects_semantic_event_tampering_and_duplicate_event_ids(): void
+    {
+        $directory = sys_get_temp_dir().'/most-report-ledger-semantic-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $path = $directory.'/ledger.json';
+        $ledger = new FilesystemReportPublicationLedger(
+            new Draft202012SchemaValidator(new CompliantValidator),
+            $this->root().'/docs/reports/contracts/report-publication-ledger.schema.json',
+        );
+        $firstLock = $this->lock(str_repeat('1', 40), '4');
+        $ledger->append($path, $firstLock);
+        $original = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        $secondLock = $this->lock(str_repeat('2', 40), '4');
+
+        $cases = [
+            'wrong digest' => static function (array $document): array {
+                $document['events'][0]['lock_digest'] = str_repeat('a', 64);
+
+                return $document;
+            },
+            'event identity mismatch' => static function (array $document): array {
+                $document['events'][0]['event_id'] = 'reports:definition:quality_report:published:'
+                    .$document['events'][0]['lock']['definition_hash'];
+
+                return $document;
+            },
+            'duplicate event id with conflicting bytes' => static function (array $document) use ($secondLock): array {
+                $document['events'][] = [
+                    'event_id' => $document['events'][0]['event_id'],
+                    'event_type' => 'definition_published',
+                    'lock' => $secondLock->canonicalPayload(),
+                    'lock_digest' => $secondLock->digest()->value,
+                ];
+
+                return $document;
+            },
+        ];
+
+        try {
+            foreach ($cases as $name => $mutate) {
+                file_put_contents($path, CanonicalJson::encode($mutate($original))."\n");
+                try {
+                    $ledger->append($path, $this->lock(str_repeat('1', 40), '6'));
+                    self::fail($name.' must be rejected.');
+                } catch (RuntimeException $exception) {
+                    self::assertSame('report_publication_ledger_event_invalid', $exception->getMessage(), $name);
+                }
+            }
+        } finally {
+            foreach ([$path, $path.'.lock'] as $candidate) {
+                if (is_file($candidate)) {
+                    unlink($candidate);
                 }
             }
             rmdir($directory);
@@ -300,6 +485,7 @@ PHP;
         return [
             new ReportManifestPromotionService(
                 new ReportDefinitionVersionPolicy,
+                new ReportDefinitionCanonicalProjector,
                 new ReportDefinitionFactory,
                 $loader,
                 new Draft202012SchemaValidator(new CompliantValidator),

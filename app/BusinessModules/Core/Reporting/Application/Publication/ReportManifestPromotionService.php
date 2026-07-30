@@ -30,6 +30,7 @@ final class ReportManifestPromotionService
 
     public function __construct(
         private ReportDefinitionVersionPolicy $versions,
+        private ReportDefinitionCanonicalProjector $projector,
         private ReportDefinitionFactory $definitions,
         private YamlReportManifestLoader $manifests,
         private Draft202012SchemaValidator $schemas,
@@ -76,20 +77,20 @@ final class ReportManifestPromotionService
         $candidateRows = $this->index($candidateManifest);
         $candidateRow = $candidateRows[$candidate->code] ?? null;
         $currentRow = $currentRows[$candidate->code] ?? null;
+        $expectedCandidate = is_array($candidateRow)
+            ? $this->definitions->fromManifest($candidateRow)
+            : null;
         if (! is_array($candidateRow)
             || ! is_array($currentRow)
-            || ! hash_equals(
-                $this->definitions->fromManifest($candidateRow)->definitionHash->value,
-                $candidate->definitionHash->value,
-            )
-            || ! hash_equals($this->definitions->fromManifest($candidateRow)->code, $candidate->code)) {
+            || $expectedCandidate === null
+            || ! $this->projector->equals($expectedCandidate, $candidate->payload())) {
             throw new InvalidArgumentException('report_promotion_candidate_wrapper_mismatch');
         }
 
         $this->assertValidation($candidateManifest, $validation, $candidate);
         $this->assertConformance($candidate, $conformance);
         $this->assertCandidateReadiness($candidateRow);
-        $this->versions->assertAllowed($currentRow, $candidateRow);
+        $this->versions->assertAllowed($currentRow, $candidateRow, $conformance);
         $this->assertUnrelatedDefinitionsUnchanged($currentRows, $candidateRows, $candidate->code);
 
         $publishedRows = $candidateManifest->definitions;
@@ -126,7 +127,10 @@ final class ReportManifestPromotionService
             $reloaded,
             $this->definitions,
         ))->published($candidate->code);
-        $this->assertPublishedPayload($candidateRow, $published->payload()->definitionHash->value, $expectedPublishedRows[$targetOrdinal]);
+        $this->assertPublishedPayload(
+            $this->definitions->fromManifest($expectedPublishedRows[$targetOrdinal]),
+            $published->payload(),
+        );
 
         $publishedHash = new Sha256Hash(hash('sha256', $publishedBytes));
         $lock = new ReportPublicationLock(
@@ -248,17 +252,10 @@ final class ReportManifestPromotionService
     }
 
     private function assertPublishedPayload(
-        array $candidateRow,
-        string $publishedDefinitionHash,
-        array $publishedRow,
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $expected,
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $published,
     ): void {
-        $expected = $candidateRow;
-        $expected['readiness']['publication'] = 'published';
-        if (CanonicalJson::encode($expected) !== CanonicalJson::encode($publishedRow)
-            || ! hash_equals(
-                $publishedDefinitionHash,
-                $this->definitions->fromManifest($publishedRow)->definitionHash->value,
-            )) {
+        if (! $this->projector->equals($expected, $published)) {
             throw new InvalidArgumentException('report_promotion_published_payload_mismatch');
         }
     }

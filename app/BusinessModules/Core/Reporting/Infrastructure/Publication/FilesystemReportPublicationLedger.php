@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Publication;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationLock;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Closure;
+use DateTimeImmutable;
 use JsonException;
 use RuntimeException;
 use Throwable;
@@ -18,13 +20,10 @@ final readonly class FilesystemReportPublicationLedger
 
     private Closure $atomicRename;
 
-    private Closure $ledgerWriter;
-
     public function __construct(
         private Draft202012SchemaValidator $validator,
         string $schemaPath,
         ?Closure $atomicRename = null,
-        ?Closure $ledgerWriter = null,
     ) {
         $bytes = @file_get_contents($schemaPath);
         if (! is_string($bytes)) {
@@ -41,32 +40,6 @@ final readonly class FilesystemReportPublicationLedger
         $this->schema = $schema;
         $this->atomicRename = $atomicRename
             ?? static fn (string $temporary, string $final): bool => rename($temporary, $final);
-        $this->ledgerWriter = $ledgerWriter
-            ?? static function (string $path, string $replacement): bool {
-                $handle = fopen($path, 'c+b');
-                if (! is_resource($handle)) {
-                    return false;
-                }
-                try {
-                    if (! flock($handle, LOCK_EX)
-                        || ! ftruncate($handle, 0)
-                        || rewind($handle) === false) {
-                        return false;
-                    }
-                    $written = fwrite($handle, $replacement);
-                    if ($written !== strlen($replacement) || ! fflush($handle)) {
-                        return false;
-                    }
-                    if (function_exists('fsync') && ! fsync($handle)) {
-                        return false;
-                    }
-
-                    return true;
-                } finally {
-                    flock($handle, LOCK_UN);
-                    fclose($handle);
-                }
-            };
     }
 
     public function append(string $path, ReportPublicationLock $lock): void
@@ -139,7 +112,13 @@ final readonly class FilesystemReportPublicationLedger
             }
 
             if ($changed) {
-                $this->replaceLedger($ledgerPath, $ledgerBytes, $originalLedger);
+                $this->replaceLedger(
+                    $ledgerPath,
+                    $ledgerTemporary,
+                    $ledgerBytes,
+                    $originalLedger,
+                );
+                $ledgerTemporary = null;
             }
         } catch (Throwable $exception) {
             foreach (array_reverse($publishedArtifacts) as $path) {
@@ -164,35 +143,54 @@ final readonly class FilesystemReportPublicationLedger
 
     private function replaceLedger(
         string $path,
+        string $temporary,
         string $replacement,
         ?string $original,
     ): void {
-        if (! ($this->ledgerWriter)($path, $replacement)) {
-            $this->restoreLedger($path, $original);
-            throw new RuntimeException('report_publication_ledger_write_failed');
-        }
-
-        try {
-            $reread = $this->read($path);
-            $this->validatedDocument($reread, $replacement);
-        } catch (Throwable $exception) {
-            $this->restoreLedger($path, $original);
-            throw new RuntimeException('report_publication_ledger_reread_failed', 0, $exception);
-        }
-    }
-
-    private function restoreLedger(string $path, ?string $original): void
-    {
         if ($original === null) {
-            if (is_file($path) && ! unlink($path)) {
-                throw new RuntimeException('report_publication_ledger_rollback_failed');
+            if (! ($this->atomicRename)($temporary, $path)) {
+                throw new RuntimeException('report_publication_ledger_replace_failed');
+            }
+            try {
+                $this->validatedDocument($this->read($path), $replacement);
+            } catch (Throwable $exception) {
+                if (is_file($path)) {
+                    unlink($path);
+                }
+                throw new RuntimeException('report_publication_ledger_reread_failed', 0, $exception);
             }
 
             return;
         }
-        if (! ($this->ledgerWriter)($path, $original)
-            || ! hash_equals($original, $this->read($path))) {
-            throw new RuntimeException('report_publication_ledger_rollback_failed');
+
+        $backup = tempnam(dirname($path), '.report-ledger-backup-');
+        if (! is_string($backup) || ! unlink($backup)) {
+            throw new RuntimeException('report_publication_ledger_backup_failed');
+        }
+        if (! ($this->atomicRename)($path, $backup)) {
+            throw new RuntimeException('report_publication_ledger_backup_failed');
+        }
+
+        try {
+            if (! ($this->atomicRename)($temporary, $path)) {
+                throw new RuntimeException('report_publication_ledger_replace_failed');
+            }
+            $this->validatedDocument($this->read($path), $replacement);
+            if (! unlink($backup)) {
+                throw new RuntimeException('report_publication_ledger_backup_cleanup_failed');
+            }
+        } catch (Throwable $exception) {
+            if (is_file($path) && ! unlink($path)) {
+                throw new RuntimeException('report_publication_ledger_rollback_failed', 0, $exception);
+            }
+            if (! is_file($backup)
+                || ! ($this->atomicRename)($backup, $path)
+                || ! hash_equals($original, $this->read($path))) {
+                throw new RuntimeException('report_publication_ledger_rollback_failed', 0, $exception);
+            }
+            throw $exception instanceof RuntimeException
+                ? $exception
+                : new RuntimeException('report_publication_ledger_replace_failed', 0, $exception);
         }
     }
 
@@ -310,8 +308,44 @@ final readonly class FilesystemReportPublicationLedger
             $this->schema,
             'most.report-publication-ledger.v1',
         );
+        $this->assertEventSemantics($document['events']);
 
         return $document;
+    }
+
+    private function assertEventSemantics(array $events): void
+    {
+        $seen = [];
+        foreach ($events as $event) {
+            $lockPayload = is_array($event) ? ($event['lock'] ?? null) : null;
+            if (! is_array($lockPayload) || array_is_list($lockPayload)) {
+                throw new RuntimeException('report_publication_ledger_event_invalid');
+            }
+            $lock = new ReportPublicationLock(
+                $lockPayload['code'],
+                new Sha256Hash($lockPayload['previous_manifest_hash']),
+                new Sha256Hash($lockPayload['candidate_manifest_hash']),
+                new Sha256Hash($lockPayload['published_manifest_hash']),
+                new Sha256Hash($lockPayload['definition_hash']),
+                new Sha256Hash($lockPayload['conformance_hash']),
+                $lockPayload['release_sha'],
+                new DateTimeImmutable($lockPayload['published_at']),
+            );
+            $eventId = $event['event_id'];
+            $expectedEventId = sprintf(
+                'reports:definition:%s:published:%s',
+                $lock->code,
+                $lock->definitionHash->value,
+            );
+            if (isset($seen[$eventId])
+                || ! hash_equals($eventId, $expectedEventId)
+                || ! hash_equals($event['lock_digest'], $lock->digest()->value)
+                || CanonicalJson::encode($lockPayload)
+                    !== CanonicalJson::encode($lock->canonicalPayload())) {
+                throw new RuntimeException('report_publication_ledger_event_invalid');
+            }
+            $seen[$eventId] = true;
+        }
     }
 
     private function assertLedgerPath(string $path): void

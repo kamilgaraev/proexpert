@@ -7,6 +7,7 @@ use App\BusinessModules\Core\Reporting\Application\Catalog\ReportBindingCompatib
 use App\BusinessModules\Core\Reporting\Application\Catalog\ReportCodeSetComparator;
 use App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog;
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionCanonicalProjector;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportManifestPromotionService;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence;
@@ -286,7 +287,12 @@ try {
         new ReportBindingCompatibilityChecker,
         new ReportCodeSetComparator,
     );
-    $generated = (new ReportCandidateValidationFixtureBuilder($concreteValidator))->build(
+    $projector = new ReportDefinitionCanonicalProjector;
+    $generated = (new ReportCandidateValidationFixtureBuilder(
+        $concreteValidator,
+        $factory,
+        $projector,
+    ))->build(
         $candidateManifest,
         $registry,
         [$candidate->code => $binding],
@@ -298,6 +304,7 @@ try {
 
     $service = new ReportManifestPromotionService(
         new ReportDefinitionVersionPolicy,
+        $projector,
         $factory,
         $loader,
         $schemaValidator,

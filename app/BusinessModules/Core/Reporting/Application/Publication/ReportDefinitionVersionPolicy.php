@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Publication;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionSemanticDiff;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
@@ -17,12 +18,19 @@ final class ReportDefinitionVersionPolicy
         'renderer' => 'rendererChanged',
     ];
 
-    public function assertAllowed(array $current, array $candidate): ReportDefinitionSemanticDiff
-    {
-        $diff = $this->diff($current, $candidate);
+    public function assertAllowed(
+        array $current,
+        array $candidate,
+        ReportDefinitionConformanceEvidence $conformance,
+    ): ReportDefinitionSemanticDiff {
         $currentVersions = $this->versions($current);
         $candidateVersions = $this->versions($candidate);
+        if (! hash_equals($candidateVersions['formula'], $conformance->formula->formulaVersion)
+            || ! hash_equals($candidateVersions['source_schema'], $conformance->sourceSchemaVersion)) {
+            throw new InvalidArgumentException('report_definition_version_evidence_mismatch');
+        }
 
+        $diff = $this->diff($current, $candidate, $conformance);
         foreach (self::VERSION_DIMENSIONS as $version => $property) {
             $comparison = version_compare($candidateVersions[$version], $currentVersions[$version]);
             if ($diff->{$property} && $comparison <= 0) {
@@ -36,15 +44,28 @@ final class ReportDefinitionVersionPolicy
         return $diff;
     }
 
-    public function diff(array $current, array $candidate): ReportDefinitionSemanticDiff
-    {
+    public function diff(
+        array $current,
+        array $candidate,
+        ReportDefinitionConformanceEvidence $conformance,
+    ): ReportDefinitionSemanticDiff {
+        $currentVersions = $this->versions($current);
+
         return new ReportDefinitionSemanticDiff(
-            formulaChanged: $this->changed($current, $candidate, ['formula', 'formula_semantics']),
-            sourceSchemaChanged: $this->changed(
-                $current,
-                $candidate,
-                ['source', 'source_schema', 'source_filters', 'grain'],
-            ),
+            formulaChanged: $this->fingerprint([
+                'formula_version' => $currentVersions['formula'],
+            ]) !== $this->fingerprint([
+                'formula_version' => $conformance->formula->formulaVersion,
+            ]),
+            sourceSchemaChanged: $this->fingerprint([
+                'filters' => $current['filters'] ?? null,
+                'grain' => $current['grain'] ?? null,
+                'source_schema_version' => $currentVersions['source_schema'],
+            ]) !== $this->fingerprint([
+                'filters' => $candidate['filters'] ?? null,
+                'grain' => $candidate['grain'] ?? null,
+                'source_schema_version' => $conformance->sourceSchemaVersion,
+            ]),
             contractChanged: $this->changed(
                 $current,
                 $candidate,
@@ -53,7 +74,7 @@ final class ReportDefinitionVersionPolicy
             rendererChanged: $this->changed(
                 $current,
                 $candidate,
-                ['title_key', 'category', 'wave', 'renderer'],
+                ['title_key', 'category', 'wave'],
             ),
             permissionsChanged: $this->changed($current, $candidate, ['permissions']),
             readinessChanged: $this->changed($current, $candidate, ['readiness', 'capabilities']),
@@ -86,13 +107,19 @@ final class ReportDefinitionVersionPolicy
 
     private function changed(array $current, array $candidate, array $keys): bool
     {
+        $currentFingerprint = [];
+        $candidateFingerprint = [];
         foreach ($keys as $key) {
-            if (CanonicalJson::encode(['value' => $current[$key] ?? null])
-                !== CanonicalJson::encode(['value' => $candidate[$key] ?? null])) {
-                return true;
-            }
+            $currentFingerprint[$key] = $current[$key] ?? null;
+            $candidateFingerprint[$key] = $candidate[$key] ?? null;
         }
 
-        return false;
+        return $this->fingerprint($currentFingerprint)
+            !== $this->fingerprint($candidateFingerprint);
+    }
+
+    private function fingerprint(array $value): string
+    {
+        return hash('sha256', CanonicalJson::encode($value));
     }
 }

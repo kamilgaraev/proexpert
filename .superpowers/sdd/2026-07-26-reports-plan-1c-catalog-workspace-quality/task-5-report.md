@@ -19,15 +19,21 @@ Task 5 реализован изолированно на ветке `feat/repor
 - `ReportPublicationLock`;
 - `PublishedDefinitionRelease`.
 
-`ReportDefinitionVersionPolicy` разделяет formula, source-schema, public
-contract и renderer dimensions. Изменение dimension требует строго большей
-соответствующей semantic version; bump без изменения dimension и semantic
-version drift отклоняются. Permission/readiness-only изменение сохраняет все
-semantic versions.
+`ReportDefinitionVersionPolicy` разделяет schema-valid formula, source-schema,
+public contract и renderer fingerprints. Formula fingerprint использует
+version из typed passed conformance evidence; source fingerprint включает
+manifest filters/grain и typed source-schema identity; contract использует
+filters/columns/sorts/formats/catalog group; renderer использует реальные
+title/category/wave поля manifest. Незаконные скрытые `formula`/`source` keys
+не используются. Изменение dimension требует строго большей соответствующей
+semantic version; bump без реального dimension/evidence и semantic version
+drift отклоняются. Permission/readiness-only изменение сохраняет все semantic
+versions.
 
 `ReportManifestPromotionService` выполняет полный fail-closed promotion:
 
-1. сверяет candidate wrapper code/payload/hash с candidate manifest row;
+1. строит expected definition через `ReportDefinitionFactory::fromManifest()`
+   и сравнивает полный typed canonical projection candidate wrapper;
 2. сверяет expected raw candidate SHA-256 с hash Task 2 loaded manifest;
 3. требует exact ordered passed validation item для каждого candidate;
 4. проверяет conformance code, definition, versions, passed status и digest;
@@ -57,8 +63,10 @@ release SHA и UTC timestamp без дробных секунд. `PublishedDefin
 - сохраняет distinct concurrent events без lost update;
 - перед commit создаёт и schema/hash-проверяет временные output, lock и ledger;
 - публикует новые output/lock через atomic rename;
-- обновляет существующий ledger под блокировкой без удаления target path,
-  включая Windows;
+- проверяет каждый прочитанный event: exact event id из embedded lock,
+  пересчитанный lock digest и уникальность event id;
+- заменяет существующий ledger только preverified staged bytes через portable
+  same-directory backup/rename/rollback, без `ftruncate()` final path;
 - при любой ошибке rename/reread восстанавливает ledger и удаляет уже
   опубликованные артефакты.
 
@@ -116,7 +124,7 @@ RED:
 
 GREEN после implementation и review fixes:
 
-- exact four-file PHPUnit gate: `OK (17 tests, 50 assertions)`;
+- exact four-file PHPUnit gate: `OK (26 tests, 214 assertions)`;
 - exact offline `--check`: `promotion-check: PASS`.
 
 Покрыты semantic drift, unrelated block, reload published wrapper, strict
@@ -129,6 +137,7 @@ conformance с пересчитанным digest.
 - `app/BusinessModules/Core/Reporting/Domain/DTO/ReportDefinitionSemanticDiff.php`
 - `app/BusinessModules/Core/Reporting/Domain/DTO/ReportPublicationLock.php`
 - `app/BusinessModules/Core/Reporting/Domain/DTO/PublishedDefinitionRelease.php`
+- `app/BusinessModules/Core/Reporting/Application/Publication/ReportDefinitionCanonicalProjector.php`
 - `app/BusinessModules/Core/Reporting/Application/Publication/ReportDefinitionVersionPolicy.php`
 - `app/BusinessModules/Core/Reporting/Application/Publication/ReportManifestPromotionService.php`
 - `app/BusinessModules/Core/Reporting/Infrastructure/Publication/FilesystemReportPublicationLedger.php`
@@ -153,7 +162,7 @@ conformance с пересчитанным digest.
 ## Проверки
 
 - Exact Task 5 PHPUnit + script gate:
-  `OK (17 tests, 50 assertions)`, `promotion-check: PASS`.
+  `OK (26 tests, 214 assertions)`, `promotion-check: PASS`.
 - Task 3 repin schema regression:
   `OK (4 tests, 14 assertions)`.
 - PHPStan changed production scope, `--memory-limit=1G`:
@@ -166,7 +175,7 @@ conformance с пересчитанным digest.
 
 ## Independent review
 
-Закрыты три blocking finding:
+Первоначально закрыты три blocking finding:
 
 - output/lock/ledger теперь preverified до commit и откатываются как единая
   recoverable transaction;
@@ -174,6 +183,26 @@ conformance с пересчитанным digest.
   two-process regression;
 - fixture identity берётся из независимого deterministic registry, forged
   evidence с новым digest отклоняется.
+
+### Review round 1
+
+Закрыты ещё шесть blocking finding:
+
+- version policy переведён с schema-invalid synthetic keys на fingerprint
+  реальных production-loaded manifest rows и typed conformance evidence;
+- добавлен `ReportDefinitionCanonicalProjector`; forged wrapper с настоящими
+  code/hash, но чужим typed payload отклоняется;
+- ledger read после schema/canonical validation пересчитывает event id и lock
+  digest, а также запрещает duplicate event ids до idempotency/conflict;
+- final ledger больше не переписывается через `ftruncate`; existing/new ledger
+  покрыты injected backup/replace/rollback regressions;
+- fixture builder независимо связывает ordered manifest candidate definitions
+  с registry через factory и полный typed projection; foreign registry
+  отклоняется;
+- один table-driven gate покрывает BOM/CRLF/terminal LF, checksum byte matrix,
+  stale candidate/evidence/output, canonical validation/path/item matrix,
+  forged passed inputs, `--check` no-write, normal ledger publication/reread,
+  schema enums и semantic ledger tampering.
 
 ## Concerns
 
