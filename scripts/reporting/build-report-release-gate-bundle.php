@@ -40,8 +40,22 @@ try {
     $sources = sourceArtifacts($options);
     $catalog = new ReportPlatformGateCatalog(RELEASE_GATE_ROOT.'/docs/reports/contracts/report-platform-gates.v1.json');
     $qg14Evidence = (new FixedRootJointQG14EvidenceSource($options['admin-root'], $options['backend-root']))->execute();
-    $gates = gateEvidence($catalog->records(), $qg14Evidence, $options['release-sha'], $generatedAt);
-    (new ReportReleaseGateBundleBuilder($catalog))->build($gates, $qg14Evidence, $options['release-sha'], $sources, $generatedAt);
+    $builder = new ReportReleaseGateBundleBuilder($catalog);
+    $gates = $builder->loadGateEvidence(
+        $sources,
+        $options['release-sha'],
+        $options['activation-commit'],
+        $options['admin-evidence-commit'],
+    );
+    $builder->build(
+        $gates,
+        $qg14Evidence,
+        $options['release-sha'],
+        $sources,
+        $options['activation-commit'],
+        $options['admin-evidence-commit'],
+        $generatedAt,
+    );
 
     $document = releaseGateDocument($gates, $qg14Evidence, $sources, $options, $generatedAt);
     $schema = json_decode(read(RELEASE_GATE_ROOT.'/docs/reports/contracts/report-release-gate-bundle.schema.json'), false, 512, JSON_THROW_ON_ERROR);
@@ -93,20 +107,6 @@ function sourceArtifacts(array $options): array
     }
 
     return $sources;
-}
-
-/** @param list<array{id: string, release_owner: string, command: string, minimum_count: int, schema_sha256: string}> $records @return list<ReportQualityGateEvidence> */
-function gateEvidence(array $records, \App\BusinessModules\Core\Reporting\Domain\DTO\JointQG14Evidence $qg14Evidence, string $releaseSha, DateTimeImmutable $generatedAt): array
-{
-    return array_map(static function (array $record) use ($qg14Evidence, $releaseSha, $generatedAt): ReportQualityGateEvidence {
-        if (($record['platform_status'] ?? null) !== 'passed') {
-            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
-        }
-
-        $count = $record['id'] === 'QG-14' ? $qg14Evidence->combinedForbiddenSymbolMatches : $record['minimum_count'];
-
-        return new ReportQualityGateEvidence($record['id'], $record['release_owner'], ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, $record['command'], $count, new Sha256Hash($record['schema_sha256']), $releaseSha, $releaseSha, $generatedAt, new Sha256Hash($record['schema_sha256']));
-    }, $records);
 }
 
 /** @param list<ReportQualityGateEvidence> $gates @param list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> $sources @param array<string, string|bool> $options @return array<string, mixed> */

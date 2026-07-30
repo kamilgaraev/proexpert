@@ -10,6 +10,53 @@ use Symfony\Component\Process\Process;
 
 final class BuildReportQualityEvidenceTest extends TestCase
 {
+    public function test_release_phase_fails_closed_for_a_malformed_release_gate_bundle(): void
+    {
+        $repositoryRoot = dirname(__DIR__, 4);
+        $temporaryRoot = sys_get_temp_dir().'/report-quality-release-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($temporaryRoot, 0777, true));
+
+        try {
+            $releaseSha = $this->gitOutput($repositoryRoot, ['rev-parse', 'HEAD']);
+            $catalogBytes = $this->gitBlob($repositoryRoot, $releaseSha, 'docs/reports/contracts/report-platform-gates.v1.json');
+            $this->prepareStandaloneScript($repositoryRoot, $temporaryRoot, $catalogBytes);
+            self::assertNotFalse(file_put_contents(
+                $temporaryRoot.'/docs/reports/contracts/report-release-gate-bundle.schema.json',
+                (string) file_get_contents($repositoryRoot.'/docs/reports/contracts/report-release-gate-bundle.schema.json'),
+            ));
+            self::assertTrue(mkdir($temporaryRoot.'/build/reports', 0777, true));
+            self::assertNotFalse(file_put_contents(
+                $temporaryRoot.'/build/reports/report-release-gate-bundle.json',
+                CanonicalJson::encode(['artifact_id' => 'arbitrary_bytes'])."\n",
+            ));
+
+            $process = new Process([
+                PHP_BINARY,
+                $temporaryRoot.'/scripts/reporting/build-report-quality-evidence.php',
+                '--phase=release',
+                '--manifest=ignored',
+                '--ledger=ignored',
+                '--activation-inputs=ignored',
+                '--activation=ignored',
+                '--activation-commit='.str_repeat('b', 40),
+                '--gates=build/reports/report-release-gate-bundle.json',
+                '--plan-1a=ignored',
+                '--plan-1b=ignored',
+                '--plan-1c=ignored',
+                '--release-sha='.$releaseSha,
+                '--generated-at=2026-07-26T00:00:00Z',
+                '--output='.$temporaryRoot.'/report-quality-evidence.json',
+            ], $temporaryRoot);
+            $process->run();
+
+            self::assertSame(2, $process->getExitCode());
+            self::assertSame('quality-gate:invalid'.PHP_EOL, $process->getErrorOutput());
+            self::assertFileDoesNotExist($temporaryRoot.'/report-quality-evidence.json');
+        } finally {
+            $this->removeDirectory($temporaryRoot);
+        }
+    }
+
     public function test_script_rejects_a_forged_passed_gate_artifact_hash_from_a_commit_bound_catalog(): void
     {
         $repositoryRoot = dirname(__DIR__, 4);

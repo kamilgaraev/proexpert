@@ -10,7 +10,10 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportReleaseGateBundle;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityEvidencePhase;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityEvidenceStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
+use Symfony\Component\Yaml\Yaml;
 
 final class ReportReleaseGateBundleBuilder
 {
@@ -37,16 +40,32 @@ final class ReportReleaseGateBundleBuilder
     }
 
     /** @param list<ReportQualityGateEvidence> $gates */
-    public function build(array $gates, JointQG14Evidence $qg14Evidence, string $releaseSha, array $sources, DateTimeImmutable $generatedAt): ReportReleaseGateBundle
+    public function build(
+        array $gates,
+        JointQG14Evidence $qg14Evidence,
+        string $releaseSha,
+        array $sources,
+        string $activationCommitSha,
+        string $adminEvidenceCommitSha,
+        DateTimeImmutable $generatedAt,
+    ): ReportReleaseGateBundle
     {
-        if (preg_match('/^[a-f0-9]{40}$/', $releaseSha) !== 1 || ! array_is_list($gates) || count($gates) !== 14 || ! $this->hasExactSourceArtifacts($sources)) {
+        if (preg_match('/^[a-f0-9]{40}$/D', $releaseSha) !== 1
+            || preg_match('/^[a-f0-9]{40}$/D', $activationCommitSha) !== 1
+            || preg_match('/^[a-f0-9]{40}$/D', $adminEvidenceCommitSha) !== 1
+            || $activationCommitSha === $releaseSha
+            || ! array_is_list($gates)
+            || count($gates) !== 14
+            || ! $this->hasExactSourceArtifacts($sources)) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH);
         }
 
         $catalog = $this->catalog()->records();
+        $loadedGates = $this->loadGateEvidence($sources, $releaseSha, $activationCommitSha, $adminEvidenceCommitSha);
 
         foreach ($gates as $index => $gate) {
             $definition = $catalog[$index];
+            $loadedGate = $loadedGates[$index];
             if (! $gate instanceof ReportQualityGateEvidence
                 || $gate->gate !== $definition['id']
                 || $gate->phase !== ReportQualityEvidencePhase::RELEASE
@@ -55,6 +74,9 @@ final class ReportReleaseGateBundleBuilder
                 || $gate->ownerPlan !== $definition['release_owner']
                 || $gate->command !== $definition['command']
                 || $gate->schemaHash->value !== $definition['schema_sha256']
+                || $gate->commitSha !== $loadedGate->commitSha
+                || $gate->executedAt != $loadedGate->executedAt
+                || $gate->artifactHash?->value !== $loadedGate->artifactHash?->value
                 || ! $this->matchesCount($gate, $definition)
                 || ($gate->gate === 'QG-07' && ($generatedAt->getTimestamp() - $gate->executedAt->getTimestamp() < 0 || $generatedAt->getTimestamp() - $gate->executedAt->getTimestamp() > 86400))) {
                 throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
@@ -70,11 +92,118 @@ final class ReportReleaseGateBundleBuilder
             'report_release_gate_bundle',
             'release_gates_passed',
             $releaseSha,
+            $activationCommitSha,
+            $adminEvidenceCommitSha,
             $gates,
             $sources,
             $generatedAt,
             ['backend' => 9, 'admin' => 4, 'joint' => 1],
         );
+    }
+
+    /**
+     * @param list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> $sources
+     * @return list<ReportQualityGateEvidence>
+     */
+    public function loadGateEvidence(
+        array $sources,
+        string $releaseSha,
+        string $activationCommitSha,
+        string $adminEvidenceCommitSha,
+    ): array {
+        if (! $this->hasExactSourceArtifacts($sources)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH);
+        }
+
+        $catalog = $this->catalog()->records();
+        $byGate = [];
+        foreach ($sources as $index => $source) {
+            $bytes = $this->artifactBytes($source['path']);
+            if ($index === 9) {
+                $schema = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
+                if (! is_array($schema)
+                    || ($schema['$schema'] ?? null) !== 'https://json-schema.org/draft/2020-12/schema'
+                    || ($schema['type'] ?? null) !== 'object'
+                    || ($schema['additionalProperties'] ?? null) !== false) {
+                    throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+                }
+                continue;
+            }
+            if ($index === 11) {
+                $manifest = Yaml::parse($bytes);
+                if (! is_array($manifest)
+                    || ($manifest['catalog'] ?? null) !== 'management-catalog.v1'
+                    || ! is_array($manifest['definitions'] ?? null)
+                    || count($manifest['definitions']) !== 28) {
+                    throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+                }
+                continue;
+            }
+            if ($index === 12) {
+                $ledger = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
+                if (! is_array($ledger)
+                    || ($ledger['artifact_id'] ?? null) !== 'report_publication_ledger'
+                    || ($ledger['schema_version'] ?? null) !== '1.0.0'
+                    || ! is_array($ledger['events'] ?? null)) {
+                    throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+                }
+                continue;
+            }
+
+            $document = $this->decodeCanonical($bytes);
+            $this->assertEvidenceDocument(
+                $document,
+                $source['artifact_id'],
+                $source['kind'],
+                $releaseSha,
+                $activationCommitSha,
+                $adminEvidenceCommitSha,
+            );
+            foreach ($document['gate_evidence'] as $item) {
+                $gate = $item['gate'] ?? null;
+                if (! is_string($gate) || isset($byGate[$gate])) {
+                    throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+                }
+                $catalogIndex = (int) substr($gate, -2) - 1;
+                $definition = $catalog[$catalogIndex] ?? null;
+                if (! is_array($definition)
+                    || $gate !== $definition['id']
+                    || ($item['owner_plan'] ?? null) !== $definition['release_owner']
+                    || ($item['status'] ?? null) !== 'passed'
+                    || ($item['command'] ?? null) !== $definition['command']
+                    || ! is_int($item['count'] ?? null)
+                    || ($item['schema_sha256'] ?? null) !== $definition['schema_sha256']
+                    || preg_match('/^[a-f0-9]{40}$/D', $item['commit_sha'] ?? '') !== 1
+                    || ! is_array($item['evidence'] ?? null)
+                    || ($item['artifact_sha256'] ?? null) !== hash('sha256', CanonicalJson::encode($item['evidence']))) {
+                    throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+                }
+                $executedAt = $this->canonicalTime($item['executed_at'] ?? null);
+                $byGate[$gate] = new ReportQualityGateEvidence(
+                    $gate,
+                    $definition['release_owner'],
+                    ReportQualityEvidencePhase::RELEASE,
+                    ReportQualityEvidenceStatus::PASSED,
+                    $definition['command'],
+                    $item['count'],
+                    new Sha256Hash($definition['schema_sha256']),
+                    $releaseSha,
+                    $item['commit_sha'],
+                    $executedAt,
+                    new Sha256Hash($item['artifact_sha256']),
+                );
+            }
+        }
+
+        $gates = [];
+        foreach ($catalog as $definition) {
+            if (! isset($byGate[$definition['id']])) {
+                throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+            }
+            $gates[] = $byGate[$definition['id']];
+        }
+
+        return $gates;
     }
 
     /** @param array{id: string, minimum_count: int} $definition */
@@ -123,5 +252,87 @@ final class ReportReleaseGateBundleBuilder
         $bytes = @file_get_contents(dirname(__DIR__, 6).'/'.$path);
 
         return is_string($bytes) && hash_equals(hash('sha256', $bytes), $expectedHash);
+    }
+
+    private function artifactBytes(string $path): string
+    {
+        $bytes = @file_get_contents(dirname(__DIR__, 6).'/'.$path);
+        if (! is_string($bytes)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::MISSING);
+        }
+
+        return $bytes;
+    }
+
+    /** @return array<string, mixed> */
+    private function decodeCanonical(string $bytes): array
+    {
+        try {
+            $document = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+        if (! is_array($document) || CanonicalJson::encode($document)."\n" !== $bytes) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+
+        return $document;
+    }
+
+    /** @param array<string, mixed> $document */
+    private function assertEvidenceDocument(
+        array $document,
+        string $artifactId,
+        string $kind,
+        string $releaseSha,
+        string $activationCommitSha,
+        string $adminEvidenceCommitSha,
+    ): void {
+        $requiredKeys = ['artifact_id', 'schema_version', 'status', 'producer_commit_sha', 'generated_at', 'gate_evidence', 'section_hashes'];
+        foreach ($requiredKeys as $key) {
+            if (! array_key_exists($key, $document)) {
+                throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+            }
+        }
+        if (($document['artifact_id'] ?? null) !== $artifactId
+            || ($document['schema_version'] ?? null) !== '1.0.0'
+            || ! in_array($document['status'] ?? null, ['passed', 'artifact_transferred'], true)
+            || preg_match('/^[a-f0-9]{40}$/D', $document['producer_commit_sha'] ?? '') !== 1
+            || ! array_is_list($document['gate_evidence'] ?? null)
+            || ! is_array($document['section_hashes'] ?? null)
+            || ($document['section_hashes']['gate_evidence'] ?? null) !== hash('sha256', CanonicalJson::encode($document['gate_evidence']))) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+        $this->canonicalTime($document['generated_at'] ?? null);
+        if ($kind === 'ancestor_evidence') {
+            if (array_key_exists('release_sha', $document)) {
+                throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+            }
+        } elseif (($document['release_sha'] ?? null) !== $releaseSha) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+        if ($kind === 'transfer'
+            && (($document['status'] ?? null) !== 'artifact_transferred'
+                || ($document['activation_commit_sha'] ?? null) !== $activationCommitSha
+                || ($document['admin_evidence_commit_sha'] ?? null) !== $adminEvidenceCommitSha)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+    }
+
+    private function canonicalTime(mixed $value): DateTimeImmutable
+    {
+        if (! is_string($value)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+        try {
+            $time = new DateTimeImmutable($value);
+        } catch (\Exception) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+        if ($time->format('Y-m-d\TH:i:s\Z') !== $value) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+
+        return $time;
     }
 }
