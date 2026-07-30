@@ -175,6 +175,17 @@ final class FinanceOwnerReportingContractTest extends TestCase
     }
 
     #[Test]
+    public function every_financial_change_transition_rechecks_state_under_the_aggregate_lock(): void
+    {
+        $workflow = (string) file_get_contents(
+            $this->root().'/app/BusinessModules/Features/ChangeManagement/Services/ChangeManagementService.php',
+        );
+
+        self::assertGreaterThanOrEqual(6, substr_count($workflow, '$this->lockedTransition('));
+        self::assertStringContainsString('->lockForUpdate()', $workflow);
+    }
+
+    #[Test]
     public function owner_slice_does_not_publish_or_mutate_the_global_catalog(): void
     {
         $forbidden = [

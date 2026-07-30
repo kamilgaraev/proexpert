@@ -85,6 +85,20 @@ final class FinanceSourceAccessPolicyTest extends TestCase
         ));
     }
 
+    #[Test]
+    public function aggregate_rows_only_enforce_resource_kinds_constrained_by_the_scope(): void
+    {
+        self::assertTrue((new FinanceSourceAccessPolicy)->allowsAggregate(
+            $this->context()->scope,
+            [
+                ['type' => 'contract', 'id' => 10],
+                ['type' => 'payment_transaction', 'id' => 500],
+                ['type' => 'completed_work', 'id' => 700],
+            ],
+            ['contract', 'payment_transaction', 'completed_work'],
+        ));
+    }
+
     private function context(): ReportExecutionContext
     {
         $timezone = new DateTimeZone('Europe/Moscow');

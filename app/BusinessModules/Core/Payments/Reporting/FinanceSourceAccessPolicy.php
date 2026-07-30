@@ -12,12 +12,14 @@ final readonly class FinanceSourceAccessPolicy
     public function allowsAggregate(ReportScope $scope, mixed $sourceRefs, array $allowedTypes): bool
     {
         $restricted = [];
+        $restrictedTypes = [];
         foreach ($scope->resources as $resource) {
             if (in_array($resource->kind, $allowedTypes, true)) {
                 $restricted[$resource->kind.':'.$resource->id] = true;
+                $restrictedTypes[$resource->kind] = true;
             }
         }
-        if ($restricted === []) {
+        if ($restrictedTypes === []) {
             return true;
         }
         if (! is_array($sourceRefs)) {
@@ -26,7 +28,7 @@ final readonly class FinanceSourceAccessPolicy
         $relevant = false;
         foreach ($sourceRefs as $ref) {
             if (! is_array($ref) || ! is_string($ref['type'] ?? null)
-                || ! in_array($ref['type'], $allowedTypes, true)) {
+                || ! isset($restrictedTypes[$ref['type']])) {
                 continue;
             }
             $relevant = true;

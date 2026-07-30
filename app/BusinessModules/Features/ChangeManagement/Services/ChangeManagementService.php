@@ -191,79 +191,82 @@ final class ChangeManagementService
 
     public function submitChange(ChangeRequest $change): ChangeRequest
     {
-        $this->assertStatus($change->status, ['draft']);
-
-        return DB::transaction(function () use ($change): ChangeRequest {
-            $change->forceFill([
-                'status' => 'submitted',
-                'submitted_at' => now(),
-            ])->save();
-            $this->changeEvents->record($change, 'submit', CarbonImmutable::now(), null);
-
-            return $this->reloadChange($change);
-        });
+        return $this->lockedTransition(
+            $change,
+            ['draft'],
+            'submitted',
+            function (ChangeRequest $lockedChange): void {
+                $lockedChange->forceFill([
+                    'status' => 'submitted',
+                    'submitted_at' => now(),
+                ])->save();
+                $this->changeEvents->record($lockedChange, 'submit', CarbonImmutable::now(), null);
+            },
+        );
     }
 
     public function assessImpact(ChangeRequest $change, array $data): ChangeRequest
     {
-        $this->assertStatus($change->status, ['submitted', 'impact_assessment']);
+        return $this->lockedTransition(
+            $change,
+            ['submitted', 'impact_assessment'],
+            'impact_assessment',
+            function (ChangeRequest $lockedChange) use ($data): void {
+                $impactData = [
+                    'organization_id' => $lockedChange->organization_id,
+                    'cost_delta' => $data['cost_delta'] ?? 0,
+                    'schedule_delta_days' => $data['schedule_delta_days'] ?? 0,
+                    'requires_contract_change' => (bool) ($data['requires_contract_change'] ?? false),
+                    'requires_estimate_revision' => (bool) ($data['requires_estimate_revision'] ?? false),
+                    'requires_procurement_update' => (bool) ($data['requires_procurement_update'] ?? false),
+                    'requires_customer_approval' => (bool) ($data['requires_customer_approval'] ?? false),
+                    'affected_schedule_task_ids' => $this->integerList($data['affected_schedule_task_ids'] ?? $lockedChange->affected_schedule_task_ids ?? []),
+                    'affected_estimate_item_ids' => $this->integerList($data['affected_estimate_item_ids'] ?? $lockedChange->affected_estimate_item_ids ?? []),
+                    'affected_contract_ids' => $this->integerList($data['affected_contract_ids'] ?? []),
+                    'summary' => $data['summary'] ?? null,
+                ];
 
-        return DB::transaction(function () use ($change, $data): ChangeRequest {
-            $impactData = [
-                'organization_id' => $change->organization_id,
-                'cost_delta' => $data['cost_delta'] ?? 0,
-                'schedule_delta_days' => $data['schedule_delta_days'] ?? 0,
-                'requires_contract_change' => (bool) ($data['requires_contract_change'] ?? false),
-                'requires_estimate_revision' => (bool) ($data['requires_estimate_revision'] ?? false),
-                'requires_procurement_update' => (bool) ($data['requires_procurement_update'] ?? false),
-                'requires_customer_approval' => (bool) ($data['requires_customer_approval'] ?? false),
-                'affected_schedule_task_ids' => $this->integerList($data['affected_schedule_task_ids'] ?? $change->affected_schedule_task_ids ?? []),
-                'affected_estimate_item_ids' => $this->integerList($data['affected_estimate_item_ids'] ?? $change->affected_estimate_item_ids ?? []),
-                'affected_contract_ids' => $this->integerList($data['affected_contract_ids'] ?? []),
-                'summary' => $data['summary'] ?? null,
-            ];
-
-            $change->impact()->updateOrCreate([], $impactData);
-
-            $change->forceFill([
-                'status' => 'impact_assessment',
-                'affected_schedule_task_ids' => $impactData['affected_schedule_task_ids'],
-                'affected_estimate_item_ids' => $impactData['affected_estimate_item_ids'],
-            ])->save();
-            $this->changeEvents->record($change, 'impact_assessment', CarbonImmutable::now(), null);
-
-            return $this->reloadChange($change);
-        });
+                $lockedChange->impact()->updateOrCreate([], $impactData);
+                $lockedChange->forceFill([
+                    'status' => 'impact_assessment',
+                    'affected_schedule_task_ids' => $impactData['affected_schedule_task_ids'],
+                    'affected_estimate_item_ids' => $impactData['affected_estimate_item_ids'],
+                ])->save();
+                $this->changeEvents->record($lockedChange, 'impact_assessment', CarbonImmutable::now(), null);
+            },
+            fn (ChangeRequest $lockedChange): bool => $this->impactMatches($lockedChange, $data),
+        );
     }
 
     public function startInternalReview(ChangeRequest $change): ChangeRequest
     {
-        $this->assertStatus($change->status, ['impact_assessment']);
-        $this->assertImpactExists($change);
-
-        return DB::transaction(function () use ($change): ChangeRequest {
-            $change->forceFill(['status' => 'internal_review'])->save();
-            $this->changeEvents->record($change, 'review', CarbonImmutable::now(), null);
-
-            return $this->reloadChange($change);
-        });
+        return $this->lockedTransition(
+            $change,
+            ['impact_assessment'],
+            'internal_review',
+            function (ChangeRequest $lockedChange): void {
+                $this->assertImpactExists($lockedChange);
+                $lockedChange->forceFill(['status' => 'internal_review'])->save();
+                $this->changeEvents->record($lockedChange, 'review', CarbonImmutable::now(), null);
+            },
+        );
     }
 
     public function startCustomerReview(ChangeRequest $change): ChangeRequest
     {
-        $this->assertStatus($change->status, ['internal_review']);
-        $impact = $this->assertImpactExists($change);
-
-        if (! $impact->requires_customer_approval) {
-            throw new DomainException(trans_message('change_management.errors.customer_approval_not_required'));
-        }
-
-        return DB::transaction(function () use ($change): ChangeRequest {
-            $change->forceFill(['status' => 'customer_review'])->save();
-            $this->changeEvents->record($change, 'review', CarbonImmutable::now(), null);
-
-            return $this->reloadChange($change);
-        });
+        return $this->lockedTransition(
+            $change,
+            ['internal_review'],
+            'customer_review',
+            function (ChangeRequest $lockedChange): void {
+                $impact = $this->assertImpactExists($lockedChange);
+                if (! $impact->requires_customer_approval) {
+                    throw new DomainException(trans_message('change_management.errors.customer_approval_not_required'));
+                }
+                $lockedChange->forceFill(['status' => 'customer_review'])->save();
+                $this->changeEvents->record($lockedChange, 'review', CarbonImmutable::now(), null);
+            },
+        );
     }
 
     public function approveChange(
@@ -302,35 +305,37 @@ final class ChangeManagementService
 
     public function implementChange(ChangeRequest $change, ?string $comment = null): ChangeRequest
     {
-        $this->assertStatus($change->status, ['approved']);
-
-        return DB::transaction(function () use ($change, $comment): ChangeRequest {
-            $change->forceFill([
-                'status' => 'implemented',
-                'implementation_comment' => $comment,
-                'implemented_at' => now(),
-            ])->save();
-            $this->changeEvents->record($change, 'implement', CarbonImmutable::now(), null);
-
-            return $this->reloadChange($change);
-        });
+        return $this->lockedTransition(
+            $change,
+            ['approved'],
+            'implemented',
+            function (ChangeRequest $lockedChange) use ($comment): void {
+                $lockedChange->forceFill([
+                    'status' => 'implemented',
+                    'implementation_comment' => $comment,
+                    'implemented_at' => now(),
+                ])->save();
+                $this->changeEvents->record($lockedChange, 'implement', CarbonImmutable::now(), null);
+            },
+            static fn (ChangeRequest $lockedChange): bool => $lockedChange->implementation_comment === $comment,
+        );
     }
 
     public function closeChange(ChangeRequest $change): ChangeRequest
     {
-        if ($change->status !== 'implemented') {
-            throw new DomainException(trans_message('change_management.errors.implementation_required'));
-        }
-
-        return DB::transaction(function () use ($change): ChangeRequest {
-            $change->forceFill([
-                'status' => 'closed',
-                'closed_at' => now(),
-            ])->save();
-            $this->changeEvents->record($change, 'close', CarbonImmutable::now(), null);
-
-            return $this->reloadChange($change);
-        });
+        return $this->lockedTransition(
+            $change,
+            ['implemented'],
+            'closed',
+            function (ChangeRequest $lockedChange): void {
+                $lockedChange->forceFill([
+                    'status' => 'closed',
+                    'closed_at' => now(),
+                ])->save();
+                $this->changeEvents->record($lockedChange, 'close', CarbonImmutable::now(), null);
+            },
+            invalidStatusMessage: 'change_management.errors.implementation_required',
+        );
     }
 
     public function createClaim(int $organizationId, int $userId, array $data): ChangeClaim
@@ -454,6 +459,62 @@ final class ChangeManagementService
         if (! in_array($currentStatus, $allowedStatuses, true)) {
             throw new DomainException(trans_message('change_management.errors.invalid_status'));
         }
+    }
+
+    private function lockedTransition(
+        ChangeRequest $change,
+        array $allowedStatuses,
+        string $targetStatus,
+        callable $transition,
+        ?callable $isConverged = null,
+        ?string $invalidStatusMessage = null,
+    ): ChangeRequest {
+        return DB::transaction(function () use (
+            $change,
+            $allowedStatuses,
+            $targetStatus,
+            $transition,
+            $isConverged,
+            $invalidStatusMessage,
+        ): ChangeRequest {
+            $lockedChange = ChangeRequest::query()
+                ->where('organization_id', $change->organization_id)
+                ->whereKey($change->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ($lockedChange->status === $targetStatus
+                && ($isConverged === null || $isConverged($lockedChange))) {
+                return $this->reloadChange($lockedChange);
+            }
+            if ($invalidStatusMessage !== null
+                && ! in_array((string) $lockedChange->status, $allowedStatuses, true)) {
+                throw new DomainException(trans_message($invalidStatusMessage));
+            }
+            $this->assertStatus((string) $lockedChange->status, $allowedStatuses);
+            $transition($lockedChange);
+
+            return $this->reloadChange($lockedChange);
+        });
+    }
+
+    private function impactMatches(ChangeRequest $change, array $data): bool
+    {
+        $impact = $this->assertImpactExists($change);
+
+        return ExactDecimal::minor((string) $impact->cost_delta)
+                === ExactDecimal::minor((string) ($data['cost_delta'] ?? 0))
+            && (int) $impact->schedule_delta_days === (int) ($data['schedule_delta_days'] ?? 0)
+            && (bool) $impact->requires_contract_change === (bool) ($data['requires_contract_change'] ?? false)
+            && (bool) $impact->requires_estimate_revision === (bool) ($data['requires_estimate_revision'] ?? false)
+            && (bool) $impact->requires_procurement_update === (bool) ($data['requires_procurement_update'] ?? false)
+            && (bool) $impact->requires_customer_approval === (bool) ($data['requires_customer_approval'] ?? false)
+            && $this->integerList((array) $impact->affected_schedule_task_ids)
+                === $this->integerList($data['affected_schedule_task_ids'] ?? $change->affected_schedule_task_ids ?? [])
+            && $this->integerList((array) $impact->affected_estimate_item_ids)
+                === $this->integerList($data['affected_estimate_item_ids'] ?? $change->affected_estimate_item_ids ?? [])
+            && $this->integerList((array) $impact->affected_contract_ids)
+                === $this->integerList($data['affected_contract_ids'] ?? [])
+            && $impact->summary === ($data['summary'] ?? null);
     }
 
     private function assertImpactExists(ChangeRequest $change): object
