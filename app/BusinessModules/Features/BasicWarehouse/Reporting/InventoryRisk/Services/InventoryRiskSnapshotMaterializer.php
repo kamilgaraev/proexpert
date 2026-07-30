@@ -22,6 +22,8 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\W
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\OwnerSnapshotFirstWriter;
+use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use DateTimeImmutable;
@@ -64,9 +66,21 @@ final readonly class InventoryRiskSnapshotMaterializer
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
         private ReportSourceAccessPolicy $sourceAccess,
+        private OwnerReportFilterApplier $filters,
     ) {}
 
     public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef {
+        return OwnerSnapshotFirstWriter::run(
+            $query,
+            fn (): ReportSnapshotRef => $this->materializeLocked($context, $query, $progress),
+        );
+    }
+
+    private function materializeLocked(
         ReportExecutionContext $context,
         ReportQuery $query,
         ReportProgress $progress,
@@ -77,21 +91,41 @@ final readonly class InventoryRiskSnapshotMaterializer
             'warehouse',
         );
         $balanceSnapshot = $this->balances->materialize($context, $query, $progress);
-        $balanceRows = WarehouseDailyBalanceRow::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('balance_snapshot_id', $balanceSnapshot->getKey())
+        $balanceQuery = WarehouseDailyBalanceRow::query()
+            ->join('materials as inventory_filter_material', 'inventory_filter_material.id', '=', 'warehouse_daily_balance_rows.material_id')
+            ->where('warehouse_daily_balance_rows.organization_id', $context->scope->organizationId)
+            ->where('warehouse_daily_balance_rows.balance_snapshot_id', $balanceSnapshot->getKey())
             ->when(
                 $allowedWarehouseIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'warehouse_id',
+                    'warehouse_daily_balance_rows.warehouse_id',
                     $allowedWarehouseIds,
                 ),
-            )
-            ->orderBy('balance_date')
-            ->orderBy('warehouse_id')
-            ->orderBy('project_id')
-            ->orderBy('material_id')
-            ->orderBy('row_key')
+            );
+        $this->filters->apply($balanceQuery, $this->filters->only($query->filters, [
+            'organization', 'organization_id', 'warehouse', 'warehouse_id', 'project', 'project_id',
+            'material', 'material_id', 'category', 'abc', 'xyz', 'period',
+        ]), [
+            'organization' => 'warehouse_daily_balance_rows.organization_id',
+            'organization_id' => 'warehouse_daily_balance_rows.organization_id',
+            'warehouse' => 'warehouse_daily_balance_rows.warehouse_id',
+            'warehouse_id' => 'warehouse_daily_balance_rows.warehouse_id',
+            'project' => 'warehouse_daily_balance_rows.project_id',
+            'project_id' => 'warehouse_daily_balance_rows.project_id',
+            'material' => 'warehouse_daily_balance_rows.material_id',
+            'material_id' => 'warehouse_daily_balance_rows.material_id',
+            'category' => 'inventory_filter_material.category',
+            'abc' => DB::raw("inventory_filter_material.additional_properties->>'abc_class'"),
+            'xyz' => DB::raw("inventory_filter_material.additional_properties->>'xyz_class'"),
+            'period' => 'warehouse_daily_balance_rows.balance_date',
+        ]);
+        $balanceRows = $balanceQuery
+            ->select('warehouse_daily_balance_rows.*')
+            ->orderBy('warehouse_daily_balance_rows.balance_date')
+            ->orderBy('warehouse_daily_balance_rows.warehouse_id')
+            ->orderBy('warehouse_daily_balance_rows.project_id')
+            ->orderBy('warehouse_daily_balance_rows.material_id')
+            ->orderBy('warehouse_daily_balance_rows.row_key')
             ->get();
         $events = WarehouseInventoryEvent::query()
             ->where('organization_id', $context->scope->organizationId)
@@ -197,6 +231,14 @@ final readonly class InventoryRiskSnapshotMaterializer
 
                     continue;
                 }
+                $riskStatus = $this->riskStatus(
+                    $metric->availableQuantity,
+                    $metric->recommendedOrderQuantity,
+                    $policy,
+                );
+                if (! $this->matchesStatusFilter($riskStatus, $query)) {
+                    continue;
+                }
                 if ($warnings !== []) {
                     $gapCount++;
                 }
@@ -212,7 +254,7 @@ final readonly class InventoryRiskSnapshotMaterializer
                     'project_id' => $balance->project_id,
                     'material_id' => $balance->material_id,
                     'balance_date' => $balance->balance_date,
-                    'risk_status' => $this->riskStatus($metric->availableQuantity, $metric->recommendedOrderQuantity, $policy),
+                    'risk_status' => $riskStatus,
                     'opening_on_hand' => $balance->opening_on_hand,
                     'closing_on_hand' => $balance->closing_on_hand,
                     'reserved_quantity' => $balance->reserved_quantity,
@@ -429,6 +471,22 @@ final readonly class InventoryRiskSnapshotMaterializer
         }
 
         return 'healthy';
+    }
+
+    private function matchesStatusFilter(string $status, ReportQuery $query): bool
+    {
+        $condition = $query->filters->values['status'] ?? null;
+        if (! is_array($condition)) {
+            return true;
+        }
+
+        return match ($condition['operator'] ?? null) {
+            'eq' => $status === (string) ($condition['value'] ?? ''),
+            'neq' => $status !== (string) ($condition['value'] ?? ''),
+            'in' => in_array($status, (array) ($condition['value'] ?? []), true),
+            'not_in' => ! in_array($status, (array) ($condition['value'] ?? []), true),
+            default => false,
+        };
     }
 
     private function snapshotRef(ReportQuery $query, InventoryRiskSnapshot $snapshot): ReportSnapshotRef

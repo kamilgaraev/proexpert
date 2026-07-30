@@ -186,7 +186,7 @@ final class SupplyReportingHardeningTest extends TestCase
         }
     }
 
-    public function test_supply_readiness_compares_only_eligible_items(): void
+    public function test_supply_readiness_uses_owner_items_and_counts_missing_projection(): void
     {
         $source = $this->source(
             'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/'
@@ -205,8 +205,79 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('$missingSent', $source);
         self::assertStringNotContainsString('->get([', $source);
         self::assertStringNotContainsString('->pluck(', $source);
-        self::assertStringNotContainsString('PurchaseOrderItem::query()', $source);
+        self::assertStringContainsString('PurchaseOrderItem::query()', $source);
+        self::assertStringContainsString('$missingPromise', $source);
+        self::assertStringContainsString('$eligible - $projected', $source);
         self::assertStringNotContainsString('min($projected, $sentItems)', $source);
+    }
+
+    public function test_owner_materializers_filter_sources_before_hashing_and_serialize_first_writer(): void
+    {
+        foreach ([
+            'Procurement/Reporting/Cycle/Services/ProcurementCycleSnapshotMaterializer.php',
+            'Procurement/Reporting/Award/Services/SupplierAwardSnapshotMaterializer.php',
+            'Procurement/Reporting/Supply/Services/SupplyReliabilitySnapshotMaterializer.php',
+            'BasicWarehouse/Reporting/InventoryRisk/Services/InventoryRiskSnapshotMaterializer.php',
+        ] as $suffix) {
+            $source = $this->source('app/BusinessModules/Features/'.$suffix);
+            self::assertStringContainsString('OwnerReportFilterApplier', $source, $suffix);
+            self::assertStringContainsString('OwnerSnapshotFirstWriter::run(', $source, $suffix);
+            self::assertLessThan(
+                strpos($source, '$sourceHash ='),
+                strpos($source, '$this->filters->apply('),
+                $suffix,
+            );
+        }
+        $firstWriter = $this->source('app/Support/Reporting/OwnerSnapshotFirstWriter.php');
+        self::assertStringContainsString('pg_advisory_xact_lock', $firstWriter);
+        self::assertStringContainsString('$query->queryHash->value', $firstWriter);
+    }
+
+    public function test_supply_backfill_uses_exact_proven_owner_lifecycle_evidence(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Backfill/'
+            .'SupplyReliabilityBackfill.php',
+        );
+
+        foreach ([
+            "'reporting_sent_at'",
+            "'reporting_confirmed_at'",
+            "'reporting_cancelled_at'",
+            "'owner_timestamp_evidence_hash'",
+            "'remediated_owner_timestamp' => true",
+        ] as $evidence) {
+            self::assertStringContainsString($evidence, $source);
+        }
+        self::assertStringNotContainsString('startOfDay()', $source);
+        self::assertStringNotContainsString('endOfDay()', $source);
+    }
+
+    public function test_supply_database_contract_preserves_exact_owner_timestamps(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/migrations/'
+            .'2026_07_26_120000_create_supply_reliability_reporting_tables.php',
+        );
+
+        self::assertStringContainsString('ALTER COLUMN sent_at TYPE timestamptz', $source);
+        self::assertStringContainsString('ALTER COLUMN confirmed_at TYPE timestamptz', $source);
+        self::assertStringContainsString('NEW.occurred_at <> source_order.sent_at', $source);
+        self::assertStringContainsString('NEW.occurred_at <> source_order.confirmed_at', $source);
+        self::assertStringNotContainsString('NEW.occurred_at::date', $source);
+    }
+
+    public function test_purchase_order_controller_never_exposes_domain_exception_messages(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/Http/Controllers/PurchaseOrderController.php',
+        );
+
+        self::assertStringNotContainsString('DomainException $', $source);
+        self::assertStringContainsString(
+            "trans_message('procurement.purchase_orders.operation_rejected')",
+            $source,
+        );
     }
 
     public function test_database_fences_bind_inventory_events_and_receipt_lots_to_sources(): void

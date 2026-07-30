@@ -11,6 +11,16 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(
+                "ALTER TABLE purchase_orders ALTER COLUMN sent_at TYPE timestamptz "
+                ."USING sent_at::timestamp AT TIME ZONE 'UTC'",
+            );
+            DB::statement(
+                "ALTER TABLE purchase_orders ALTER COLUMN confirmed_at TYPE timestamptz "
+                ."USING confirmed_at::timestamp AT TIME ZONE 'UTC'",
+            );
+        }
         Schema::table('purchase_orders', function (Blueprint $table): void {
             $table->timestampTz('cancelled_at')->nullable();
         });
@@ -293,6 +303,14 @@ return new class extends Migration
         Schema::table('purchase_orders', function (Blueprint $table): void {
             $table->dropColumn('cancelled_at');
         });
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(
+                'ALTER TABLE purchase_orders ALTER COLUMN sent_at TYPE date USING sent_at::date',
+            );
+            DB::statement(
+                'ALTER TABLE purchase_orders ALTER COLUMN confirmed_at TYPE date USING confirmed_at::date',
+            );
+        }
     }
 
     private function installConstraints(): void
@@ -595,13 +613,19 @@ CREATE OR REPLACE FUNCTION most_purchase_order_reporting_identity_v1() RETURNS t
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF OLD.sent_at IS NOT NULL AND NEW.sent_at IS DISTINCT FROM OLD.sent_at THEN
+    IF EXISTS (
+        SELECT 1 FROM purchase_order_promise_versions WHERE purchase_order_id = OLD.id
+    ) AND OLD.sent_at IS NOT NULL AND NEW.sent_at IS DISTINCT FROM OLD.sent_at THEN
         RAISE EXCEPTION 'purchase order sent timestamp is immutable' USING ERRCODE = '55000';
     END IF;
-    IF OLD.confirmed_at IS NOT NULL AND NEW.confirmed_at IS DISTINCT FROM OLD.confirmed_at THEN
+    IF EXISTS (
+        SELECT 1 FROM purchase_order_promise_versions WHERE purchase_order_id = OLD.id
+    ) AND OLD.confirmed_at IS NOT NULL AND NEW.confirmed_at IS DISTINCT FROM OLD.confirmed_at THEN
         RAISE EXCEPTION 'purchase order confirmed timestamp is immutable' USING ERRCODE = '55000';
     END IF;
-    IF OLD.cancelled_at IS NOT NULL AND (
+    IF EXISTS (
+        SELECT 1 FROM purchase_order_promise_versions WHERE purchase_order_id = OLD.id
+    ) AND OLD.cancelled_at IS NOT NULL AND (
         NEW.cancelled_at IS DISTINCT FROM OLD.cancelled_at
         OR NEW.status <> 'cancelled'
     ) THEN
@@ -947,11 +971,11 @@ BEGIN
                OR NEW.source_version <> 1
                OR (NEW.event_type = 'sent' AND (
                     source_order.sent_at IS NULL
-                    OR NEW.occurred_at::date <> source_order.sent_at::date
+                    OR NEW.occurred_at <> source_order.sent_at
                ))
                OR (NEW.event_type = 'confirmed' AND (
                     source_order.confirmed_at IS NULL
-                    OR NEW.occurred_at::date <> source_order.confirmed_at::date
+                    OR NEW.occurred_at <> source_order.confirmed_at
                ))
                OR (NEW.event_type = 'cancelled' AND (
                     source_order.cancelled_at IS NULL

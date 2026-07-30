@@ -19,6 +19,8 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwar
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardSnapshot;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\OwnerSnapshotFirstWriter;
+use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use DateTimeImmutable;
 use DomainException;
@@ -54,9 +56,21 @@ final readonly class SupplierAwardSnapshotMaterializer
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
         private ReportSourceAccessPolicy $sourceAccess,
+        private OwnerReportFilterApplier $filters,
     ) {}
 
     public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef {
+        return OwnerSnapshotFirstWriter::run(
+            $query,
+            fn (): ReportSnapshotRef => $this->materializeLocked($context, $query, $progress),
+        );
+    }
+
+    private function materializeLocked(
         ReportExecutionContext $context,
         ReportQuery $query,
         ReportProgress $progress,
@@ -68,8 +82,26 @@ final readonly class SupplierAwardSnapshotMaterializer
             'supplier_award_decision',
         );
         $decisionQuery = SupplierAwardDecisionVersion::query()
-            ->where('organization_id', $organizationId)
-            ->where('selected_at', '<=', $query->asOf)
+            ->leftJoin(
+                'purchase_requests as award_filter_request',
+                'award_filter_request.id',
+                '=',
+                'supplier_award_decision_versions.purchase_request_id',
+            )
+            ->leftJoin(
+                'supplier_proposal_versions as award_filter_version',
+                'award_filter_version.id',
+                '=',
+                'supplier_award_decision_versions.selected_proposal_version_id',
+            )
+            ->leftJoin(
+                'supplier_proposals as award_filter_proposal',
+                'award_filter_proposal.id',
+                '=',
+                'award_filter_version.supplier_proposal_id',
+            )
+            ->where('supplier_award_decision_versions.organization_id', $organizationId)
+            ->where('supplier_award_decision_versions.selected_at', '<=', $query->asOf)
             ->when(
                 $allowedDecisionIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
@@ -85,7 +117,23 @@ final readonly class SupplierAwardSnapshotMaterializer
                 ->all();
             $decisionQuery->whereIn('purchase_request_id', $purchaseRequestIds);
         }
+        $this->filters->apply($decisionQuery, $query->filters, [
+            'project' => 'award_filter_request.project_id',
+            'category' => DB::raw("NULLIF(award_filter_version.commercial_snapshot->>'category_id', '')::bigint"),
+            'material' => DB::raw("NULLIF(award_filter_version.commercial_snapshot->>'material_id', '')::bigint"),
+            'buyer' => 'supplier_award_decision_versions.selected_by',
+            'supplier' => 'award_filter_proposal.supplier_id',
+            'decision' => 'supplier_award_decision_versions.decision_id',
+            'method' => DB::raw("award_filter_version.commercial_snapshot->>'procurement_method'"),
+            'currency' => DB::raw("award_filter_version.commercial_snapshot->>'currency'"),
+            'non_lowest' => [
+                'column' => 'supplier_award_decision_versions.is_lowest_price_selected',
+                'invert_boolean' => true,
+            ],
+            'period' => 'supplier_award_decision_versions.selected_at',
+        ]);
         $decisions = $decisionQuery
+            ->select('supplier_award_decision_versions.*')
             ->orderBy('decision_id')
             ->orderBy('decision_version')
             ->get();

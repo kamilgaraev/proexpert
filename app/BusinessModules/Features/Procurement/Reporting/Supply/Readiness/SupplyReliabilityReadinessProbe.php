@@ -8,16 +8,22 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadines
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
+use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 final readonly class SupplyReliabilityReadinessProbe implements ReportDefinitionReadinessProbe
 {
-    public function __construct(private ReportSourceAccessPolicy $sourceAccess) {}
+    public function __construct(
+        private ReportSourceAccessPolicy $sourceAccess,
+        private OwnerReportFilterApplier $filters,
+    ) {}
 
     public function supports(ReportDefinition $definition): bool
     {
@@ -37,22 +43,55 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             $context->scope->resources,
             'purchase_order_item',
         );
+        $ownerItems = PurchaseOrderItem::query()
+            ->join('purchase_orders as readiness_owner_order', 'readiness_owner_order.id', '=', 'purchase_order_items.purchase_order_id')
+            ->leftJoin('purchase_requests as readiness_owner_request', 'readiness_owner_request.id', '=', 'readiness_owner_order.purchase_request_id')
+            ->leftJoin('site_requests as readiness_owner_site_request', 'readiness_owner_site_request.id', '=', 'readiness_owner_request.site_request_id')
+            ->where('readiness_owner_order.organization_id', $context->scope->organizationId)
+            ->whereNotNull('readiness_owner_order.sent_at')
+            ->where('readiness_owner_order.sent_at', '<=', $query->asOf)
+            ->when(
+                $allowedItemIds !== null,
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'purchase_order_items.id',
+                    $allowedItemIds,
+                ),
+            )
+            ->when(
+                $projects !== [],
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'readiness_owner_site_request.project_id',
+                    $projects,
+                ),
+            );
+        $this->filters->apply($ownerItems, $this->filters->only($query->filters, [
+            'supplier', 'supplier_id', 'project', 'project_id', 'warehouse', 'warehouse_id',
+            'material', 'material_id', 'buyer', 'priority', 'status', 'period', 'promised_month',
+        ]), [
+            'supplier' => 'readiness_owner_order.supplier_id',
+            'supplier_id' => 'readiness_owner_order.supplier_id',
+            'project' => 'readiness_owner_site_request.project_id',
+            'project_id' => 'readiness_owner_site_request.project_id',
+            'warehouse' => DB::raw("NULLIF(readiness_owner_order.metadata->>'warehouse_id', '')::bigint"),
+            'warehouse_id' => DB::raw("NULLIF(readiness_owner_order.metadata->>'warehouse_id', '')::bigint"),
+            'material' => 'purchase_order_items.material_id',
+            'material_id' => 'purchase_order_items.material_id',
+            'buyer' => DB::raw("NULLIF(readiness_owner_order.metadata->>'buyer_id', '')::bigint"),
+            'priority' => DB::raw("readiness_owner_request.metadata->>'priority'"),
+            'status' => 'readiness_owner_order.status',
+            'period' => 'readiness_owner_order.sent_at',
+            'promised_month' => 'readiness_owner_order.delivery_date',
+        ]);
+        $eligibleItemIds = (clone $ownerItems)->select('purchase_order_items.id');
+        $eligible = (clone $ownerItems)->distinct()->count('purchase_order_items.id');
         $promises = PurchaseOrderPromiseVersion::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('promise_version', 1)
             ->where('effective_from', '<=', $query->asOf)
-            ->when(
-                $allowedItemIds !== null,
-                static fn ($builder) => $builder->whereIn(
-                    'purchase_order_item_id',
-                    $allowedItemIds,
-                ),
-            )
-            ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects));
+            ->whereIn('purchase_order_item_id', $eligibleItemIds);
         $eligiblePromiseIds = (clone $promises)->select('id');
-        $eligibleItemIds = (clone $promises)->select('purchase_order_item_id');
-        $eligible = (clone $promises)->distinct()->count('purchase_order_item_id');
-        $projected = $eligible;
+        $projected = (clone $promises)->distinct()->count('purchase_order_item_id');
+        $missingPromise = max(0, $eligible - $projected);
         $missingSent = (clone $promises)
             ->whereNotExists(function ($builder) use ($context, $query): void {
                 $builder->selectRaw('1')
@@ -184,7 +223,8 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         return new SourceReadinessResult(
             $eligible,
             $projected,
-            $missingSent
+            $missingPromise
+                + $missingSent
                 + $missingOwnerLifecycle
                 + $invalidOwnerCancellation
                 + $missingReceiptLifecycle

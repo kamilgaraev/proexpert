@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Supply\Backfill;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
@@ -46,17 +47,24 @@ final readonly class SupplyReliabilityBackfill
             $promiseEvidence = $metadata['reporting_original_promised_at']
                 ?? $orderMetadata['delivery_date_at_first_send']
                 ?? null;
+            $sentEvidence = $orderMetadata['reporting_sent_at'] ?? null;
+            $confirmedEvidence = $orderMetadata['reporting_confirmed_at'] ?? null;
+            $cancelledEvidence = $orderMetadata['reporting_cancelled_at'] ?? null;
             $unitDimension = $metadata['reporting_unit_dimension'] ?? null;
             $unitCode = $metadata['reporting_unit_code'] ?? null;
             $conversionVersion = $metadata['reporting_conversion_version'] ?? null;
             $input[] = [
                 'item_id' => (int) $item->id,
                 'sent_at' => $order->sent_at?->format(DATE_ATOM),
+                'sent_evidence' => $sentEvidence,
+                'confirmed_evidence' => $confirmedEvidence,
+                'cancelled_evidence' => $cancelledEvidence,
                 'promise_evidence' => $promiseEvidence,
             ];
             if (! is_string($promiseEvidence)
                 || trim($promiseEvidence) === ''
-                || $order->sent_at === null
+                || ! is_string($sentEvidence)
+                || trim($sentEvidence) === ''
                 || ! is_string($unitDimension)
                 || trim($unitDimension) === ''
                 || ! is_string($unitCode)
@@ -70,6 +78,34 @@ final readonly class SupplyReliabilityBackfill
                 continue;
             }
             try {
+                $sentAt = CarbonImmutable::parse($sentEvidence)->utc();
+                $confirmedAt = is_string($confirmedEvidence) && trim($confirmedEvidence) !== ''
+                    ? CarbonImmutable::parse($confirmedEvidence)->utc()
+                    : null;
+                $cancelledAt = is_string($cancelledEvidence) && trim($cancelledEvidence) !== ''
+                    ? CarbonImmutable::parse($cancelledEvidence)->utc()
+                    : null;
+                if ($order->status === PurchaseOrderStatusEnum::CANCELLED && $cancelledAt === null) {
+                    throw new DomainException('Legacy cancelled order requires explicit cancellation evidence.');
+                }
+                if ($order->confirmed_at !== null && $confirmedAt === null) {
+                    throw new DomainException('Legacy confirmed order requires explicit confirmation evidence.');
+                }
+                if (($confirmedAt !== null && $confirmedAt->lessThan($sentAt))
+                    || ($cancelledAt !== null && $cancelledAt->lessThan($sentAt))) {
+                    throw new DomainException('Legacy lifecycle evidence is not chronologically valid.');
+                }
+                $evidenceHash = hash('sha256', CanonicalJson::encode([
+                    'order_id' => (int) $order->id,
+                    'sent_at' => $sentEvidence,
+                    'confirmed_at' => $confirmedEvidence,
+                    'cancelled_at' => $cancelledEvidence,
+                ]));
+                $order->forceFill([
+                    'sent_at' => $sentAt,
+                    'confirmed_at' => $confirmedAt,
+                    'cancelled_at' => $cancelledAt,
+                ])->save();
                 $basis = array_merge([
                     'reporting_source_version' => 1,
                     'unit_dimension' => $unitDimension,
@@ -78,7 +114,6 @@ final readonly class SupplyReliabilityBackfill
                     'tax_basis' => $orderMetadata['tax_basis'],
                     'freight_basis' => $orderMetadata['freight_basis'],
                 ], $metadata);
-                $sentAt = CarbonImmutable::instance($order->sent_at);
                 $promise = $this->promises->captureBackfillOriginal(
                     $item->fresh(),
                     CarbonImmutable::parse($promiseEvidence),
@@ -94,9 +129,50 @@ final readonly class SupplyReliabilityBackfill
                     '0',
                     $sentAt,
                     'purchase_order_item:'.$item->id.':sent',
-                    evidence: ['backfill' => true],
+                    evidence: [
+                        'backfill' => true,
+                        'owner_timestamp_evidence_hash' => $evidenceHash,
+                        'owner_timestamp' => $sentAt->format(DATE_ATOM),
+                    ],
                 );
                 $projected[] = (int) $sent->id;
+                if ($confirmedAt !== null) {
+                    $confirmed = $this->events->record(
+                        $promise,
+                        'confirmed',
+                        'purchase_order',
+                        (int) $order->id,
+                        1,
+                        '0',
+                        $confirmedAt,
+                        'purchase_order_item:'.$item->id.':confirmed',
+                        evidence: [
+                            'backfill' => true,
+                            'owner_timestamp_evidence_hash' => $evidenceHash,
+                            'owner_timestamp' => $confirmedAt->format(DATE_ATOM),
+                        ],
+                    );
+                    $projected[] = (int) $confirmed->id;
+                }
+                if ($cancelledAt !== null) {
+                    $cancelled = $this->events->record(
+                        $promise,
+                        'cancelled',
+                        'purchase_order',
+                        (int) $order->id,
+                        1,
+                        '0',
+                        $cancelledAt,
+                        'purchase_order_item:'.$item->id.':cancelled',
+                        evidence: [
+                            'backfill' => true,
+                            'remediated_owner_timestamp' => true,
+                            'owner_timestamp_evidence_hash' => $evidenceHash,
+                            'owner_timestamp' => $cancelledAt->format(DATE_ATOM),
+                        ],
+                    );
+                    $projected[] = (int) $cancelled->id;
+                }
                 foreach ($item->receiptLines->sortBy('id') as $line) {
                     $lineMetadata = is_array($line->metadata) ? $line->metadata : [];
                     $postedAt = $lineMetadata['reporting_posted_at'] ?? null;

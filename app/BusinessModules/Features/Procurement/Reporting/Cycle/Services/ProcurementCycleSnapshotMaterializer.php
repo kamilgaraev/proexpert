@@ -22,6 +22,8 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrd
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\OwnerSnapshotFirstWriter;
+use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -58,9 +60,21 @@ final readonly class ProcurementCycleSnapshotMaterializer
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
         private ReportSourceAccessPolicy $sourceAccess,
+        private OwnerReportFilterApplier $filters,
     ) {}
 
     public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef {
+        return OwnerSnapshotFirstWriter::run(
+            $query,
+            fn (): ReportSnapshotRef => $this->materializeLocked($context, $query, $progress),
+        );
+    }
+
+    private function materializeLocked(
         ReportExecutionContext $context,
         ReportQuery $query,
         ReportProgress $progress,
@@ -82,26 +96,53 @@ final readonly class ProcurementCycleSnapshotMaterializer
             throw new DomainException('Procurement cycle policy is unavailable for the requested cutoff.');
         }
 
-        $events = ProcurementProcessEvent::query()
-            ->where('organization_id', $organizationId)
-            ->where('occurred_at', '<=', $query->asOf)
+        $eventQuery = ProcurementProcessEvent::query()
+            ->leftJoin(
+                'purchase_requests as cycle_filter_request',
+                'cycle_filter_request.id',
+                '=',
+                'procurement_process_events.purchase_request_id',
+            )
+            ->leftJoin(
+                'purchase_orders as cycle_filter_order',
+                'cycle_filter_order.id',
+                '=',
+                'procurement_process_events.purchase_order_id',
+            )
+            ->where('procurement_process_events.organization_id', $organizationId)
+            ->where('procurement_process_events.occurred_at', '<=', $query->asOf)
             ->when(
                 $allowedLineIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'purchase_request_line_id',
+                    'procurement_process_events.purchase_request_line_id',
                     $allowedLineIds,
                 ),
             )
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'project_id',
+                    'procurement_process_events.project_id',
                     $context->scope->projectIds,
                 ),
-            )
-            ->orderBy('purchase_request_line_id')
-            ->orderBy('occurred_at')
-            ->orderBy('id')
+            );
+        $this->filters->apply($eventQuery, $query->filters, [
+            'project' => 'procurement_process_events.project_id',
+            'project_id' => 'procurement_process_events.project_id',
+            'requester' => DB::raw("NULLIF(cycle_filter_request.metadata->>'requester_id', '')::bigint"),
+            'buyer' => 'cycle_filter_request.assigned_to',
+            'category' => DB::raw("NULLIF(procurement_process_events.evidence->>'category_id', '')::bigint"),
+            'supplier' => 'cycle_filter_order.supplier_id',
+            'amount' => 'cycle_filter_order.total_amount',
+            'priority' => DB::raw("cycle_filter_request.metadata->>'priority'"),
+            'stage' => 'procurement_process_events.stage',
+            'status' => 'procurement_process_events.event_code',
+            'period' => 'procurement_process_events.occurred_at',
+        ]);
+        $events = $eventQuery
+            ->select('procurement_process_events.*')
+            ->orderBy('procurement_process_events.purchase_request_line_id')
+            ->orderBy('procurement_process_events.occurred_at')
+            ->orderBy('procurement_process_events.id')
             ->get();
         $purchaseOrderIds = $events->pluck('purchase_order_id')->filter()->unique()->values();
         $promises = PurchaseOrderPromiseVersion::query()

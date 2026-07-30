@@ -15,11 +15,14 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLifecycl
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLineFact;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityPolicyVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityRow;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilitySnapshot;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\OwnerSnapshotFirstWriter;
+use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use DateTimeImmutable;
@@ -63,9 +66,21 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
         private ReportSourceAccessPolicy $sourceAccess,
+        private OwnerReportFilterApplier $filters,
     ) {}
 
     public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef {
+        return OwnerSnapshotFirstWriter::run(
+            $query,
+            fn (): ReportSnapshotRef => $this->materializeLocked($context, $query, $progress),
+        );
+    }
+
+    private function materializeLocked(
         ReportExecutionContext $context,
         ReportQuery $query,
         ReportProgress $progress,
@@ -86,25 +101,93 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         if (! $policy instanceof SupplyReliabilityPolicyVersion) {
             throw new DomainException('Supply reliability policy is unavailable for the requested cutoff.');
         }
-        $promises = PurchaseOrderPromiseVersion::query()
-            ->where('organization_id', $organizationId)
-            ->where('promise_version', 1)
-            ->where('effective_from', '<=', $query->asOf)
+        $ownerQuery = PurchaseOrderItem::query()
+            ->join(
+                'purchase_orders as owner_order',
+                'owner_order.id',
+                '=',
+                'purchase_order_items.purchase_order_id',
+            )
+            ->leftJoin(
+                'purchase_requests as owner_request',
+                'owner_request.id',
+                '=',
+                'owner_order.purchase_request_id',
+            )
+            ->leftJoin(
+                'site_requests as owner_site_request',
+                'owner_site_request.id',
+                '=',
+                'owner_request.site_request_id',
+            )
+            ->where('owner_order.organization_id', $organizationId)
+            ->whereNotNull('owner_order.sent_at')
+            ->where('owner_order.sent_at', '<=', $query->asOf)
             ->when(
                 $allowedItemIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'purchase_order_item_id',
+                    'purchase_order_items.id',
+                    $allowedItemIds,
+                ),
+            )
+            ->when(
+                $context->scope->projectIds !== [],
+                static fn (Builder $builder): Builder => $builder
+                    ->whereIn('owner_site_request.project_id', $context->scope->projectIds),
+            );
+        $this->filters->apply($ownerQuery, $this->filters->only($query->filters, [
+            'supplier', 'supplier_id', 'project', 'project_id', 'warehouse', 'warehouse_id',
+            'material', 'material_id', 'buyer', 'priority', 'status', 'period', 'promised_month',
+        ]), [
+            'supplier' => 'owner_order.supplier_id',
+            'supplier_id' => 'owner_order.supplier_id',
+            'project' => 'owner_site_request.project_id',
+            'project_id' => 'owner_site_request.project_id',
+            'material' => 'purchase_order_items.material_id',
+            'material_id' => 'purchase_order_items.material_id',
+            'warehouse' => DB::raw("NULLIF(owner_order.metadata->>'warehouse_id', '')::bigint"),
+            'warehouse_id' => DB::raw("NULLIF(owner_order.metadata->>'warehouse_id', '')::bigint"),
+            'buyer' => DB::raw("NULLIF(owner_order.metadata->>'buyer_id', '')::bigint"),
+            'priority' => DB::raw("owner_request.metadata->>'priority'"),
+            'status' => 'owner_order.status',
+            'period' => 'owner_order.sent_at',
+            'promised_month' => 'owner_order.delivery_date',
+        ]);
+        $ownerItems = $ownerQuery
+            ->select([
+                'purchase_order_items.id',
+                'purchase_order_items.purchase_order_id',
+                'purchase_order_items.updated_at',
+                'owner_order.updated_at as order_updated_at',
+                'owner_order.confirmed_at',
+                'owner_order.cancelled_at',
+                'owner_order.status as order_status',
+            ])
+            ->orderBy('purchase_order_items.id')
+            ->get();
+        $ownerItemIds = $ownerItems->pluck('id')->all();
+        $promiseQuery = PurchaseOrderPromiseVersion::query()
+            ->where('purchase_order_promise_versions.organization_id', $organizationId)
+            ->where('purchase_order_promise_versions.promise_version', 1)
+            ->where('purchase_order_promise_versions.effective_from', '<=', $query->asOf)
+            ->whereIn('purchase_order_promise_versions.purchase_order_item_id', $ownerItemIds)
+            ->when(
+                $allowedItemIds !== null,
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'purchase_order_promise_versions.purchase_order_item_id',
                     $allowedItemIds,
                 ),
             )
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(
-                    'project_id',
+                    'purchase_order_promise_versions.project_id',
                     $context->scope->projectIds,
                 ),
-            )
-            ->orderBy('purchase_order_item_id')
+            );
+        $promises = $promiseQuery
+            ->select('purchase_order_promise_versions.*')
+            ->orderBy('purchase_order_promise_versions.purchase_order_item_id')
             ->get();
         $promiseIds = $promises->pluck('id')->all();
         $events = SupplyLifecycleEvent::query()
@@ -117,7 +200,15 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             ->get();
         $sourceHash = $this->sourceHashes->make(
             $query->canonicalJson,
-            [$policy->source_hash, ...$promises->pluck('source_hash')->all(), ...$events->pluck('source_hash')->all()],
+            [
+                $policy->source_hash,
+                ...$ownerItems->map(static fn ($item): string => hash(
+                    'sha256',
+                    $item->id.':'.$item->purchase_order_id.':'.$item->updated_at.':'.$item->order_updated_at,
+                ))->all(),
+                ...$promises->pluck('source_hash')->all(),
+                ...$events->pluck('source_hash')->all(),
+            ],
         );
         $existing = SupplyReliabilitySnapshot::query()
             ->where('organization_id', $organizationId)
@@ -131,6 +222,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         }
 
         $eventsByLine = $events->groupBy('purchase_order_item_id');
+        $ownerItemsById = $ownerItems->keyBy('id');
         $snapshot = DB::transaction(function () use (
             $eventsByLine,
             $organizationId,
@@ -139,12 +231,27 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $promises,
             $query,
             $sourceHash,
+            $ownerItems,
+            $ownerItemsById,
         ) {
             $rows = [];
             $metrics = [];
-            $gapCount = 0;
+            $gapCount = max(0, $ownerItems->count() - $promises->count());
             foreach ($promises as $promise) {
                 $lineEvents = $eventsByLine->get($promise->purchase_order_item_id, collect());
+                $ownerItem = $ownerItemsById->get($promise->purchase_order_item_id);
+                $lineGapCount = 0;
+                if (! $lineEvents->contains('event_type', 'sent')) {
+                    $lineGapCount++;
+                }
+                if ($ownerItem?->confirmed_at !== null
+                    && ! $lineEvents->contains('event_type', 'confirmed')) {
+                    $lineGapCount++;
+                }
+                if (($ownerItem?->cancelled_at !== null || $ownerItem?->order_status === 'cancelled')
+                    && ! $lineEvents->contains('event_type', 'cancelled')) {
+                    $lineGapCount++;
+                }
                 try {
                     $facts = $lineEvents->map(
                         static fn (SupplyLifecycleEvent $event): SupplyLifecycleFact => new SupplyLifecycleFact(
@@ -181,7 +288,6 @@ final readonly class SupplyReliabilitySnapshotMaterializer
 
                     continue;
                 }
-                $metrics[] = $metric;
                 $qualifyingReceipt = $this->qualifyingReceipt(
                     $promise,
                     $lineEvents,
@@ -190,6 +296,12 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                 $cancelled = $lineEvents->first(
                     static fn (SupplyLifecycleEvent $event): bool => $event->event_type === 'cancelled',
                 );
+                $delayBucket = $this->delayBucket($promise, $qualifyingReceipt);
+                if (! $this->matchesDelayFilter($delayBucket, $query)) {
+                    continue;
+                }
+                $gapCount += $lineGapCount;
+                $metrics[] = $metric;
                 $rows[] = [
                     'organization_id' => $organizationId,
                     'row_key' => 'supply_'.$promise->purchase_order_item_id,
@@ -202,7 +314,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                     'material_id' => $promise->material_id,
                     'original_promised_at' => $promise->promised_at,
                     'promised_month' => $promise->promised_at->format('Y-m'),
-                    'delay_bucket' => $this->delayBucket($promise, $qualifyingReceipt),
+                    'delay_bucket' => $delayBucket,
                     'ordered_quantity' => $promise->ordered_quantity,
                     'net_received_quantity' => $metric->netReceivedQuantity,
                     'unit_dimension' => $promise->unit_dimension,
@@ -313,6 +425,22 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $delayDays <= 3 => 'delay_1_3',
             $delayDays <= 7 => 'delay_4_7',
             default => 'delay_over_7',
+        };
+    }
+
+    private function matchesDelayFilter(string $delayBucket, ReportQuery $query): bool
+    {
+        $condition = $query->filters->values['delay'] ?? null;
+        if (! is_array($condition)) {
+            return true;
+        }
+
+        return match ($condition['operator'] ?? null) {
+            'eq' => $delayBucket === (string) ($condition['value'] ?? ''),
+            'neq' => $delayBucket !== (string) ($condition['value'] ?? ''),
+            'in' => in_array($delayBucket, (array) ($condition['value'] ?? []), true),
+            'not_in' => ! in_array($delayBucket, (array) ($condition['value'] ?? []), true),
+            default => false,
         };
     }
 
