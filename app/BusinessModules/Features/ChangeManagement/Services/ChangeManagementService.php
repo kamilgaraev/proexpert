@@ -272,13 +272,6 @@ final class ChangeManagementService
         string $approvedCostAmount,
         ?string $comment = null,
     ): ChangeRequest {
-        $this->assertStatus($change->status, ['internal_review']);
-        $impact = $this->assertImpactExists($change);
-
-        if ($impact->requires_customer_approval) {
-            throw new DomainException(trans_message('change_management.errors.customer_approval_required'));
-        }
-
         return $this->approve($change, $userId, 'internal', $approvedCostAmount, $comment);
     }
 
@@ -288,13 +281,6 @@ final class ChangeManagementService
         string $approvedCostAmount,
         ?string $comment = null,
     ): ChangeRequest {
-        $this->assertStatus($change->status, ['customer_review']);
-        $impact = $this->assertImpactExists($change);
-
-        if (! $impact->requires_customer_approval) {
-            throw new DomainException(trans_message('change_management.errors.customer_approval_not_required'));
-        }
-
         return $this->approve($change, $userId, 'customer', $approvedCostAmount, $comment);
     }
 
@@ -388,13 +374,44 @@ final class ChangeManagementService
         string $approvedCostAmount,
         ?string $comment,
     ): ChangeRequest {
+        $approvedCostMinor = ExactDecimal::minor($approvedCostAmount);
+
         return DB::transaction(function () use (
             $change,
             $userId,
             $approvalType,
-            $approvedCostAmount,
+            $approvedCostMinor,
             $comment,
         ): ChangeRequest {
+            $lockedChange = ChangeRequest::query()
+                ->where('organization_id', $change->organization_id)
+                ->whereKey($change->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $expectedStatus = $approvalType === 'customer' ? 'customer_review' : 'internal_review';
+            if ($lockedChange->status === 'approved') {
+                $existing = $lockedChange->approvals()
+                    ->where('approval_type', $approvalType)
+                    ->where('status', 'approved')
+                    ->latest('id')
+                    ->first();
+                if ($existing instanceof ChangeApproval
+                    && (int) $existing->approved_by_user_id === $userId
+                    && (int) $existing->approved_cost_minor === $approvedCostMinor
+                    && (string) $existing->currency === (string) $lockedChange->reporting_currency
+                    && $existing->comment === $comment) {
+                    return $this->reloadChange($lockedChange);
+                }
+            }
+            $this->assertStatus((string) $lockedChange->status, [$expectedStatus]);
+            $impact = $this->assertImpactExists($lockedChange);
+            if ($approvalType === 'customer' && ! $impact->requires_customer_approval) {
+                throw new DomainException(trans_message('change_management.errors.customer_approval_not_required'));
+            }
+            if ($approvalType === 'internal' && $impact->requires_customer_approval) {
+                throw new DomainException(trans_message('change_management.errors.customer_approval_required'));
+            }
+            $change = $lockedChange;
             if ($change->reporting_currency === null) {
                 throw new DomainException(trans_message('change_management.errors.monetary_context_missing'));
             }
@@ -405,7 +422,7 @@ final class ChangeManagementService
                 'approval_type' => $approvalType,
                 'status' => 'approved',
                 'comment' => $comment,
-                'approved_cost_minor' => ExactDecimal::minor($approvedCostAmount),
+                'approved_cost_minor' => $approvedCostMinor,
                 'currency' => (string) $change->reporting_currency,
                 'decided_at' => now(),
             ]);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -22,10 +23,16 @@ return new class extends Migration
             $table->bigInteger('approved_cost_minor')->nullable();
             $table->char('currency', 3)->nullable();
         });
+        DB::statement(
+            "CREATE UNIQUE INDEX change_management_single_approved_change
+             ON change_management_approvals (change_request_id)
+             WHERE status = 'approved'",
+        );
     }
 
     public function down(): void
     {
+        DB::statement('DROP INDEX IF EXISTS change_management_single_approved_change');
         Schema::table('change_management_approvals', function (Blueprint $table): void {
             $table->dropColumn(['approved_cost_minor', 'currency']);
         });

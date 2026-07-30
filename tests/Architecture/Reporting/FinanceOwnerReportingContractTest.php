@@ -127,8 +127,12 @@ final class FinanceOwnerReportingContractTest extends TestCase
         $workflow = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ChangeWorkflowEventRecorder.php');
         $ledger = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ContingencyLedgerService.php');
         $settlementWriter = (string) file_get_contents($root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementProjectionService.php');
-        self::assertStringContainsString("DB::table('change_requests')", $workflow);
+        self::assertStringContainsString('ChangeRequest::query()', $workflow);
+        self::assertStringNotContainsString("DB::table('change_requests')", $workflow);
         self::assertStringContainsString('->lockForUpdate()', $workflow);
+        self::assertStringContainsString('change_management_single_approved_change', (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ChangeManagement/migrations/2026_07_30_000010_add_change_monetary_reporting_contract.php',
+        ));
         self::assertStringContainsString('insertOrIgnore', $ledger);
         self::assertStringContainsString('contingency_ledger_replay_conflict', $ledger);
         self::assertStringContainsString('contract_settlement_source_fact_race_conflict', $settlementWriter);
@@ -144,6 +148,7 @@ final class FinanceOwnerReportingContractTest extends TestCase
         self::assertStringContainsString('management_pnl_snapshot_race_conflict', $managementWriter);
         self::assertStringContainsString('change_claim_snapshot_race_conflict', $changeWriter);
         self::assertStringContainsString("->where('effective_at', '<=', \$query->asOf)", $changeWriter);
+        self::assertStringContainsString("'quality_status' => 'partial'", $changeWriter);
     }
 
     #[Test]

@@ -23,16 +23,20 @@ final readonly class FinanceSourceAccessPolicy
         if (! is_array($sourceRefs)) {
             return false;
         }
+        $relevant = false;
         foreach ($sourceRefs as $ref) {
-            if (is_array($ref)
-                && is_string($ref['type'] ?? null)
-                && (is_int($ref['id'] ?? null) || ctype_digit((string) ($ref['id'] ?? '')))
-                && isset($restricted[$ref['type'].':'.(string) $ref['id']])) {
-                return true;
+            if (! is_array($ref) || ! is_string($ref['type'] ?? null)
+                || ! in_array($ref['type'], $allowedTypes, true)) {
+                continue;
+            }
+            $relevant = true;
+            if ((! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))
+                || ! isset($restricted[$ref['type'].':'.(string) $ref['id']])) {
+                return false;
             }
         }
 
-        return false;
+        return $relevant;
     }
 
     public function visibleRefs(

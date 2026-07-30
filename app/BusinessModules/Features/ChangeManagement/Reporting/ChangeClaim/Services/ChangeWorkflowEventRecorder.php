@@ -28,11 +28,12 @@ final readonly class ChangeWorkflowEventRecorder
         ?int $actorId,
     ): ChangeWorkflowEvent {
         return DB::transaction(function () use ($change, $eventType, $occurredAt, $actorId): ChangeWorkflowEvent {
-            DB::table('change_requests')
+            $lockedChange = ChangeRequest::query()
                 ->where('organization_id', $change->organization_id)
-                ->where('id', $change->id)
+                ->whereKey($change->id)
                 ->lockForUpdate()
-                ->first();
+                ->firstOrFail();
+            $change = $lockedChange;
             $change->loadMissing('impact');
             $latest = ChangeRequestVersion::query()
                 ->where('organization_id', $change->organization_id)

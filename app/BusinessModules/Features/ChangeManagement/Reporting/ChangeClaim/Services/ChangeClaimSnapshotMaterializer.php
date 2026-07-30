@@ -294,6 +294,12 @@ final readonly class ChangeClaimSnapshotMaterializer
         $quality = $warnings === [] && $coverageNumerator === $coverageDenominator
             ? 'complete'
             : 'partial';
+        if ($quality === 'partial') {
+            $rows = array_map(static fn (array $row): array => [
+                ...$row,
+                'quality_status' => 'partial',
+            ], $rows);
+        }
 
         $persistedSnapshotId = DB::transaction(function () use (
             $scope,

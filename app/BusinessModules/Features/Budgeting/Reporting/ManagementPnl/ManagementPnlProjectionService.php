@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ExactDecimal;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Contracts\ManagementPnlComponentSource;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementPnlComponentSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementSourceFact;
@@ -196,7 +197,10 @@ final readonly class ManagementPnlProjectionService
                 'operating_result_minor' => $operatingResult,
                 'gross_margin_percent' => $row['revenue_minor'] === 0
                     ? null
-                    : number_format($grossMargin / $row['revenue_minor'] * 100, 8, '.', ''),
+                    : ExactDecimal::percentage(
+                        $grossMargin,
+                        $row['revenue_minor'],
+                    ),
                 'policy_version' => $policy->version(),
             ];
         }

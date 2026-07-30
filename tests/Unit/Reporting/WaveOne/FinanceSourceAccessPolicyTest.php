@@ -72,6 +72,19 @@ final class FinanceSourceAccessPolicyTest extends TestCase
         self::assertTrue($policy->allowsAggregate($scope, [], ['change_request']));
     }
 
+    #[Test]
+    public function aggregate_rows_fail_closed_when_any_relevant_source_is_outside_scope(): void
+    {
+        self::assertFalse((new FinanceSourceAccessPolicy)->allowsAggregate(
+            $this->context()->scope,
+            [
+                ['type' => 'contract', 'id' => 10],
+                ['type' => 'contract', 'id' => 11],
+            ],
+            ['contract'],
+        ));
+    }
+
     private function context(): ReportExecutionContext
     {
         $timezone = new DateTimeZone('Europe/Moscow');
