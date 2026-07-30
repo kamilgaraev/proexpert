@@ -19,7 +19,6 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DTO\Admiss
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionPolicyVersion;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionRow;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionSnapshot;
-use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetySiteWorkforceAssignment;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
 use App\Jobs\ReportingSourceBackfillJob;
 use Carbon\CarbonImmutable;
@@ -74,21 +73,19 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             $query,
         );
         $projection = $this->projection($organizationId, $assignments, $date, $asOf, $query);
-        $ownerSources = $this->ownerSources(
-            $organizationId,
-            $context->scope->projectIds,
-            $context->scope->resources,
-            $date,
-            $asOf,
-            $query,
-        );
+        $ownerSources = $assignments->map(static fn (object $ownership): object => (object) [
+            'assignment_id' => $ownership->workforce_assignment_id,
+            'employee_id' => $ownership->employee_id,
+            'mapping_id' => $ownership->id,
+            'safety_site_id' => $ownership->safety_site_id,
+        ]);
         $ownerKeys = $ownerSources->map(
             static fn (object $row): string => $row->mapping_id === null
                 ? 'assignment:'.$row->assignment_id.':employee:'.$row->employee_id.':site:missing'
                 : 'assignment:'.$row->assignment_id.':employee:'.$row->employee_id.':site:'.$row->safety_site_id,
         );
         $projectedKeys = $assignments->map(
-            static fn (SafetySiteWorkforceAssignment $mapping): string => 'assignment:'.$mapping->workforce_assignment_id
+            static fn (object $mapping): string => 'assignment:'.$mapping->workforce_assignment_id
                 .':employee:'.$mapping->employee_id.':site:'.$mapping->safety_site_id,
         );
         $mappingGapCount = ReportIdentitySetReconciler::gapCount($ownerKeys, $projectedKeys);
@@ -248,15 +245,23 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         CarbonImmutable $asOf,
         ReportQuery $query,
     ): Collection {
-        $builder = SafetySiteWorkforceAssignment::query()
-            ->where('organization_id', $organizationId)
-            ->where('mapping_source', self::MAPPING_SOURCE)
-            ->where('created_at', '<=', $asOf)
-            ->whereDate('valid_from', '<=', $date->toDateString())
-            ->where(static function (Builder $builder) use ($date): void {
-                $builder->whereNull('valid_to')->orWhereDate('valid_to', '>=', $date->toDateString());
+        $builder = DB::table('safety_assignment_ownership_versions as ownership')
+            ->where('ownership.organization_id', $organizationId)
+            ->where('ownership.history_complete', true)
+            ->where('ownership.tombstone', false)
+            ->where('ownership.effective_at', '<=', $asOf)
+            ->whereNotExists(static function ($query) use ($asOf): void {
+                $query->selectRaw('1')
+                    ->from('safety_assignment_ownership_versions as newer')
+                    ->whereColumn('newer.site_assignment_id', 'ownership.site_assignment_id')
+                    ->where('newer.effective_at', '<=', $asOf)
+                    ->where(static fn ($query) => $query
+                        ->whereColumn('newer.effective_at', '>', 'ownership.effective_at')
+                        ->orWhere(static fn ($query) => $query
+                            ->whereColumn('newer.effective_at', 'ownership.effective_at')
+                            ->whereColumn('newer.id', '>', 'ownership.id')));
             })
-            ->when($scopeProjectIds !== [], static fn (Builder $builder) => $builder->whereIn('project_id', $scopeProjectIds));
+            ->when($scopeProjectIds !== [], static fn ($builder) => $builder->whereIn('ownership.project_id', $scopeProjectIds));
         $this->applyFilter($builder, 'project_id', $query->filters->values['project_id'] ?? null);
         $this->applyFilter($builder, 'safety_site_id', $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
         $this->applyFilter($builder, 'employee_id', $query->filters->values['employee_id'] ?? null);
@@ -268,7 +273,16 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             ->orderBy('safety_site_id')
             ->orderBy('employee_id')
             ->orderBy('id')
-            ->get();
+            ->get([
+                'ownership.id as ownership_version_id',
+                'ownership.organization_id',
+                'ownership.project_id',
+                'ownership.employee_id',
+                'ownership.safety_site_id',
+                'ownership.site_assignment_id as id',
+                'ownership.workforce_assignment_id',
+                'ownership.source_hash',
+            ]);
     }
 
     private function ownerSources(
@@ -517,7 +531,9 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'evidence_id' => $state->evidenceId,
                     'evidence_version_id' => $evidenceVersion['id'] ?? null,
                     'evidence_hash' => $evidenceVersion['hash'] ?? null,
-                    'evidence_identity' => $evidenceVersion === null ? null : [
+                    'evidence_identity' => [
+                        'ownership_version_id' => (int) $assignment->ownership_version_id,
+                        'ownership_version_hash' => (string) $assignment->source_hash,
                         'evidence_id' => $state->evidenceId,
                         'evidence_type' => $state->evidenceType,
                         'resource_id' => $state->evidenceType === 'briefing'
@@ -531,8 +547,8 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                         'safety_site_id' => (int) $assignment->safety_site_id,
                         'site_assignment_id' => (int) $assignment->id,
                         'workforce_assignment_id' => (int) $assignment->workforce_assignment_id,
-                        'version_hash' => $evidenceVersion['hash'],
-                        'version_id' => $evidenceVersion['id'],
+                        'version_hash' => $evidenceVersion['hash'] ?? null,
+                        'version_id' => $evidenceVersion['id'] ?? null,
                     ],
                     'medical_details' => $state->type === 'medical_exam' ? [
                         'source_type' => 'medical_exam',
@@ -577,7 +593,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
     }
 
     private function workforceAssignmentState(
-        SafetySiteWorkforceAssignment $mapping,
+        object $mapping,
         CarbonImmutable $date,
         CarbonImmutable $asOf,
     ): array {
@@ -589,44 +605,10 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             ->orderByDesc('occurred_at')
             ->orderByDesc('event_version')
             ->first();
-        $record = DB::table('workforce_employee_assignments')
-            ->where('id', $mapping->workforce_assignment_id)
-            ->where('organization_id', $mapping->organization_id)
-            ->where('project_id', $mapping->project_id)
-            ->where('employee_id', $mapping->employee_id)
-            ->first([
-                'id',
-                'organization_id',
-                'project_id',
-                'employee_id',
-                'status',
-                'valid_from',
-                'valid_to',
-                'created_at',
-                'updated_at',
-                'deleted_at',
-            ]);
-        $source = $record === null ? [
-            'mapping_id' => (int) $mapping->id,
-            'state' => 'missing',
-        ] : [
-            'created_at' => (string) $record->created_at,
-            'deleted_at' => $record->deleted_at === null ? null : (string) $record->deleted_at,
-            'employee_id' => (int) $record->employee_id,
-            'id' => (int) $record->id,
-            'organization_id' => (int) $record->organization_id,
-            'project_id' => (int) $record->project_id,
-            'status' => (string) $record->status,
-            'updated_at' => (string) $record->updated_at,
-            'valid_from' => (string) $record->valid_from,
-            'valid_to' => $record->valid_to === null ? null : (string) $record->valid_to,
-        ];
         $active = false;
-        if ($record !== null && $lifecycle !== null && (bool) $lifecycle->history_complete) {
+        if ($lifecycle !== null && (bool) $lifecycle->history_complete) {
             try {
                 $active = $lifecycle->status === 'active'
-                    && CarbonImmutable::parse((string) $record->created_at) <= $asOf
-                    && ($record->deleted_at === null || CarbonImmutable::parse((string) $record->deleted_at) > $asOf)
                     && CarbonImmutable::parse((string) $lifecycle->valid_from)->toDateString() <= $date->toDateString()
                     && (
                         $lifecycle->valid_to === null
@@ -640,7 +622,8 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         return [
             'active' => $active,
             'source_hash' => hash('sha256', CanonicalJson::encode([
-                'record' => $source,
+                'ownership_version_hash' => (string) $mapping->source_hash,
+                'ownership_version_id' => (int) $mapping->ownership_version_id,
                 'lifecycle_hash' => $lifecycle?->source_hash,
                 'lifecycle_history_complete' => $lifecycle === null ? false : (bool) $lifecycle->history_complete,
             ])),

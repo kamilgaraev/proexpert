@@ -351,26 +351,26 @@ final class ProductionReportScopedResourceAuthorizers
                 'site_assignment_id',
                 'workforce_assignment_id',
             ]);
-        if ($row === null
-            || ! DB::table('safety_site_workforce_assignments as mapping')
-                ->join('workforce_employee_assignments as assignment', 'assignment.id', '=', 'mapping.workforce_assignment_id')
-                ->join('safety_sites as site', 'site.id', '=', 'mapping.safety_site_id')
-                ->where('mapping.id', $row->site_assignment_id)
-                ->where('mapping.organization_id', $organizationId)
-                ->where('mapping.project_id', $projectId)
-                ->where('mapping.safety_site_id', $row->safety_site_id)
-                ->where('mapping.workforce_assignment_id', $row->workforce_assignment_id)
-                ->where('mapping.employee_id', $row->employee_id)
-                ->whereDate('mapping.valid_from', '<=', now()->toDateString())
-                ->where(static fn ($query) => $query->whereNull('mapping.valid_to')->orWhereDate('mapping.valid_to', '>=', now()->toDateString()))
-                ->where('assignment.organization_id', $organizationId)
-                ->where('assignment.project_id', $projectId)
-                ->where('assignment.employee_id', $row->employee_id)
-                ->where('assignment.status', 'active')
-                ->whereNull('assignment.deleted_at')
-                ->where('site.organization_id', $organizationId)
-                ->where('site.project_id', $projectId)
-                ->where('site.is_active', true)
+        if ($row === null) {
+            return false;
+        }
+        $identity = $row->evidence_identity === null
+            ? []
+            : json_decode((string) $row->evidence_identity, true, 512, JSON_THROW_ON_ERROR);
+        if (! is_array($identity)
+            || (int) ($identity['ownership_version_id'] ?? 0) < 1
+            || ! is_string($identity['ownership_version_hash'] ?? null)
+            || ! DB::table('safety_assignment_ownership_versions')
+                ->where('id', (int) $identity['ownership_version_id'])
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('employee_id', $row->employee_id)
+                ->where('safety_site_id', $row->safety_site_id)
+                ->where('site_assignment_id', $row->site_assignment_id)
+                ->where('workforce_assignment_id', $row->workforce_assignment_id)
+                ->where('history_complete', true)
+                ->where('tombstone', false)
+                ->where('source_hash', $identity['ownership_version_hash'])
                 ->exists()) {
             return false;
         }
@@ -379,7 +379,6 @@ final class ProductionReportScopedResourceAuthorizers
                 && $row->evidence_version_id === null
                 && $row->evidence_hash === null;
         }
-        $identity = json_decode((string) $row->evidence_identity, true, 512, JSON_THROW_ON_ERROR);
         if (! is_array($identity)
             || (int) ($identity['version_id'] ?? 0) !== (int) $row->evidence_version_id
             || ! hash_equals((string) ($identity['version_hash'] ?? ''), (string) $row->evidence_hash)

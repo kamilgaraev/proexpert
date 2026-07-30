@@ -207,7 +207,7 @@ return new class extends Migration
         DB::statement("ALTER TABLE safety_admission_rows ADD CONSTRAINT safety_admission_row_type_check CHECK (row_type = 'requirement')");
         DB::statement("ALTER TABLE safety_workforce_lifecycle_events ADD CONSTRAINT safety_workforce_lifecycle_subject_check CHECK (subject_type IN ('employee', 'assignment'))");
         DB::statement("ALTER TABLE safety_workforce_lifecycle_events ADD CONSTRAINT safety_workforce_lifecycle_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')");
-        DB::statement("ALTER TABLE safety_admission_rows ADD CONSTRAINT safety_admission_row_evidence_version_check CHECK ((evidence_id IS NULL AND evidence_version_id IS NULL AND evidence_hash IS NULL AND evidence_identity IS NULL) OR (evidence_id IS NOT NULL AND evidence_version_id IS NOT NULL AND evidence_hash ~ '^[a-f0-9]{64}$' AND jsonb_typeof(evidence_identity) = 'object'))");
+        DB::statement("ALTER TABLE safety_admission_rows ADD CONSTRAINT safety_admission_row_evidence_version_check CHECK ((evidence_id IS NULL AND evidence_version_id IS NULL AND evidence_hash IS NULL AND jsonb_typeof(evidence_identity) = 'object') OR (evidence_id IS NOT NULL AND evidence_version_id IS NOT NULL AND evidence_hash ~ '^[a-f0-9]{64}$' AND jsonb_typeof(evidence_identity) = 'object'))");
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION capture_safety_evidence_version() RETURNS trigger AS $$
 DECLARE
@@ -368,7 +368,10 @@ CREATE TRIGGER safety_briefing_participants_evidence_delete_version
 BEFORE DELETE ON safety_briefing_participants
 FOR EACH ROW EXECUTE FUNCTION capture_safety_briefing_evidence_version();
 CREATE TRIGGER safety_briefings_evidence_version
-AFTER UPDATE OR DELETE ON safety_briefings
+AFTER UPDATE ON safety_briefings
+FOR EACH ROW EXECUTE FUNCTION capture_safety_briefing_evidence_version();
+CREATE TRIGGER safety_briefings_evidence_delete_version
+BEFORE DELETE ON safety_briefings
 FOR EACH ROW EXECUTE FUNCTION capture_safety_briefing_evidence_version();
 INSERT INTO safety_evidence_versions (organization_id, evidence_type, evidence_id, employee_id, project_id, effective_at, content, content_hash, history_complete, recorded_at)
 SELECT briefing.organization_id, 'briefing', participant.id, participant.employee_id, briefing.project_id,
