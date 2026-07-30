@@ -25,6 +25,7 @@ final class ProductionReportScopedResourceAuthorizers
             $this->workforceEmployee(),
             $this->direct('incident_closure', 'safety_incidents'),
             $this->direct('incident_cancellation', 'safety_incidents'),
+            $this->violationResolution(),
             $this->direct('corrective_action_verification', 'safety_corrective_actions'),
             $this->workforceEvidence('employee_requirement', 'safety_employee_requirements'),
             $this->workforceEvidence('training', 'safety_training_records'),
@@ -68,7 +69,31 @@ final class ProductionReportScopedResourceAuthorizers
                 ->where('id', $id)
                 ->where('organization_id', $organizationId)
                 ->exists()
-                && self::activeProject($organizationId, $projectId),
+                && (
+                    DB::table('quality_defects')
+                        ->where('organization_id', $organizationId)
+                        ->where('project_id', $projectId)
+                        ->where('contractor_id', $id)
+                        ->exists()
+                    || self::safetySubjectUsesContractor(
+                        'safety_incidents',
+                        $organizationId,
+                        $projectId,
+                        $id,
+                    )
+                    || self::safetySubjectUsesContractor(
+                        'safety_violations',
+                        $organizationId,
+                        $projectId,
+                        $id,
+                    )
+                    || self::safetySubjectUsesContractor(
+                        'safety_corrective_actions',
+                        $organizationId,
+                        $projectId,
+                        $id,
+                    )
+                ),
         );
     }
 
@@ -160,13 +185,32 @@ final class ProductionReportScopedResourceAuthorizers
         );
     }
 
-    private static function activeProject(int $organizationId, int $projectId): bool
+    private function violationResolution(): QueryReportScopedResourceAuthorizer
     {
-        return DB::table('projects')
-            ->where('id', $projectId)
+        return new QueryReportScopedResourceAuthorizer(
+            'violation_resolution',
+            static fn (int $organizationId, int $projectId, int $id): bool => DB::table('safety_violations')
+                ->where('id', $id)
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('status', 'resolved')
+                ->whereNotNull('resolved_at')
+                ->whereNotNull('resolution_comment')
+                ->whereRaw("btrim(resolution_comment) <> ''")
+                ->exists(),
+        );
+    }
+
+    private static function safetySubjectUsesContractor(
+        string $table,
+        int $organizationId,
+        int $projectId,
+        int $contractorId,
+    ): bool {
+        return DB::table($table)
             ->where('organization_id', $organizationId)
-            ->where('status', 'active')
-            ->where('is_archived', false)
+            ->where('project_id', $projectId)
+            ->where('metadata->contractor_id', $contractorId)
             ->exists();
     }
 }

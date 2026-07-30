@@ -43,6 +43,10 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString("'status' => 'pending'", $job);
         self::assertStringContainsString("'completed_owner_checksum' => null", $job);
         self::assertStringContainsString('->afterCommit()', $job);
+        self::assertStringContainsString("'content_hash' => hash_final(\$hash)", $job);
+        self::assertStringContainsString("'versions' => \$versions", $job);
+        self::assertStringContainsString("'watermarks' => \$watermarks", $job);
+        self::assertStringContainsString('...self::dependentTables($sourceCode)', $job);
     }
 
     #[Test]

@@ -48,7 +48,7 @@ final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDo
                     ScopedReportSourceGuard::assertExactAccessible(
                         $context,
                         new ReportScopedResource(
-                            ($evidence['type'] ?? null) === 'status_comment' ? 'quality_defect_status_history' : 'quality_defect_photo',
+                            ($evidence['type'] ?? null) === 'status_comment' ? 'status_comment' : 'quality_defect_photo',
                             (int) $evidence['id'],
                             (int) $row->project_id,
                         ),

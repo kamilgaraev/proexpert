@@ -4,24 +4,28 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Backfill\WorkforceAdmissionBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyExposureBackfill;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Backfill\SafetyIncidentBackfill;
-use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
-final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
+final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Queueable;
 
     public const QUALITY_DEFECTS = 'quality_defect_status_history';
+
     public const SAFETY_INCIDENTS = 'safety_subject_lifecycle';
+
     public const SAFETY_EXPOSURE = 'approved_workforce_attendance';
+
     public const WORKFORCE_ADMISSION = 'safety_site_workforce_assignments';
 
     public int $uniqueFor = 300;
@@ -186,7 +190,9 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
             ] as $key => $table) {
                 $query = DB::table($table)->where('organization_id', $organizationId);
                 $cursor[$key] = (int) ($query->max('id') ?? 0);
-                $facts[$key] = [$cursor[$key], $query->count(), $query->max('updated_at')];
+            }
+            foreach (self::ownerTables($sourceCode) as $table) {
+                $facts[$table] = self::tableContentFact($organizationId, $table);
             }
 
             return [$cursor, $facts];
@@ -210,26 +216,41 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
             'id' => $id,
         ], [
             'id' => $id,
-            'count' => $query->count(),
-            'watermark' => $query->max($watermarkColumn),
+            'owner' => self::tableContentFact($organizationId, $table),
+            'watermark' => (clone $query)->max($watermarkColumn),
             'dependencies' => self::dependentFacts($organizationId, $sourceCode),
         ]];
     }
 
     private static function ownerTables(string $sourceCode): array
     {
-        return match ($sourceCode) {
+        $primary = match ($sourceCode) {
             self::QUALITY_DEFECTS => ['quality_defect_status_history'],
             self::SAFETY_EXPOSURE => ['workforce_attendance_corrections'],
             self::WORKFORCE_ADMISSION => ['workforce_employee_assignments'],
             self::SAFETY_INCIDENTS => ['safety_incidents', 'safety_violations', 'safety_corrective_actions'],
             default => throw new \LogicException('report_source_sync_unknown'),
         };
+
+        return array_values(array_unique([
+            ...$primary,
+            ...self::dependentTables($sourceCode),
+        ]));
     }
 
     private static function dependentFacts(int $organizationId, string $sourceCode): array
     {
-        $tables = match ($sourceCode) {
+        $facts = [];
+        foreach (self::dependentTables($sourceCode) as $table) {
+            $facts[$table] = self::tableContentFact($organizationId, $table);
+        }
+
+        return $facts;
+    }
+
+    private static function dependentTables(string $sourceCode): array
+    {
+        return match ($sourceCode) {
             self::QUALITY_DEFECTS => ['quality_defect_status_history'],
             self::SAFETY_EXPOSURE => ['safety_site_workforce_assignments', 'safety_sites'],
             self::WORKFORCE_ADMISSION => [
@@ -244,15 +265,47 @@ final class ReportingSourceBackfillJob implements ShouldQueue, ShouldBeUniqueUnt
             self::SAFETY_INCIDENTS => ['safety_transition_events', 'safety_incident_policy_versions', 'safety_exposure_days'],
             default => [],
         };
-        $facts = [];
-        foreach ($tables as $table) {
-            $query = DB::table($table)->where('organization_id', $organizationId);
-            $facts[$table] = [
-                'count' => $query->count(),
-                'max_id' => $query->max('id'),
-            ];
+    }
+
+    private static function tableContentFact(int $organizationId, string $table): array
+    {
+        $columns = Schema::getColumnListing($table);
+        sort($columns);
+        $query = DB::table($table)->where('organization_id', $organizationId);
+        $hash = hash_init('sha256');
+        (clone $query)
+            ->select($columns)
+            ->orderBy('id')
+            ->chunkById(500, static function (Collection $rows) use ($columns, $hash): void {
+                foreach ($rows as $row) {
+                    $values = [];
+                    foreach ($columns as $column) {
+                        $values[$column] = $row->{$column};
+                    }
+                    hash_update($hash, CanonicalJson::encode($values)."\n");
+                }
+            });
+        $watermarks = [];
+        foreach (array_intersect(
+            ['changed_at', 'created_at', 'occurred_at', 'source_watermark', 'updated_at', 'valid_from', 'valid_to'],
+            $columns,
+        ) as $column) {
+            $watermarks[$column] = (clone $query)->max($column);
+        }
+        $versions = [];
+        foreach (array_intersect(
+            ['event_version', 'formula_version', 'policy_version', 'schema_version', 'version'],
+            $columns,
+        ) as $column) {
+            $versions[$column] = (clone $query)->max($column);
         }
 
-        return $facts;
+        return [
+            'content_hash' => hash_final($hash),
+            'count' => (clone $query)->count(),
+            'max_id' => (clone $query)->max('id'),
+            'versions' => $versions,
+            'watermarks' => $watermarks,
+        ];
     }
 }

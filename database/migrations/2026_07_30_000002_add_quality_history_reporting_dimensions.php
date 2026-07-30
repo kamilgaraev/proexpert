@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::table('quality_defect_status_history', function (Blueprint $table): void {
@@ -18,15 +19,25 @@ return new class extends Migration {
 CREATE FUNCTION quality_defect_history_reporting_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    IF OLD.reporting_dimensions IS DISTINCT FROM NEW.reporting_dimensions
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'quality_defect_history_immutable' USING ERRCODE = '55000';
+    END IF;
+    IF OLD.quality_defect_id IS DISTINCT FROM NEW.quality_defect_id
+        OR OLD.organization_id IS DISTINCT FROM NEW.organization_id
+        OR OLD.from_status IS DISTINCT FROM NEW.from_status
+        OR OLD.to_status IS DISTINCT FROM NEW.to_status
+        OR OLD.comment IS DISTINCT FROM NEW.comment
+        OR OLD.changed_by IS DISTINCT FROM NEW.changed_by
+        OR OLD.changed_at IS DISTINCT FROM NEW.changed_at
+        OR OLD.reporting_dimensions IS DISTINCT FROM NEW.reporting_dimensions
         OR OLD.reporting_evidence_refs IS DISTINCT FROM NEW.reporting_evidence_refs THEN
-        RAISE EXCEPTION 'quality_defect_history_reporting_immutable' USING ERRCODE = '55000';
+        RAISE EXCEPTION 'quality_defect_history_immutable' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
 END;
 $$;
 CREATE TRIGGER quality_defect_history_reporting_immutable
-BEFORE UPDATE ON quality_defect_status_history
+BEFORE UPDATE OR DELETE ON quality_defect_status_history
 FOR EACH ROW EXECUTE FUNCTION quality_defect_history_reporting_immutable();
 SQL);
     }

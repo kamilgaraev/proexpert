@@ -151,7 +151,7 @@ final readonly class QualityDefectFlowRowQuery implements ReportRowQuery
                     ScopedReportSourceGuard::assertExactAccessible(
                         $context,
                         new ReportScopedResource(
-                            ($evidence['type'] ?? null) === 'status_comment' ? 'quality_defect_status_history' : 'quality_defect_photo',
+                            ($evidence['type'] ?? null) === 'status_comment' ? 'status_comment' : 'quality_defect_photo',
                             (int) $evidence['id'],
                             (int) $row->project_id,
                         ),
@@ -273,5 +273,4 @@ final readonly class QualityDefectFlowRowQuery implements ReportRowQuery
 
         return sprintf('%d.%04d', intdiv($scaled, 10_000), $scaled % 10_000);
     }
-
 }

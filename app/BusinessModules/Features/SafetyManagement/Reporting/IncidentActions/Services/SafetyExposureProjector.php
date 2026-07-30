@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetySite;
 use DateTimeInterface;
@@ -48,16 +49,34 @@ final readonly class SafetyExposureProjector
             'source_watermark' => $sourceWatermark,
         ];
 
-        return SafetyExposureDay::query()->updateOrCreate(
-            [
-                'organization_id' => $organizationId,
-                'safety_site_id' => $siteId,
-                'exposure_date' => $date->format('Y-m-d'),
-            ],
-            $payload + [
-                'source_hash' => hash('sha256', CanonicalJson::encode($payload)),
-                'projected_at' => now(),
-            ],
+        $sourceHash = hash('sha256', CanonicalJson::encode($payload));
+
+        return ReportSnapshotFirstWriter::run(
+            'safety_exposure:'.$organizationId.':'.$siteId.':'.$date->format('Y-m-d'),
+            static function () use ($organizationId, $siteId, $date, $payload, $sourceHash): SafetyExposureDay {
+                $existing = SafetyExposureDay::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('safety_site_id', $siteId)
+                    ->whereDate('exposure_date', $date->format('Y-m-d'))
+                    ->lockForUpdate()
+                    ->first();
+                if ($existing instanceof SafetyExposureDay && hash_equals((string) $existing->source_hash, $sourceHash)) {
+                    return $existing;
+                }
+                if ($existing instanceof SafetyExposureDay) {
+                    $existing->forceFill($payload + [
+                        'source_hash' => $sourceHash,
+                        'projected_at' => now(),
+                    ])->save();
+
+                    return $existing->refresh();
+                }
+
+                return SafetyExposureDay::query()->create($payload + [
+                    'source_hash' => $sourceHash,
+                    'projected_at' => now(),
+                ]);
+            },
         );
     }
 }

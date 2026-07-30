@@ -182,6 +182,7 @@ return new class extends Migration
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_timestamps_check CHECK ((resolved_at IS NULL OR resolved_at <= occurred_at) AND (verified_at IS NULL OR (resolved_at IS NOT NULL AND verified_at >= resolved_at AND verified_at <= occurred_at)))');
         DB::statement('ALTER TABLE safety_sites ADD CONSTRAINT safety_site_active_dates_check CHECK (active_until IS NULL OR active_until >= active_from)');
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_evidence_check CHECK ((evidence_type IS NULL) = (evidence_id IS NULL))');
+        DB::statement("ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_evidence_id_check CHECK (evidence_id IS NULL OR evidence_id ~ '^[1-9][0-9]*$')");
         DB::statement('ALTER TABLE safety_exposure_days ADD CONSTRAINT safety_exposure_non_negative_check CHECK (exposure_hours >= 0 AND person_shifts >= 0)');
         DB::statement("ALTER TABLE safety_exposure_days ADD CONSTRAINT safety_exposure_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')");
         DB::statement("ALTER TABLE safety_incident_snapshots ADD CONSTRAINT safety_incident_snapshot_hashes_check CHECK (scope_hash ~ '^[a-f0-9]{64}$' AND definition_hash ~ '^[a-f0-9]{64}$' AND query_hash ~ '^[a-f0-9]{64}$' AND input_hash ~ '^[a-f0-9]{64}$' AND output_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$')");

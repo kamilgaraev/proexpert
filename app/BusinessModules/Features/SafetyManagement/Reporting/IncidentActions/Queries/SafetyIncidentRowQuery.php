@@ -144,7 +144,7 @@ final readonly class SafetyIncidentRowQuery implements ReportRowQuery
         if ($context->visibility->canViewAudit && $row->evidence_id !== null) {
             ScopedReportSourceGuard::assertExactAccessible(
                 $context,
-                new ReportScopedResource((string) $row->evidence_type, (int) $row->subject_id, (int) $row->project_id),
+                new ReportScopedResource((string) $row->evidence_type, (int) $row->evidence_id, (int) $row->project_id),
             );
         }
 
@@ -254,5 +254,4 @@ final readonly class SafetyIncidentRowQuery implements ReportRowQuery
 
         return sprintf('%d.%04d', intdiv($scaled, 10_000), $scaled % 10_000);
     }
-
 }
