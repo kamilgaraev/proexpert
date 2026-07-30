@@ -1,136 +1,188 @@
 {
-  "catalog": {
-    "success": true,
-    "message": null,
-    "data": {
-      "contract_version": "1.0.0",
-      "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "definitions": [{
-        "code": "cash_flow",
-        "definition_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "contract_version": "1.0.0",
-        "formula_version": "1",
-        "source_schema_version": "1",
-        "renderer_version": "1",
-        "filters": [{"id": "project_id", "type": "reference"}],
-        "columns": [{"id": "amount", "type": "decimal"}],
-        "sorts": [{"id": "amount"}],
-        "formats": ["csv", "xlsx", "pdf"],
-        "permission_policy": {"view": ["reports.view"], "export": ["reports.export"], "sensitive": [], "audit": []},
-        "snapshot_classification": "operational",
-        "output_classification": {"default_classification": "standard", "sensitive_column_ids": [], "audit_column_ids": [], "totals_sensitive": false, "totals_audit": false, "provenance_audit": false},
-        "publication_readiness": "published",
-        "supports_subscriptions": true
-      }]
-    }
-  },
-  "run": {
-    "success": true,
-    "message": null,
-    "data": {
-      "id": "01J00000000000000000000000",
-      "report_code": "report",
-      "status": "ready",
-      "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "contract_version": "1",
-      "formula_version": "1",
-      "source_schema_version": "1",
-      "renderer_version": "1",
-      "query_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "source_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "progress": 0,
-      "row_count": 0,
-      "freshness": "fresh",
-      "totals": {},
-      "quality": {"status": "complete", "coverage": null, "warnings": [], "unmatched_count": 0, "reconciliation": "matched", "unknown_metrics": [], "excluded_sources": []},
-      "provenance": {
-        "source_of_truth": "system",
-        "source_refs": [{"source": "system", "snapshot_kind": "report", "snapshot_id": "snapshot", "schema_version": "v1", "watermark": "watermark", "row_count": 0, "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],
-        "source_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "external_confirmation_role": null
-      },
-      "created_at": "2026-01-01T00:00:00+00:00",
-      "updated_at": "2026-01-01T00:01:00+00:00",
-      "ready_at": "2026-01-01T00:01:00+00:00",
-      "expires_at": "2026-01-02T00:00:00+00:00",
-      "cancel_requested_at": null,
-      "poll_after_ms": null
-    }
-  },
-  "rows": {
-    "success": true,
-    "message": null,
-    "data": {
-      "rows": [{"row_key": "row_1", "amount": "10.50"}],
-      "totals": {"amount": "10.50"},
-      "freshness": "fresh",
-      "quality": {"status": "complete", "coverage": null, "warnings": [], "unmatched_count": 0, "reconciliation": "matched", "unknown_metrics": [], "excluded_sources": []}
+    "catalog": {
+        "success": true,
+        "message": null,
+        "data": {
+            "contract_version": "1.0.0",
+            "manifest_sha256": "b6b44eac45e211acda9465c1d29f569403eddc1af9cf72d45c4da8f663263b07",
+            "definitions": []
+        }
     },
-    "meta": {"limit": 50, "next_cursor": null, "has_more": false, "sort": {"field": "amount", "direction": "desc"}}
-  },
-  "drill_down": {
-    "success": true,
-    "message": null,
-    "data": {
-      "rows": [{"row_key": "drill_1", "name": "Проект"}],
-      "next_cursor": null,
-      "resource_links": [{"resource_type": "project", "resource_id": "project_1", "route_name": "admin.projects.show", "params": {"project_id": 1}, "availability": "available"}]
+    "run": {
+        "success": true,
+        "message": null,
+        "data": {
+            "id": "01J00000000000000000000000",
+            "report_code": "report",
+            "status": "ready",
+            "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract_version": "1",
+            "formula_version": "1",
+            "source_schema_version": "1",
+            "renderer_version": "1",
+            "query_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "source_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "progress": 0,
+            "row_count": 0,
+            "freshness": "fresh",
+            "totals": {},
+            "quality": {
+                "status": "complete",
+                "coverage": null,
+                "warnings": [],
+                "unmatched_count": 0,
+                "reconciliation": "matched",
+                "unknown_metrics": [],
+                "excluded_sources": []
+            },
+            "provenance": {
+                "source_of_truth": "system",
+                "source_refs": [
+                    {
+                        "source": "system",
+                        "snapshot_kind": "report",
+                        "snapshot_id": "snapshot",
+                        "schema_version": "v1",
+                        "watermark": "watermark",
+                        "row_count": 0,
+                        "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    }
+                ],
+                "source_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "external_confirmation_role": null
+            },
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:01:00+00:00",
+            "ready_at": "2026-01-01T00:01:00+00:00",
+            "expires_at": "2026-01-02T00:00:00+00:00",
+            "cancel_requested_at": null,
+            "poll_after_ms": null
+        }
+    },
+    "rows": {
+        "success": true,
+        "message": null,
+        "data": {
+            "rows": [
+                {
+                    "row_key": "row_1",
+                    "amount": "10.50"
+                }
+            ],
+            "totals": {
+                "amount": "10.50"
+            },
+            "freshness": "fresh",
+            "quality": {
+                "status": "complete",
+                "coverage": null,
+                "warnings": [],
+                "unmatched_count": 0,
+                "reconciliation": "matched",
+                "unknown_metrics": [],
+                "excluded_sources": []
+            }
+        },
+        "meta": {
+            "limit": 50,
+            "next_cursor": null,
+            "has_more": false,
+            "sort": {
+                "field": "amount",
+                "direction": "desc"
+            }
+        }
+    },
+    "drill_down": {
+        "success": true,
+        "message": null,
+        "data": {
+            "rows": [
+                {
+                    "row_key": "drill_1",
+                    "name": "Проект"
+                }
+            ],
+            "next_cursor": null,
+            "resource_links": [
+                {
+                    "resource_type": "project",
+                    "resource_id": "project_1",
+                    "route_name": "admin.projects.show",
+                    "params": {
+                        "project_id": 1
+                    },
+                    "availability": "available"
+                }
+            ]
+        }
+    },
+    "export": {
+        "success": true,
+        "message": null,
+        "data": {
+            "id": "01J00000000000000000000000",
+            "run_id": "01J00000000000000000000001",
+            "status": "ready",
+            "export_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "format": "csv",
+            "columns": [
+                "name"
+            ],
+            "sort": {
+                "field": "name",
+                "direction": "asc"
+            },
+            "locale": "ru",
+            "timezone": "UTC",
+            "size_bytes": 1,
+            "checksum": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:01:00+00:00",
+            "ready_at": "2026-01-01T00:01:00+00:00",
+            "expires_at": "2026-01-02T00:00:00+00:00",
+            "cancel_requested_at": null,
+            "poll_after_ms": null
+        }
+    },
+    "download_link": {
+        "success": true,
+        "message": null,
+        "data": {
+            "url": "https://files.example.test/report.csv",
+            "version_id": "version-1",
+            "expires_at": "2026-01-01T00:05:00+00:00"
+        }
+    },
+    "saved_view": {
+        "success": true,
+        "message": null,
+        "data": {
+            "id": "01J00000000000000000000002",
+            "report_code": "cash_flow",
+            "contract_version": "1.0.0",
+            "name": "Основной вид",
+            "visibility": "private",
+            "filters": {
+                "project_id": {
+                    "operator": "eq",
+                    "value": 1
+                }
+            },
+            "comparison": {
+                "period": "previous"
+            },
+            "sort": {
+                "field": "amount",
+                "direction": "desc"
+            },
+            "columns": [
+                "amount"
+            ],
+            "status": "active",
+            "is_default": true,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:01:00+00:00"
+        }
     }
-  },
-  "export": {
-    "success": true,
-    "message": null,
-    "data": {
-      "id": "01J00000000000000000000000",
-      "run_id": "01J00000000000000000000001",
-      "status": "ready",
-      "export_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "format": "csv",
-      "columns": ["name"],
-      "sort": {"field": "name", "direction": "asc"},
-      "locale": "ru",
-      "timezone": "UTC",
-      "size_bytes": 1,
-      "checksum": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-      "created_at": "2026-01-01T00:00:00+00:00",
-      "updated_at": "2026-01-01T00:01:00+00:00",
-      "ready_at": "2026-01-01T00:01:00+00:00",
-      "expires_at": "2026-01-02T00:00:00+00:00",
-      "cancel_requested_at": null,
-      "poll_after_ms": null
-    }
-  },
-  "download_link": {
-    "success": true,
-    "message": null,
-    "data": {"url": "https://files.example.test/report.csv", "version_id": "version-1", "expires_at": "2026-01-01T00:05:00+00:00"}
-  },
-  "saved_view": {
-    "success": true,
-    "message": null,
-    "data": {
-      "id": "01J00000000000000000000002",
-      "report_code": "cash_flow",
-      "contract_version": "1.0.0",
-      "name": "Основной вид",
-      "visibility": "private",
-      "filters": {"project_id": {"operator": "eq", "value": 1}},
-      "comparison": {"period": "previous"},
-      "sort": {"field": "amount", "direction": "desc"},
-      "columns": ["amount"],
-      "status": "active",
-      "is_default": true,
-      "created_at": "2026-01-01T00:00:00+00:00",
-      "updated_at": "2026-01-01T00:01:00+00:00"
-    }
-  },
-  "catalog_generated": {
-    "success": true,
-    "message": null,
-    "data": {
-      "contract_version": "1.0.0",
-      "manifest_sha256": "b6b44eac45e211acda9465c1d29f569403eddc1af9cf72d45c4da8f663263b07",
-      "definitions": []
-    }
-  }
 }

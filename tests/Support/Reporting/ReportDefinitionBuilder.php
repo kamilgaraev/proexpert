@@ -7,8 +7,13 @@ namespace Tests\Support\Reporting;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogDefinitionView;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCatalogGroup;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
@@ -75,5 +80,17 @@ final class ReportDefinitionBuilder
     public function published(): PublishedReportDefinition
     {
         return new PublishedReportDefinition($this->publicationReadiness(ReportPublicationReadiness::PUBLISHED)->payload());
+    }
+
+    public function catalogView(): ReportCatalogDefinitionView
+    {
+        $published = $this->published();
+
+        return ReportCatalogDefinitionView::from(
+            $published,
+            new ReportCatalogMetadata($published->code, 'reports.catalog.'.$published->code, ReportCatalogGroup::PROJECTS, 'projects', 'project', 1, 0),
+            new ReportSchedulingCapability($published->code, false, false),
+            new ReportVisibility(true, true, true, true, true, true, true),
+        );
     }
 }

@@ -532,7 +532,7 @@ final class HermeticReportingHttpHarness
         );
 
         return new FakeReportingActions([
-            'catalog' => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('f', 64)), [$definition]),
+            'catalog' => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('f', 64)), [(new ReportDefinitionBuilder())->catalogView()]),
             'createRun' => (new ReportRunBuilder())->ready(),
             'getRun' => (new ReportRunBuilder())->queued(),
             'rows' => new ReportPage(

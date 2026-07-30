@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Catalog;
 
-use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
@@ -14,7 +13,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogDefinitionView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCatalogGroup;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use InvalidArgumentException;
 
 final readonly class GetReportCatalogHandler implements GetReportCatalogAction
@@ -23,16 +21,14 @@ final readonly class GetReportCatalogHandler implements GetReportCatalogAction
         private ReportDefinitionRegistry $registry,
         private ReportCatalogMetadataRegistry $metadata,
         private ReportSchedulingCapabilityRegistry $scheduling,
-        private ReportAccessService $access,
     ) {}
 
     public function handle(
         ReportExecutionContext $context,
-        ?ReportCatalogAuthorization $authorization = null,
+        ReportCatalogAuthorization $authorization,
     ): ReportCatalogView {
-        if ($authorization !== null
-            && ($authorization->context->actor->id !== $context->actor->id
-                || $authorization->context->scope->canonicalIdentity() !== $context->scope->canonicalIdentity())) {
+        if ($authorization->context->actor->id !== $context->actor->id
+            || $authorization->context->scope->canonicalIdentity() !== $context->scope->canonicalIdentity()) {
             throw new InvalidArgumentException('report_catalog_authorization_invalid');
         }
 
@@ -60,9 +56,7 @@ final readonly class GetReportCatalogHandler implements GetReportCatalogAction
         $definitions = [];
         foreach ($codes as $code) {
             $published = $this->registry->published($code);
-            $visibility = $authorization === null
-                ? $this->visibilityFromAccess($context, $published->payload())
-                : $this->visibilityFromAuthorization($authorization, $published->definitionHash->value);
+            $visibility = $this->visibilityFromAuthorization($authorization, $published->definitionHash->value);
 
             if ($visibility === null) {
                 continue;
@@ -81,21 +75,6 @@ final readonly class GetReportCatalogHandler implements GetReportCatalogAction
             $this->registry->manifestSha256(),
             $definitions,
         );
-    }
-
-    private function visibilityFromAccess(
-        ReportExecutionContext $context,
-        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $definition,
-    ): ?\App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility {
-        try {
-            return $this->access->assertOperation($context, $definition, ReportOperation::VIEW, null);
-        } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
-            if ($exception->errorCode->value === 'REPORT_SCOPE_FORBIDDEN') {
-                return null;
-            }
-
-            throw $exception;
-        }
     }
 
     private function visibilityFromAuthorization(

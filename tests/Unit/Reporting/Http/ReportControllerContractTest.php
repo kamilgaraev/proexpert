@@ -247,7 +247,7 @@ final class ReportControllerContractTest extends TestCase
         $catalog = new ReportCatalogView(
             '1.0.0',
             new Sha256Hash(str_repeat('9', 64)),
-            [(new ReportDefinitionBuilder)->contractVersion('1.0.0')->payload()],
+            [(new ReportDefinitionBuilder)->contractVersion('1.0.0')->catalogView()],
         );
         $page = new ReportPage(
             [['row_key' => 'row-1', 'value' => 7]],

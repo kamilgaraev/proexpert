@@ -7,7 +7,10 @@ namespace App\BusinessModules\Core\Reporting\Application\Generation;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogDefinitionView;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCatalogGroup;
+use App\BusinessModules\Core\Reporting\Http\Admin\Resources\ReportCatalogResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
 
@@ -36,11 +39,18 @@ final readonly class ReportCatalogArtifactGenerator
         }
 
         $definitions = [];
+        $resourceViews = [];
         foreach ($registry->publishedCodes() as $code) {
             $published = $registry->published($code);
             $definition = $published->payload();
             $itemMetadata = $metadata->published($code);
             $itemScheduling = $scheduling->published($code);
+            $resourceViews[$code] = ReportCatalogDefinitionView::from(
+                $published,
+                $itemMetadata,
+                $itemScheduling,
+                new ReportVisibility(true, true, true, true, true, true, true),
+            );
             $definitions[] = [
                 'code' => $definition->code,
                 'catalog_group' => $itemMetadata->catalogGroup->value,
@@ -99,19 +109,17 @@ final readonly class ReportCatalogArtifactGenerator
             }
         }
         $translationArtifact = $translations->generate($codes, $groupOrder, $permissions);
-        $resource = [
-            'contract_version' => '1.0.0',
-            'manifest_sha256' => $registry->manifestSha256()->value,
-            'definitions' => array_map(static fn (array $definition): array => [
-                'code' => $definition['code'],
-                'catalog_group' => $definition['catalog_group'],
-                'category' => $definition['category'],
-                'definition_hash' => $definition['definition_hash'],
-                'versions' => $definition['versions'],
-                'permissions' => $definition['permissions'],
-                'capabilities' => $definition['capabilities'],
-            ], $definitions),
-        ];
+        $translationArtifact['titles'] = $translationArtifact['titles'] === []
+            ? new \stdClass
+            : $translationArtifact['titles'];
+        $translationArtifact['permissions'] = $translationArtifact['permissions'] === []
+            ? new \stdClass
+            : $translationArtifact['permissions'];
+        $resource = ReportCatalogResource::payload(
+            '1.0.0',
+            $registry->manifestSha256(),
+            array_map(static fn (array $definition): ReportCatalogDefinitionView => $resourceViews[$definition['code']], $definitions),
+        );
         $typeScript = $this->typeScript($groupOrder, $codes);
         $lock = [
             'contract_version' => '1.0.0',
@@ -119,7 +127,7 @@ final readonly class ReportCatalogArtifactGenerator
             'manifest_sha256' => $registry->manifestSha256()->value,
             'resource_sha256' => hash('sha256', CanonicalJson::encode($resource)),
             'permission_sha256' => hash('sha256', CanonicalJson::encode($catalog['definitions'])),
-            'translation_sha256' => hash('sha256', CanonicalJson::encode($translationArtifact)),
+            'translation_sha256' => hash('sha256', json_encode($translationArtifact, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
             'group_order_sha256' => hash('sha256', CanonicalJson::encode(['catalog_group_order' => $groupOrder])),
             'published_count' => count($definitions),
         ];

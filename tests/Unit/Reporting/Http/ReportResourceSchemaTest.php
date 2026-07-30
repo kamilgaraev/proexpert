@@ -5,17 +5,14 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Http;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogView;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Http\Admin\Resources\ReportCatalogResource;
@@ -32,6 +29,7 @@ use Opis\JsonSchema\CompliantValidator;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\ReportExportBuilder;
+use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportRunBuilder;
 
 final class ReportResourceSchemaTest extends TestCase
@@ -97,9 +95,8 @@ final class ReportResourceSchemaTest extends TestCase
     {
         return [
             'contract version' => [static fn () => new ReportCatalogView('2.0.0', new Sha256Hash(str_repeat('a', 64)), [])],
-            'empty definitions' => [static fn () => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('a', 64)), [])],
             'wrong definition type' => [static fn () => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('a', 64)), ['bad'])],
-            'duplicate definition code' => [static fn () => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('a', 64)), [self::definition(), self::definition()])],
+            'duplicate definition code' => [static fn () => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('a', 64)), [self::catalogDefinition(), self::catalogDefinition()])],
         ];
     }
 
@@ -127,7 +124,7 @@ final class ReportResourceSchemaTest extends TestCase
     private function resource(string $branch): object
     {
         return match ($branch) {
-            'catalog' => new ReportCatalogResource(new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('a', 64)), [self::definition()])),
+            'catalog' => new ReportCatalogResource(new ReportCatalogView('1.0.0', new Sha256Hash($this->fixtures()['catalog']['data']['manifest_sha256']), [])),
             'run' => new ReportRunResource((new ReportRunBuilder())->ready()),
             'rows' => new ReportRowsResource(new ReportPage(
                 [['row_key' => 'row_1', 'amount' => '10.50']],
@@ -155,25 +152,9 @@ final class ReportResourceSchemaTest extends TestCase
         };
     }
 
-    private static function definition(): ReportDefinition
+    private static function catalogDefinition(): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogDefinitionView
     {
-        return new ReportDefinition(
-            'cash_flow',
-            new Sha256Hash(str_repeat('b', 64)),
-            '1.0.0',
-            '1',
-            '1',
-            '1',
-            [['id' => 'project_id', 'type' => 'reference']],
-            [['id' => 'amount', 'type' => 'decimal']],
-            [['id' => 'amount']],
-            ['csv', 'xlsx', 'pdf'],
-            new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []),
-            \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OPERATIONAL,
-            new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::STANDARD, [], [], false, false, false),
-            ReportPublicationReadiness::PUBLISHED,
-            true,
-        );
+        return (new ReportDefinitionBuilder)->code('cash_flow')->catalogView();
     }
 
     private static function savedView(

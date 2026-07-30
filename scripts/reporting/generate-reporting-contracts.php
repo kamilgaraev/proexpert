@@ -67,12 +67,25 @@ $json = static function (array $value, int $indent = 4): string {
     return $encoded."\n";
 };
 
+$wirePath = $root.'/tests/Fixtures/Reporting/Wire/reporting-admin-resources.v1.json';
+$wire = json_decode((string) file_get_contents($wirePath), false, 512, JSON_THROW_ON_ERROR);
+if (! is_object($wire)) {
+    throw new RuntimeException('reporting_wire_fixture_invalid');
+}
+$wire->catalog = (object) [
+    'success' => true,
+    'message' => null,
+    'data' => json_decode(json_encode($generated['resource'], JSON_THROW_ON_ERROR), false, 512, JSON_THROW_ON_ERROR),
+];
+unset($wire->catalog_generated);
+
 $files = [
     $root.'/docs/reports/generated/reporting-catalog.v1.json' => $json($generated['catalog']),
     $root.'/docs/reports/generated/reporting-catalog.v1.d.ts' => $generated['typeScript'],
     $root.'/docs/reports/generated/report-permissions.v1.json' => $json($generated['translations']),
     $root.'/docs/reports/contracts/reporting-generation.lock.json' => $json($generated['lock']),
     $root.'/tests/Fixtures/Reporting/Wire/report-catalog-resource.v1.json' => $json($generated['resource']),
+    $wirePath => json_encode($wire, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)."\n",
 ];
 
 $dirty = false;
