@@ -65,11 +65,11 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
             'blocked' => (bool) $row->blocked,
             'valid_until' => $row->valid_until?->toDateString(),
         ];
-        if (! $medical) {
+        if ($context->visibility->canViewSensitive) {
             $values['evidence_id'] = $row->evidence_id;
-        } elseif ($canViewMedical) {
-            $values['evidence_id'] = $row->evidence_id;
-            $values['medical_details'] = $row->medical_details;
+            if ($medical) {
+                $values['medical_details'] = $row->medical_details;
+            }
         }
 
         $links = [];

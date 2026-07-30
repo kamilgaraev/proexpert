@@ -24,7 +24,9 @@ final class QualityReportsPostgresEndToEndContractTest extends TestCase
             'ReportRowChunkReader::class',
             'CsvReportExportRenderer::class',
             'XlsxReportExportRenderer::class',
-            'TrustedReportSnapshotSealVerifier',
+            'ReportSnapshotSealVerifier::class',
+            'MaterializeReportRunJob',
+            'Bus::dispatchSync',
             'SignedReportCursorCodec::class',
         ] as $required) {
             self::assertStringContainsString($required, $source);
@@ -46,5 +48,37 @@ final class QualityReportsPostgresEndToEndContractTest extends TestCase
         $configuration = (string) file_get_contents(dirname(__DIR__, 3).'/config/database.php');
 
         self::assertStringContainsString("'search_path' => env('DB_SCHEMA', 'public')", $configuration);
+    }
+
+    public function test_snapshot_signing_is_independent_from_the_application_key(): void
+    {
+        $provider = (string) file_get_contents(
+            dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php',
+        );
+        $configuration = (string) file_get_contents(dirname(__DIR__, 3).'/config/reporting.php');
+
+        self::assertStringContainsString("config('reporting.snapshot_signing.active_private_key')", $provider);
+        self::assertStringContainsString("config('reporting.snapshot_signing.active_key_id')", $provider);
+        self::assertStringContainsString('ReportSnapshotSealVerifier::class', $provider);
+        self::assertStringNotContainsString("CanonicalReportSnapshotSealer((string) config('app.key')", $provider);
+        self::assertStringContainsString('REPORT_SNAPSHOT_TRUSTED_PUBLIC_KEYS', $configuration);
+    }
+
+    public function test_r25_evidence_identity_is_sensitive_for_every_requirement_type(): void
+    {
+        foreach ([
+            'Queries/WorkforceAdmissionRowQuery.php',
+            'DrillDown/WorkforceAdmissionDrillDownProvider.php',
+        ] as $relativePath) {
+            $source = (string) file_get_contents(
+                dirname(__DIR__, 3).'/app/BusinessModules/Features/SafetyManagement/Reporting/Admission/'.$relativePath,
+            );
+
+            self::assertStringContainsString(
+                'if ($context->visibility->canViewSensitive)',
+                $source,
+            );
+            self::assertStringNotContainsString('if (! $medical)', $source);
+        }
     }
 }

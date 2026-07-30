@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\Waves23;
 
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactStream;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
@@ -19,20 +20,19 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportCursorCodec;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
-use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionCandidateReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\MaterializeReportRunJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\DrillDown\QualityDefectFlowDrillDownProvider;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers\QualityDefectFlowReportProvider;
@@ -46,17 +46,23 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Back
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DrillDown\SafetyIncidentDrillDownProvider;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Providers\SafetyIncidentActionsReportProvider;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Queries\SafetyIncidentRowQuery;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Jobs\ReportingSourceBackfillJob;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use DateTimeImmutable;
 use DateTimeZone;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use PDO;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
+use ZipArchive;
 
 #[Group('postgres-contract')]
 final class QualityReportsEndToEndPostgresTest extends TestCase
@@ -64,6 +70,14 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
     private ?PDO $schemaConnection = null;
 
     private ?string $schema = null;
+
+    /** @var array<string, array{getenv: string|false, env_exists: bool, env: mixed, server_exists: bool, server: mixed}> */
+    private array $previousEnvironment = [];
+
+    private bool $previousMigrationState = false;
+
+    /** @var array<string, mixed> */
+    private array $previousReportingConfig = [];
 
     protected function setUp(): void
     {
@@ -77,6 +91,8 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             self::markTestSkipped('QUALITY_REPORTS_PG_DSN must target a disposable test database.');
         }
 
+        $this->rememberEnvironment(['DB_CONNECTION', 'DB_URL', 'DB_SCHEMA']);
+        $this->previousMigrationState = RefreshDatabaseState::$migrated;
         $this->schema = 'quality_reports_'.strtolower(Str::random(16));
         $this->schemaConnection = new PDO(
             $connection['pdo_dsn'],
@@ -89,12 +105,19 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         $this->environment('DB_URL', $dsn);
         $this->environment('DB_SCHEMA', $this->schema);
 
-        parent::setUp();
+        try {
+            parent::setUp();
+            $this->previousReportingConfig = (array) config('reporting.snapshot_signing', []);
+            $this->configureSnapshotSigning();
 
-        self::assertSame('pgsql', DB::connection()->getDriverName());
-        self::assertTrue(DB::getSchemaBuilder()->hasTable('quality_defect_flow_snapshots'));
-        self::assertTrue(DB::getSchemaBuilder()->hasTable('safety_incident_snapshots'));
-        self::assertTrue(DB::getSchemaBuilder()->hasTable('safety_admission_snapshots'));
+            self::assertSame('pgsql', DB::connection()->getDriverName());
+            self::assertTrue(DB::getSchemaBuilder()->hasTable('quality_defect_flow_snapshots'));
+            self::assertTrue(DB::getSchemaBuilder()->hasTable('safety_incident_snapshots'));
+            self::assertTrue(DB::getSchemaBuilder()->hasTable('safety_admission_snapshots'));
+        } catch (\Throwable $exception) {
+            $this->cleanupPostgresContract();
+            throw $exception;
+        }
     }
 
     protected function tearDown(): void
@@ -102,13 +125,7 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         try {
             parent::tearDown();
         } finally {
-            if ($this->schemaConnection instanceof PDO && is_string($this->schema)) {
-                $this->schemaConnection->exec(
-                    'DROP SCHEMA IF EXISTS '.$this->quotedIdentifier($this->schema).' CASCADE',
-                );
-            }
-            $this->schemaConnection = null;
-            $this->schema = null;
+            $this->cleanupPostgresContract();
         }
     }
 
@@ -117,6 +134,7 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         $organization = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $this->grantReportRunAccess($actor, $organization, $project);
         $sourceTime = new DateTimeImmutable('now', new DateTimeZone('UTC'));
         $siteId = $this->seedSafetySite((int) $organization->id, (int) $project->id);
 
@@ -203,15 +221,31 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             $sensitive,
         );
 
-        self::assertSame(1, $quality['row_count']);
-        self::assertSame(1, $incident['row_count']);
-        self::assertSame(1, $admissionOrdinary['row_count']);
-        self::assertArrayNotHasKey('medical_details', $admissionOrdinary['row']);
-        self::assertArrayNotHasKey('evidence_id', $admissionOrdinary['row']);
-        self::assertArrayNotHasKey('medical_details', $admissionOrdinary['drill']);
-        self::assertArrayHasKey('medical_details', $admissionSensitive['row']);
-        self::assertArrayHasKey('evidence_id', $admissionSensitive['row']);
-        self::assertArrayHasKey('medical_details', $admissionSensitive['drill']);
+        self::assertGreaterThan(1, $quality['row_count']);
+        self::assertGreaterThan(1, $incident['row_count']);
+        self::assertGreaterThan(1, $admissionOrdinary['row_count']);
+        foreach ($admissionOrdinary['rows'] as $row) {
+            self::assertArrayNotHasKey('medical_details', $row);
+            self::assertArrayNotHasKey('evidence_id', $row);
+        }
+        foreach ($admissionOrdinary['drills'] as $drill) {
+            self::assertArrayNotHasKey('medical_details', $drill);
+            self::assertArrayNotHasKey('evidence_id', $drill);
+        }
+        self::assertStringNotContainsString('evidence_id', $admissionOrdinary['csv']);
+        self::assertStringNotContainsString('evidence_id', $admissionOrdinary['xlsx_xml']);
+
+        $sensitiveByType = [];
+        foreach ($admissionSensitive['rows'] as $row) {
+            $sensitiveByType[$row['requirement_type']] = $row;
+            self::assertArrayHasKey('evidence_id', $row);
+        }
+        self::assertArrayHasKey('medical_exam', $sensitiveByType);
+        self::assertArrayHasKey('training', $sensitiveByType);
+        self::assertArrayHasKey('medical_details', $sensitiveByType['medical_exam']);
+        self::assertArrayNotHasKey('medical_details', $sensitiveByType['training']);
+        self::assertStringContainsString('evidence_id', $admissionSensitive['csv']);
+        self::assertStringContainsString('evidence_id', $admissionSensitive['xlsx_xml']);
     }
 
     private function execute(
@@ -224,7 +258,8 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         ReportExecutionContext $context,
         DateTimeImmutable $asOf,
     ): array {
-        $definition = (new ProductionCandidateReportDefinitionRegistry)->candidate($code)->definition;
+        $definitions = app(ReportDefinitionRegistry::class);
+        $definition = $definitions->published($code)->definition;
         self::assertContains($sortField, array_column($definition->sorts, 'id'));
         $query = new ReportQuery(
             $definition,
@@ -234,12 +269,8 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             $asOf,
             'ru-RU',
         );
-        $provider = app($providerClass);
-        self::assertInstanceOf(ReportDataProvider::class, $provider);
-        $snapshot = $provider->materialize($context, $query, new ReportProgress(0));
-        $result = $provider->result($context, $snapshot);
-        self::assertGreaterThan(0, $result->metadata->rowCount);
-        $this->assertTrustedSeal($snapshot);
+        $binding = app(ReportDefinitionBindingAssembler::class)->assemble($definitions)->get($code);
+        self::assertInstanceOf($providerClass, $binding->dataProvider);
 
         $runs = app(ReportRunStore::class);
         $run = $runs->createOrReuse(
@@ -248,13 +279,13 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             null,
             new IdempotencyKey('quality-pg-'.$code.'-'.Str::uuid()),
         );
-        $clock = app(ReportExecutionClock::class);
-        $now = $clock->now();
-        $lease = (string) Str::uuid();
-        $runs->claimMaterialization($context, $run->id, $lease, $now->modify('+5 minutes'), $now);
-        $runs->sealReady($context, $run->id, $lease, $snapshot, $result, $snapshot->sourceHash, $now);
+        Bus::dispatchSync(new MaterializeReportRunJob($run->id));
+        $ready = $runs->get($context, $run->id);
+        self::assertSame(ReportRunStatus::READY, $ready->status);
         $source = $runs->exportSource($context, $run->id);
         self::assertInstanceOf(ReportRunExportSource::class, $source);
+        self::assertGreaterThan(0, $source->result->metadata->rowCount);
+        $this->assertTrustedSeal($source->snapshot);
 
         return [
             ...$this->readExisting($source, $rowQueryClass, $drillClass, $sortField, $drillColumn, $context),
@@ -277,6 +308,7 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         $sort = new ReportWindowSort($sortField, ReportSortDirection::ASC);
         $page = $rowQuery->page($context, $source->snapshot, $sort, null, 1);
         self::assertNotEmpty($page->rows);
+        self::assertTrue($page->hasMore);
         $row = $page->rows[0];
 
         $codec = app(SignedReportCursorCodec::class);
@@ -302,38 +334,47 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         );
         self::assertSame($source->run->id, $cursor->runId);
         $nextPage = $rowQuery->page($context, $source->snapshot, $sort, $cursor, 1);
-        self::assertSame([], $nextPage->rows);
+        self::assertNotEmpty($nextPage->rows);
+        self::assertNotSame($row['row_key'], $nextPage->rows[0]['row_key']);
 
-        $drillToken = $codec->encodeDrillDownCell(
-            $context->scope->organizationId,
-            $source->run->reportCode,
-            $source->run->id,
-            $source->snapshot,
-            $source->query->queryHash,
-            $row['row_key'],
-            $drillColumn,
-            $source->run->expiresAt,
-        );
-        self::assertSame(
-            ['row_key' => $row['row_key'], 'column_id' => $drillColumn],
-            $codec->decodeDrillDownCell(
-                $drillToken,
+        $rows = [];
+        $drills = [];
+        foreach ($rowQuery->cursor($context, $source->snapshot, $sort, 100) as $envelope) {
+            $currentRow = $envelope->values;
+            $rows[] = $currentRow;
+            $drillToken = $codec->encodeDrillDownCell(
                 $context->scope->organizationId,
                 $source->run->reportCode,
                 $source->run->id,
                 $source->snapshot,
                 $source->query->queryHash,
-            ),
-        );
-        $drillResult = $drill->drillDown(
-            $context,
-            $source->snapshot,
-            new ReportDrillDownRequest($drillToken, null, 25),
-        );
+                $currentRow['row_key'],
+                $drillColumn,
+                $source->run->expiresAt,
+            );
+            self::assertSame(
+                ['row_key' => $currentRow['row_key'], 'column_id' => $drillColumn],
+                $codec->decodeDrillDownCell(
+                    $drillToken,
+                    $context->scope->organizationId,
+                    $source->run->reportCode,
+                    $source->run->id,
+                    $source->snapshot,
+                    $source->query->queryHash,
+                ),
+            );
+            $drillResult = $drill->drillDown(
+                $context,
+                $source->snapshot,
+                new ReportDrillDownRequest($drillToken, null, 25),
+            );
+            $drills[] = $drillResult->rows[0];
+        }
+        self::assertCount($source->result->metadata->rowCount, $rows);
 
         $columns = array_values(array_filter(
             array_column($source->query->definition->columns, 'id'),
-            static fn (string $column): bool => array_key_exists($column, $row),
+            static fn (string $column): bool => array_key_exists($column, $rows[0]),
         ));
         self::assertNotEmpty($columns);
         foreach ($columns as $column) {
@@ -382,22 +423,17 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
 
         return [
             'row_count' => $source->result->metadata->rowCount,
-            'row' => $row,
-            'drill' => $drillResult->rows[0],
+            'rows' => $rows,
+            'drills' => $drills,
+            'csv' => $csv->bytes,
+            'xlsx_xml' => $this->xlsxSheetXml($xlsx->bytes),
         ];
     }
 
     private function assertTrustedSeal(ReportSnapshotRef $snapshot): void
     {
         self::assertNotNull($snapshot->seal);
-        $applicationKey = (string) config('app.key');
-        $seed = hash('sha256', $applicationKey, true);
-        $publicKey = sodium_crypto_sign_publickey(sodium_crypto_sign_seed_keypair($seed));
-        $encoded = rtrim(strtr(base64_encode($publicKey), '+/', '-_'), '=');
-        $verifier = new TrustedReportSnapshotSealVerifier([
-            'application-v1' => ['public_key' => $encoded, 'revoked' => false],
-        ]);
-        $verifier->assertTrusted(new ReportSnapshotSealVerificationInput(
+        app(ReportSnapshotSealVerifier::class)->assertTrusted(new ReportSnapshotSealVerificationInput(
             $snapshot->seal,
             $snapshot->id,
             $snapshot->kind,
@@ -484,6 +520,34 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             'reporting_evidence_refs' => '[]',
         ]);
         self::assertGreaterThan(0, $historyId);
+        $secondDefectId = DB::table('quality_defects')->insertGetId([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'created_by' => $actorId,
+            'defect_number' => 'PG-R23-2',
+            'title' => 'Второй дефект для проверки курсора',
+            'severity' => 'major',
+            'status' => 'open',
+            'inspection_required' => true,
+            'created_at' => $asOf->modify('-9 days'),
+            'updated_at' => $asOf->modify('-9 days'),
+        ]);
+        DB::table('quality_defect_status_history')->insert([
+            'quality_defect_id' => $secondDefectId,
+            'organization_id' => $organizationId,
+            'from_status' => null,
+            'to_status' => 'open',
+            'changed_by' => $actorId,
+            'changed_at' => $asOf->modify('-9 days'),
+            'reporting_dimensions' => json_encode([
+                'project_id' => $projectId,
+                'contractor_id' => null,
+                'schedule_task_id' => null,
+                'severity' => 'major',
+                'due_date' => $asOf->modify('+6 days')->format('Y-m-d'),
+            ], JSON_THROW_ON_ERROR),
+            'reporting_evidence_refs' => '[]',
+        ]);
         DB::table('quality_defect_flow_policy_versions')->insert([
             'organization_id' => $organizationId,
             'project_id' => $projectId,
@@ -524,6 +588,20 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             'updated_at' => $asOf->modify('-2 days'),
         ]);
         self::assertGreaterThan(0, $incidentId);
+        DB::table('safety_incidents')->insert([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'reported_by_user_id' => $actorId,
+            'incident_number' => 'PG-R24-2',
+            'title' => 'Второй инцидент для проверки курсора',
+            'incident_type' => 'near_miss',
+            'severity' => 'minor',
+            'status' => 'reported',
+            'occurred_at' => $asOf->modify('-3 days'),
+            'metadata' => json_encode(['safety_site_id' => $siteId], JSON_THROW_ON_ERROR),
+            'created_at' => $asOf->modify('-3 days'),
+            'updated_at' => $asOf->modify('-3 days'),
+        ]);
         DB::table('workforce_attendance_corrections')->insert([
             'organization_id' => $organizationId,
             'employee_id' => $employeeId,
@@ -621,18 +699,38 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             'created_at' => $asOf->modify('-5 days'),
             'updated_at' => $asOf->modify('-5 days'),
         ]);
+        DB::table('safety_training_records')->insert([
+            'organization_id' => $organizationId,
+            'employee_id' => $employeeId,
+            'program_code' => 'training',
+            'program_name' => 'Обязательное обучение',
+            'training_type' => 'mandatory',
+            'completed_at' => $asOf->modify('-4 days')->format('Y-m-d'),
+            'valid_until' => $asOf->modify('+1 year')->format('Y-m-d'),
+            'result' => 'passed',
+            'created_at' => $asOf->modify('-4 days'),
+            'updated_at' => $asOf->modify('-4 days'),
+        ]);
         DB::table('safety_admission_policy_versions')->insert([
             'organization_id' => $organizationId,
             'project_id' => $projectId,
             'safety_site_id' => $siteId,
             'version' => 'pg-contract-v1',
             'effective_from' => $asOf->modify('-1 year')->format('Y-m-d'),
-            'mandatory_requirements' => json_encode([[
-                'code' => 'medical',
-                'type' => 'medical_exam',
-                'label' => 'Медицинский допуск',
-                'required' => true,
-            ]], JSON_THROW_ON_ERROR),
+            'mandatory_requirements' => json_encode([
+                [
+                    'code' => 'medical',
+                    'type' => 'medical_exam',
+                    'label' => 'Медицинский допуск',
+                    'required' => true,
+                ],
+                [
+                    'code' => 'training',
+                    'type' => 'training',
+                    'label' => 'Обязательное обучение',
+                    'required' => true,
+                ],
+            ], JSON_THROW_ON_ERROR),
             'expiring_soon_days' => 30,
             'waiver_evidence_required' => true,
             'source_hash' => hash('sha256', 'r25-policy'),
@@ -656,6 +754,128 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             'created_at' => now()->subYear(),
             'updated_at' => now()->subYear(),
         ]);
+    }
+
+    private function grantReportRunAccess(User $actor, Organization $organization, Project $project): void
+    {
+        $actor->organizations()->attach($organization->id, [
+            'is_owner' => true,
+            'is_active' => true,
+            'project_access_mode' => 'all',
+        ]);
+        $actor->assignedProjects()->attach($project->id, [
+            'role' => 'member',
+            'is_active' => true,
+            'assigned_at' => now(),
+        ]);
+        $role = OrganizationCustomRole::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Контракт выполнения отчетов',
+            'slug' => 'quality_reports_contract',
+            'system_permissions' => [
+                'reports.view',
+                'reports.run',
+                'reports.export',
+                'reports.download',
+                'reports.sensitive',
+                'reports.audit',
+            ],
+            'module_permissions' => [],
+            'interface_access' => ['lk'],
+            'conditions' => null,
+            'is_active' => true,
+            'created_by' => $actor->id,
+        ]);
+        UserRoleAssignment::query()->create([
+            'user_id' => $actor->id,
+            'role_slug' => $role->slug,
+            'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+            'context_id' => AuthorizationContext::getOrganizationContext((int) $organization->id)->id,
+            'assigned_by' => $actor->id,
+            'expires_at' => null,
+            'is_active' => true,
+        ]);
+    }
+
+    private function configureSnapshotSigning(): void
+    {
+        $keyPair = sodium_crypto_sign_keypair();
+        $privateKey = sodium_crypto_sign_secretkey($keyPair);
+        $publicKey = sodium_crypto_sign_publickey($keyPair);
+        $encode = static fn (string $value): string => rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+
+        config([
+            'reporting.snapshot_signing.active_key_id' => 'quality-contract-v1',
+            'reporting.snapshot_signing.active_private_key' => $encode($privateKey),
+            'reporting.snapshot_signing.trusted_public_keys_json' => json_encode([
+                'quality-contract-v1' => [
+                    'public_key' => $encode($publicKey),
+                    'revoked' => false,
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+    }
+
+    private function xlsxSheetXml(string $bytes): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'quality-report-xlsx-');
+        self::assertIsString($path);
+        file_put_contents($path, $bytes);
+        $archive = new ZipArchive;
+        self::assertTrue($archive->open($path));
+        try {
+            return (string) $archive->getFromName('xl/worksheets/sheet1.xml')
+                .(string) $archive->getFromName('xl/sharedStrings.xml');
+        } finally {
+            $archive->close();
+            unlink($path);
+        }
+    }
+
+    /** @param list<string> $keys */
+    private function rememberEnvironment(array $keys): void
+    {
+        foreach ($keys as $key) {
+            $this->previousEnvironment[$key] = [
+                'getenv' => getenv($key),
+                'env_exists' => array_key_exists($key, $_ENV),
+                'env' => $_ENV[$key] ?? null,
+                'server_exists' => array_key_exists($key, $_SERVER),
+                'server' => $_SERVER[$key] ?? null,
+            ];
+        }
+    }
+
+    private function cleanupPostgresContract(): void
+    {
+        try {
+            if (isset($this->app)) {
+                DB::purge('pgsql');
+                config(['reporting.snapshot_signing' => $this->previousReportingConfig]);
+            }
+        } catch (\Throwable) {
+        }
+        if ($this->schemaConnection instanceof PDO && is_string($this->schema)) {
+            $this->schemaConnection->exec(
+                'DROP SCHEMA IF EXISTS '.$this->quotedIdentifier($this->schema).' CASCADE',
+            );
+        }
+        foreach ($this->previousEnvironment as $key => $state) {
+            $state['getenv'] === false ? putenv($key) : putenv($key.'='.$state['getenv']);
+            if ($state['env_exists']) {
+                $_ENV[$key] = $state['env'];
+            } else {
+                unset($_ENV[$key]);
+            }
+            if ($state['server_exists']) {
+                $_SERVER[$key] = $state['server'];
+            } else {
+                unset($_SERVER[$key]);
+            }
+        }
+        RefreshDatabaseState::$migrated = $this->previousMigrationState;
+        $this->schemaConnection = null;
+        $this->schema = null;
     }
 
     private function connectionFromUrl(string $dsn): array

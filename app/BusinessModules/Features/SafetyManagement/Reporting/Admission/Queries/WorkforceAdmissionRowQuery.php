@@ -159,11 +159,11 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
             'verified' => (bool) $row->verified,
             'valid_until' => $row->valid_until?->toDateString(),
         ];
-        if (! $medical) {
+        if ($context->visibility->canViewSensitive) {
             $values['evidence_id'] = $row->evidence_id;
-        } elseif ($canViewMedical) {
-            $values['evidence_id'] = $row->evidence_id;
-            $values['medical_details'] = $row->medical_details;
+            if ($medical) {
+                $values['medical_details'] = $row->medical_details;
+            }
         }
 
         return $values;

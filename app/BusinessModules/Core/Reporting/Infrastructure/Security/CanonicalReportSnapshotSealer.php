@@ -16,14 +16,18 @@ final readonly class CanonicalReportSnapshotSealer
     private string $secretKey;
 
     public function __construct(
-        string $applicationKey,
-        private string $keyId = 'application-v1',
+        string $privateKey,
+        private string $keyId,
     ) {
-        if (! function_exists('sodium_crypto_sign_seed_keypair')) {
-            throw new InvalidArgumentException('report_snapshot_sealer_unavailable');
+        if (! function_exists('sodium_crypto_sign_detached')
+            || preg_match('/^[a-z][a-z0-9_.:-]{2,127}$/D', $keyId) !== 1) {
+            throw new InvalidArgumentException('report_snapshot_signing_key_invalid');
         }
-        $seed = hash('sha256', $applicationKey, true);
-        $this->secretKey = sodium_crypto_sign_secretkey(sodium_crypto_sign_seed_keypair($seed));
+        $decoded = self::decodeCanonical($privateKey);
+        if ($decoded === null) {
+            throw new InvalidArgumentException('report_snapshot_signing_key_invalid');
+        }
+        $this->secretKey = $decoded;
     }
 
     public function seal(
@@ -61,5 +65,20 @@ final readonly class CanonicalReportSnapshotSealer
     private static function encode(string $value): string
     {
         return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+    }
+
+    private static function decodeCanonical(string $value): ?string
+    {
+        if (strlen($value) !== 86 || preg_match('/^[A-Za-z0-9_-]+$/D', $value) !== 1) {
+            return null;
+        }
+        $decoded = base64_decode(strtr($value, '-_', '+/').'==', true);
+        if ($decoded === false
+            || strlen($decoded) !== SODIUM_CRYPTO_SIGN_SECRETKEYBYTES
+            || self::encode($decoded) !== $value) {
+            return null;
+        }
+
+        return $decoded;
     }
 }
