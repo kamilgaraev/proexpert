@@ -99,6 +99,10 @@ function sourceArtifacts(array $options): array
 function gateEvidence(array $records, \App\BusinessModules\Core\Reporting\Domain\DTO\JointQG14Evidence $qg14Evidence, string $releaseSha, DateTimeImmutable $generatedAt): array
 {
     return array_map(static function (array $record) use ($qg14Evidence, $releaseSha, $generatedAt): ReportQualityGateEvidence {
+        if (($record['platform_status'] ?? null) !== 'passed') {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
+        }
+
         $count = $record['id'] === 'QG-14' ? $qg14Evidence->combinedForbiddenSymbolMatches : $record['minimum_count'];
 
         return new ReportQualityGateEvidence($record['id'], $record['release_owner'], ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, $record['command'], $count, new Sha256Hash($record['schema_sha256']), $releaseSha, $releaseSha, $generatedAt, new Sha256Hash($record['schema_sha256']));
