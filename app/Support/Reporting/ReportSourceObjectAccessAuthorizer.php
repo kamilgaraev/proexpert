@@ -93,18 +93,21 @@ final readonly class ReportSourceObjectAccessAuthorizer
         int $projectId,
     ): void {
         $restrictedIds = [];
+        $restricted = false;
         foreach ($resources as $resource) {
             if (! $resource instanceof ReportScopedResource) {
                 $this->deny();
             }
             $resourceKind = self::KIND_ALIASES[$resource->kind] ?? $resource->kind;
-            if ($resourceKind === $canonicalKind
-                && ($resource->projectId === null || $resource->projectId === $projectId)
-            ) {
+            if ($resourceKind !== $canonicalKind) {
+                continue;
+            }
+            $restricted = true;
+            if ($resource->projectId === null || $resource->projectId === $projectId) {
                 $restrictedIds[$resource->id] = true;
             }
         }
-        if ($restrictedIds !== [] && ! isset($restrictedIds[$sourceId])) {
+        if ($restricted && ! isset($restrictedIds[$sourceId])) {
             $this->deny();
         }
     }

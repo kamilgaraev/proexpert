@@ -43,11 +43,16 @@ final readonly class BaselineScheduleSnapshotService
         }
 
         return DB::transaction(function () use ($schedule, $actorId, $capturedAt): ScheduleBaselineVersion {
-            $latestVersion = (int) ScheduleBaselineVersion::query()
+            DB::select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ['schedule-baseline:'.$schedule->organization_id.':'.$schedule->id],
+            );
+            $latest = ScheduleBaselineVersion::query()
                 ->where('organization_id', $schedule->organization_id)
                 ->where('schedule_id', $schedule->id)
-                ->lockForUpdate()
-                ->max('version');
+                ->orderByDesc('version')
+                ->first();
+            $latestVersion = $latest === null ? 0 : (int) $latest->version;
             $tasks = $schedule->tasks()
                 ->orderBy('id')
                 ->get();
@@ -87,6 +92,22 @@ final readonly class BaselineScheduleSnapshotService
             })->all();
             $criticalPathWatermark = $schedule->critical_path_updated_at?->format(DATE_ATOM)
                 ?? 'not_calculated';
+            $payloadHash = hash('sha256', CanonicalJson::encode($payload));
+            $duplicate = ScheduleBaselineVersion::query()
+                ->where('organization_id', $schedule->organization_id)
+                ->where('schedule_id', $schedule->id)
+                ->where('captured_at', $capturedAt)
+                ->where('captured_by', $actorId)
+                ->where('critical_path_watermark', $criticalPathWatermark)
+                ->orderByDesc('version')
+                ->get()
+                ->first(static fn (ScheduleBaselineVersion $candidate): bool => hash_equals(
+                    hash('sha256', CanonicalJson::encode((array) $candidate->source_payload)),
+                    $payloadHash,
+                ));
+            if ($duplicate instanceof ScheduleBaselineVersion) {
+                return $duplicate;
+            }
             $sourceHash = hash('sha256', CanonicalJson::encode([
                 'captured_at' => $capturedAt->format(DATE_ATOM),
                 'critical_path_watermark' => $criticalPathWatermark,

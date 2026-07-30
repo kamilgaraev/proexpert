@@ -88,6 +88,37 @@ final class ReportSourceObjectAccessAuthorizerTest extends TestCase
         );
     }
 
+    #[Test]
+    public function resource_kind_restricted_to_another_project_is_denied(): void
+    {
+        $timezone = new DateTimeZone('Europe/Moscow');
+        $resources = [new ReportScopedResource('task', 41, 7)];
+        $scope = new ReportScope(3, [3], [7, 8], $resources, $timezone);
+        $context = new ReportExecutionContext(
+            new ReportActor(5, 'active', ['reports.view']),
+            $scope,
+            new ReportVisibility(true, true, true, true, false, true, false),
+            new AuthorizationDecisionContext(
+                'queue',
+                3,
+                [3],
+                [7, 8],
+                $resources,
+                $timezone,
+                'source-abac-cross-project-test',
+                null,
+            ),
+        );
+
+        $this->expectException(ReportContractException::class);
+        (new ReportSourceObjectAccessAuthorizer)->assertAccessible(
+            $context,
+            'schedule_task',
+            42,
+            8,
+        );
+    }
+
     private function context(array $resources): ReportExecutionContext
     {
         $timezone = new DateTimeZone('Europe/Moscow');

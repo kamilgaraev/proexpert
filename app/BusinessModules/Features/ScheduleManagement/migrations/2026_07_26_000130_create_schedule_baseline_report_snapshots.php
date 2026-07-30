@@ -146,8 +146,8 @@ SQL);
         Schema::dropIfExists('baseline_schedule_variance_rows');
         Schema::dropIfExists('baseline_schedule_variance_snapshots');
         Schema::dropIfExists('schedule_task_state_versions');
-        DB::statement('DROP FUNCTION IF EXISTS schedule_reporting_history_append_only_guard()');
         Schema::dropIfExists('schedule_baseline_task_rows');
         Schema::dropIfExists('schedule_baseline_versions');
+        DB::statement('DROP FUNCTION IF EXISTS schedule_reporting_history_append_only_guard()');
     }
 };

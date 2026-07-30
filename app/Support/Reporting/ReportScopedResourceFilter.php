@@ -14,19 +14,21 @@ final readonly class ReportScopedResourceFilter
         $kindSet = array_fill_keys($kinds, true);
         $projectSet = array_fill_keys($projectIds, true);
         $ids = [];
+        $restricted = false;
 
         foreach ($scope->resources as $resource) {
-            if (! $resource instanceof ReportScopedResource
-                || ! isset($kindSet[$resource->kind])
-                || ($resource->projectId !== null && ! isset($projectSet[$resource->projectId]))
-            ) {
+            if (! $resource instanceof ReportScopedResource || ! isset($kindSet[$resource->kind])) {
+                continue;
+            }
+            $restricted = true;
+            if ($resource->projectId !== null && ! isset($projectSet[$resource->projectId])) {
                 continue;
             }
 
             $ids[$resource->id] = true;
         }
 
-        if ($ids === []) {
+        if (! $restricted) {
             return null;
         }
 

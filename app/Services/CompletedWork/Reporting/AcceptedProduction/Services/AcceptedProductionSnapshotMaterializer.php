@@ -14,6 +14,7 @@ use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAccept
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionRow;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
+use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
@@ -43,7 +44,16 @@ final readonly class AcceptedProductionSnapshotMaterializer
             throw new InvalidArgumentException('accepted_production_materialization_identity_invalid');
         }
 
-        $allEvents = ProductionAcceptanceEvent::query()
+        $resources = new ReportScopedResourceFilter;
+        $workIds = $resources->ids($scope, ['work', 'completed_work'], $scope->projectIds);
+        $actIds = $resources->ids(
+            $scope,
+            ['act', 'performance_act', 'contract_performance_act'],
+            $scope->projectIds,
+        );
+        $actLineIds = $resources->ids($scope, ['act_line', 'performance_act_line'], $scope->projectIds);
+
+        $completeEvents = ProductionAcceptanceEvent::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $scope->projectIds)
             ->where('recognized_at', '<=', $query->asOf)
@@ -52,7 +62,27 @@ final readonly class AcceptedProductionSnapshotMaterializer
             ->orderBy('source_line_id')
             ->orderBy('transition_version')
             ->get();
-        $this->completeness->assertComplete($scope, $query->asOf, $allEvents);
+        $this->completeness->assertComplete($scope, $query->asOf, $completeEvents);
+        $allEvents = $completeEvents
+            ->filter(static function (ProductionAcceptanceEvent $event) use (
+                $workIds,
+                $actIds,
+                $actLineIds,
+            ): bool {
+                if ($workIds !== null
+                    && ($event->work_id === null || ! in_array((int) $event->work_id, $workIds, true))
+                ) {
+                    return false;
+                }
+                if ($actIds !== null && ! in_array((int) $event->performance_act_id, $actIds, true)) {
+                    return false;
+                }
+
+                return $actLineIds === null
+                    || (string) $event->source_line_type !== 'performance_act_line'
+                    || in_array((int) $event->source_line_id, $actLineIds, true);
+            })
+            ->values();
         $events = $allEvents
             ->filter(fn (ProductionAcceptanceEvent $event): bool => $this->matchesFilters($query, $event))
             ->values();
@@ -179,8 +209,22 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         'accepted_amount_minor' => $metric->acceptedAmountMinor,
                         'payload' => $payload,
                         'source_refs' => [
+                            [
+                                'type' => 'performance_act',
+                                'id' => (int) $event->performance_act_id,
+                                'project_id' => (int) $event->project_id,
+                            ],
+                            ...($event->work_id === null ? [] : [[
+                                'type' => 'completed_work',
+                                'id' => (int) $event->work_id,
+                                'project_id' => (int) $event->project_id,
+                            ]]),
                             ...(array) $event->evidence_refs,
-                            ['type' => 'acceptance_event', 'ids' => $item['event_ids']],
+                            [
+                                'type' => 'acceptance_event',
+                                'ids' => $item['event_ids'],
+                                'project_id' => (int) $event->project_id,
+                            ],
                         ],
                     ]);
                 }

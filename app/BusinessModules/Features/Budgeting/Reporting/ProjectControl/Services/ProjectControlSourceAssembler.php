@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectC
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceIdentity;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceRow;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlBaselineVersion;
+use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -23,6 +24,11 @@ final readonly class ProjectControlSourceAssembler
             throw new InvalidArgumentException('project_control_single_project_scope_required');
         }
         $projectId = $scope->projectIds[0];
+        $scopedTaskIds = (new ReportScopedResourceFilter)->ids(
+            $scope,
+            ['task', 'schedule_task'],
+            [$projectId],
+        );
         $this->assertStatusDateFilter($query);
         $baselines = ProjectControlBaselineVersion::query()
             ->where('organization_id', $scope->organizationId)
@@ -97,7 +103,8 @@ final readonly class ProjectControlSourceAssembler
             }
             $taskId = $this->positiveInt($baselineRow['task_id'] ?? null);
             $currency = (string) ($baselineRow['currency'] ?? '');
-            if (!$this->matches($query->filters->values['project_ids'] ?? [], $projectId)
+            if (($scopedTaskIds !== null && ! in_array($taskId, $scopedTaskIds, true))
+                || !$this->matches($query->filters->values['project_ids'] ?? [], $projectId)
                 || !$this->matches($query->filters->values['task_ids'] ?? [], $taskId)
                 || !$this->matches($query->filters->values['wbs_ids'] ?? [], $baselineRow['wbs_code'] ?? null)
                 || !$this->matches($query->filters->values['currencies'] ?? [], $currency)
@@ -129,14 +136,21 @@ final readonly class ProjectControlSourceAssembler
             $evMinor = $this->proportion($bacMinor, $percentComplete, 1_000_000);
             $sourceRefs = [
                 [
+                    'type' => 'schedule_task',
+                    'id' => $taskId,
+                    'project_id' => $projectId,
+                ],
+                [
                     'type' => 'project_control_baseline',
                     'id' => (int) $baseline->id,
+                    'project_id' => $projectId,
                     'task_id' => $taskId,
                     'curve_version' => (string) $baselineRow['baseline_curve_version'],
                 ],
                 [
                     'type' => 'wip_forecast_line',
                     'id' => (int) $line->id,
+                    'project_id' => $projectId,
                     'version_id' => (int) $version->id,
                     'source_snapshot_hash' => (string) $version->source_snapshot_hash,
                 ],

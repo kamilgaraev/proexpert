@@ -52,4 +52,22 @@ final class ReportScopedResourceFilterTest extends TestCase
             [7],
         ));
     }
+
+    #[Test]
+    public function resource_kind_present_only_in_another_project_is_fail_closed(): void
+    {
+        $scope = new ReportScope(
+            1,
+            [1],
+            [7, 8],
+            [new ReportScopedResource('task', 41, 7)],
+            new DateTimeZone('Europe/Moscow'),
+        );
+
+        self::assertSame([], (new ReportScopedResourceFilter)->ids(
+            $scope,
+            ['task', 'schedule_task'],
+            [8],
+        ));
+    }
 }
