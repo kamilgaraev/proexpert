@@ -52,6 +52,7 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
             'training' => 'admin.safety_management.training_records.index',
             'medical_exam' => 'admin.safety_management.medical_exams.index',
             'ppe' => 'admin.safety_management.ppe_issues.index',
+            'briefing' => 'admin.safety_management.briefings.show',
             default => 'admin.safety_management.employee_requirements.index',
         };
 
@@ -76,11 +77,18 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
             && $row->evidence_version_id !== null
             && $row->evidence_hash !== null
             && (bool) $row->verified) {
+            $identity = is_array($row->evidence_identity) ? $row->evidence_identity : [];
+            $resourceId = $row->requirement_type === 'briefing'
+                ? (int) ($identity['resource_id'] ?? 0)
+                : (int) $row->evidence_id;
+            if ($resourceId < 1) {
+                return new ReportDrillDownResult([$values], null, []);
+            }
             $links[] = new ReportResourceLink(
-                'safety_requirement',
+                $row->requirement_type === 'briefing' ? 'safety_briefing' : 'safety_requirement',
                 'requirement_'.(int) $row->id,
                 $route,
-                ['id' => (int) $row->evidence_id],
+                ['id' => $resourceId],
                 $medical && ! $canViewMedical ? 'forbidden' : 'available',
             );
         }

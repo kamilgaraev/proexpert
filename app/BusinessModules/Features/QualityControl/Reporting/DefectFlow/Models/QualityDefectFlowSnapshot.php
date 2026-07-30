@@ -22,6 +22,7 @@ final class QualityDefectFlowSnapshot extends Model
         'policy_version_ids' => 'array',
         'as_of' => 'immutable_datetime',
         'source_watermark' => 'immutable_datetime',
+        'sealed_at' => 'immutable_datetime',
         'source_ledger_binding' => 'array',
         'generated_at' => 'immutable_datetime',
         'stale_at' => 'immutable_datetime',

@@ -250,6 +250,10 @@ final readonly class SafetyIncidentSnapshotMaterializer
                             'snapshot_id' => $snapshot->id,
                         ] + $row);
                     }
+                    DB::table('safety_incident_snapshots')
+                        ->where('id', $snapshot->id)
+                        ->update(['sealed_at' => $generatedAt]);
+                    $snapshot->sealed_at = $generatedAt;
 
                     return $snapshot;
                 });

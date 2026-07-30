@@ -229,6 +229,10 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                             'snapshot_id' => $snapshot->id,
                         ] + $row);
                     }
+                    DB::table('safety_admission_snapshots')
+                        ->where('id', $snapshot->id)
+                        ->update(['sealed_at' => $generatedAt]);
+                    $snapshot->sealed_at = $generatedAt;
 
                     return $snapshot;
                 });
@@ -516,6 +520,12 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'evidence_identity' => $evidenceVersion === null ? null : [
                         'evidence_id' => $state->evidenceId,
                         'evidence_type' => $state->evidenceType,
+                        'resource_id' => $state->evidenceType === 'briefing'
+                            ? (int) ($evidenceVersion['content']['participant']['briefing_id'] ?? 0)
+                            : $state->evidenceId,
+                        'resource_type' => $state->evidenceType === 'briefing'
+                            ? 'safety_briefing'
+                            : $state->evidenceType,
                         'employee_id' => (int) $assignment->employee_id,
                         'project_id' => (int) $assignment->project_id,
                         'safety_site_id' => (int) $assignment->safety_site_id,

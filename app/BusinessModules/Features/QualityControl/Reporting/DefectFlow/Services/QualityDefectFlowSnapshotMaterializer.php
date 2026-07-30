@@ -187,6 +187,10 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                             'snapshot_id' => $snapshot->id,
                         ] + $row);
                     }
+                    DB::table('quality_defect_flow_snapshots')
+                        ->where('id', $snapshot->id)
+                        ->update(['sealed_at' => $generatedAt]);
+                    $snapshot->sealed_at = $generatedAt;
 
                     return $snapshot;
                 });
@@ -383,6 +387,14 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $lastOccurredAt[$defectId] = $occurredAt;
 
             $wasOpen = $states[$defectId]['current_open'];
+            $hasUnknownEvidence = collect($event->evidence_refs ?? [])->contains(
+                static fn (mixed $reference): bool => is_array($reference)
+                    && ($reference['coverage'] ?? null) === 'unknown',
+            );
+            if ($hasUnknownEvidence) {
+                $gaps++;
+                $unknowns++;
+            }
             $isClosed = $this->formula->isClosure($event, $policy);
             $isReopen = $this->formula->isReopen($event, $policy)
                 && ! $wasOpen

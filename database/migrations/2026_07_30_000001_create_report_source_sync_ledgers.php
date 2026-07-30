@@ -106,7 +106,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER safety_briefing_participants_report_source_generation
-AFTER INSERT OR UPDATE OR DELETE ON safety_briefing_participants
+AFTER INSERT OR UPDATE ON safety_briefing_participants
+FOR EACH ROW EXECUTE FUNCTION bump_briefing_participant_report_generation();
+CREATE TRIGGER safety_briefing_participants_delete_report_source_generation
+BEFORE DELETE ON safety_briefing_participants
 FOR EACH ROW EXECUTE FUNCTION bump_briefing_participant_report_generation();
 SQL);
     }

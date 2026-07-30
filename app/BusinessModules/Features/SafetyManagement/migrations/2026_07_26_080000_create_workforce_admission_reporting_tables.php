@@ -101,6 +101,23 @@ return new class extends Migration
                 'safety_evidence_versions_effective_idx',
             );
         });
+        Schema::create('safety_assignment_ownership_versions', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('employee_id');
+            $table->unsignedBigInteger('safety_site_id');
+            $table->unsignedBigInteger('site_assignment_id');
+            $table->unsignedBigInteger('workforce_assignment_id');
+            $table->timestampTz('effective_at');
+            $table->boolean('tombstone');
+            $table->boolean('history_complete');
+            $table->char('source_hash', 64);
+            $table->index(
+                ['site_assignment_id', 'effective_at', 'id'],
+                'safety_assignment_ownership_effective_idx',
+            );
+        });
 
         Schema::create('safety_admission_snapshots', function (Blueprint $table): void {
             $table->ulid('id')->primary();
@@ -229,6 +246,69 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 SQL);
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION capture_safety_assignment_ownership() RETURNS trigger AS $$
+DECLARE
+    mapping_row record;
+    ownership_payload text;
+BEGIN
+    IF TG_TABLE_NAME = 'safety_site_workforce_assignments' THEN
+        mapping_row := NEW;
+        ownership_payload := concat_ws('|', NEW.organization_id, NEW.project_id, NEW.employee_id, NEW.safety_site_id, NEW.id, NEW.workforce_assignment_id, false);
+        INSERT INTO safety_assignment_ownership_versions (
+            organization_id, project_id, employee_id, safety_site_id, site_assignment_id,
+            workforce_assignment_id, effective_at, tombstone, history_complete, source_hash
+        ) VALUES (
+            NEW.organization_id, NEW.project_id, NEW.employee_id, NEW.safety_site_id, NEW.id,
+            NEW.workforce_assignment_id, clock_timestamp(), false, true,
+            encode(digest(ownership_payload, 'sha256'), 'hex')
+        );
+        RETURN NEW;
+    END IF;
+    FOR mapping_row IN SELECT * FROM safety_site_workforce_assignments WHERE workforce_assignment_id = COALESCE(NEW.id, OLD.id) LOOP
+        ownership_payload := concat_ws('|', OLD.organization_id, OLD.project_id, OLD.employee_id, mapping_row.safety_site_id, mapping_row.id, OLD.id, true);
+        INSERT INTO safety_assignment_ownership_versions (
+            organization_id, project_id, employee_id, safety_site_id, site_assignment_id,
+            workforce_assignment_id, effective_at, tombstone, history_complete, source_hash
+        ) VALUES (
+            OLD.organization_id, OLD.project_id, OLD.employee_id, mapping_row.safety_site_id, mapping_row.id,
+            OLD.id, clock_timestamp(), true, true, encode(digest(ownership_payload, 'sha256'), 'hex')
+        );
+        IF TG_OP = 'UPDATE'
+           AND NEW.project_id IS NOT NULL
+           AND NEW.deleted_at IS NULL
+           AND NEW.status = 'active' THEN
+            ownership_payload := concat_ws('|', NEW.organization_id, NEW.project_id, NEW.employee_id, mapping_row.safety_site_id, mapping_row.id, NEW.id, false);
+            INSERT INTO safety_assignment_ownership_versions (
+                organization_id, project_id, employee_id, safety_site_id, site_assignment_id,
+                workforce_assignment_id, effective_at, tombstone, history_complete, source_hash
+            ) VALUES (
+                NEW.organization_id, NEW.project_id, NEW.employee_id, mapping_row.safety_site_id, mapping_row.id,
+                NEW.id, clock_timestamp(), false, true, encode(digest(ownership_payload, 'sha256'), 'hex')
+            );
+        END IF;
+    END LOOP;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER safety_site_assignment_ownership_insert
+AFTER INSERT ON safety_site_workforce_assignments
+FOR EACH ROW EXECUTE FUNCTION capture_safety_assignment_ownership();
+CREATE TRIGGER workforce_assignment_ownership_change
+AFTER UPDATE ON workforce_employee_assignments
+FOR EACH ROW EXECUTE FUNCTION capture_safety_assignment_ownership();
+CREATE TRIGGER workforce_assignment_ownership_delete
+BEFORE DELETE ON workforce_employee_assignments
+FOR EACH ROW EXECUTE FUNCTION capture_safety_assignment_ownership();
+INSERT INTO safety_assignment_ownership_versions (
+    organization_id, project_id, employee_id, safety_site_id, site_assignment_id,
+    workforce_assignment_id, effective_at, tombstone, history_complete, source_hash
+)
+SELECT mapping.organization_id, mapping.project_id, mapping.employee_id, mapping.safety_site_id, mapping.id,
+       mapping.workforce_assignment_id, clock_timestamp(), false, false,
+       encode(digest(concat_ws('|', mapping.organization_id, mapping.project_id, mapping.employee_id, mapping.safety_site_id, mapping.id, mapping.workforce_assignment_id, false), 'sha256'), 'hex')
+FROM safety_site_workforce_assignments mapping;
+SQL);
         foreach ([
             'safety_employee_requirements' => 'employee_requirement',
             'safety_training_records' => 'training',
@@ -282,7 +362,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER safety_briefing_participants_evidence_version
-AFTER INSERT OR UPDATE OR DELETE ON safety_briefing_participants
+AFTER INSERT OR UPDATE ON safety_briefing_participants
+FOR EACH ROW EXECUTE FUNCTION capture_safety_briefing_evidence_version();
+CREATE TRIGGER safety_briefing_participants_evidence_delete_version
+BEFORE DELETE ON safety_briefing_participants
 FOR EACH ROW EXECUTE FUNCTION capture_safety_briefing_evidence_version();
 CREATE TRIGGER safety_briefings_evidence_version
 AFTER UPDATE OR DELETE ON safety_briefings
@@ -395,12 +478,14 @@ SQL);
     {
         DB::statement('DROP FUNCTION IF EXISTS capture_safety_briefing_evidence_version() CASCADE');
         DB::statement('DROP FUNCTION IF EXISTS capture_safety_evidence_version() CASCADE');
+        DB::statement('DROP FUNCTION IF EXISTS capture_safety_assignment_ownership() CASCADE');
         DB::statement('DROP TRIGGER IF EXISTS workforce_assignments_reporting_lifecycle ON workforce_employee_assignments');
         DB::statement('DROP TRIGGER IF EXISTS workforce_employees_reporting_lifecycle ON workforce_employees');
         DB::statement('DROP FUNCTION IF EXISTS safety_capture_workforce_lifecycle()');
         Schema::dropIfExists('safety_admission_rows');
         Schema::dropIfExists('safety_admission_snapshots');
         Schema::dropIfExists('safety_evidence_versions');
+        Schema::dropIfExists('safety_assignment_ownership_versions');
         Schema::dropIfExists('safety_workforce_lifecycle_events');
         Schema::dropIfExists('safety_admission_policy_versions');
         Schema::dropIfExists('safety_site_workforce_assignments');

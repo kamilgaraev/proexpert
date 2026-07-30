@@ -15,9 +15,12 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\DrillDown\QualityDefectFlowDrillDownProvider;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowPolicyVersion;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowRow;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectTransitionEvent;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers\QualityDefectFlowReportProvider;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Queries\QualityDefectFlowRowQuery;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectFlowFormula;
 use DateTimeZone;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -103,6 +106,21 @@ final class QualityDefectFlowContractTest extends TestCase
             ->invoke(new QualityDefectFlowRowQuery, $row, $context);
 
         self::assertSame([['id' => 14, 'type' => 'status_comment']], $serialized['evidence_refs']);
+    }
+
+    #[Test]
+    public function legacy_unverified_photo_is_unknown_and_does_not_certify_closure(): void
+    {
+        $policy = (new QualityDefectFlowPolicyVersion)->setRawAttributes([
+            'closure_evidence_required' => true,
+            'terminal_statuses' => '["resolved"]',
+        ], true);
+        $event = (new QualityDefectTransitionEvent)->setRawAttributes([
+            'to_status' => 'resolved',
+            'evidence_refs' => '[{"id":14,"type":"quality_defect_photo","coverage":"unknown","reason":"legacy_storage_identity_unverified"}]',
+        ], true);
+
+        self::assertFalse((new QualityDefectFlowFormula)->isClosure($event, $policy));
     }
 
     private function context(bool $canViewAudit, array $resources = []): ReportExecutionContext

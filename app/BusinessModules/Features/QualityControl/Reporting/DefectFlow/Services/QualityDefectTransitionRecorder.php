@@ -68,6 +68,12 @@ final readonly class QualityDefectTransitionRecorder
                 || ! in_array($evidence['type'] ?? null, ['quality_defect_photo', 'status_comment'], true)) {
                 throw new LogicException('quality_defect_transition_evidence_invalid');
             }
+            if (($evidence['coverage'] ?? null) === 'unknown'
+                && ($evidence['reason'] ?? null) === 'legacy_storage_identity_unverified') {
+                $evidenceRefs[] = $evidence;
+
+                continue;
+            }
             if ($evidence['type'] === 'quality_defect_photo') {
                 $required = [
                     'caption', 'content_hash', 'created_at', 'metadata', 'mime_type', 'photo_type',

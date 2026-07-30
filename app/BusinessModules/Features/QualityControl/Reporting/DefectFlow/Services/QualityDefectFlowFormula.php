@@ -57,10 +57,22 @@ final readonly class QualityDefectFlowFormula
         $toStatus = $event->toStatus ?? $event->to_status;
         $evidencePresent = $event instanceof DefectTransitionTimeline
             ? $event->closureEvidencePresent
-            : ($event->evidence_refs ?? []) !== [];
+            : $this->hasVerifiedEvidence($event->evidence_refs ?? []);
 
         return in_array($toStatus, $this->terminalStatuses($policy), true)
             && (! (bool) $policy->closure_evidence_required || $evidencePresent);
+    }
+
+    private function hasVerifiedEvidence(array $references): bool
+    {
+        foreach ($references as $reference) {
+            if (is_array($reference)
+                && ($reference['coverage'] ?? 'verified') === 'verified') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function matureCohort(

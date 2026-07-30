@@ -177,6 +177,9 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             'snapshot_date' => '2026-07-30',
             'source_watermark' => now(),
             'source_ledger_binding' => '{}',
+            'row_count' => 2,
+            'eligible_count' => 2,
+            'projected_count' => 2,
             'generated_at' => now(),
             'stale_at' => now()->addMinute(),
         ]);
@@ -286,6 +289,31 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             (string) $evidenceVersion->content_hash,
             (string) DB::table('safety_evidence_versions')->latest('id')->value('content_hash'),
         );
+        DB::table('safety_admission_snapshots')->where('id', $snapshotId)->update(['sealed_at' => now()]);
+        try {
+            DB::table('safety_admission_rows')->insert([
+                'organization_id' => $organization->id,
+                'snapshot_id' => $snapshotId,
+                'project_id' => $project->id,
+                'safety_site_id' => $siteId,
+                'site_assignment_id' => $mappingId,
+                'workforce_assignment_id' => $assignmentId,
+                'employee_id' => $employeeId,
+                'snapshot_date' => '2026-07-30',
+                'row_type' => 'requirement',
+                'row_key' => 'post-seal-'.$mappingId,
+                'requirement_code' => 'late',
+                'requirement_type' => 'training',
+                'status' => 'missing',
+                'mandatory' => true,
+                'blocked' => true,
+                'verified' => false,
+                'blocker_codes' => '[]',
+            ]);
+            self::fail('Sealed snapshot accepted an additional row');
+        } catch (QueryException $exception) {
+            self::assertSame('55000', $exception->getCode());
+        }
         foreach ([
             ['safety_admission_rows', $evidenceRowId, ['status' => 'missing']],
             ['safety_admission_snapshots', $snapshotId, ['output_hash' => str_repeat('0', 64)]],
@@ -297,6 +325,41 @@ final class WorkforceAdmissionPostgresTest extends TestCase
                 self::assertSame('55000', $exception->getCode());
             }
         }
+        $newOrganization = Organization::factory()->create();
+        $newProject = Project::factory()->create(['organization_id' => $newOrganization->id]);
+        DB::table('workforce_employee_assignments')->where('id', $assignmentId)->update([
+            'organization_id' => $newOrganization->id,
+            'project_id' => $newProject->id,
+            'updated_at' => now(),
+        ]);
+        $ownershipVersions = DB::table('safety_assignment_ownership_versions')
+            ->where('site_assignment_id', $mappingId)
+            ->where('history_complete', true)
+            ->orderByDesc('id')
+            ->limit(2)
+            ->get();
+        self::assertCount(2, $ownershipVersions);
+        self::assertFalse((bool) $ownershipVersions[0]->tombstone);
+        self::assertSame((int) $newOrganization->id, (int) $ownershipVersions[0]->organization_id);
+        self::assertTrue((bool) $ownershipVersions[1]->tombstone);
+        self::assertSame((int) $organization->id, (int) $ownershipVersions[1]->organization_id);
+        self::assertTrue(DB::table('report_source_generations')
+            ->where('organization_id', $organization->id)
+            ->where('source_code', 'safety_site_workforce_assignments')
+            ->exists());
+        self::assertTrue(DB::table('report_source_generations')
+            ->where('organization_id', $newOrganization->id)
+            ->where('source_code', 'safety_site_workforce_assignments')
+            ->exists());
+        DB::table('workforce_employee_assignments')->where('id', $assignmentId)->update([
+            'status' => 'inactive',
+            'deleted_at' => now(),
+            'updated_at' => now(),
+        ]);
+        self::assertTrue((bool) DB::table('safety_assignment_ownership_versions')
+            ->where('site_assignment_id', $mappingId)
+            ->latest('id')
+            ->value('tombstone'));
     }
 
     private function structure(int $organizationId): array

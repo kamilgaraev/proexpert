@@ -21,20 +21,19 @@ final class SafetyEvidenceVersionResolver
         int $siteAssignmentId,
         int $workforceAssignmentId,
     ): ?array {
-        $provenance = DB::table('safety_site_workforce_assignments')
-            ->where('id', $siteAssignmentId)
+        $provenance = DB::table('safety_assignment_ownership_versions')
+            ->where('site_assignment_id', $siteAssignmentId)
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('safety_site_id', $siteId)
             ->where('workforce_assignment_id', $workforceAssignmentId)
             ->where('employee_id', $employeeId)
-            ->where('created_at', '<=', $asOf)
-            ->whereDate('valid_from', '<=', $asOf->toDateString())
-            ->where(static fn ($query) => $query
-                ->whereNull('valid_to')
-                ->orWhereDate('valid_to', '>=', $asOf->toDateString()))
-            ->exists();
-        if (! $provenance) {
+            ->where('effective_at', '<=', $asOf)
+            ->where('history_complete', true)
+            ->orderByDesc('effective_at')
+            ->orderByDesc('id')
+            ->first(['tombstone']);
+        if ($provenance === null || (bool) $provenance->tombstone) {
             return null;
         }
         $version = DB::table('safety_evidence_versions')

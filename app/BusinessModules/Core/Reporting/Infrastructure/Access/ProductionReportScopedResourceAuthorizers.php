@@ -405,8 +405,17 @@ final class ProductionReportScopedResourceAuthorizers
             return false;
         }
         $content = json_decode((string) $version->content, true, 512, JSON_THROW_ON_ERROR);
+        if (! is_array($content)) {
+            return false;
+        }
+        if ($row->evidence_type === 'briefing'
+            && ((int) ($identity['resource_id'] ?? 0) < 1
+                || ($identity['resource_type'] ?? null) !== 'safety_briefing'
+                || (int) ($content['participant']['briefing_id'] ?? 0) !== (int) $identity['resource_id'])) {
+            return false;
+        }
 
-        return is_array($content) && ($content['_deleted'] ?? false) !== true;
+        return ($content['_deleted'] ?? false) !== true;
     }
 
     private static function applyWorkforceEvidenceValidity(Builder $query, string $type, ?object $row = null): void

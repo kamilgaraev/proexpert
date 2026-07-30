@@ -310,36 +310,47 @@ final class QualityDefectService
                     'size_bytes', 'mime_type', 'caption', 'metadata', 'uploaded_by', 'created_at',
                     'storage_identity_verified',
                 ])
-                ->map(static fn ($photo): array => [
-                    'caption' => $photo->caption,
-                    'content_hash' => hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode([
+                ->map(static function ($photo): array {
+                    if (! (bool) $photo->storage_identity_verified) {
+                        return [
+                            'coverage' => 'unknown',
+                            'id' => (int) $photo->id,
+                            'reason' => 'legacy_storage_identity_unverified',
+                            'type' => 'quality_defect_photo',
+                        ];
+                    }
+
+                    return [
                         'caption' => $photo->caption,
+                        'content_hash' => hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode([
+                            'caption' => $photo->caption,
+                            'created_at' => $photo->created_at?->toAtomString(),
+                            'metadata' => $photo->metadata,
+                            'mime_type' => (string) $photo->mime_type,
+                            'size_bytes' => (int) $photo->size_bytes,
+                            'storage_etag' => (string) $photo->storage_etag,
+                            'storage_key' => (string) $photo->url,
+                            'storage_sha256' => (string) $photo->storage_sha256,
+                            'storage_version_id' => (string) $photo->storage_version_id,
+                            'storage_identity_verified' => (bool) $photo->storage_identity_verified,
+                            'type' => (string) $photo->type,
+                            'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
+                        ])),
                         'created_at' => $photo->created_at?->toAtomString(),
+                        'id' => (int) $photo->id,
                         'metadata' => $photo->metadata,
+                        'photo_type' => (string) $photo->type,
                         'mime_type' => (string) $photo->mime_type,
                         'size_bytes' => (int) $photo->size_bytes,
                         'storage_etag' => (string) $photo->storage_etag,
                         'storage_key' => (string) $photo->url,
                         'storage_sha256' => (string) $photo->storage_sha256,
                         'storage_version_id' => (string) $photo->storage_version_id,
-                        'storage_identity_verified' => (bool) $photo->storage_identity_verified,
-                        'type' => (string) $photo->type,
+                        'type' => 'quality_defect_photo',
                         'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
-                    ])),
-                    'created_at' => $photo->created_at?->toAtomString(),
-                    'id' => (int) $photo->id,
-                    'metadata' => $photo->metadata,
-                    'photo_type' => (string) $photo->type,
-                    'mime_type' => (string) $photo->mime_type,
-                    'size_bytes' => (int) $photo->size_bytes,
-                    'storage_etag' => (string) $photo->storage_etag,
-                    'storage_key' => (string) $photo->url,
-                    'storage_sha256' => (string) $photo->storage_sha256,
-                    'storage_version_id' => (string) $photo->storage_version_id,
-                    'type' => 'quality_defect_photo',
-                    'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
-                    'storage_identity_verified' => (bool) $photo->storage_identity_verified,
-                ])
+                        'storage_identity_verified' => (bool) $photo->storage_identity_verified,
+                    ];
+                })
                 ->all(),
         ]);
         $this->transitionRecorder->record($defect, $history);

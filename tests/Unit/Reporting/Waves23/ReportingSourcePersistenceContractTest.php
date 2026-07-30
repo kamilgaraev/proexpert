@@ -78,6 +78,8 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString("'evidence_hash' => \$evidenceVersion['hash']", $materializer);
         self::assertStringContainsString('history_complete', $migration);
         self::assertStringContainsString("jsonb_build_object('_deleted', true)", $migration);
+        self::assertStringContainsString("Schema::create('safety_assignment_ownership_versions'", $migration);
+        self::assertStringContainsString('capture_safety_assignment_ownership', $migration);
     }
 
     #[Test]
@@ -94,7 +96,9 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertIsString($migration);
         self::assertIsString($originalPhotoMigration);
         self::assertStringContainsString("Schema::table('quality_defect_photos'", $migration);
-        self::assertStringContainsString('sealed_reporting_record_guard', $migration);
+        self::assertStringContainsString('sealed_reporting_snapshot_guard', $migration);
+        self::assertStringContainsString('sealed_reporting_row_guard', $migration);
+        self::assertStringContainsString('persisted_rows = NEW.row_count', $migration);
         self::assertStringContainsString('quality_defect_flow_snapshots', $migration);
         self::assertStringContainsString('safety_incident_snapshots', $migration);
         self::assertStringContainsString('safety_admission_snapshots', $migration);
@@ -106,6 +110,20 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertIsString($drillDown);
         self::assertStringContainsString('$row->evidence_id !== null', $drillDown);
         self::assertStringContainsString('$row->evidence_version_id !== null', $drillDown);
+        self::assertStringContainsString("'briefing' => 'admin.safety_management.briefings.show'", $drillDown);
+        self::assertStringContainsString("'safety_briefing'", $drillDown);
+        $qualityService = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Services/QualityDefectService.php',
+        );
+        $qualityMaterializer = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/'
+            .'QualityDefectFlowSnapshotMaterializer.php',
+        );
+        self::assertIsString($qualityService);
+        self::assertIsString($qualityMaterializer);
+        self::assertStringContainsString("'coverage' => 'unknown'", $qualityService);
+        self::assertStringContainsString("'legacy_storage_identity_unverified'", $qualityService);
+        self::assertStringContainsString('$hasUnknownEvidence', $qualityMaterializer);
     }
 
     #[Test]
