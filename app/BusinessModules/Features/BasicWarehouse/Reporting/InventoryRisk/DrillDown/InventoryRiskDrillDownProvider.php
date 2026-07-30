@@ -47,6 +47,8 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
             sourceResourceKind: 'warehouse',
             sourceResourceIdColumn: 'warehouse_id',
             requiresSensitive: true,
+            rowSourceIdsColumn: 'inventory_event_ids',
+            sourceCutoffColumn: 'occurred_at',
         );
     }
 }

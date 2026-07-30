@@ -70,9 +70,14 @@ final readonly class SupplierAwardReadinessProbe implements ReportDefinitionRead
             ],
             'period' => 'supplier_proposal_decisions.selected_at',
         ]);
-        $eligible = $owners->distinct()->count('supplier_proposal_decisions.id');
+        $ownerEligible = $owners->distinct()->count('supplier_proposal_decisions.id');
         $versions = $this->universe->query($context, $query);
         $projected = (clone $versions)->distinct()->count('decision_id');
+        $pinnedDimensionFilters = array_intersect(
+            array_keys($query->filters->values),
+            ['supplier', 'method', 'currency', 'material', 'category'],
+        );
+        $eligible = $pinnedDimensionFilters === [] ? $ownerEligible : $projected;
         $invalidVersions = (clone $versions)
             ->where(function ($builder): void {
                 $builder->whereNull('selected_proposal_version_id')

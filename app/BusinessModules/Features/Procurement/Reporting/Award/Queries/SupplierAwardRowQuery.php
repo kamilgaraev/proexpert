@@ -96,9 +96,11 @@ final readonly class SupplierAwardRowQuery implements ReportDrillDownProvider, R
                 'excluded_comparisons',
                 'selected_at',
             ],
+            ['decision_version'],
             sourceResourceKind: 'supplier_award_decision',
             sourceResourceIdColumn: 'decision_id',
             requiresSensitive: true,
+            sourceCutoffColumn: 'selected_at',
         );
     }
 }

@@ -42,6 +42,7 @@ final class SupplyReliabilityRow extends Model
             'value_otif_numerator_minor' => 'integer',
             'value_otif_denominator_minor' => 'integer',
             'quality_warnings' => 'array',
+            'lifecycle_event_ids' => 'array',
         ];
     }
 }

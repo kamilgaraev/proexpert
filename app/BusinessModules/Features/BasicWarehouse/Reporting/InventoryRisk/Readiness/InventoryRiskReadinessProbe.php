@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskGrainUniverse;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\SourceReadinessResult;
@@ -20,6 +21,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
     public function __construct(
         private ReportSourceAccessPolicy $sourceAccess,
         private OwnerReportFilterApplier $filters,
+        private InventoryRiskGrainUniverse $grainUniverse,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -65,7 +67,17 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             'abc' => DB::raw("readiness_event_material.additional_properties->>'abc_class'"),
             'xyz' => DB::raw("readiness_event_material.additional_properties->>'xyz_class'"),
         ]);
-        $eligible = (clone $events)->distinct()->count('source_movement_id');
+        $pinnedEvents = (clone $events)
+            ->select('warehouse_inventory_events.*')
+            ->get();
+        $grains = $this->grainUniverse->collect(
+            $context->scope->organizationId,
+            $query->asOf,
+            $allowedWarehouseIds,
+            $projects,
+            $pinnedEvents,
+        );
+        $eligible = $grains->count();
         $projected = $eligible;
         $unknown = (clone $events)
             ->where(function ($builder): void {
@@ -78,31 +90,25 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
                     });
             })
             ->count();
-        $missingOpening = (clone $events)
-            ->whereNull('opening_basis')
-            ->whereNotExists(function ($builder): void {
-                $builder->selectRaw('1')
-                    ->from('warehouse_inventory_events as earlier')
-                    ->whereColumn('earlier.organization_id', 'warehouse_inventory_events.organization_id')
-                    ->whereColumn('earlier.warehouse_id', 'warehouse_inventory_events.warehouse_id')
-                    ->whereRaw('earlier.project_id IS NOT DISTINCT FROM warehouse_inventory_events.project_id')
-                    ->whereColumn('earlier.material_id', 'warehouse_inventory_events.material_id')
-                    ->whereColumn('earlier.unit_dimension', 'warehouse_inventory_events.unit_dimension')
-                    ->whereColumn('earlier.unit_code', 'warehouse_inventory_events.unit_code')
-                    ->whereColumn('earlier.conversion_version', 'warehouse_inventory_events.conversion_version')
-                    ->where(function ($position): void {
-                        $position
-                            ->whereColumn('earlier.occurred_at', '<', 'warehouse_inventory_events.occurred_at')
-                            ->orWhere(function ($sameTime): void {
-                                $sameTime
-                                    ->whereColumn(
-                                        'earlier.occurred_at',
-                                        'warehouse_inventory_events.occurred_at',
-                                    )
-                                    ->whereColumn('earlier.id', '<', 'warehouse_inventory_events.id');
-                            });
-                    });
-            })
+        $openingGrains = $pinnedEvents
+            ->filter(static fn (WarehouseInventoryEvent $event): bool => in_array(
+                $event->opening_basis,
+                ['verified_zero', 'opening_inventory', 'prior_verified_closing'],
+                true,
+            ))
+            ->mapWithKeys(static fn (WarehouseInventoryEvent $event): array => [
+                implode(':', [
+                    $event->warehouse_id,
+                    $event->project_id ?? 'null',
+                    $event->material_id,
+                    $event->unit_dimension,
+                    $event->unit_code,
+                    $event->conversion_version,
+                ]) => true,
+            ]);
+        $missingOpening = $grains
+            ->keys()
+            ->reject(static fn (string $grain): bool => $openingGrains->has($grain))
             ->count();
         $invalidTransfers = DB::query()
             ->fromSub(

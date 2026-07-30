@@ -340,13 +340,13 @@ final class SupplyReportingHardeningTest extends TestCase
         );
 
         foreach ([
-            "cycle_filter_event.evidence->>'project_id'",
-            "cycle_filter_event.evidence->>'requester_id'",
-            "cycle_filter_event.evidence->>'buyer_id'",
-            "cycle_filter_event.evidence->>'material_id'",
-            "cycle_filter_event.evidence->>'category'",
-            "cycle_filter_event.evidence->>'amount'",
-            "cycle_filter_event.evidence->>'priority'",
+            "cycle_owner.dimensions->>'project_id'",
+            "cycle_owner.dimensions->>'requester_id'",
+            "cycle_owner.dimensions->>'buyer_id'",
+            "cycle_owner.dimensions->>'material_id'",
+            "cycle_owner.dimensions->>'category'",
+            "cycle_owner.dimensions->>'amount'",
+            "cycle_owner.dimensions->>'priority'",
         ] as $persistedDimension) {
             self::assertStringContainsString($persistedDimension, $universe);
         }
@@ -419,7 +419,8 @@ final class SupplyReportingHardeningTest extends TestCase
             .'InventoryRiskReadinessProbe.php',
         );
 
-        self::assertStringContainsString('$eligible = (clone $events)', $readiness);
+        self::assertStringContainsString('$eligible = $grains->count()', $readiness);
+        self::assertStringContainsString('$this->grainUniverse->collect(', $readiness);
         self::assertStringContainsString('(clone $events)', $readiness);
         self::assertStringContainsString("'transfer_pair_key'", $readiness);
         self::assertStringNotContainsString('WarehouseMovement::query()', $readiness);
@@ -473,6 +474,75 @@ final class SupplyReportingHardeningTest extends TestCase
         ] as $identityFence) {
             self::assertStringContainsString($identityFence, $supply, $identityFence);
         }
+    }
+
+    public function test_drill_down_is_bounded_by_snapshot_cutoff_and_pinned_source_ids(): void
+    {
+        $resolver = $this->source('app/Support/Reporting/EloquentOwnerDrillDown.php');
+
+        self::assertStringContainsString('?string $rowSourceIdsColumn = null', $resolver);
+        self::assertStringContainsString('?string $sourceCutoffColumn = null', $resolver);
+        self::assertStringContainsString("\$query->whereIn('id', \$sourceIds)", $resolver);
+        self::assertStringContainsString("\$snapshot->dimensions['as_of']", $resolver);
+        self::assertStringContainsString("\$query->where(\$sourceCutoffColumn, '<=', \$cutoff)", $resolver);
+
+        foreach ([
+            'Procurement/Reporting/Cycle/Queries/ProcurementCycleRowQuery.php' => [
+                "rowSourceIdsColumn: 'process_event_ids'",
+                "sourceCutoffColumn: 'occurred_at'",
+            ],
+            'Procurement/Reporting/Supply/DrillDown/SupplyReliabilityDrillDownProvider.php' => [
+                "rowSourceIdsColumn: 'lifecycle_event_ids'",
+                "sourceCutoffColumn: 'occurred_at'",
+            ],
+            'BasicWarehouse/Reporting/InventoryRisk/DrillDown/InventoryRiskDrillDownProvider.php' => [
+                "rowSourceIdsColumn: 'inventory_event_ids'",
+                "sourceCutoffColumn: 'occurred_at'",
+            ],
+            'Procurement/Reporting/Award/Queries/SupplierAwardRowQuery.php' => [
+                "['decision_version']",
+                "sourceCutoffColumn: 'selected_at'",
+            ],
+        ] as $path => $contracts) {
+            $source = $this->source('app/BusinessModules/Features/'.$path);
+            foreach ($contracts as $contract) {
+                self::assertStringContainsString($contract, $source, $path);
+            }
+        }
+    }
+
+    public function test_award_recorder_validates_every_comparable_version_owner(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Award/Services/'
+            .'SupplierAwardDecisionVersionRecorder.php',
+        );
+
+        self::assertStringContainsString("->whereIn('id', \$comparableProposalVersionIds)", $source);
+        self::assertStringContainsString(
+            '$versions->count() !== count($comparableProposalVersionIds)',
+            $source,
+        );
+        self::assertStringContainsString(
+            'foreach ($comparableProposalVersionIds as $proposalVersionId)',
+            $source,
+        );
+        self::assertStringContainsString(
+            '(int) $version->organization_id !== $organizationId',
+            $source,
+        );
+        self::assertStringContainsString(
+            '(int) $version->supplier_request_id !== $supplierRequestId',
+            $source,
+        );
+        self::assertStringContainsString(
+            "hash('sha256', CanonicalJson::encode(\$version->dimension_snapshot))",
+            $source,
+        );
+        self::assertStringContainsString(
+            "(int) (\$version->dimension_snapshot['supplier_party_id'] ?? 0)",
+            $source,
+        );
     }
 
     public function test_inventory_opening_reconciliation_is_project_bound(): void

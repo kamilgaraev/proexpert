@@ -33,6 +33,8 @@ final readonly class EloquentOwnerDrillDown
         ?string $rowProjectIdColumn = 'project_id',
         bool $requiresAudit = false,
         bool $requiresSensitive = false,
+        ?string $rowSourceIdsColumn = null,
+        ?string $sourceCutoffColumn = null,
     ): ReportDrillDownResult {
         if ($context->scope->canonicalIdentity() !== $snapshot->scope->canonicalIdentity()) {
             throw new DomainException('Report scope does not match snapshot scope.');
@@ -81,6 +83,20 @@ final readonly class EloquentOwnerDrillDown
             ->orderBy('id');
         foreach ($additionalRelationColumns as $column) {
             $query->where($column, $row->getAttribute($column));
+        }
+        if ($rowSourceIdsColumn !== null) {
+            $sourceIds = $row->getAttribute($rowSourceIdsColumn);
+            if (! is_array($sourceIds) || $sourceIds === []) {
+                throw new DomainException('Report drill-down pinned source identities are invalid.');
+            }
+            $query->whereIn('id', $sourceIds);
+        }
+        if ($sourceCutoffColumn !== null) {
+            $cutoff = $snapshot->dimensions['as_of'] ?? null;
+            if (! is_string($cutoff) || trim($cutoff) === '') {
+                throw new DomainException('Report drill-down cutoff is unavailable.');
+            }
+            $query->where($sourceCutoffColumn, '<=', $cutoff);
         }
 
         if ($request->cursor !== null) {

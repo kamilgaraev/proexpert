@@ -220,6 +220,7 @@ return new class extends Migration
             $table->unsignedBigInteger('demand_snapshot_id')->nullable();
             $table->unsignedBigInteger('reorder_policy_version_id')->nullable();
             $table->jsonb('quality_warnings');
+            $table->jsonb('inventory_event_ids');
             $table->unique(['organization_id', 'snapshot_id', 'row_key'], 'inventory_risk_row_key_unique');
             $table->index(
                 ['organization_id', 'snapshot_id', 'balance_date', 'warehouse_id', 'project_id', 'material_id', 'risk_status', 'row_key'],
@@ -284,6 +285,9 @@ SQL);
         DB::statement('ALTER TABLE warehouse_daily_balance_rows ADD CONSTRAINT daily_balance_equation_check CHECK (closing_on_hand = opening_on_hand + receipts + inbound_transfers + returns + positive_adjustments - issues - outbound_transfers - negative_adjustments)');
         DB::statement('ALTER TABLE inventory_demand_snapshots ADD CONSTRAINT inventory_demand_values_check CHECK (horizon_days > 0 AND approved_quantity >= 0 AND source_version > 0)');
         DB::statement('ALTER TABLE inventory_reorder_policy_versions ADD CONSTRAINT inventory_policy_order_check CHECK (policy_version > 0 AND minimum_quantity >= 0 AND reorder_point_quantity >= minimum_quantity AND target_quantity >= reorder_point_quantity AND safety_stock_quantity >= 0)');
+        DB::statement('CREATE UNIQUE INDEX inventory_demand_effective_grain_unique ON inventory_demand_snapshots (organization_id, warehouse_id, project_id, material_id, horizon_days, unit_dimension, unit_code, conversion_version, effective_from) NULLS NOT DISTINCT');
+        DB::statement('CREATE UNIQUE INDEX inventory_policy_version_grain_unique ON inventory_reorder_policy_versions (organization_id, warehouse_id, project_id, material_id, policy_version) NULLS NOT DISTINCT');
+        DB::statement('CREATE UNIQUE INDEX inventory_policy_effective_grain_unique ON inventory_reorder_policy_versions (organization_id, warehouse_id, project_id, material_id, effective_from) NULLS NOT DISTINCT');
         DB::statement("ALTER TABLE inventory_risk_snapshots ADD CONSTRAINT inventory_risk_quality_check CHECK (quality_status IN ('complete','partial','invalid'))");
         DB::statement("ALTER TABLE inventory_risk_snapshots ADD CONSTRAINT inventory_risk_reconciliation_check CHECK (reconciliation_status IN ('matched','mismatch','not_applicable'))");
         DB::statement('ALTER TABLE inventory_risk_rows ADD CONSTRAINT inventory_risk_available_check CHECK (available_quantity = closing_on_hand - reserved_quantity AND available_quantity >= 0)');

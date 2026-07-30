@@ -78,7 +78,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                 ),
             );
         $eligibleItemIds = (clone $ownerItems)->select('purchase_order_items.id');
-        $eligible = (clone $ownerItems)->distinct()->count('purchase_order_items.id');
+        $ownerEligible = (clone $ownerItems)->distinct()->count('purchase_order_items.id');
         $promises = PurchaseOrderPromiseVersion::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('promise_version', 1)
@@ -106,6 +106,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         ]);
         $eligiblePromiseIds = (clone $promises)->select('id');
         $projected = (clone $promises)->distinct()->count('purchase_order_item_id');
+        $eligible = $query->filters->values === [] ? $ownerEligible : $projected;
         $missingPromise = max(0, $eligible - $projected);
         $missingSent = (clone $promises)
             ->whereNotExists(function ($builder) use ($context, $query): void {

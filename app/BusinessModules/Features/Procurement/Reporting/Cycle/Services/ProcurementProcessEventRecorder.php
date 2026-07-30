@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementCycleOwnerExpectationVersion;
 use DateTimeInterface;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -67,13 +68,22 @@ final readonly class ProcurementProcessEventRecorder
                 'event_owner_request.budget_amount',
                 'event_owner_request.budget_currency',
                 'event_owner_site_request.priority',
+                'event_owner_request.organization_id',
             ]);
-        if ($owner === null) {
+        if ($owner === null
+            || (int) $owner->organization_id !== $organizationId
+            || ($projectId !== null && (int) $owner->project_id !== $projectId)) {
             throw new DomainException('Procurement process event owner is unavailable.');
         }
         $supplierPartyId = $purchaseOrderId === null
-            ? DB::table('supplier_requests')->where('id', $supplierRequestId)->value('supplier_party_id')
-            : DB::table('purchase_orders')->where('id', $purchaseOrderId)->value('supplier_party_id');
+            ? DB::table('supplier_requests')
+                ->where('id', $supplierRequestId)
+                ->where('organization_id', $organizationId)
+                ->value('supplier_party_id')
+            : DB::table('purchase_orders')
+                ->where('id', $purchaseOrderId)
+                ->where('organization_id', $organizationId)
+                ->value('supplier_party_id');
         $evidence = array_merge($evidence, [
             'project_id' => $owner->project_id,
             'requester_id' => $owner->requester_id,
@@ -125,6 +135,8 @@ final readonly class ProcurementProcessEventRecorder
                     throw new DomainException('Procurement process event idempotency conflict.');
                 }
 
+                $this->pinExpectation($existing);
+
                 return $existing;
             }
 
@@ -140,8 +152,47 @@ final readonly class ProcurementProcessEventRecorder
                 throw new DomainException('Procurement process events must be monotonic.');
             }
 
-            return ProcurementProcessEvent::query()->create($attributes);
+            $created = ProcurementProcessEvent::query()->create($attributes);
+            $this->pinExpectation($created);
+
+            return $created;
         }, 3);
+    }
+
+    private function pinExpectation(ProcurementProcessEvent $event): void
+    {
+        $existing = ProcurementCycleOwnerExpectationVersion::query()
+            ->where('organization_id', $event->organization_id)
+            ->where('purchase_request_line_id', $event->purchase_request_line_id)
+            ->where('source_event_id', $event->source_event_id)
+            ->first();
+        if ($existing instanceof ProcurementCycleOwnerExpectationVersion) {
+            return;
+        }
+        $latest = ProcurementCycleOwnerExpectationVersion::query()
+            ->where('organization_id', $event->organization_id)
+            ->where('purchase_request_line_id', $event->purchase_request_line_id)
+            ->orderByDesc('expectation_version')
+            ->lockForUpdate()
+            ->first();
+        $version = $latest instanceof ProcurementCycleOwnerExpectationVersion
+            ? ((int) $latest->expectation_version) + 1
+            : 1;
+        $dimensions = is_array($event->evidence) ? $event->evidence : [];
+        ProcurementCycleOwnerExpectationVersion::query()->create([
+            'organization_id' => $event->organization_id,
+            'purchase_request_id' => $event->purchase_request_id,
+            'purchase_request_line_id' => $event->purchase_request_line_id,
+            'expectation_version' => $version,
+            'dimensions' => $dimensions,
+            'effective_from' => $event->occurred_at,
+            'source_event_id' => $event->source_event_id,
+            'source_hash' => hash('sha256', CanonicalJson::encode([
+                'dimensions' => $dimensions,
+                'effective_from' => $event->occurred_at->format(DATE_ATOM),
+                'source_event_id' => $event->source_event_id,
+            ])),
+        ]);
     }
 
     private function canonical(array $attributes): array

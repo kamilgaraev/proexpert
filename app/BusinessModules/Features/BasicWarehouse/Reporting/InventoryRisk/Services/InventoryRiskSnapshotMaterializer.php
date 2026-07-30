@@ -274,6 +274,14 @@ final readonly class InventoryRiskSnapshotMaterializer
                     'demand_snapshot_id' => $demand?->getKey(),
                     'reorder_policy_version_id' => $policy?->getKey(),
                     'quality_warnings' => $warnings,
+                    'inventory_event_ids' => $events->filter(
+                        static fn (WarehouseInventoryEvent $event): bool =>
+                            (int) $event->warehouse_id === (int) $balance->warehouse_id
+                            && (int) $event->material_id === (int) $balance->material_id
+                            && ($event->project_id === null
+                                ? $balance->project_id === null
+                                : (int) $event->project_id === (int) $balance->project_id),
+                    )->pluck('id')->map(static fn (mixed $id): int => (int) $id)->values()->all(),
                 ];
             }
 

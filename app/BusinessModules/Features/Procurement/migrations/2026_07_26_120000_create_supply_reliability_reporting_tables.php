@@ -228,6 +228,7 @@ return new class extends Migration
             $table->char('value_currency', 3)->nullable();
             $table->string('value_basis', 128)->nullable();
             $table->jsonb('quality_warnings');
+            $table->jsonb('lifecycle_event_ids');
             $table->unique(['organization_id', 'snapshot_id', 'row_key'], 'supply_row_key_unique');
             $table->index(
                 ['organization_id', 'snapshot_id', 'supplier_id', 'project_id', 'promised_month', 'delay_bucket', 'row_key'],

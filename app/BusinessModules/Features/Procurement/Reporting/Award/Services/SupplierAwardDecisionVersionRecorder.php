@@ -54,20 +54,47 @@ final readonly class SupplierAwardDecisionVersionRecorder
         if (! hash_equals(hash('sha256', implode(',', $comparableProposalVersionIds)), $comparableSetHash)) {
             throw new DomainException('Award comparable proposal set hash is invalid.');
         }
-        $selectedVersion = SupplierProposalVersion::query()
-            ->whereKey($selectedProposalVersionId)
-            ->where('organization_id', $organizationId)
-            ->first();
-        if (! $selectedVersion instanceof SupplierProposalVersion
-            || $selectedVersion->supplier_party_id === null
-            || (int) $selectedVersion->supplier_request_id !== $supplierRequestId
-            || ! is_array($selectedVersion->dimension_snapshot)
-            || ! is_string($selectedVersion->dimension_hash)
-            || ! hash_equals(
-                hash('sha256', CanonicalJson::encode($selectedVersion->dimension_snapshot)),
-                $selectedVersion->dimension_hash,
-            )) {
-            throw new DomainException('Selected proposal version lacks immutable award dimensions.');
+        $requestOwner = DB::table('supplier_requests as award_request')
+            ->join('purchase_requests as award_purchase_request', 'award_purchase_request.id', '=', 'award_request.purchase_request_id')
+            ->join('site_requests as award_site_request', 'award_site_request.id', '=', 'award_purchase_request.site_request_id')
+            ->where('award_request.id', $supplierRequestId)
+            ->where('award_request.organization_id', $organizationId)
+            ->where('award_purchase_request.organization_id', $organizationId)
+            ->first([
+                'award_purchase_request.id as purchase_request_id',
+                'award_site_request.project_id',
+            ]);
+        if ($requestOwner === null
+            || ($purchaseRequestId !== null && (int) $requestOwner->purchase_request_id !== $purchaseRequestId)
+            || ($projectId !== null && (int) $requestOwner->project_id !== $projectId)) {
+            throw new DomainException('Supplier award request owner is invalid.');
+        }
+        $versions = SupplierProposalVersion::query()
+            ->whereIn('id', $comparableProposalVersionIds)
+            ->get()
+            ->keyBy('id');
+        if ($versions->count() !== count($comparableProposalVersionIds)) {
+            throw new DomainException('Award comparable proposal set is incomplete.');
+        }
+        foreach ($comparableProposalVersionIds as $proposalVersionId) {
+            $version = $versions->get($proposalVersionId);
+            if (! $version instanceof SupplierProposalVersion
+                || (int) $version->organization_id !== $organizationId
+                || (int) $version->supplier_request_id !== $supplierRequestId
+                || $version->supplier_party_id === null
+                || ! is_array($version->dimension_snapshot)
+                || ! is_string($version->dimension_hash)
+                || ! hash_equals(
+                    hash('sha256', CanonicalJson::encode($version->dimension_snapshot)),
+                    $version->dimension_hash,
+                )
+                || (int) ($version->dimension_snapshot['supplier_party_id'] ?? 0) !== (int) $version->supplier_party_id) {
+                throw new DomainException('Comparable proposal version lacks immutable award ownership.');
+            }
+        }
+        $selectedVersion = $versions->get($selectedProposalVersionId);
+        if (! $selectedVersion instanceof SupplierProposalVersion) {
+            throw new DomainException('Selected proposal version is unavailable.');
         }
         $proposalDimensions = $selectedVersion->dimension_snapshot;
         $dimensionSnapshot = [

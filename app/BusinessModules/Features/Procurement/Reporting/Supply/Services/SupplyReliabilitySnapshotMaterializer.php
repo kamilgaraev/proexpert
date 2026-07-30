@@ -139,8 +139,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             ->select([
                 'purchase_order_items.id',
                 'purchase_order_items.purchase_order_id',
-                'purchase_order_items.updated_at',
-                'owner_order.updated_at as order_updated_at',
+                'owner_order.sent_at',
                 'owner_order.confirmed_at',
                 'owner_order.cancelled_at',
                 'owner_order.status as order_status',
@@ -225,13 +224,17 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $events = $events->whereIn('promise_version_id', $includedPromiseIds)->values();
             $eventsByLine = $events->groupBy('purchase_order_item_id');
         }
+        if ($query->filters->values !== []) {
+            $filteredItemIds = $promises->pluck('purchase_order_item_id')->all();
+            $ownerItems = $ownerItems->whereIn('id', $filteredItemIds)->values();
+        }
         $sourceHash = $this->sourceHashes->make(
             $query->canonicalJson,
             [
                 $policy->source_hash,
                 ...$ownerItems->map(static fn ($item): string => hash(
                     'sha256',
-                    $item->id.':'.$item->purchase_order_id.':'.$item->updated_at.':'.$item->order_updated_at,
+                    $item->id.':'.$item->purchase_order_id.':'.$item->sent_at,
                 ))->all(),
                 ...$promises->pluck('source_hash')->all(),
                 ...$events->pluck('source_hash')->all(),
@@ -365,6 +368,9 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                     'value_currency' => $metric->valueCurrency,
                     'value_basis' => $metric->valueBasis,
                     'quality_warnings' => [],
+                    'lifecycle_event_ids' => $lineEvents->pluck('id')->map(
+                        static fn (mixed $id): int => (int) $id,
+                    )->values()->all(),
                 ];
             }
 

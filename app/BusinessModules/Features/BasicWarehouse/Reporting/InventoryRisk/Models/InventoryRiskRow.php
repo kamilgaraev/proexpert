@@ -31,6 +31,7 @@ final class InventoryRiskRow extends Model
             'demand_snapshot_id' => 'integer',
             'reorder_policy_version_id' => 'integer',
             'quality_warnings' => 'array',
+            'inventory_event_ids' => 'array',
         ];
     }
 }

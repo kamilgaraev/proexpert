@@ -92,6 +92,8 @@ final readonly class ProcurementCycleRowQuery implements ReportDrillDownProvider
             sourceResourceKind: 'purchase_request_line',
             sourceResourceIdColumn: 'purchase_request_line_id',
             requiresAudit: true,
+            rowSourceIdsColumn: 'process_event_ids',
+            sourceCutoffColumn: 'occurred_at',
         );
     }
 }

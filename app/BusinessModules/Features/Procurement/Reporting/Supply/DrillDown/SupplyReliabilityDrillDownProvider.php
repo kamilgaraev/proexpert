@@ -46,6 +46,8 @@ final readonly class SupplyReliabilityDrillDownProvider implements ReportDrillDo
             sourceResourceKind: 'purchase_order_item',
             sourceResourceIdColumn: 'purchase_order_item_id',
             requiresSensitive: true,
+            rowSourceIdsColumn: 'lifecycle_event_ids',
+            sourceCutoffColumn: 'occurred_at',
         );
     }
 }

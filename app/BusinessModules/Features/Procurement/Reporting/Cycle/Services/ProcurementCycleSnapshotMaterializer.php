@@ -11,7 +11,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementProcessEvent as ProcessEventData;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementProcessTimeline;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementCyclePolicyVersion;
@@ -131,12 +130,6 @@ final readonly class ProcurementCycleSnapshotMaterializer
                 ->orWhere('effective_to', '>', $query->asOf))
             ->whereIn('purchase_order_id', $purchaseOrderIds)
             ->get();
-        $expectedItemsByOrder = PurchaseOrderItem::query()
-            ->whereIn('purchase_order_id', $purchaseOrderIds)
-            ->orderBy('purchase_order_id')
-            ->orderBy('id')
-            ->get(['id', 'purchase_order_id'])
-            ->groupBy('purchase_order_id');
         $supplyEvents = SupplyLifecycleEvent::query()
             ->where('organization_id', $organizationId)
             ->whereIn('purchase_order_id', $purchaseOrderIds)
@@ -163,18 +156,6 @@ final readonly class ProcurementCycleSnapshotMaterializer
             ->keys()
             ->map(static fn (mixed $id): int => (int) $id)
             ->all();
-        foreach ($expectedItemsByOrder as $purchaseOrderId => $orderItems) {
-            $expectedIds = $orderItems->pluck('id')->map(static fn (mixed $id): int => (int) $id)->sort()->values();
-            $promisedIds = $promises
-                ->where('purchase_order_id', $purchaseOrderId)
-                ->pluck('purchase_order_item_id')
-                ->map(static fn (mixed $id): int => (int) $id)
-                ->sort()
-                ->values();
-            if ($expectedIds->all() !== $promisedIds->all()) {
-                $incompletePurchaseOrderIds[] = (int) $purchaseOrderId;
-            }
-        }
         $incompletePurchaseOrderIds = array_values(array_unique($incompletePurchaseOrderIds));
         $events = $events->reject(
             static fn (ProcurementProcessEvent $event): bool => $event->event_code === 'fully_received'
@@ -188,13 +169,6 @@ final readonly class ProcurementCycleSnapshotMaterializer
                 ...$events->pluck('source_hash')->all(),
                 ...$promises->pluck('source_hash')->all(),
                 ...$supplyEvents->pluck('source_hash')->all(),
-                hash('sha256', CanonicalJson::encode(
-                    $expectedItemsByOrder->map(
-                        static fn ($items): array => $items->pluck('id')
-                            ->map(static fn (mixed $id): int => (int) $id)
-                            ->all(),
-                    )->all(),
-                )),
             ],
         );
         $existing = ProcurementCycleSnapshot::query()
@@ -270,6 +244,9 @@ final readonly class ProcurementCycleSnapshotMaterializer
                     'cohort_mature' => $metric->mature,
                     'outcome_code' => $metric->outcomeCode,
                     'stage_timestamps' => $timestamps,
+                    'process_event_ids' => $lineEvents->pluck('id')->map(
+                        static fn (mixed $id): int => (int) $id,
+                    )->values()->all(),
                     'stage_duration_seconds' => $metric->stageDurationSeconds,
                     'total_duration_seconds' => $metric->totalDurationSeconds,
                     'sla_numerator' => $metric->slaNumerator,

@@ -39,6 +39,26 @@ return new class extends Migration
                 'proc_cycle_event_timeline_idx',
             );
         });
+        Schema::create('procurement_cycle_owner_expectation_versions', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('purchase_request_id');
+            $table->unsignedBigInteger('purchase_request_line_id');
+            $table->unsignedInteger('expectation_version');
+            $table->jsonb('dimensions');
+            $table->timestampTz('effective_from');
+            $table->string('source_event_id', 128);
+            $table->char('source_hash', 64);
+            $table->timestampTz('recorded_at')->useCurrent();
+            $table->unique(
+                ['organization_id', 'purchase_request_line_id', 'expectation_version'],
+                'proc_cycle_expectation_version_unique',
+            );
+            $table->unique(
+                ['organization_id', 'purchase_request_line_id', 'source_event_id'],
+                'proc_cycle_expectation_source_unique',
+            );
+        });
 
         Schema::create('procurement_cycle_policy_versions', function (Blueprint $table): void {
             $table->bigIncrements('id');
@@ -106,6 +126,7 @@ return new class extends Migration
             $table->boolean('cohort_mature');
             $table->string('outcome_code', 32);
             $table->jsonb('stage_timestamps');
+            $table->jsonb('process_event_ids');
             $table->jsonb('stage_duration_seconds');
             $table->unsignedBigInteger('total_duration_seconds');
             $table->unsignedInteger('sla_numerator');
@@ -121,6 +142,7 @@ return new class extends Migration
         $this->installConstraints();
         $this->installAppendOnlyTriggers([
             'procurement_process_events',
+            'procurement_cycle_owner_expectation_versions',
             'procurement_cycle_policy_versions',
             'procurement_cycle_snapshots',
             'procurement_cycle_rows',
@@ -132,6 +154,7 @@ return new class extends Migration
         Schema::dropIfExists('procurement_cycle_rows');
         Schema::dropIfExists('procurement_cycle_snapshots');
         Schema::dropIfExists('procurement_cycle_policy_versions');
+        Schema::dropIfExists('procurement_cycle_owner_expectation_versions');
         Schema::dropIfExists('procurement_process_events');
     }
 

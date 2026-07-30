@@ -7,6 +7,9 @@ namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Se
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DTO\InventoryRiskGrain;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\InventoryDemandSnapshot;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\InventoryReorderPolicyVersion;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseDailyBalanceRow;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseDailyBalanceSnapshot;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
@@ -27,6 +30,7 @@ final readonly class WarehouseDailyBalanceMaterializer
     public function __construct(
         private OwnerSnapshotSourceHash $sourceHashes,
         private ReportSourceAccessPolicy $sourceAccess,
+        private InventoryRiskGrainUniverse $grainUniverse,
     ) {}
 
     public function materialize(
@@ -65,9 +69,66 @@ final readonly class WarehouseDailyBalanceMaterializer
             ->orderBy('occurred_at')
             ->orderBy('id')
             ->get();
+        $grains = $this->grainUniverse->collect(
+            $context->scope->organizationId,
+            $eventCutoff,
+            $allowedWarehouseIds,
+            $context->scope->projectIds,
+            $events,
+        );
+        $planningSourceHashes = [
+            ...InventoryDemandSnapshot::query()
+                ->where('organization_id', $context->scope->organizationId)
+                ->where('effective_from', '<=', $eventCutoff)
+                ->where(fn (Builder $builder): Builder => $builder
+                    ->whereNull('effective_to')
+                    ->orWhere('effective_to', '>', $eventCutoff))
+                ->when(
+                    $allowedWarehouseIds !== null,
+                    static fn (Builder $builder): Builder => $builder->where(
+                        static fn (Builder $scope): Builder => $scope
+                            ->whereNull('warehouse_id')
+                            ->orWhereIn('warehouse_id', $allowedWarehouseIds),
+                    ),
+                )
+                ->when(
+                    $context->scope->projectIds !== [],
+                    static fn (Builder $builder): Builder => $builder->where(
+                        static fn (Builder $scope): Builder => $scope
+                            ->whereNull('project_id')
+                            ->orWhereIn('project_id', $context->scope->projectIds),
+                    ),
+                )
+                ->pluck('source_hash')
+                ->all(),
+            ...InventoryReorderPolicyVersion::query()
+                ->where('organization_id', $context->scope->organizationId)
+                ->where('effective_from', '<=', $eventCutoff)
+                ->where(fn (Builder $builder): Builder => $builder
+                    ->whereNull('effective_to')
+                    ->orWhere('effective_to', '>', $eventCutoff))
+                ->when(
+                    $allowedWarehouseIds !== null,
+                    static fn (Builder $builder): Builder => $builder->where(
+                        static fn (Builder $scope): Builder => $scope
+                            ->whereNull('warehouse_id')
+                            ->orWhereIn('warehouse_id', $allowedWarehouseIds),
+                    ),
+                )
+                ->when(
+                    $context->scope->projectIds !== [],
+                    static fn (Builder $builder): Builder => $builder->where(
+                        static fn (Builder $scope): Builder => $scope
+                            ->whereNull('project_id')
+                            ->orWhereIn('project_id', $context->scope->projectIds),
+                    ),
+                )
+                ->pluck('source_hash')
+                ->all(),
+        ];
         $sourceHash = $this->sourceHashes->make(
             $query->canonicalJson,
-            $events->pluck('source_hash')->all(),
+            [...$events->pluck('source_hash')->all(), ...$planningSourceHashes],
         );
         $existing = WarehouseDailyBalanceSnapshot::query()
             ->where('organization_id', $context->scope->organizationId)
@@ -85,6 +146,7 @@ final readonly class WarehouseDailyBalanceMaterializer
             $context,
             $events,
             $fromDate,
+            $grains,
             $progress,
             $query,
             $sourceHash,
@@ -92,11 +154,12 @@ final readonly class WarehouseDailyBalanceMaterializer
         ): WarehouseDailyBalanceSnapshot {
             $rows = [];
             $gapCount = 0;
-            foreach ($events->groupBy(fn (WarehouseInventoryEvent $event): string => $this->grain($event)) as $grainEvents) {
-                $grainFirst = $grainEvents->first();
-                if (! $grainFirst instanceof WarehouseInventoryEvent) {
+            $eventsByGrain = $events->groupBy(fn (WarehouseInventoryEvent $event): string => $this->grain($event));
+            foreach ($grains as $grain) {
+                if (! $grain instanceof InventoryRiskGrain) {
                     continue;
                 }
+                $grainEvents = $eventsByGrain->get($grain->key(), new Collection);
                 $eventsByDate = $grainEvents->groupBy(
                     static fn (WarehouseInventoryEvent $event): string => ReportingBalanceDay::resolve(
                         $event->occurred_at,
@@ -164,10 +227,10 @@ final readonly class WarehouseDailyBalanceMaterializer
                         }
                         $rows[] = [
                             'organization_id' => $context->scope->organizationId,
-                            'row_key' => $this->rowKey($grainFirst, $balanceDate),
-                            'warehouse_id' => $grainFirst->warehouse_id,
-                            'project_id' => $grainFirst->project_id,
-                            'material_id' => $grainFirst->material_id,
+                            'row_key' => $this->rowKey($grain, $balanceDate),
+                            'warehouse_id' => $grain->warehouseId,
+                            'project_id' => $grain->projectId,
+                            'material_id' => $grain->materialId,
                             'balance_date' => $balanceDate,
                             'opening_on_hand' => $this->quantity($openingOnHand),
                             'receipts' => $this->quantity($receipts),
@@ -180,9 +243,9 @@ final readonly class WarehouseDailyBalanceMaterializer
                             'closing_on_hand' => $this->quantity($closingOnHand),
                             'reserved_quantity' => $this->quantity($reserved),
                             'available_quantity' => $this->quantity($available),
-                            'unit_dimension' => $grainFirst->unit_dimension,
-                            'unit_code' => $grainFirst->unit_code,
-                            'conversion_version' => $grainFirst->conversion_version,
+                            'unit_dimension' => $grain->unitDimension,
+                            'unit_code' => $grain->unitCode,
+                            'conversion_version' => $grain->conversionVersion,
                             'unit_price_minor' => $unitPriceMinor,
                             'currency' => $currency,
                             'currency_source' => $currencySource,
@@ -291,9 +354,9 @@ final readonly class WarehouseDailyBalanceMaterializer
         );
     }
 
-    private function rowKey(WarehouseInventoryEvent $event, string $balanceDate): string
+    private function rowKey(InventoryRiskGrain $grain, string $balanceDate): string
     {
-        return 'inventory_balance_'.hash('sha256', $this->grain($event).':'.$balanceDate);
+        return 'inventory_balance_'.hash('sha256', $grain->key().':'.$balanceDate);
     }
 
     private function quantity(BigDecimal $quantity): string
