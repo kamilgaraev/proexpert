@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProce
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DocumentVisualAttributeSummaryBuilder;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -42,7 +43,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                 ->where('document_id', $document->id)
                 ->where('source_version', $sourceVersion);
 
-            if (! (clone $base)->exists() || (clone $base)->where('status', '<>', DocumentProcessingUnitStatus::Completed->value)->exists()) {
+            if (! (clone $base)->exists() || $this->hasBlockingUnits($base)) {
                 return null;
             }
 
@@ -58,13 +59,16 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     ->where('source_version', $sourceVersion)
                     ->orderBy('page_number')
                     ->get();
-                $qualitySignals = $this->qualitySignals($pages->pluck('normalized_payload')->all());
-                $visualAttributes = $this->visualAttributes->summarize($pages->pluck('normalized_payload')->all());
+                $includedPages = $pages->reject(static fn ($page): bool => (string) $page->status === 'excluded');
+                $excludedCount = $pages->count() - $includedPages->count();
+                $status = $this->documentStatus($includedPages);
+                $qualitySignals = $this->qualitySignals($includedPages->pluck('normalized_payload')->all());
+                $visualAttributes = $this->visualAttributes->summarize($includedPages->pluck('normalized_payload')->all());
                 $document->forceFill([
-                    'extracted_text' => $pages->pluck('text')->filter()->implode("\n\n"),
+                    'extracted_text' => $includedPages->pluck('text')->filter()->implode("\n\n"),
                     'structured_payload' => [
                         'source_version' => $sourceVersion,
-                        'pages' => $pages->map(fn ($page): array => [
+                        'pages' => $includedPages->map(fn ($page): array => [
                             'page_number' => $page->page_number,
                             'text' => $page->text,
                             'confidence' => $page->confidence,
@@ -72,13 +76,14 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                         ])->all(),
                     ],
                     'page_count' => $pages->count(),
-                    'processed_page_count' => $pages->count(),
+                    'processed_page_count' => $includedPages->whereNotNull('text')->count(),
                     'units_finalized_source_version' => $sourceVersion,
-                    'status' => 'ready',
+                    'status' => $status,
                     'processing_stage' => 'completed',
                     'progress_percent' => 100,
-                    'quality_score' => 1.0,
-                    'quality_level' => 'good',
+                    'quality_score' => $status === 'ready' ? 1.0 : null,
+                    'quality_level' => $status === 'ready' ? 'good' : null,
+                    'quality_flags' => $this->qualityFlags($document, $excludedCount),
                     'facts_summary' => [
                         ...($qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals]),
                         ...$visualAttributes,
@@ -171,6 +176,53 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
         }
 
         return $result;
+    }
+
+    private function documentStatus(Collection $includedPages): string
+    {
+        if ($includedPages->isEmpty()) {
+            return 'needs_review';
+        }
+
+        if ($includedPages->contains(static fn ($page): bool => in_array((string) $page->status, ['queued', 'processing'], true))) {
+            return 'processing';
+        }
+
+        if ($includedPages->contains(static fn ($page): bool => in_array((string) $page->status, ['failed', 'needs_review'], true))) {
+            return 'needs_review';
+        }
+
+        return 'ready';
+    }
+
+    private function hasBlockingUnits(Builder $base): bool
+    {
+        return (clone $base)
+            ->where('status', '<>', DocumentProcessingUnitStatus::Completed->value)
+            ->whereDoesntHave('page', static function (Builder $query): void {
+                $query->where('status', 'excluded');
+            })
+            ->exists();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function qualityFlags(EstimateGenerationDocument $document, int $excludedCount): array
+    {
+        $flags = array_values(array_filter(
+            array_map('strval', is_array($document->quality_flags) ? $document->quality_flags : []),
+            static fn (string $flag): bool => ! in_array($flag, [
+                'document_unit_attempts_exhausted',
+                'pages_excluded_from_estimation',
+            ], true),
+        ));
+
+        if ($excludedCount > 0) {
+            $flags[] = 'pages_excluded_from_estimation';
+        }
+
+        return array_values(array_unique($flags));
     }
 
     /** @return Builder<EstimateGenerationDocument> */

@@ -8,18 +8,26 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
 final class RecoverStalledEstimateGenerationDocuments
 {
+    public function __construct(
+        private readonly DocumentUnitAggregateReconciler $unitAggregates,
+        private readonly ReconcileEstimateGenerationDocuments $sessions,
+        private readonly DocumentGenerationReadinessService $readiness,
+    ) {}
+
     public function handle(int $minimumAgeSeconds = 120, int $limit = 100): int
     {
+        $minimumAge = now()->subSeconds(max(30, $minimumAgeSeconds));
         $documents = EstimateGenerationDocument::query()
             ->with('session')
             ->where('status', 'queued')
-            ->where('updated_at', '<=', now()->subSeconds(max(30, $minimumAgeSeconds)))
+            ->where('updated_at', '<=', $minimumAge)
             ->orderBy('id')
             ->limit(max(1, $limit))
             ->get();
@@ -68,12 +76,69 @@ final class RecoverStalledEstimateGenerationDocuments
             $dispatched++;
         }
 
-        if ($dispatched > 0) {
+        $reconciled = $this->recoverReconciliation($minimumAge, max(1, $limit));
+
+        if ($dispatched > 0 || $reconciled > 0) {
             Log::info('[EstimateGeneration] Recovered stalled document jobs', [
                 'count' => $dispatched,
+                'reconciled_count' => $reconciled,
             ]);
         }
 
-        return $dispatched;
+        return $dispatched + $reconciled;
+    }
+
+    private function recoverReconciliation(\DateTimeInterface $minimumAge, int $limit): int
+    {
+        $documents = EstimateGenerationDocument::query()
+            ->whereIn('status', ['ready', 'needs_review'])
+            ->whereNotNull('source_version')
+            ->where('updated_at', '<=', $minimumAge)
+            ->where(function ($query): void {
+                $query
+                    ->whereNull('units_reconciled_source_version')
+                    ->orWhereColumn('units_reconciled_source_version', '<>', 'source_version');
+            })
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+
+        $reconciled = 0;
+
+        foreach ($documents as $document) {
+            try {
+                $sourceVersion = DocumentSourceVersion::fromDocument($document);
+                $this->unitAggregates->reconcile((int) $document->getKey(), $sourceVersion);
+                $document->refresh();
+                if ((string) $document->units_reconciled_source_version === $sourceVersion) {
+                    $reconciled++;
+                }
+            } catch (RuntimeException) {
+                continue;
+            }
+        }
+
+        $sessions = EstimateGenerationSession::query()
+            ->with('documents')
+            ->where('status', 'processing_documents')
+            ->where('updated_at', '<=', $minimumAge)
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+
+        foreach ($sessions as $session) {
+            $readiness = $this->readiness->evaluate($session);
+            if ((int) ($readiness['summary']['pending_count'] ?? 0) > 0) {
+                continue;
+            }
+
+            $before = (string) $session->status->value;
+            $settled = $this->sessions->reconcile($session);
+            if ((string) $settled->status->value !== $before) {
+                $reconciled++;
+            }
+        }
+
+        return $reconciled;
     }
 }

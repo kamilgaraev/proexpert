@@ -21,10 +21,15 @@ use function trans_message;
 final class ManageEstimateGenerationDocumentPages
 {
     public const STATUS_READY = 'ready';
+
     public const STATUS_NEEDS_REVIEW = 'needs_review';
+
     public const STATUS_QUEUED = 'queued';
+
     public const STATUS_PROCESSING = 'processing';
+
     public const STATUS_FAILED = 'failed';
+
     public const STATUS_EXCLUDED = 'excluded';
 
     public function __construct(
@@ -34,7 +39,7 @@ final class ManageEstimateGenerationDocumentPages
     ) {}
 
     /**
-     * @param list<int> $pageNumbers
+     * @param  list<int>  $pageNumbers
      */
     public function retry(
         EstimateGenerationSession $session,
@@ -144,7 +149,7 @@ final class ManageEstimateGenerationDocumentPages
     }
 
     /**
-     * @param list<int> $pageNumbers
+     * @param  list<int>  $pageNumbers
      */
     public function exclude(
         EstimateGenerationSession $session,
@@ -175,6 +180,8 @@ final class ManageEstimateGenerationDocumentPages
             ];
         }, 3);
         $session = $session->fresh(['documents']) ?? $session;
+        $session = $this->reconciler->reconcile($session);
+        $session = $session->fresh(['documents']) ?? $session;
 
         return new DocumentPageActionResult(
             $document,
@@ -186,7 +193,7 @@ final class ManageEstimateGenerationDocumentPages
     }
 
     /**
-     * @param list<int> $pageNumbers
+     * @param  list<int>  $pageNumbers
      */
     public function restore(
         EstimateGenerationSession $session,
@@ -216,6 +223,8 @@ final class ManageEstimateGenerationDocumentPages
             ];
         }, 3);
         $session = $session->fresh(['documents']) ?? $session;
+        $session = $this->reconciler->reconcile($session);
+        $session = $session->fresh(['documents']) ?? $session;
 
         return new DocumentPageActionResult(
             $document,
@@ -227,7 +236,7 @@ final class ManageEstimateGenerationDocumentPages
     }
 
     /**
-     * @param list<int> $pageNumbers
+     * @param  list<int>  $pageNumbers
      * @return array{0: EstimateGenerationSession, 1: EstimateGenerationDocument, 2: Collection<int, EstimateGenerationDocumentPage>}
      */
     private function lockScope(EstimateGenerationSession $session, EstimateGenerationDocument $document, int $expectedVersion, array $pageNumbers): array
@@ -331,7 +340,11 @@ final class ManageEstimateGenerationDocumentPages
                 ])->values()->all(),
             ],
             'processed_page_count' => $pages->whereNotNull('text')->count(),
+            'page_count' => $pageSummary['total'],
             'quality_flags' => array_values(array_unique($qualityFlags)),
+            'units_reconciled_source_version' => null,
+            'units_reconcile_claim_token' => null,
+            'units_reconcile_lease_expires_at' => null,
         ])->save();
     }
 

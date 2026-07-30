@@ -4,16 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverStalledEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ManageEstimateGenerationDocumentPagesRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDrawingElement;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDrawingElement;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationQuantityTakeoff;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationScopeInference;
@@ -187,14 +188,18 @@ class EstimateGenerationDocumentApiTest extends TestCase
 
         $this->assertTrue($excludedPayload['success']);
         $this->assertSame('ready', $excludedPayload['data']['document']['status']);
+        $this->assertSame(2, $excludedPayload['data']['document']['page_count']);
+        $this->assertSame(1, $excludedPayload['data']['document']['processed_page_count']);
         $this->assertSame('excluded', $excludedPayload['data']['pages'][1]['status']);
+        $this->assertSame(['total' => 2, 'included' => 1, 'excluded' => 1, 'action_required' => 0, 'processing' => 0], $excludedPayload['data']['page_summary']);
         $this->assertDatabaseHas('estimate_generation_documents', ['id' => $document->id, 'status' => 'ready']);
+        $this->assertDatabaseHas('estimate_generation_sessions', ['id' => $session->id, 'status' => 'ready_to_generate']);
         $this->assertDatabaseHas('estimate_generation_document_pages', ['id' => $second->id, 'status' => 'excluded']);
         $this->assertDatabaseHas('estimate_generation_document_facts', ['page_id' => $first->id]);
         $this->assertDatabaseMissing('estimate_generation_document_facts', ['page_id' => $second->id]);
 
         $restore = ManageEstimateGenerationDocumentPagesRequest::create('/pages/restore', 'POST', [
-            'state_version' => $session->state_version,
+            'state_version' => $excludedPayload['data']['document']['state_version'],
             'page_numbers' => [2],
         ]);
         $restore->setContainer($this->app)->setRedirector($this->app['redirect']);
@@ -205,7 +210,69 @@ class EstimateGenerationDocumentApiTest extends TestCase
 
         $this->assertTrue($restoredPayload['success']);
         $this->assertSame('ready', $restoredPayload['data']['document']['status']);
+        $this->assertSame(2, $restoredPayload['data']['document']['page_count']);
+        $this->assertSame(2, $restoredPayload['data']['document']['processed_page_count']);
         $this->assertSame('ready', $restoredPayload['data']['pages'][1]['status']);
+        $this->assertDatabaseHas('estimate_generation_sessions', ['id' => $session->id, 'status' => 'ready_to_generate']);
+    }
+
+    public function test_recovery_reconciles_ready_document_with_excluded_failed_unit(): void
+    {
+        [, , $session] = $this->makeSession();
+        $session->forceFill([
+            'status' => 'processing_documents',
+            'processing_stage' => 'processing_documents',
+            'processing_progress' => 5,
+            'updated_at' => now()->subMinutes(10),
+        ])->save();
+        $document = $this->makeDocument($session, 'ready');
+        $document->forceFill([
+            'source_version' => 'sha256:document',
+            'page_count' => null,
+            'processed_page_count' => 1,
+            'quality_flags' => ['document_unit_attempts_exhausted', 'pages_excluded_from_estimation'],
+            'units_finalized_source_version' => null,
+            'units_reconciled_source_version' => null,
+            'updated_at' => now()->subMinutes(10),
+        ])->save();
+        $first = $this->makeProcessedPage($document, 1, 'РЎС‚СЂР°РЅРёС†Р° 1');
+        $second = $this->makeProcessedPage($document, 2, 'РЎС‚СЂР°РЅРёС†Р° 2');
+        EstimateGenerationProcessingUnit::query()
+            ->whereKey($second->processing_unit_id)
+            ->update([
+                'status' => 'failed',
+                'attempt_count' => 3,
+                'failure_code' => 'unit_processing_failed',
+                'failure_fingerprint' => hash('sha256', 'unit-2'),
+                'failed_at' => now()->subMinutes(9),
+            ]);
+        $second->forceFill([
+            'status' => 'excluded',
+            'excluded_at' => now()->subMinutes(8),
+            'text' => null,
+            'text_hash' => null,
+        ])->save();
+
+        $recovered = app(RecoverStalledEstimateGenerationDocuments::class)->handle(120, 10);
+
+        $this->assertGreaterThanOrEqual(1, $recovered);
+        $this->assertDatabaseHas('estimate_generation_documents', [
+            'id' => $document->id,
+            'status' => 'ready',
+            'page_count' => 2,
+            'processed_page_count' => 1,
+            'units_finalized_source_version' => 'sha256:document',
+            'units_reconciled_source_version' => 'sha256:document',
+        ]);
+        $this->assertDatabaseHas('estimate_generation_sessions', [
+            'id' => $session->id,
+            'status' => 'ready_to_generate',
+        ]);
+
+        $document->refresh();
+        $this->assertSame(['pages_excluded_from_estimation'], $document->quality_flags);
+        $this->assertStringContainsString('РЎС‚СЂР°РЅРёС†Р° 1', (string) $document->extracted_text);
+        $this->assertStringNotContainsString('РЎС‚СЂР°РЅРёС†Р° 2', (string) $document->extracted_text);
     }
 
     public function test_retry_is_allowed_for_ready_document(): void
