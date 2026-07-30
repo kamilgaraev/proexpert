@@ -120,6 +120,9 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/confirm', [PurchaseOrderController::class, 'confirm'])
                 ->middleware('authorize:procurement.purchase_orders.confirm')
                 ->name('confirm');
+            Route::post('/{id}/cancel', [PurchaseOrderController::class, 'cancel'])
+                ->middleware('authorize:procurement.purchase_orders.delete')
+                ->name('cancel');
             Route::post('/{id}/mark-in-delivery', [PurchaseOrderController::class, 'markInDelivery'])
                 ->middleware('authorize:procurement.purchase_orders.mark_delivery')
                 ->name('mark_in_delivery');

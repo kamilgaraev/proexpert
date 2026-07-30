@@ -861,8 +861,30 @@ SQL);
         $promiseId = DB::table('purchase_order_promise_versions')->insertGetId($promiseAttributes);
 
         foreach ([
-            ['purchase_order_item_id' => $itemIds[1], 'source_id' => $orderId, 'key' => 'mismatched-item'],
-            ['purchase_order_item_id' => $itemIds[0], 'source_id' => $orderId + 999999, 'key' => 'missing-source'],
+            [
+                'purchase_order_item_id' => $itemIds[1],
+                'source_id' => $orderId,
+                'event_type' => 'sent',
+                'key' => 'mismatched-item',
+            ],
+            [
+                'purchase_order_item_id' => $itemIds[0],
+                'source_id' => $orderId + 999999,
+                'event_type' => 'sent',
+                'key' => 'missing-source',
+            ],
+            [
+                'purchase_order_item_id' => $itemIds[0],
+                'source_id' => $orderId,
+                'event_type' => 'confirmed',
+                'key' => 'unconfirmed-owner',
+            ],
+            [
+                'purchase_order_item_id' => $itemIds[0],
+                'source_id' => $orderId,
+                'event_type' => 'cancelled',
+                'key' => 'active-owner',
+            ],
         ] as $case) {
             DB::beginTransaction();
             try {
@@ -871,7 +893,7 @@ SQL);
                     'purchase_order_id' => $orderId,
                     'purchase_order_item_id' => $case['purchase_order_item_id'],
                     'promise_version_id' => $promiseId,
-                    'event_type' => 'sent',
+                    'event_type' => $case['event_type'],
                     'source_type' => 'purchase_order',
                     'source_id' => $case['source_id'],
                     'source_version' => 1,
@@ -919,6 +941,14 @@ SQL);
         );
         self::assertStringContainsString(
             'reversed_event.promise_version_id <> new.promise_version_id',
+            $lifecycle,
+        );
+        self::assertStringContainsString(
+            'new.signed_quantity <> -reversed_event.signed_quantity',
+            $lifecycle,
+        );
+        self::assertStringContainsString(
+            'source_line.reversal_warehouse_movement_id IS NULL',
             $lifecycle,
         );
     }

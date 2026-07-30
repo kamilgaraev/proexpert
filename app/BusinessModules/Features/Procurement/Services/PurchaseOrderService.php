@@ -205,6 +205,46 @@ class PurchaseOrderService
         }
     }
 
+    public function cancel(PurchaseOrder $order, string $reason): PurchaseOrder
+    {
+        return DB::transaction(function () use ($order, $reason): PurchaseOrder {
+            $locked = PurchaseOrder::query()
+                ->where('organization_id', $order->organization_id)
+                ->whereKey($order->id)
+                ->with(['items', 'receipts'])
+                ->lockForUpdate()
+                ->firstOrFail();
+            if (! in_array($locked->status, [
+                PurchaseOrderStatusEnum::SENT,
+                PurchaseOrderStatusEnum::CONFIRMED,
+            ], true)) {
+                throw new \DomainException(
+                    trans_message('procurement.purchase_orders.cancel_invalid_status'),
+                );
+            }
+            if ($locked->receipts->isNotEmpty()) {
+                throw new \DomainException(
+                    trans_message('procurement.purchase_orders.cancel_has_receipts'),
+                );
+            }
+
+            $occurredAt = CarbonImmutable::now('UTC');
+            $locked->forceFill([
+                'status' => PurchaseOrderStatusEnum::CANCELLED,
+                'cancelled_at' => $occurredAt,
+                'notes' => trim((string) $locked->notes)."\n".trim($reason),
+            ])->save();
+            $this->reportingLifecycle->orderCancelled($locked->fresh('items'), $occurredAt);
+
+            return $locked->fresh([
+                'items',
+                'supplier',
+                'supplierParty',
+                'purchaseRequest',
+            ]);
+        }, 3);
+    }
+
     public function receiveMaterials(
         PurchaseOrder $order,
         int $warehouseId,
@@ -432,7 +472,6 @@ class PurchaseOrderService
                 $actorId,
                 $occurredAt,
             );
-            $event = $this->reportingLifecycle->receiptReversed($line->fresh(), $reasonCode, $occurredAt);
             $metadata = is_array($line->metadata) ? $line->metadata : [];
             $corrections = is_array($metadata['reporting_return_events'] ?? null)
                 ? $metadata['reporting_return_events']
@@ -454,6 +493,11 @@ class PurchaseOrderService
                 'reversal_warehouse_movement_id' => $movement->id,
                 'reversal_idempotency_key' => $idempotencyKey,
             ])->save();
+            $event = $this->reportingLifecycle->receiptReversed(
+                $line->fresh(['purchaseReceipt', 'purchaseOrderItem', 'inventoryLot']),
+                $reasonCode,
+                $occurredAt,
+            );
 
             $order->update([
                 'status' => $this->lifecycleService->resolveOrderReceiptStatus($order->fresh()),

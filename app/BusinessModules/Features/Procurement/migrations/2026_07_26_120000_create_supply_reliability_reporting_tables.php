@@ -11,6 +11,9 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('purchase_orders', function (Blueprint $table): void {
+            $table->timestampTz('cancelled_at')->nullable();
+        });
         Schema::table('purchase_receipt_lines', function (Blueprint $table): void {
             $table->timestampTz('reversed_at')->nullable();
             $table->unsignedBigInteger('reversed_by_user_id')->nullable();
@@ -251,6 +254,18 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS most_purchase_order_item_reporting_identity_v1()');
             DB::statement('DROP TRIGGER IF EXISTS purchase_order_reporting_identity ON purchase_orders');
             DB::statement('DROP FUNCTION IF EXISTS most_purchase_order_reporting_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS purchase_request_supply_identity ON purchase_requests');
+            DB::statement('DROP FUNCTION IF EXISTS most_purchase_request_supply_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS site_request_supply_identity ON site_requests');
+            DB::statement('DROP FUNCTION IF EXISTS most_site_request_supply_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS supplier_supply_identity ON suppliers');
+            DB::statement('DROP FUNCTION IF EXISTS most_supplier_supply_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS warehouse_supply_identity ON organization_warehouses');
+            DB::statement('DROP FUNCTION IF EXISTS most_warehouse_supply_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS material_supply_identity ON materials');
+            DB::statement('DROP FUNCTION IF EXISTS most_material_supply_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS project_supply_identity ON projects');
+            DB::statement('DROP FUNCTION IF EXISTS most_project_supply_identity_v1()');
             DB::statement('DROP TRIGGER IF EXISTS supply_lifecycle_event_source_identity ON supply_lifecycle_events');
             DB::statement('DROP FUNCTION IF EXISTS most_supply_lifecycle_event_source_identity_v1()');
             DB::statement('DROP TRIGGER IF EXISTS supply_promise_source_identity ON purchase_order_promise_versions');
@@ -274,6 +289,9 @@ return new class extends Migration
                 'reversal_warehouse_movement_id',
                 'reversal_idempotency_key',
             ]);
+        });
+        Schema::table('purchase_orders', function (Blueprint $table): void {
+            $table->dropColumn('cancelled_at');
         });
     }
 
@@ -371,7 +389,11 @@ BEGIN
        OR NEW.purchase_order_item_id <> OLD.purchase_order_item_id
        OR NEW.quantity_received <> OLD.quantity_received
        OR NEW.price <> OLD.price
-       OR NEW.total_amount <> OLD.total_amount THEN
+       OR NEW.total_amount <> OLD.total_amount
+       OR (NEW.metadata->>'reporting_source_version')
+          IS DISTINCT FROM (OLD.metadata->>'reporting_source_version')
+       OR (NEW.metadata->>'reporting_posted_at')
+          IS DISTINCT FROM (OLD.metadata->>'reporting_posted_at') THEN
         RAISE EXCEPTION 'purchase receipt line source identity is immutable' USING ERRCODE = '55000';
     END IF;
     IF OLD.reversed_at IS NULL AND NEW.reversed_at IS NULL THEN
@@ -406,6 +428,24 @@ BEGIN
            OR reversal_movement.movement_type <> 'write_off'
            OR reversal_movement.operation_category IS DISTINCT FROM 'procurement_receipt_reversal'
            OR reversal_movement.quantity <> source_lot.original_quantity
+           OR reversal_movement.price IS DISTINCT FROM source_receipt_movement.price
+           OR reversal_movement.project_id IS DISTINCT FROM source_receipt_movement.project_id
+           OR (reversal_movement.metadata->>'purchase_order_item_id')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'purchase_order_item_id')
+           OR (reversal_movement.metadata->>'batch_number')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'batch_number')
+           OR (reversal_movement.metadata->>'reporting_source_version')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'reporting_source_version')
+           OR (reversal_movement.metadata->>'unit_dimension')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'unit_dimension')
+           OR (reversal_movement.metadata->>'unit_code')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'unit_code')
+           OR (reversal_movement.metadata->>'unit_conversion_version')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'unit_conversion_version')
+           OR (reversal_movement.metadata->>'currency')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'currency')
+           OR (reversal_movement.metadata->>'currency_source')
+              IS DISTINCT FROM (source_receipt_movement.metadata->>'currency_source')
            OR (reversal_movement.metadata->>'reversed_purchase_receipt_line_id')
               IS DISTINCT FROM NEW.id::text
            OR (reversal_movement.metadata->>'reversed_receipt_movement_id')
@@ -555,6 +595,25 @@ CREATE OR REPLACE FUNCTION most_purchase_order_reporting_identity_v1() RETURNS t
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF OLD.sent_at IS NOT NULL AND NEW.sent_at IS DISTINCT FROM OLD.sent_at THEN
+        RAISE EXCEPTION 'purchase order sent timestamp is immutable' USING ERRCODE = '55000';
+    END IF;
+    IF OLD.confirmed_at IS NOT NULL AND NEW.confirmed_at IS DISTINCT FROM OLD.confirmed_at THEN
+        RAISE EXCEPTION 'purchase order confirmed timestamp is immutable' USING ERRCODE = '55000';
+    END IF;
+    IF OLD.cancelled_at IS NOT NULL AND (
+        NEW.cancelled_at IS DISTINCT FROM OLD.cancelled_at
+        OR NEW.status <> 'cancelled'
+    ) THEN
+        RAISE EXCEPTION 'purchase order cancellation identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    IF OLD.cancelled_at IS NULL AND NEW.cancelled_at IS NOT NULL
+       AND NEW.status <> 'cancelled' THEN
+        RAISE EXCEPTION 'purchase order cancellation must be atomic' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.status = 'cancelled' AND NEW.cancelled_at IS NULL THEN
+        RAISE EXCEPTION 'purchase order cancellation timestamp is required' USING ERRCODE = '55000';
+    END IF;
     IF (
         EXISTS (
             SELECT 1
@@ -576,6 +635,7 @@ BEGIN
         OR NEW.supplier_id IS DISTINCT FROM OLD.supplier_id
         OR NEW.currency IS DISTINCT FROM OLD.currency
         OR NEW.pricing_source IS DISTINCT FROM OLD.pricing_source
+        OR NEW.delivery_date IS DISTINCT FROM OLD.delivery_date
         OR (NEW.metadata->>'warehouse_id') IS DISTINCT FROM (OLD.metadata->>'warehouse_id')
         OR (NEW.metadata->>'tax_basis') IS DISTINCT FROM (OLD.metadata->>'tax_basis')
         OR (NEW.metadata->>'freight_basis') IS DISTINCT FROM (OLD.metadata->>'freight_basis')
@@ -587,7 +647,133 @@ END
 $$;
 CREATE TRIGGER purchase_order_reporting_identity
 BEFORE UPDATE ON purchase_orders
-FOR EACH ROW EXECUTE FUNCTION most_purchase_order_reporting_identity_v1()
+FOR EACH ROW EXECUTE FUNCTION most_purchase_order_reporting_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_purchase_request_supply_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_orders source_order
+          JOIN purchase_order_promise_versions source_promise
+            ON source_promise.purchase_order_id = source_order.id
+         WHERE source_order.purchase_request_id = OLD.id
+    ) AND (
+        NEW.organization_id <> OLD.organization_id
+        OR NEW.site_request_id IS DISTINCT FROM OLD.site_request_id
+    ) THEN
+        RAISE EXCEPTION 'linked purchase request supply identity is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER purchase_request_supply_identity
+BEFORE UPDATE ON purchase_requests
+FOR EACH ROW EXECUTE FUNCTION most_purchase_request_supply_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_site_request_supply_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_requests source_request
+          JOIN purchase_orders source_order
+            ON source_order.purchase_request_id = source_request.id
+          JOIN purchase_order_promise_versions source_promise
+            ON source_promise.purchase_order_id = source_order.id
+         WHERE source_request.site_request_id = OLD.id
+    ) AND (
+        NEW.organization_id <> OLD.organization_id
+        OR NEW.project_id IS DISTINCT FROM OLD.project_id
+    ) THEN
+        RAISE EXCEPTION 'linked site request supply identity is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER site_request_supply_identity
+BEFORE UPDATE ON site_requests
+FOR EACH ROW EXECUTE FUNCTION most_site_request_supply_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_supplier_supply_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_order_promise_versions
+         WHERE supplier_id = OLD.id
+    ) AND NEW.organization_id <> OLD.organization_id THEN
+        RAISE EXCEPTION 'linked supply supplier ownership is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER supplier_supply_identity
+BEFORE UPDATE ON suppliers
+FOR EACH ROW EXECUTE FUNCTION most_supplier_supply_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_warehouse_supply_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_order_promise_versions
+         WHERE warehouse_id = OLD.id
+    ) AND NEW.organization_id <> OLD.organization_id THEN
+        RAISE EXCEPTION 'linked supply warehouse ownership is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER warehouse_supply_identity
+BEFORE UPDATE ON organization_warehouses
+FOR EACH ROW EXECUTE FUNCTION most_warehouse_supply_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_material_supply_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_order_promise_versions
+         WHERE material_id = OLD.id
+    ) AND NEW.organization_id <> OLD.organization_id THEN
+        RAISE EXCEPTION 'linked supply material ownership is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER material_supply_identity
+BEFORE UPDATE ON materials
+FOR EACH ROW EXECUTE FUNCTION most_material_supply_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_project_supply_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_order_promise_versions
+         WHERE project_id = OLD.id
+    ) AND NEW.organization_id <> OLD.organization_id THEN
+        RAISE EXCEPTION 'linked supply project ownership is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER project_supply_identity
+BEFORE UPDATE ON projects
+FOR EACH ROW EXECUTE FUNCTION most_project_supply_identity_v1()
 SQL);
     }
 
@@ -601,6 +787,10 @@ DECLARE source_order purchase_orders%ROWTYPE;
 DECLARE source_item purchase_order_items%ROWTYPE;
 DECLARE source_previous purchase_order_promise_versions%ROWTYPE;
 DECLARE source_project_id bigint;
+DECLARE source_project_organization_id bigint;
+DECLARE source_supplier_organization_id bigint;
+DECLARE source_warehouse_organization_id bigint;
+DECLARE source_material_organization_id bigint;
 DECLARE expected_warehouse_id bigint;
 DECLARE expected_tax_basis text;
 DECLARE expected_freight_basis text;
@@ -618,6 +808,18 @@ BEGIN
       JOIN site_requests site_request
         ON site_request.id = purchase_request.site_request_id
      WHERE purchase_request.id = source_order.purchase_request_id;
+    SELECT organization_id INTO source_project_organization_id
+      FROM projects
+     WHERE id = source_project_id;
+    SELECT organization_id INTO source_supplier_organization_id
+      FROM suppliers
+     WHERE id = source_order.supplier_id;
+    SELECT organization_id INTO source_warehouse_organization_id
+      FROM organization_warehouses
+     WHERE id = NULLIF(source_order.metadata->>'warehouse_id', '')::bigint;
+    SELECT organization_id INTO source_material_organization_id
+      FROM materials
+     WHERE id = source_item.material_id;
     expected_warehouse_id := NULLIF(source_order.metadata->>'warehouse_id', '')::bigint;
     expected_tax_basis := COALESCE(
         NULLIF(source_item.metadata->>'tax_basis', ''),
@@ -645,6 +847,14 @@ BEGIN
        OR source_item.material_id IS DISTINCT FROM NEW.material_id
        OR source_order.supplier_id IS DISTINCT FROM NEW.supplier_id
        OR source_project_id IS DISTINCT FROM NEW.project_id
+       OR (source_project_id IS NOT NULL
+           AND source_project_organization_id IS DISTINCT FROM NEW.organization_id)
+       OR (source_order.supplier_id IS NOT NULL
+           AND source_supplier_organization_id IS DISTINCT FROM NEW.organization_id)
+       OR (expected_warehouse_id IS NOT NULL
+           AND source_warehouse_organization_id IS DISTINCT FROM NEW.organization_id)
+       OR (source_item.material_id IS NOT NULL
+           AND source_material_organization_id IS DISTINCT FROM NEW.organization_id)
        OR expected_warehouse_id IS DISTINCT FROM NEW.warehouse_id
        OR source_item.quantity IS DISTINCT FROM NEW.ordered_quantity
        OR expected_ordered_value_minor IS DISTINCT FROM NEW.ordered_value_minor
@@ -688,6 +898,8 @@ DECLARE reversed_event supply_lifecycle_events%ROWTYPE;
 DECLARE source_order purchase_orders%ROWTYPE;
 DECLARE source_line purchase_receipt_lines%ROWTYPE;
 DECLARE source_receipt purchase_receipts%ROWTYPE;
+DECLARE source_lot purchase_receipt_inventory_lots%ROWTYPE;
+DECLARE reversal_movement warehouse_movements%ROWTYPE;
 BEGIN
     SELECT * INTO source_promise
       FROM purchase_order_promise_versions
@@ -708,6 +920,14 @@ BEGIN
         SELECT * INTO source_receipt
           FROM purchase_receipts
          WHERE id = source_line.purchase_receipt_id;
+        SELECT * INTO source_lot
+          FROM purchase_receipt_inventory_lots
+         WHERE purchase_receipt_line_id = source_line.id;
+        IF source_line.reversal_warehouse_movement_id IS NOT NULL THEN
+            SELECT * INTO reversal_movement
+              FROM warehouse_movements
+             WHERE id = source_line.reversal_warehouse_movement_id;
+        END IF;
     END IF;
 
     IF source_promise.id IS NULL
@@ -725,6 +945,19 @@ BEGIN
                OR source_order.id <> NEW.purchase_order_id
                OR source_order.organization_id <> NEW.organization_id
                OR NEW.source_version <> 1
+               OR (NEW.event_type = 'sent' AND (
+                    source_order.sent_at IS NULL
+                    OR NEW.occurred_at::date <> source_order.sent_at::date
+               ))
+               OR (NEW.event_type = 'confirmed' AND (
+                    source_order.confirmed_at IS NULL
+                    OR NEW.occurred_at::date <> source_order.confirmed_at::date
+               ))
+               OR (NEW.event_type = 'cancelled' AND (
+                    source_order.cancelled_at IS NULL
+                    OR NEW.occurred_at <> source_order.cancelled_at
+                    OR source_order.status <> 'cancelled'
+               ))
            )
        )
        OR (
@@ -733,11 +966,18 @@ BEGIN
                NEW.source_type <> 'purchase_receipt_line'
                OR source_line.id IS NULL
                OR source_receipt.id IS NULL
-               OR source_line.purchase_order_item_id <> NEW.purchase_order_item_id
-               OR source_receipt.purchase_order_id <> NEW.purchase_order_id
-               OR source_receipt.organization_id <> NEW.organization_id
-               OR (source_line.metadata->>'reporting_source_version')
-                  IS DISTINCT FROM NEW.source_version::text
+                OR source_line.purchase_order_item_id <> NEW.purchase_order_item_id
+                OR source_receipt.purchase_order_id <> NEW.purchase_order_id
+                OR source_receipt.organization_id <> NEW.organization_id
+                OR source_receipt.warehouse_id IS DISTINCT FROM source_promise.warehouse_id
+                OR (source_line.metadata->>'reporting_source_version')
+                   IS DISTINCT FROM NEW.source_version::text
+                OR (NEW.event_type = 'received' AND (
+                    NEW.signed_quantity <> source_line.quantity_received
+                    OR NULLIF(source_line.metadata->>'reporting_posted_at', '') IS NULL
+                    OR NEW.occurred_at <>
+                       (source_line.metadata->>'reporting_posted_at')::timestamptz
+                ))
            )
        )
        OR (
@@ -747,9 +987,29 @@ BEGIN
                OR reversed_event.organization_id <> NEW.organization_id
                OR reversed_event.purchase_order_id <> NEW.purchase_order_id
                OR reversed_event.purchase_order_item_id <> NEW.purchase_order_item_id
-               OR reversed_event.promise_version_id <> NEW.promise_version_id
-               OR reversed_event.event_type <> 'received'
-               OR reversed_event.occurred_at > NEW.occurred_at
+                OR reversed_event.promise_version_id <> NEW.promise_version_id
+                OR reversed_event.event_type <> 'received'
+                OR reversed_event.source_type <> NEW.source_type
+                OR reversed_event.source_id <> NEW.source_id
+                OR reversed_event.source_version <> NEW.source_version
+                OR NEW.signed_quantity <> -reversed_event.signed_quantity
+                OR reversed_event.occurred_at > NEW.occurred_at
+                OR source_line.reversed_at IS NULL
+                OR source_line.reversed_at <> NEW.occurred_at
+                OR source_lot.id IS NULL
+                OR source_lot.reversed_quantity <> source_lot.original_quantity
+                OR source_line.reversal_warehouse_movement_id IS NULL
+                OR reversal_movement.id IS NULL
+                OR reversal_movement.organization_id <> NEW.organization_id
+                OR reversal_movement.warehouse_id <> source_receipt.warehouse_id
+                OR reversal_movement.material_id <> source_promise.material_id
+                OR reversal_movement.quantity <> source_lot.original_quantity
+                OR reversal_movement.movement_type <> 'write_off'
+                OR reversal_movement.operation_category <> 'procurement_receipt_reversal'
+                OR (reversal_movement.metadata->>'reversed_purchase_receipt_line_id')
+                   IS DISTINCT FROM source_line.id::text
+                OR (reversal_movement.metadata->>'reversed_receipt_movement_id')
+                   IS DISTINCT FROM source_lot.receipt_warehouse_movement_id::text
            )
        ) THEN
         RAISE EXCEPTION 'supply lifecycle event does not match its promise'

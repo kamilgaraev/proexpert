@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
 use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
+use App\BusinessModules\Features\Procurement\Http\Requests\CancelPurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\ProcurementAuditLogResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseContractResource;
@@ -274,6 +275,35 @@ class PurchaseOrderController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('procurement.purchase_orders.confirm_error'), 500);
+        }
+    }
+
+    public function cancel(CancelPurchaseOrderRequest $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $request->validated();
+            $order = PurchaseOrder::forOrganization($organizationId)->find($id);
+            if (! $order) {
+                return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
+            }
+
+            return AdminResponse::success(
+                new PurchaseOrderResource($this->service->cancel($order, (string) $validated['reason'])),
+                trans_message('procurement.purchase_orders.cancelled'),
+            );
+        } catch (\DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('procurement.purchase_orders.cancel.error', [
+                'id' => $id,
+                'user_id' => $request->user()?->getAuthIdentifier(),
+            ]);
+
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.cancel_error'),
+                500,
+            );
         }
     }
 

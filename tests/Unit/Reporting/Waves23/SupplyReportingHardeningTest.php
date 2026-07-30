@@ -293,6 +293,48 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringNotContainsString('chunkById', $legacyMigration);
     }
 
+    public function test_supply_owner_lifecycle_is_exact_and_reconciled(): void
+    {
+        $migration = $this->source(
+            'app/BusinessModules/Features/Procurement/migrations/'
+            .'2026_07_26_120000_create_supply_reliability_reporting_tables.php',
+        );
+        $readiness = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/'
+            .'SupplyReliabilityReadinessProbe.php',
+        );
+        $service = $this->source(
+            'app/BusinessModules/Features/Procurement/Services/PurchaseOrderService.php',
+        );
+        $lifecycle = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/'
+            .'ProcurementReportingLifecycleRecorder.php',
+        );
+        foreach ([
+            "source_order.confirmed_at IS NULL",
+            "source_order.cancelled_at IS NULL",
+            "NEW.signed_quantity <> source_line.quantity_received",
+            "NEW.signed_quantity <> -reversed_event.signed_quantity",
+            "source_line.reversal_warehouse_movement_id IS NULL",
+            "most_purchase_request_supply_identity_v1",
+            "most_site_request_supply_identity_v1",
+        ] as $fence) {
+            self::assertStringContainsString($fence, $migration);
+        }
+        foreach ([
+            'missingOwnerLifecycle',
+            'missingReceiptLifecycle',
+            'missingReversalLifecycle',
+        ] as $reconciliation) {
+            self::assertStringContainsString($reconciliation, $readiness);
+        }
+        self::assertStringContainsString('orderCancelled(', $lifecycle);
+        self::assertLessThan(
+            strpos($service, '$this->reportingLifecycle->receiptReversed('),
+            strpos($service, "'reversal_idempotency_key' => \$idempotencyKey"),
+        );
+    }
+
     private function source(string $path): string
     {
         $source = file_get_contents($this->root.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $path));

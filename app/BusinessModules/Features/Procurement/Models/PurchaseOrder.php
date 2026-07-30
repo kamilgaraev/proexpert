@@ -40,6 +40,7 @@ class PurchaseOrder extends Model
         'delivery_date',
         'sent_at',
         'confirmed_at',
+        'cancelled_at',
         'notes',
         'metadata',
     ];
@@ -50,6 +51,7 @@ class PurchaseOrder extends Model
         'delivery_date' => 'date',
         'sent_at' => 'immutable_datetime',
         'confirmed_at' => 'immutable_datetime',
+        'cancelled_at' => 'immutable_datetime',
         'total_amount' => 'decimal:2',
         'supplier_snapshot' => 'array',
         'metadata' => 'array',

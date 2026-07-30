@@ -258,6 +258,25 @@ final readonly class ProcurementReportingLifecycleRecorder
         }
     }
 
+    public function orderCancelled(PurchaseOrder $order, CarbonImmutable $occurredAt): void
+    {
+        $order->loadMissing('items');
+        foreach ($order->items as $item) {
+            $promise = $this->originalPromise($order, $item);
+            $this->supplyEvents->record(
+                $promise,
+                'cancelled',
+                'purchase_order',
+                (int) $order->id,
+                1,
+                '0',
+                $occurredAt,
+                'purchase_order_item:'.$item->id.':cancelled',
+                evidence: ['purchase_order_id' => (int) $order->id],
+            );
+        }
+    }
+
     public function receipt(PurchaseReceiptLine $line, int $actorId): void
     {
         $line->loadMissing([
