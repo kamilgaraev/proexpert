@@ -85,4 +85,15 @@ final readonly class LookaheadEligibilityInput
             'zone_id' => $this->zoneId,
         ];
     }
+
+    public function eligibilityExplanation(): array
+    {
+        return [
+            'task_status' => $this->status,
+            'task_type' => $this->taskType,
+            'task_state_version' => $this->taskStateVersion,
+            'task_state_source_hash' => $this->taskStateSourceHash,
+            'task_state_effective_at' => $this->taskStateEffectiveAt?->format(DATE_ATOM),
+        ];
+    }
 }

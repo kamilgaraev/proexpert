@@ -36,6 +36,18 @@ return new class extends Migration
                 version
             )'
         );
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION lookahead_reporting_history_append_only_guard()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'lookahead_reporting_history_is_append_only' USING ERRCODE = '55000';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER lookahead_policy_versions_append_only
+BEFORE UPDATE OR DELETE ON lookahead_readiness_policy_versions
+FOR EACH ROW EXECUTE FUNCTION lookahead_reporting_history_append_only_guard();
+SQL);
 
         Schema::create('work_constraint_transition_events', function (Blueprint $table): void {
             $table->bigIncrements('id');
@@ -60,6 +72,11 @@ return new class extends Migration
             $table->unique(['organization_id', 'source_event_id'], 'constraint_source_event_unique');
             $table->index(['organization_id', 'project_id', 'occurred_at', 'id'], 'constraint_event_order');
         });
+        DB::statement(
+            'CREATE TRIGGER work_constraint_transition_events_append_only
+            BEFORE UPDATE OR DELETE ON work_constraint_transition_events
+            FOR EACH ROW EXECUTE FUNCTION lookahead_reporting_history_append_only_guard()'
+        );
 
         Schema::create('lookahead_readiness_snapshots', function (Blueprint $table): void {
             $table->string('id', 26)->primary();
@@ -120,5 +137,6 @@ return new class extends Migration
         Schema::dropIfExists('lookahead_readiness_snapshots');
         Schema::dropIfExists('work_constraint_transition_events');
         Schema::dropIfExists('lookahead_readiness_policy_versions');
+        DB::statement('DROP FUNCTION IF EXISTS lookahead_reporting_history_append_only_guard()');
     }
 };

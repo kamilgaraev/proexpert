@@ -19,8 +19,7 @@ final readonly class LookaheadReadinessReportProvider implements ReportDataProvi
     public function __construct(
         private LookaheadReadinessSnapshotMaterializer $snapshots,
         private OwnerProjectionResultFactory $results,
-    ) {
-    }
+    ) {}
 
     public function code(): string
     {
@@ -48,6 +47,7 @@ final readonly class LookaheadReadinessReportProvider implements ReportDataProvi
             $snapshot,
             LookaheadReadinessSnapshot::class,
             'lookahead_events',
+            ['task_state_source_hash'],
         );
     }
 }

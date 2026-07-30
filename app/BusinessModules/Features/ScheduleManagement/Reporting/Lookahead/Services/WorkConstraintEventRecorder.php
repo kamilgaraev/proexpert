@@ -85,6 +85,18 @@ final readonly class WorkConstraintEventRecorder
                 $sourceEventId,
                 $linkedResource,
             ): WorkConstraintTransitionEvent {
+                DB::select(
+                    'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                    ['lookahead-constraint-event:'.$constraint->organization_id.':'.$constraint->id],
+                );
+                $lockedConstraint = WorkConstraint::withTrashed()
+                    ->where('organization_id', $constraint->organization_id)
+                    ->whereKey($constraint->id)
+                    ->lockForUpdate()
+                    ->first();
+                if ($lockedConstraint === null) {
+                    throw new InvalidArgumentException('work_constraint_event_parent_unavailable');
+                }
                 $existing = WorkConstraintTransitionEvent::query()
                     ->where('organization_id', $constraint->organization_id)
                     ->where('source_event_id', $sourceEventId)
@@ -96,7 +108,6 @@ final readonly class WorkConstraintEventRecorder
                 $version = (int) WorkConstraintTransitionEvent::query()
                     ->where('organization_id', $constraint->organization_id)
                     ->where('constraint_id', $constraint->id)
-                    ->lockForUpdate()
                     ->max('event_version');
 
                 return WorkConstraintTransitionEvent::query()->create([
@@ -124,13 +135,13 @@ final readonly class WorkConstraintEventRecorder
                         $linkedResource,
                     ])),
                 ]);
-            });
+            }, 5);
         } catch (QueryException $exception) {
             $existing = WorkConstraintTransitionEvent::query()
                 ->where('organization_id', $constraint->organization_id)
                 ->where('source_event_id', $sourceEventId)
                 ->first();
-            if ($existing === null || !hash_equals((string) $existing->source_hash, $sourceHash)) {
+            if ($existing === null || ! hash_equals((string) $existing->source_hash, $sourceHash)) {
                 throw $exception;
             }
 
@@ -142,12 +153,12 @@ final readonly class WorkConstraintEventRecorder
     {
         $metadata = (array) $constraint->metadata;
         $linked = $metadata['linked_action'] ?? $metadata['linked_entity'] ?? null;
-        if (!is_array($linked)) {
+        if (! is_array($linked)) {
             return null;
         }
         $type = $linked['type'] ?? null;
         $id = $linked['id'] ?? null;
-        if (!is_string($type) || trim($type) === '' || !is_numeric($id) || (int) $id < 1) {
+        if (! is_string($type) || trim($type) === '' || ! is_numeric($id) || (int) $id < 1) {
             throw new InvalidArgumentException('work_constraint_linked_resource_invalid');
         }
 

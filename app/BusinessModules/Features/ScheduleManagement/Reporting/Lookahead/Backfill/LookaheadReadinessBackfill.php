@@ -12,6 +12,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillResult;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessPolicyDefinition;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessPolicyVersionWriter;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\WorkConstraintEventRecorder;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -20,8 +22,8 @@ final readonly class LookaheadReadinessBackfill implements ReportSourceBackfill
 {
     public function __construct(
         private WorkConstraintEventRecorder $events,
-    ) {
-    }
+        private LookaheadReadinessPolicyVersionWriter $policies,
+    ) {}
 
     public function sourceCode(): string
     {
@@ -76,6 +78,12 @@ final readonly class LookaheadReadinessBackfill implements ReportSourceBackfill
         ReportSourceBackfillContext $context,
         ReportSourceBackfillBatch $batch,
     ): ReportSourceBackfillResult {
+        $defaultPolicy = $this->policies->publish(
+            LookaheadReadinessPolicyDefinition::default(
+                organizationId: $context->organizationId,
+                effectiveFrom: new DateTimeImmutable('2026-07-30T00:00:00+00:00'),
+            ),
+        );
         $projected = [];
         $gapCount = 0;
         foreach ($batch->rows as $row) {
@@ -85,6 +93,7 @@ final readonly class LookaheadReadinessBackfill implements ReportSourceBackfill
                 ->find((int) ($row['source_id'] ?? 0));
             if ($constraint === null || $constraint->created_at === null) {
                 $gapCount++;
+
                 continue;
             }
 
@@ -121,9 +130,9 @@ final readonly class LookaheadReadinessBackfill implements ReportSourceBackfill
                     $metadata = (array) $constraint->metadata;
                     $evidenceRef = $metadata['waiver_evidence_ref'] ?? null;
                     $waiverUntil = $metadata['waiver_until'] ?? null;
-                    if (!is_string($evidenceRef)
+                    if (! is_string($evidenceRef)
                         || trim($evidenceRef) === ''
-                        || !is_string($waiverUntil)
+                        || ! is_string($waiverUntil)
                         || trim($waiverUntil) === ''
                     ) {
                         throw new InvalidArgumentException('lookahead_waiver_history_unproven');
@@ -160,7 +169,10 @@ final readonly class LookaheadReadinessBackfill implements ReportSourceBackfill
             gapCount: $gapCount,
             unknownCount: 0,
             inputHash: $batch->inputHash,
-            outputHash: hash('sha256', CanonicalJson::encode($projected)),
+            outputHash: hash('sha256', CanonicalJson::encode([
+                'default_policy_hash' => $defaultPolicy->sourceHash,
+                'projected_constraints' => $projected,
+            ])),
         );
     }
 

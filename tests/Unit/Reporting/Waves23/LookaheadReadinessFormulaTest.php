@@ -46,7 +46,7 @@ final class LookaheadReadinessFormulaTest extends TestCase
         self::assertSame('LOOKAHEAD_WAIVER_EXPIRED', $metric->warningCode);
     }
 
-    public function test_resolved_rfi_without_pinned_linked_evidence_is_partial(): void
+    public function test_resolved_rfi_without_pinned_linked_evidence_is_blocked(): void
     {
         $policy = new LookaheadReadinessPolicyVersion(
             1,
@@ -61,11 +61,12 @@ final class LookaheadReadinessFormulaTest extends TestCase
             'Europe/Moscow',
             str_repeat('c', 64),
         );
-        $metric = (new LookaheadReadinessFormula())->evaluate($this->input(1, [
+        $metric = (new LookaheadReadinessFormula)->evaluate($this->input(1, [
             new LookaheadConstraintState(10, 'rfi_missing', 'high', 'resolved', null, null),
         ]), $policy);
 
-        self::assertTrue($metric->ready);
+        self::assertFalse($metric->ready);
+        self::assertSame([10], $metric->blockingConstraintIds);
         self::assertSame('LOOKAHEAD_LINKED_EVIDENCE_MISSING', $metric->warningCode);
     }
 
@@ -101,8 +102,8 @@ final class LookaheadReadinessFormulaTest extends TestCase
             [],
         );
 
-        self::assertFalse((new LookaheadReadinessFormula())->evaluate($completed, $policy)->eligible);
-        self::assertFalse((new LookaheadReadinessFormula())->evaluate($cancelled, $policy)->eligible);
+        self::assertFalse((new LookaheadReadinessFormula)->evaluate($completed, $policy)->eligible);
+        self::assertFalse((new LookaheadReadinessFormula)->evaluate($cancelled, $policy)->eligible);
     }
 
     private function input(int $taskId, array $constraints): LookaheadEligibilityInput

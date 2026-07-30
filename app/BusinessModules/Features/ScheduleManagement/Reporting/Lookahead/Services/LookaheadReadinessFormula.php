@@ -18,18 +18,18 @@ final readonly class LookaheadReadinessFormula
         LookaheadEligibilityInput $input,
         LookaheadReadinessPolicyVersion $policy,
     ): LookaheadReadinessMetric {
-        if (!$policy->appliesAt($input->asOf)) {
+        if (! $policy->appliesAt($input->asOf)) {
             throw new InvalidArgumentException('lookahead_policy_not_effective');
         }
 
         $horizonEnd = $input->asOf->add(new DateInterval('P'.$policy->horizonDays.'D'));
-        $eligible = !$input->container
-            && !in_array($input->status, ['completed', 'cancelled', 'canceled'], true)
+        $eligible = ! $input->container
+            && ! in_array($input->status, ['completed', 'cancelled', 'canceled'], true)
             && in_array($input->status, $policy->eligibleTaskStatuses, true)
             && $input->plannedStart >= $input->asOf
             && $input->plannedStart <= $horizonEnd;
 
-        if (!$eligible) {
+        if (! $eligible) {
             return new LookaheadReadinessMetric($input->taskId, false, false, [], 0, 0, null, 0);
         }
 
@@ -40,7 +40,7 @@ final readonly class LookaheadReadinessFormula
         $maxAge = 0;
 
         foreach ($input->constraints as $constraint) {
-            if (!$this->isMandatory($constraint, $policy)) {
+            if (! $this->isMandatory($constraint, $policy)) {
                 continue;
             }
 
@@ -48,9 +48,9 @@ final readonly class LookaheadReadinessFormula
             if ($constraint->status === 'waived') {
                 $waiverActive = $constraint->waiverUntil !== null
                     && $constraint->waiverUntil >= $input->asOf
-                    && (!$policy->waiverEvidenceRequired || trim((string) $constraint->waiverEvidenceRef) !== '');
+                    && (! $policy->waiverEvidenceRequired || trim((string) $constraint->waiverEvidenceRef) !== '');
                 $released = $waiverActive;
-                if (!$waiverActive) {
+                if (! $waiverActive) {
                     $warning = $constraint->waiverUntil !== null && $constraint->waiverUntil < $input->asOf
                         ? 'LOOKAHEAD_WAIVER_EXPIRED'
                         : 'LOOKAHEAD_WAIVER_EVIDENCE_MISSING';
@@ -60,7 +60,17 @@ final readonly class LookaheadReadinessFormula
             if ($released) {
                 if ($this->requiresLinkedEvidence($constraint) && $constraint->linkedResourceId === null) {
                     $warning = 'LOOKAHEAD_LINKED_EVIDENCE_MISSING';
+                    $blockingIds[] = $constraint->constraintId;
+                    if (in_array($constraint->severity, $policy->hardSeverities, true)) {
+                        $hard++;
+                    } else {
+                        $soft++;
+                    }
+                    if ($constraint->openedAt !== null && $constraint->openedAt < $input->asOf) {
+                        $maxAge = max($maxAge, (int) $constraint->openedAt->diff($input->asOf)->days);
+                    }
                 }
+
                 continue;
             }
 
@@ -99,14 +109,14 @@ final readonly class LookaheadReadinessFormula
         $taskIds = [];
 
         foreach ($taskMetrics as $metric) {
-            if (!$metric instanceof LookaheadReadinessMetric) {
+            if (! $metric instanceof LookaheadReadinessMetric) {
                 throw new InvalidArgumentException('lookahead_summary_metric_invalid');
             }
             if (isset($taskIds[$metric->taskId])) {
                 throw new InvalidArgumentException('lookahead_summary_task_duplicate');
             }
             $taskIds[$metric->taskId] = true;
-            if (!$metric->eligible) {
+            if (! $metric->eligible) {
                 continue;
             }
 
@@ -136,7 +146,14 @@ final readonly class LookaheadReadinessFormula
     {
         $type = strtolower($constraint->type);
 
-        return str_contains($type, 'rfi') || str_contains($type, 'procurement');
+        return str_contains($type, 'rfi')
+            || str_contains($type, 'procurement')
+            || in_array($type, [
+                'design_question',
+                'labor_missing',
+                'machinery_missing',
+                'material_missing',
+            ], true);
     }
 
     private function ratio(int $numerator, int $denominator): string

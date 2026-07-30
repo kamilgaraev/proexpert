@@ -22,11 +22,12 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
 
     public function __construct(?ReportSourceObjectAccessAuthorizer $sourceAccess = null)
     {
-        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer();
+        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer;
         $this->reader = new ImmutableOwnerProjectionReader(
             LookaheadReadinessRow::class,
             LookaheadReadinessSnapshot::class,
             ['planned_start_date' => 'planned_start_date'],
+            ['task_state_source_hash'],
         );
     }
 
@@ -54,6 +55,13 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
                 'project_id' => $row['project_id'],
                 'schedule_id' => $row['schedule_id'],
                 'task_id' => $row['task_id'],
+                'task_status' => $row['task_status'],
+                'task_type' => $row['task_type'],
+                'task_state_version' => $row['task_state_version'],
+                ...(array_key_exists('task_state_source_hash', $row)
+                    ? ['task_state_source_hash' => $row['task_state_source_hash']]
+                    : []),
+                'task_state_effective_at' => $row['task_state_effective_at'],
                 'blocking_constraint_ids' => $row['blocking_constraint_ids'],
             ];
             if (($row['constraint_id'] ?? null) !== null) {

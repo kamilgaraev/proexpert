@@ -247,6 +247,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
 
                 foreach ($projectionRows as [$input, $metric, $constraint]) {
                     $payload = [
+                        ...$input->eligibilityExplanation(),
                         'project_id' => $input->projectId,
                         'schedule_id' => $input->scheduleId,
                         'task_id' => $input->taskId,
@@ -300,6 +301,13 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                         'payload' => $payload,
                         'source_refs' => [
                             ['type' => 'schedule_task', 'id' => $input->taskId, 'project_id' => $input->projectId],
+                            [
+                                'type' => 'schedule_task_state_version',
+                                'id' => $input->taskStateVersion,
+                                'project_id' => $input->projectId,
+                                'source_hash' => $input->taskStateSourceHash,
+                                'effective_at' => $input->taskStateEffectiveAt?->format(DATE_ATOM),
+                            ],
                             ...($constraint === null ? [] : [[
                                 'type' => 'work_constraint',
                                 'id' => $constraint->constraintId,
@@ -464,6 +472,11 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 'project_id',
                 'wbs_code',
                 'task_id',
+                'task_status',
+                'task_type',
+                'task_state_version',
+                'task_state_source_hash',
+                'task_state_effective_at',
                 'planned_start_date',
                 'eligible',
                 'ready',

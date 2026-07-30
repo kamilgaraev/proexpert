@@ -35,6 +35,7 @@ final readonly class LookaheadReadinessRowQuery implements ReportRowQuery
                 'constraint_age_days' => 'age_days',
                 'wbs_code' => 'wbs_code',
             ],
+            ['task_state_source_hash'],
         );
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -74,6 +75,18 @@ return new class extends Migration
                 'schedule_task_state_as_of'
             );
         });
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION schedule_reporting_history_append_only_guard()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'schedule_reporting_history_is_append_only' USING ERRCODE = '55000';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER schedule_task_state_versions_append_only
+BEFORE UPDATE OR DELETE ON schedule_task_state_versions
+FOR EACH ROW EXECUTE FUNCTION schedule_reporting_history_append_only_guard();
+SQL);
 
         Schema::create('baseline_schedule_variance_snapshots', function (Blueprint $table): void {
             $table->string('id', 26)->primary();
@@ -125,6 +138,7 @@ return new class extends Migration
         Schema::dropIfExists('baseline_schedule_variance_rows');
         Schema::dropIfExists('baseline_schedule_variance_snapshots');
         Schema::dropIfExists('schedule_task_state_versions');
+        DB::statement('DROP FUNCTION IF EXISTS schedule_reporting_history_append_only_guard()');
         Schema::dropIfExists('schedule_baseline_task_rows');
         Schema::dropIfExists('schedule_baseline_versions');
     }
