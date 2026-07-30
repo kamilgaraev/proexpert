@@ -7,6 +7,7 @@ namespace Tests\Contract\Reporting;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneACompletionRef;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceBuilder;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceValidator;
+use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBGateArtifactRecorder;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use Opis\JsonSchema\Validator as JsonSchemaValidator;
@@ -29,65 +30,62 @@ final class PlanOneBEndToEndContractTest extends TestCase
         $artifact = $directory.'/plan-1b-completion.json';
 
         try {
-            $recordKinds = [
-                'contract_json' => 'contract_case',
-                'architecture_json' => 'architecture_rule',
-                'unit_json' => 'unit_case',
-                'postgresql_json' => 'postgresql_case',
-                'cryptographic_json' => 'cryptographic_case',
-                'authorization_json' => 'authorization_case',
-                'queue_json' => 'queue_case',
-                'parity_json' => 'parity_case',
-                'performance_json' => 'performance_case',
-                's3_json' => 's3_case',
-                'observability_json' => 'observability_case',
-                'phpstan_json' => 'static_analysis_case',
-            ];
             $gateDirectory = $directory.'/build/reports/gates';
             self::assertTrue(mkdir($gateDirectory, 0777, true));
             $gateArtifacts = [];
             foreach ($fixture['gates'] as $gate) {
                 $gatePath = $gateDirectory.'/'.$gate['id'].'.json';
-                $testPath = substr($gate['command'], strlen('php vendor/bin/phpunit '), -strlen(' --no-coverage'));
-                $envelope = [
-                    'schema_version' => $fixture['schema_version'],
-                    'evidence_scope' => 'ci',
-                    'artifact_id' => $gate['artifacts'][0]['id'],
-                    'artifact_type' => $gate['artifacts'][0]['type'],
-                    'repository_revision' => $fixture['repository_revision'],
-                    'producer' => [
-                        'id' => 'phpunit-11',
-                        'test_path' => $testPath,
-                        'artifact_path' => 'build/reports/gates/'.$gate['id'].'.json',
-                    ],
-                    'gate' => [
-                        'id' => $gate['id'],
-                        'status' => $gate['status'],
-                        'command' => $gate['command'],
-                        'result' => $gate['result'],
-                        'duration_ms' => $gate['duration_ms'],
-                        'measurements' => $gate['measurements'],
-                    ],
-                    'records' => array_map(
+                $isStaticAnalysis = $gate['id'] === 'static_analysis';
+                $testPath = $isStaticAnalysis
+                    ? 'phpstan.neon.dist'
+                    : substr($gate['command'], strlen('php vendor/bin/phpunit '), -strlen(' --no-coverage'));
+                $stdout = json_encode([
+                    'tests' => $gate['result']['tests'],
+                    'assertions' => $gate['result']['assertions'],
+                    'cases' => array_map(
                         static fn (string $check): array => [
                             'id' => $check,
-                            'kind' => $recordKinds[$gate['artifacts'][0]['type']],
                             'status' => 'passed',
                             'tests' => 1,
                             'assertions' => 1,
                         ],
                         $gate['result']['required_checks'],
                     ),
-                ];
+                ], JSON_THROW_ON_ERROR);
+                $envelope = (new PlanOneBGateArtifactRecorder)->record(
+                    [
+                        'artifact_id' => $gate['artifacts'][0]['id'],
+                        'artifact_type' => $gate['artifacts'][0]['type'],
+                        'producer' => [
+                            'id' => $isStaticAnalysis ? 'static-analysis' : 'phpunit-11',
+                            'test_path' => $testPath,
+                            'artifact_path' => 'build/reports/gates/'.$gate['id'].'.json',
+                        ],
+                        'gate_id' => $gate['id'],
+                        'command' => $gate['command'],
+                        'required_checks' => $gate['result']['required_checks'],
+                        'measurements' => $gate['measurements'],
+                    ],
+                    [
+                        'command' => $gate['command'],
+                        'exit_code' => 0,
+                        'started_at' => '2026-07-30T11:59:59Z',
+                        'finished_at' => '2026-07-30T12:00:00Z',
+                        'duration_ms' => $gate['duration_ms'],
+                        'stdout' => $stdout,
+                        'stderr' => '',
+                    ],
+                    $fixture['repository_revision'],
+                );
                 $bytes = CanonicalJson::encode($envelope)."\n";
                 file_put_contents($gatePath, $bytes);
                 $gateArtifacts[] = [
-                    'path' => $gatePath,
+                    'path' => 'build/reports/gates/'.$gate['id'].'.json',
                     'sha256' => hash('sha256', $bytes),
                 ];
             }
 
-            $built = (new PlanOneBEvidenceBuilder($artifact))->build(
+            $built = (new PlanOneBEvidenceBuilder($artifact, null, $directory))->build(
                 $reference,
                 [
                     'repository_revision' => $fixture['repository_revision'],

@@ -71,6 +71,17 @@ final class PlanOneBCrossFileSymbolTest extends TestCase
         $fixture = $this->decode($this->root().'/tests/Fixtures/Reporting/plan-1b-completion.valid.json');
 
         foreach ($fixture['gates'] as $gate) {
+            if ($gate['id'] === 'static_analysis') {
+                self::assertSame(
+                    'php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php'
+                    .' && php vendor/bin/phpstan analyse --configuration=phpstan.neon.dist'
+                    .' app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php'
+                    .' app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php',
+                    $gate['command'],
+                );
+
+                continue;
+            }
             self::assertMatchesRegularExpression(
                 '/^php vendor\/bin\/phpunit (tests\/[A-Za-z0-9_\/]+Test\.php) --no-coverage$/D',
                 $gate['command'],

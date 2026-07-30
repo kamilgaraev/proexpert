@@ -2990,3 +2990,13 @@ Every accepted CI gate artifact now has a closed executable envelope with `evide
 The deterministic committed completion fixture uses `evidence_scope=fixture`; the builder can only produce `evidence_scope=ci`. Gate commands no longer reference undeclared suites: each exact command invokes an existing test file as `php vendor/bin/phpunit <path> --no-coverage`.
 
 The isolated Windows worktree uses its own untracked Composer vendor directory generated from the lock file. This prevents concurrent worktrees from replacing its production autoload classmap. The amended Task 14 non-database gate passes with `38 tests, 495 assertions`; database-backed, S3, queue, authorization, performance and deployment commands remain CI boundaries and were not executed locally.
+
+### Task 14 review amendment — round 3
+
+The JSON document is explicitly a structural contract. The executable PHP validator applies that structural contract plus runtime bindings that Draft 2020-12 cannot express: verified Plan 1a reference equality, repository revision propagation, artifact-byte digest binding, and equality between flattened and gate-local performance measurements. Shared tests prove structural agreement; separate tests name and prove the runtime-only bindings. Risk strings have identical trim, uniqueness and case-insensitive forbidden-family rules in Schema and PHP, without a non-semantic sort requirement.
+
+Gate artifacts are no longer assembled from caller-provided passed records. `PlanOneBGateArtifactRecorder` accepts a closed machine process result, requires the exact command and zero exit code, parses PHPUnit/static-analysis case output, and records timestamps, duration and SHA-256 digests of stdout and stderr. It alone constructs the typed case records consumed by the builder. Database, dispatch and current-authorization gates point to existing isolated Feature/Integration test files; the static-analysis gate contains the exact PHP syntax and PHPStan command chain.
+
+The builder constructor receives an explicit repository root while its locked public `build(ref, checks, time)` signature remains unchanged. Every input artifact path must be the exact canonical relative `build/reports/gates/<gate>.json`; `realpath` must remain beneath the repository root. Absolute paths, traversal and external suffix lookalikes are rejected.
+
+The amended Task 14 non-database gate passes with `41 tests, 500 assertions`. PostgreSQL, S3, queue, authorization, performance and deployment commands remain CI boundaries and were not executed locally.

@@ -61,27 +61,27 @@ final readonly class PlanOneBEvidenceValidator
         'plan1a_handoff' => 'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
         'ownership_boundary' => 'tests/Architecture/Reporting/PlanOneBOwnershipBoundaryTest.php',
         'run_state_machine' => 'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
-        'run_idempotency' => 'tests/Unit/Reporting/Actions/ReportRunHandlersTest.php',
+        'run_idempotency' => 'tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php',
         'snapshot_identity' => 'tests/Unit/Reporting/Execution/CanonicalReportSourceHashBuilderTest.php',
         'snapshot_seal_trust' => 'tests/Unit/Reporting/Execution/TrustedReportSnapshotSealVerifierTest.php',
         'typed_data_classification' => 'tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php',
         'rows_cursor_drill_parity' => 'tests/Contract/Reporting/ReportRowsParityContractTest.php',
         'row_stream_shape' => 'tests/Unit/Reporting/Rows/ReportRowChunkReaderTest.php',
         'export_state_machine' => 'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
-        'export_idempotency' => 'tests/Unit/Reporting/Actions/ReportExportHandlersTest.php',
-        'dispatch_outbox_atomicity' => 'tests/Unit/Reporting/Dispatch/ReportAuditIntentContractTest.php',
-        'dispatch_lease_recovery' => 'tests/Unit/Reporting/Dispatch/ReportDispatchIntentPublisherTest.php',
-        'dispatch_dead_letter' => 'tests/Unit/Reporting/Dispatch/ReportDispatchBackoffPolicyTest.php',
-        'audit_outbox_delivery' => 'tests/Integration/Reporting/Audit/CoreReportAuditIntentConsumerTest.php',
-        'current_async_authorization' => 'tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php',
+        'export_idempotency' => 'tests/Feature/Reporting/Persistence/EloquentReportExportStoreTest.php',
+        'dispatch_outbox_atomicity' => 'tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php',
+        'dispatch_lease_recovery' => 'tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php',
+        'dispatch_dead_letter' => 'tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php',
+        'audit_outbox_delivery' => 'tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php',
+        'current_async_authorization' => 'tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorTest.php',
         'execution_attempt_leases' => 'tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php',
         'renderer_parity' => 'tests/Contract/Reporting/ReportExportParityContractTest.php',
         'pdf_renderer_budget' => 'tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php',
         'streaming_budget' => 'tests/Performance/Reporting/ReportExportStreamingBudgetTest.php',
         'file_service_call_graph' => 'tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php',
         's3_version_race' => 'tests/Integration/Reporting/Exports/S3ReportArtifactIntegrationTest.php',
-        'audit_fail_closed' => 'tests/Unit/Reporting/Audit/ReportAuditOutboxSchedulerTest.php',
-        'retention_exact_version' => 'tests/Unit/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php',
+        'audit_fail_closed' => 'tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php',
+        'retention_exact_version' => 'tests/Feature/Reporting/Retention/DeleteExpiredReportArtifactsServiceTest.php',
         'action_bindings' => 'tests/Architecture/Reporting/ReportingExecutionBindingsTest.php',
         'error_retryability' => 'tests/Unit/Reporting/Errors/ReportExecutionErrorMappingTest.php',
         'run_export_observability' => 'tests/Unit/Reporting/Evidence/PlanOneBEvidenceValidatorTest.php',
@@ -127,6 +127,7 @@ final readonly class PlanOneBEvidenceValidator
         'PlanOneACompletionVerifier',
         'PlanOneBEvidenceBuilder',
         'PlanOneBEvidenceValidator',
+        'PlanOneBGateArtifactRecorder',
     ];
 
     private const EXTERNAL_PLAN_OWNERS = [
@@ -195,6 +196,7 @@ final readonly class PlanOneBEvidenceValidator
             'artifact_type',
             'repository_revision',
             'producer',
+            'process',
             'gate',
             'records',
         ])
@@ -212,19 +214,22 @@ final readonly class PlanOneBEvidenceValidator
         [$artifactType, $requiredChecks] = self::GATE_SPECS[$gateId];
         $testPath = self::GATE_TEST_PATHS[$gateId];
         $artifactPath = 'build/reports/gates/'.$gateId.'.json';
+        $producerId = $gateId === 'static_analysis' ? 'static-analysis' : 'phpunit-11';
+        $producerTestPath = $gateId === 'static_analysis' ? 'phpstan.neon.dist' : $testPath;
         if ($envelope['artifact_id'] !== 'plan1b.gate.'.$gateId
             || $envelope['artifact_type'] !== $artifactType
-            || ! str_ends_with(str_replace('\\', '/', $sourcePath), '/'.$artifactPath)
+            || $sourcePath !== $artifactPath
             || ! is_array($envelope['producer'])
             || array_is_list($envelope['producer'])
             || ! $this->hasExactKeys($envelope['producer'], ['id', 'test_path', 'artifact_path'])
-            || $envelope['producer']['id'] !== 'phpunit-11'
-            || $envelope['producer']['test_path'] !== $testPath
+            || $envelope['producer']['id'] !== $producerId
+            || $envelope['producer']['test_path'] !== $producerTestPath
             || $envelope['producer']['artifact_path'] !== $artifactPath) {
             $this->fail();
         }
 
         $this->validateArtifactGate($envelope['gate'], $gateId, $artifactType, $requiredChecks);
+        $this->validateProcess($envelope['process'], $this->command($gateId), $envelope['gate']['duration_ms']);
         $this->validateRecords($envelope['records'], $requiredChecks, self::RECORD_KINDS[$artifactType]);
 
         return $envelope['gate'];
@@ -360,9 +365,7 @@ final readonly class PlanOneBEvidenceValidator
                 $this->fail();
             }
         }
-        $sorted = $risks;
-        sort($sorted, SORT_STRING);
-        if ($risks !== $sorted || count($risks) !== count(array_unique($risks))) {
+        if (count($risks) !== count(array_unique($risks))) {
             $this->fail();
         }
     }
@@ -423,8 +426,39 @@ final readonly class PlanOneBEvidenceValidator
         }
     }
 
+    private function validateProcess(mixed $process, string $command, int $durationMs): void
+    {
+        if (! is_array($process)
+            || array_is_list($process)
+            || ! $this->hasExactKeys($process, [
+                'command',
+                'exit_code',
+                'started_at',
+                'finished_at',
+                'duration_ms',
+                'stdout_sha256',
+                'stderr_sha256',
+            ])
+            || $process['command'] !== $command
+            || $process['exit_code'] !== 0
+            || $process['duration_ms'] !== $durationMs
+            || ! $this->isTimestamp($process['started_at'])
+            || ! $this->isTimestamp($process['finished_at'])
+            || ! $this->isSha256($process['stdout_sha256'])
+            || ! $this->isSha256($process['stderr_sha256'])) {
+            $this->fail();
+        }
+    }
+
     private function command(string $gateId): string
     {
+        if ($gateId === 'static_analysis') {
+            return 'php -l app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php'
+                .' && php vendor/bin/phpstan analyse --configuration=phpstan.neon.dist'
+                .' app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceBuilder.php'
+                .' app/BusinessModules/Core/Reporting/Application/Evidence/PlanOneBEvidenceValidator.php';
+        }
+
         return 'php vendor/bin/phpunit '.self::GATE_TEST_PATHS[$gateId].' --no-coverage';
     }
 

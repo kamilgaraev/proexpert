@@ -23,7 +23,7 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
         self::assertTrue($this->schemaAccepts($document));
         $this->validator($document)->validate($document);
         self::assertSame(
-            '507022367f5609ac901800dc0c419edadef8e4ba201c7b78c4fb1ad064045f88',
+            '25bfec46be0e26874a24cd765d2f5035f4164001a2cbbf842cd49cedf012da6a',
             hash('sha256', CanonicalJson::encode($document)),
         );
     }
@@ -112,6 +112,12 @@ final class PlanOneBEvidenceValidatorTest extends TestCase
             }],
             'forbidden evidence family' => ['forbidden evidence family', static function (array &$document): void {
                 $document['unresolved_risks'][] = 'subscription telemetry';
+            }],
+            'forbidden evidence family uppercase' => ['forbidden evidence family uppercase', static function (array &$document): void {
+                $document['unresolved_risks'][] = 'TELEMETRY';
+            }],
+            'untrimmed risk' => ['untrimmed risk', static function (array &$document): void {
+                $document['unresolved_risks'][] = ' leading space';
             }],
         ];
     }

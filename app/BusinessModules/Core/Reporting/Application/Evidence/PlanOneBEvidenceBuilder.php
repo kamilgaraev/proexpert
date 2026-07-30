@@ -18,15 +18,23 @@ final readonly class PlanOneBEvidenceBuilder
 
     private Closure $atomicRename;
 
+    private string $repositoryRoot;
+
     public function __construct(
         string $artifactPath = 'build/reports/plan-1b-completion.json',
         ?Closure $atomicRename = null,
+        ?string $repositoryRoot = null,
     ) {
         if (trim($artifactPath) !== $artifactPath || $artifactPath === '') {
             throw new RuntimeException('plan_one_b_evidence_artifact_path_invalid');
         }
         $this->artifactPath = $artifactPath;
         $this->atomicRename = $atomicRename ?? static fn (string $temporary, string $final): bool => rename($temporary, $final);
+        $resolvedRoot = realpath($repositoryRoot ?? getcwd());
+        if (! is_string($resolvedRoot) || ! is_dir($resolvedRoot)) {
+            throw new RuntimeException('plan_one_b_evidence_repository_root_invalid');
+        }
+        $this->repositoryRoot = rtrim(str_replace('\\', '/', $resolvedRoot), '/');
     }
 
     public function build(
@@ -103,15 +111,20 @@ final readonly class PlanOneBEvidenceBuilder
             || array_is_list($artifactInput)
             || ! $this->hasExactKeys($artifactInput, ['path', 'sha256'])
             || ! is_string($artifactInput['path'])
-            || trim($artifactInput['path']) !== $artifactInput['path']
-            || $artifactInput['path'] === ''
+            || preg_match('#^build/reports/gates/[a-z0-9_]+\.json$#D', $artifactInput['path']) !== 1
             || ! is_string($artifactInput['sha256'])
             || preg_match('/^[a-f0-9]{64}$/D', $artifactInput['sha256']) !== 1
-            || ! is_file($artifactInput['path'])
-            || is_link($artifactInput['path'])) {
+        ) {
             throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
         }
-        $bytes = file_get_contents($artifactInput['path']);
+        $absolutePath = realpath($this->repositoryRoot.'/'.$artifactInput['path']);
+        if (! is_string($absolutePath)
+            || ! str_starts_with(str_replace('\\', '/', $absolutePath), $this->repositoryRoot.'/build/reports/gates/')
+            || ! is_file($absolutePath)
+            || is_link($absolutePath)) {
+            throw new \InvalidArgumentException('plan_one_b_evidence_invalid');
+        }
+        $bytes = file_get_contents($absolutePath);
         if (! is_string($bytes)
             || ! hash_equals($artifactInput['sha256'], hash('sha256', $bytes))) {
             throw new \InvalidArgumentException('plan_one_b_evidence_invalid');

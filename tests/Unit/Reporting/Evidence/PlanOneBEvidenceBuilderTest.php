@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\Evidence;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneACompletionRef;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceBuilder;
 use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBEvidenceValidator;
+use App\BusinessModules\Core\Reporting\Application\Evidence\PlanOneBGateArtifactRecorder;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use FilesystemIterator;
@@ -42,7 +43,7 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
         file_put_contents($artifact, 'stale');
         $checks = $this->checks($fixture, $directory);
 
-        $document = (new PlanOneBEvidenceBuilder($artifact))->build(
+        $document = (new PlanOneBEvidenceBuilder($artifact, null, $directory))->build(
             $this->reference($fixture),
             $checks,
             new DateTimeImmutable('2026-07-30T12:00:00+00:00'),
@@ -67,7 +68,7 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
         $digestChecks = $this->checks($fixture, $digestDirectory);
         $digestChecks['gate_artifacts'][0]['sha256'] = str_repeat('f', 64);
         $this->assertInvalid(
-            fn () => (new PlanOneBEvidenceBuilder($digestArtifact))->build(
+            fn () => (new PlanOneBEvidenceBuilder($digestArtifact, null, $digestDirectory))->build(
                 $this->reference($fixture),
                 $digestChecks,
                 new DateTimeImmutable($fixture['generated_at']),
@@ -87,7 +88,7 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
             },
         );
         $this->assertInvalid(
-            fn () => (new PlanOneBEvidenceBuilder($revisionArtifact))->build(
+            fn () => (new PlanOneBEvidenceBuilder($revisionArtifact, null, $revisionDirectory))->build(
                 $this->reference($fixture),
                 $revisionChecks,
                 new DateTimeImmutable($fixture['generated_at']),
@@ -112,7 +113,7 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
         );
 
         $this->assertInvalid(
-            fn () => (new PlanOneBEvidenceBuilder($artifact))->build(
+            fn () => (new PlanOneBEvidenceBuilder($artifact, null, $directory))->build(
                 $this->reference($fixture),
                 $checks,
                 new DateTimeImmutable($fixture['generated_at']),
@@ -145,7 +146,7 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
             );
 
             $this->assertInvalid(
-                fn () => (new PlanOneBEvidenceBuilder($artifact))->build(
+                fn () => (new PlanOneBEvidenceBuilder($artifact, null, $directory))->build(
                     $this->reference($fixture),
                     $checks,
                     new DateTimeImmutable($fixture['generated_at']),
@@ -166,18 +167,46 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
         file_put_contents($path, $bytes);
         $checks = [
             'repository_revision' => $fixture['repository_revision'],
-            'gate_artifacts' => [['path' => $path, 'sha256' => hash('sha256', $bytes)]],
+            'gate_artifacts' => [[
+                'path' => 'build/reports/gates/plan1a_handoff.json',
+                'sha256' => hash('sha256', $bytes),
+            ]],
             'ownership' => $fixture['ownership'],
             'unresolved_risks' => $fixture['unresolved_risks'],
         ];
 
         $this->assertInvalid(
-            fn () => (new PlanOneBEvidenceBuilder($directory.'/completion.json'))->build(
+            fn () => (new PlanOneBEvidenceBuilder($directory.'/completion.json', null, $directory))->build(
                 $this->reference($fixture),
                 $checks,
                 new DateTimeImmutable($fixture['generated_at']),
             ),
         );
+    }
+
+    public function test_rejects_traversal_and_external_suffix_paths(): void
+    {
+        $fixture = $this->fixture();
+        foreach ([
+            '../build/reports/gates/plan1a_handoff.json',
+            'C:/external/build/reports/gates/plan1a_handoff.json',
+        ] as $untrustedPath) {
+            $directory = $this->temporaryDirectory();
+            $checks = $this->checks($fixture, $directory);
+            $checks['gate_artifacts'][0]['path'] = $untrustedPath;
+
+            $this->assertInvalid(
+                fn () => (new PlanOneBEvidenceBuilder(
+                    $directory.'/completion.json',
+                    null,
+                    $directory,
+                ))->build(
+                    $this->reference($fixture),
+                    $checks,
+                    new DateTimeImmutable($fixture['generated_at']),
+                ),
+            );
+        }
     }
 
     public function test_final_mismatch_is_removed_and_never_left_published(): void
@@ -195,7 +224,7 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
         };
 
         try {
-            (new PlanOneBEvidenceBuilder($artifact, $tamperingRename))->build(
+            (new PlanOneBEvidenceBuilder($artifact, $tamperingRename, $directory))->build(
                 $this->reference($fixture),
                 $checks,
                 new DateTimeImmutable($fixture['generated_at']),
@@ -211,57 +240,63 @@ final class PlanOneBEvidenceBuilderTest extends TestCase
 
     private function checks(array $fixture, string $directory, ?callable $mutation = null): array
     {
-        $recordKinds = [
-            'contract_json' => 'contract_case',
-            'architecture_json' => 'architecture_rule',
-            'unit_json' => 'unit_case',
-            'postgresql_json' => 'postgresql_case',
-            'cryptographic_json' => 'cryptographic_case',
-            'authorization_json' => 'authorization_case',
-            'queue_json' => 'queue_case',
-            'parity_json' => 'parity_case',
-            'performance_json' => 'performance_case',
-            's3_json' => 's3_case',
-            'observability_json' => 'observability_case',
-            'phpstan_json' => 'static_analysis_case',
-        ];
         $gateDirectory = $directory.'/build/reports/gates';
         mkdir($gateDirectory, 0777, true);
         $artifacts = [];
         foreach ($fixture['gates'] as $index => $gate) {
             $artifact = $gate['artifacts'][0];
-            unset($gate['artifacts']);
-            $testPath = substr($gate['command'], strlen('php vendor/bin/phpunit '), -strlen(' --no-coverage'));
-            $envelope = [
-                'schema_version' => '1.0.0',
-                'evidence_scope' => 'ci',
-                'artifact_id' => $artifact['id'],
-                'artifact_type' => $artifact['type'],
-                'repository_revision' => $fixture['repository_revision'],
-                'producer' => [
-                    'id' => 'phpunit-11',
-                    'test_path' => $testPath,
-                    'artifact_path' => 'build/reports/gates/'.$gate['id'].'.json',
-                ],
-                'gate' => $gate,
-                'records' => array_map(
+            $isStaticAnalysis = $gate['id'] === 'static_analysis';
+            $testPath = $isStaticAnalysis
+                ? 'phpstan.neon.dist'
+                : substr($gate['command'], strlen('php vendor/bin/phpunit '), -strlen(' --no-coverage'));
+            $stdout = json_encode([
+                'tests' => $gate['result']['tests'],
+                'assertions' => $gate['result']['assertions'],
+                'cases' => array_map(
                     static fn (string $check): array => [
                         'id' => $check,
-                        'kind' => $recordKinds[$artifact['type']],
                         'status' => 'passed',
                         'tests' => 1,
                         'assertions' => 1,
                     ],
                     $gate['result']['required_checks'],
                 ),
-            ];
+            ], JSON_THROW_ON_ERROR);
+            $envelope = (new PlanOneBGateArtifactRecorder)->record(
+                [
+                    'artifact_id' => $artifact['id'],
+                    'artifact_type' => $artifact['type'],
+                    'producer' => [
+                        'id' => $isStaticAnalysis ? 'static-analysis' : 'phpunit-11',
+                        'test_path' => $testPath,
+                        'artifact_path' => 'build/reports/gates/'.$gate['id'].'.json',
+                    ],
+                    'gate_id' => $gate['id'],
+                    'command' => $gate['command'],
+                    'required_checks' => $gate['result']['required_checks'],
+                    'measurements' => $gate['measurements'],
+                ],
+                [
+                    'command' => $gate['command'],
+                    'exit_code' => 0,
+                    'started_at' => '2026-07-30T11:59:59Z',
+                    'finished_at' => '2026-07-30T12:00:00Z',
+                    'duration_ms' => $gate['duration_ms'],
+                    'stdout' => $stdout,
+                    'stderr' => '',
+                ],
+                $fixture['repository_revision'],
+            );
             if ($mutation !== null) {
                 $mutation($index, $envelope);
             }
             $path = $gateDirectory.'/'.$gate['id'].'.json';
             $bytes = CanonicalJson::encode($envelope)."\n";
             file_put_contents($path, $bytes);
-            $artifacts[] = ['path' => $path, 'sha256' => hash('sha256', $bytes)];
+            $artifacts[] = [
+                'path' => 'build/reports/gates/'.$gate['id'].'.json',
+                'sha256' => hash('sha256', $bytes),
+            ];
         }
 
         return [
