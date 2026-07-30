@@ -39,41 +39,40 @@ final readonly class ProjectLaborCostManagementPnlComponentSource implements Man
         $guard = new ManagementPnlSourceTupleGuard($this->connection, $this->clock);
         $expected = $this->definitions->published($this->sourceReportCode());
         $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
-        $run = $guard->selectActiveReadyRun(
+        $sourceQuery = new ReportQuery(
+            $expected->definition,
+            $scope,
+            $query->filters,
+            $query->comparison,
+            $query->asOf,
+            $query->locale,
+        );
+        $tuple = $guard->selectActiveReadyTuple(
             $scope->organizationId,
             $this->sourceReportCode(),
             'project_labor_cost',
             $expected,
-            $scope,
-            $periodFrom,
-            $periodTo,
-            $query->asOf,
+            $sourceQuery,
+            'time_tracking_owner_snapshot',
+            fn (object $run): ?object => $this->connection->table('project_labor_cost_report_snapshots')
+                ->where('id', $run->snapshot_id)
+                ->where('organization_id', $scope->organizationId)
+                ->where('scope_hash', $scopeHash)
+                ->where('period_from', $periodFrom)
+                ->where('period_to', $periodTo)
+                ->where('as_of', $query->asOf->format('Y-m-d H:i:sP'))
+                ->where('management_pnl_eligible', true)
+                ->where('definition_hash', $expected->definitionHash->value)
+                ->where('formula_version', $expected->definition->formulaVersion)
+                ->where('source_schema_version', $expected->definition->sourceSchemaVersion)
+                ->where('query_hash', $run->query_hash)
+                ->where('source_hash', $run->source_hash)
+                ->where('quality_status', 'complete')
+                ->where('reconciliation_status', 'matched')
+                ->first(),
         );
-        $snapshot = $this->connection->table('project_labor_cost_report_snapshots')
-            ->where('id', $run->snapshot_id)
-            ->where('organization_id', $scope->organizationId)
-            ->where('scope_hash', $scopeHash)
-            ->where('period_from', $periodFrom)
-            ->where('period_to', $periodTo)
-            ->where('as_of', $query->asOf->format('Y-m-d H:i:sP'))
-            ->where('management_pnl_eligible', true)
-            ->where('definition_hash', $expected->definitionHash->value)
-            ->where('formula_version', $expected->definition->formulaVersion)
-            ->where('source_schema_version', $expected->definition->sourceSchemaVersion)
-            ->where('query_hash', $run->query_hash)
-            ->where('source_hash', $run->source_hash)
-            ->where('quality_status', 'complete')
-            ->where('reconciliation_status', 'matched')
-            ->first();
-        if ($snapshot === null) {
-            throw new DomainException('management_pnl_project_labor_cost_unsealed');
-        }
-        $guard->assertRunSnapshotTuple(
-            $run,
-            'project_labor_cost',
-            $snapshot,
-            $expected,
-        );
+        $run = $tuple->run;
+        $snapshot = $tuple->snapshot;
         $currencies = $this->currencies($query);
         $rows = $this->connection->table('project_labor_cost_snapshot_rows')
             ->where('organization_id', $scope->organizationId)

@@ -6,14 +6,16 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Support
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementPnlSourceTuple;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Collection;
 use JsonException;
+use Throwable;
 
 final readonly class ManagementPnlSourceTupleGuard
 {
@@ -22,16 +24,23 @@ final readonly class ManagementPnlSourceTupleGuard
         private ReportExecutionClock $clock = new SystemReportExecutionClock,
     ) {}
 
-    public function selectActiveReadyRun(
+    public function selectActiveReadyTuple(
         int $organizationId,
         string $reportCode,
         string $snapshotKind,
         PublishedReportDefinition $expected,
-        ReportScope $scope,
-        string $periodFrom,
-        string $periodTo,
-        DateTimeImmutable $asOf,
-    ): object {
+        ReportQuery $expectedQuery,
+        string $sourceOfTruth,
+        callable $snapshotResolver,
+    ): ManagementPnlSourceTuple {
+        if ($expectedQuery->scope->organizationId !== $organizationId
+            || ! hash_equals(
+                $expected->definitionHash->value,
+                $expectedQuery->definition->definitionHash->value,
+            )) {
+            throw new DomainException('management_pnl_source_query_invalid');
+        }
+
         $runs = $this->connection->table('report_runs')
             ->where('organization_id', $organizationId)
             ->where('report_code', $reportCode)
@@ -39,6 +48,8 @@ final readonly class ManagementPnlSourceTupleGuard
             ->where('definition_hash', $expected->definitionHash->value)
             ->where('formula_version', $expected->definition->formulaVersion)
             ->where('source_schema_version', $expected->definition->sourceSchemaVersion)
+            ->where('query_hash', $expectedQuery->queryHash->value)
+            ->where('canonical_query_json', $expectedQuery->canonicalJson)
             ->where('snapshot_kind', $snapshotKind)
             ->where('expires_at', '>', $this->clock->now()->format('Y-m-d H:i:sP'))
             ->orderByDesc('ready_at')
@@ -46,16 +57,26 @@ final readonly class ManagementPnlSourceTupleGuard
             ->get();
 
         foreach ($runs as $run) {
-            if ($this->matchesCanonicalQuery(
-                $run,
-                $expected,
-                $scope,
-                $periodFrom,
-                $periodTo,
-                $asOf,
-            )) {
-                return $run;
+            if (! $this->matchesCanonicalQuery($run, $expectedQuery)) {
+                continue;
             }
+            $snapshot = $snapshotResolver($run);
+            if (! is_object($snapshot)) {
+                continue;
+            }
+            try {
+                $this->assertRunSnapshotTuple(
+                    $run,
+                    $snapshotKind,
+                    $snapshot,
+                    $expected,
+                    $sourceOfTruth,
+                );
+            } catch (DomainException) {
+                continue;
+            }
+
+            return new ManagementPnlSourceTuple($run, $snapshot);
         }
 
         throw new DomainException('management_pnl_source_run_unavailable');
@@ -66,7 +87,19 @@ final readonly class ManagementPnlSourceTupleGuard
         string $snapshotKind,
         object $snapshot,
         PublishedReportDefinition $expected,
+        string $sourceOfTruth,
     ): void {
+        $sourceRefs = $this->jsonArray($snapshot->source_refs ?? null);
+        $watermarks = $sourceRefs === null
+            ? null
+            : array_column($sourceRefs, 'watermark', 'snapshot_id');
+        $expectedProvenance = $sourceRefs === null ? null : [
+            'source_of_truth' => $sourceOfTruth,
+            'source_refs' => $sourceRefs,
+            'source_hash' => (string) ($snapshot->source_hash ?? ''),
+            'external_confirmation_role' => null,
+        ];
+
         if ((string) $run->status !== 'ready'
             || new DateTimeImmutable((string) $run->expires_at) <= $this->clock->now()
             || ! hash_equals((string) $run->definition_hash, $expected->definitionHash->value)
@@ -75,48 +108,66 @@ final readonly class ManagementPnlSourceTupleGuard
             || ! hash_equals((string) $run->snapshot_kind, $snapshotKind)
             || ! hash_equals((string) $run->snapshot_id, (string) $snapshot->id)
             || ! hash_equals((string) $run->query_hash, (string) $snapshot->query_hash)
-            || ! hash_equals((string) $run->source_hash, (string) $snapshot->source_hash)) {
+            || ! hash_equals((string) $run->source_hash, (string) $snapshot->source_hash)
+            || ! $this->sameTimestamp($run->snapshot_generated_at ?? null, $snapshot->generated_at ?? null)
+            || ! $this->sameTimestamp($run->snapshot_stale_at ?? null, $snapshot->stale_at ?? null)
+            || (int) $run->row_count !== (int) ($snapshot->row_count ?? -1)
+            || ! hash_equals((string) $run->freshness, (string) ($snapshot->freshness_status ?? ''))
+            || (string) $run->freshness !== 'fresh'
+            || ($snapshot->stale_at !== null
+                && new DateTimeImmutable((string) $snapshot->stale_at) <= $this->clock->now())
+            || $watermarks === null
+            || ! $this->sameCanonicalJson($run->snapshot_watermarks ?? null, $watermarks)
+            || $expectedProvenance === null
+            || ! $this->sameCanonicalJson($run->provenance ?? null, $expectedProvenance)) {
             throw new DomainException('management_pnl_source_run_tuple_unsealed');
         }
     }
 
     private function matchesCanonicalQuery(
         object $run,
-        PublishedReportDefinition $expected,
-        ReportScope $scope,
-        string $periodFrom,
-        string $periodTo,
-        DateTimeImmutable $asOf,
+        ReportQuery $expectedQuery,
     ): bool {
         $canonical = (string) $run->canonical_query_json;
-        if (! hash_equals((string) $run->query_hash, hash('sha256', $canonical))) {
-            return false;
+
+        return hash_equals($expectedQuery->canonicalJson, $canonical)
+            && hash_equals($expectedQuery->queryHash->value, (string) $run->query_hash)
+            && hash_equals((string) $run->query_hash, hash('sha256', $canonical));
+    }
+
+    private function sameTimestamp(mixed $left, mixed $right): bool
+    {
+        if ($left === null || $right === null) {
+            return $left === $right;
         }
         try {
-            $query = json_decode($canonical, true, 512, JSON_THROW_ON_ERROR);
+            return (new DateTimeImmutable((string) $left))->format('U.u')
+                === (new DateTimeImmutable((string) $right))->format('U.u');
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function sameCanonicalJson(mixed $stored, array $expected): bool
+    {
+        $decoded = $this->jsonArray($stored);
+
+        return $decoded !== null
+            && hash_equals(CanonicalJson::encode($expected), CanonicalJson::encode($decoded));
+    }
+
+    private function jsonArray(mixed $value): ?array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+        try {
+            $decoded = json_decode((string) $value, true, 512, JSON_THROW_ON_ERROR);
         } catch (JsonException) {
-            return false;
-        }
-        if (! is_array($query)
-            || array_keys($query) !== ['as_of', 'comparison', 'definition_hash', 'filters', 'locale', 'scope']
-            || $query['as_of'] !== $asOf->format(DATE_ATOM)
-            || $query['comparison'] !== []
-            || $query['definition_hash'] !== $expected->definitionHash->value
-            || ! is_array($query['scope'])
-            || CanonicalJson::encode($query['scope']) !== CanonicalJson::encode($scope->canonicalIdentity())
-            || ! is_array($query['filters'])
-            || CanonicalJson::encode($query) !== $canonical) {
-            return false;
-        }
-        $filters = $query['filters'];
-        if (array_key_exists('period_from', $filters) && $filters['period_from'] !== $periodFrom) {
-            return false;
-        }
-        if (array_key_exists('period_to', $filters) && $filters['period_to'] !== $periodTo) {
-            return false;
+            return null;
         }
 
-        return true;
+        return is_array($decoded) ? $decoded : null;
     }
 
     public function assertRequestedGroupCoverage(

@@ -39,42 +39,41 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
         $guard = new ManagementPnlSourceTupleGuard($this->connection, $this->clock);
         $expected = $this->definitions->published($this->sourceReportCode());
         $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
-        $run = $guard->selectActiveReadyRun(
+        $sourceQuery = new ReportQuery(
+            $expected->definition,
+            $scope,
+            $query->filters,
+            $query->comparison,
+            $query->asOf,
+            $query->locale,
+        );
+        $tuple = $guard->selectActiveReadyTuple(
             $scope->organizationId,
             $this->sourceReportCode(),
             'payroll_readiness',
             $expected,
-            $scope,
-            $periodFrom,
-            $periodTo,
-            $query->asOf,
+            $sourceQuery,
+            'locked_payroll_calculation',
+            fn (object $run): ?object => $this->connection->table('workforce_report_snapshots')
+                ->where('id', $run->snapshot_id)
+                ->where('organization_id', $scope->organizationId)
+                ->where('report_code', 'payroll_readiness')
+                ->where('scope_hash', $scopeHash)
+                ->where('period_from', $periodFrom)
+                ->where('period_to', $periodTo)
+                ->where('as_of', $query->asOf->format('Y-m-d H:i:sP'))
+                ->where('management_pnl_eligible', true)
+                ->where('definition_hash', $expected->definitionHash->value)
+                ->where('formula_version', $expected->definition->formulaVersion)
+                ->where('source_schema_version', $expected->definition->sourceSchemaVersion)
+                ->where('query_hash', $run->query_hash)
+                ->where('source_hash', $run->source_hash)
+                ->where('quality_status', 'complete')
+                ->where('reconciliation_status', 'matched')
+                ->first(),
         );
-        $snapshot = $this->connection->table('workforce_report_snapshots')
-            ->where('id', $run->snapshot_id)
-            ->where('organization_id', $scope->organizationId)
-            ->where('report_code', 'payroll_readiness')
-            ->where('scope_hash', $scopeHash)
-            ->where('period_from', $periodFrom)
-            ->where('period_to', $periodTo)
-            ->where('as_of', $query->asOf->format('Y-m-d H:i:sP'))
-            ->where('management_pnl_eligible', true)
-            ->where('definition_hash', $expected->definitionHash->value)
-            ->where('formula_version', $expected->definition->formulaVersion)
-            ->where('source_schema_version', $expected->definition->sourceSchemaVersion)
-            ->where('query_hash', $run->query_hash)
-            ->where('source_hash', $run->source_hash)
-            ->where('quality_status', 'complete')
-            ->where('reconciliation_status', 'matched')
-            ->first();
-        if ($snapshot === null) {
-            throw new DomainException('management_pnl_payroll_readiness_unsealed');
-        }
-        $guard->assertRunSnapshotTuple(
-            $run,
-            'payroll_readiness',
-            $snapshot,
-            $expected,
-        );
+        $run = $tuple->run;
+        $snapshot = $tuple->snapshot;
         $currencies = $this->currencies($query);
         $rows = $this->connection->table('payroll_readiness_snapshot_rows')
             ->where('organization_id', $scope->organizationId)
