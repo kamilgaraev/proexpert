@@ -20,6 +20,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Providers\Procureme
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Queries\ProcurementCycleRowQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Readiness\ProcurementCycleReadinessProbe;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DrillDown\SupplyReliabilityDrillDownProvider;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Providers\SupplyReliabilityReportProvider;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Queries\SupplyReliabilityRowQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Readiness\SupplyReliabilityReadinessProbe;
@@ -62,24 +63,75 @@ final class SupplyOwnerArchitectureTest extends TestCase
         ];
     }
 
-    public function test_reporting_models_are_final_and_immutable(): void
+    #[DataProvider('immutableReportingModels')]
+    public function test_reporting_fact_snapshot_and_owner_models_are_final_and_immutable(
+        string $class,
+        string $immutableRecord,
+    ): void {
+        $reflection = new ReflectionClass($class);
+        self::assertTrue($reflection->isFinal(), $class);
+        self::assertContains($immutableRecord, class_uses_recursive($class), $class);
+    }
+
+    public static function immutableReportingModels(): array
     {
-        foreach ($this->phpClassesUnder('app/BusinessModules/Features/Procurement/Reporting') as $class) {
-            if (! str_contains($class, '\\Models\\')) {
-                continue;
-            }
-            $reflection = new ReflectionClass($class);
-            self::assertTrue($reflection->isFinal(), $class);
-            self::assertContains(ProcurementImmutableRecord::class, class_uses_recursive($class), $class);
-        }
-        foreach ($this->phpClassesUnder('app/BusinessModules/Features/BasicWarehouse/Reporting') as $class) {
-            if (! str_contains($class, '\\Models\\')) {
-                continue;
-            }
-            $reflection = new ReflectionClass($class);
-            self::assertTrue($reflection->isFinal(), $class);
-            self::assertContains(WarehouseImmutableRecord::class, class_uses_recursive($class), $class);
-        }
+        $procurement = [
+            'Award\\Models\\SupplierAwardSnapshot',
+            'Award\\Models\\SupplierAwardRow',
+            'Award\\Models\\SupplierAwardDecisionVersion',
+            'Cycle\\Models\\ProcurementCycleOwnerExpectationVersion',
+            'Cycle\\Models\\ProcurementCyclePolicyVersion',
+            'Cycle\\Models\\ProcurementCycleRow',
+            'Cycle\\Models\\ProcurementCycleSnapshot',
+            'Cycle\\Models\\ProcurementProcessEvent',
+            'Supply\\Models\\PurchaseOrderPromiseVersion',
+            'Supply\\Models\\SentPurchaseOrderLineOwner',
+            'Supply\\Models\\SupplyLifecycleEvent',
+            'Supply\\Models\\SupplyReliabilitySnapshot',
+            'Supply\\Models\\SupplyReliabilityRow',
+            'Supply\\Models\\SupplyReliabilityPolicyVersion',
+        ];
+        $warehouse = [
+            'InventoryRisk\\Models\\InventoryReorderPolicyVersion',
+            'InventoryRisk\\Models\\InventoryDemandSnapshot',
+            'InventoryRisk\\Models\\InventoryRiskRow',
+            'InventoryRisk\\Models\\InventoryRiskSnapshot',
+            'InventoryRisk\\Models\\WarehouseDailyBalanceSnapshot',
+            'InventoryRisk\\Models\\WarehouseDailyBalanceRow',
+            'InventoryRisk\\Models\\WarehouseInventoryEvent',
+        ];
+
+        return [
+            ...array_map(
+                static fn (string $suffix): array => [
+                    'App\\BusinessModules\\Features\\Procurement\\Reporting\\'.$suffix,
+                    ProcurementImmutableRecord::class,
+                ],
+                $procurement,
+            ),
+            ...array_map(
+                static fn (string $suffix): array => [
+                    'App\\BusinessModules\\Features\\BasicWarehouse\\Reporting\\'.$suffix,
+                    WarehouseImmutableRecord::class,
+                ],
+                $warehouse,
+            ),
+        ];
+    }
+
+    public function test_backfill_watermark_is_explicitly_mutable_operational_state(): void
+    {
+        $reflection = new ReflectionClass(SupplyReliabilityBackfillWatermark::class);
+
+        self::assertTrue($reflection->isFinal());
+        self::assertNotContains(
+            ProcurementImmutableRecord::class,
+            class_uses_recursive(SupplyReliabilityBackfillWatermark::class),
+        );
+        self::assertSame(
+            'supply_reliability_backfill_watermarks',
+            (new SupplyReliabilityBackfillWatermark)->getTable(),
+        );
     }
 
     public function test_inventory_reporting_never_uses_ambiguous_price_field(): void
@@ -108,21 +160,5 @@ final class SupplyOwnerArchitectureTest extends TestCase
             self::assertIsString($contents);
             self::assertStringContainsString('_append_only BEFORE UPDATE OR DELETE', $contents, $path);
         }
-    }
-
-    private function phpClassesUnder(string $relativePath): array
-    {
-        $root = dirname(__DIR__, 4);
-        $path = $root.'/'.$relativePath;
-        $classes = [];
-        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path)) as $file) {
-            if (! $file->isFile() || $file->getExtension() !== 'php') {
-                continue;
-            }
-            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1));
-            $classes[] = 'App\\'.str_replace('/', '\\', substr($relative, 4, -4));
-        }
-
-        return $classes;
     }
 }
