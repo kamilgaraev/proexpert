@@ -331,4 +331,40 @@ final class PortfolioHardeningBehaviorTest extends TestCase
             HoldingAllocationFactProjector::gapBusinessEffectiveAt([])->format(DateTimeImmutable::ATOM),
         );
     }
+
+    #[Test]
+    public function historical_gap_queries_keep_resolved_gap_active_before_fact_effective_time(): void
+    {
+        foreach ([
+            'HoldingPerformanceSnapshotMaterializer.php',
+            'IntercompanyContractFlowSnapshotMaterializer.php',
+        ] as $file) {
+            $source = file_get_contents(
+                dirname(__DIR__, 4)
+                .'/app/BusinessModules/Core/MultiOrganization/Reporting/Services/'.$file,
+            );
+
+            self::assertIsString($source);
+            self::assertStringContainsString(
+                "->orWhere('resolved_business_effective_at', '>', \$query->asOf)",
+                $source,
+            );
+        }
+    }
+
+    #[Test]
+    public function malformed_string_currency_is_persisted_as_quality_gap(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Core/MultiOrganization/Reporting/Listeners/ProjectHoldingAllocationFacts.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString(
+            "preg_match('/^[A-Z]{3}$/D', mb_strtoupper(\$document->currency)) === 1",
+            $source,
+        );
+        self::assertStringContainsString("\$currencyValid ? null : 'currency'", $source);
+    }
 }

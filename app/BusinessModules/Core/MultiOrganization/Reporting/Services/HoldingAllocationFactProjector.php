@@ -286,7 +286,11 @@ final readonly class HoldingAllocationFactProjector
                 ->whereIn('source_version', self::resolvableGapSourceVersions($fact->sourceVersion))
                 ->where('monetary_basis', $fact->monetaryBasis)
                 ->whereNull('resolved_at')
-                ->update(['resolved_at' => now()]);
+                ->update([
+                    'resolved_business_effective_at' => $allocationEvidence['business_effective_at']
+                        ?? $fact->recognizedOn.' 00:00:00+00:00',
+                    'resolved_at' => now(),
+                ]);
 
             return $record;
         });
@@ -370,6 +374,7 @@ final readonly class HoldingAllocationFactProjector
                 'observed_at' => $recordedAt,
                 'business_effective_at' => $businessEffectiveAt,
                 'recorded_at' => $recordedAt,
+                'resolved_business_effective_at' => null,
                 'resolved_at' => null,
             ],
         );

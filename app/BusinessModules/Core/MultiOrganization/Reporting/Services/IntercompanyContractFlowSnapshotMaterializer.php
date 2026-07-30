@@ -134,8 +134,10 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             ->where('business_effective_at', '<=', $query->asOf)
             ->where('recorded_at', '<=', $recordedCutoff)
             ->where(static fn (Builder $builder): Builder => $builder
-                ->whereNull('resolved_at')
-                ->orWhere('resolved_at', '>', $recordedCutoff))
+                ->where(static fn (Builder $recorded): Builder => $recorded
+                    ->whereNull('resolved_at')
+                    ->orWhere('resolved_at', '>', $recordedCutoff))
+                ->orWhere('resolved_business_effective_at', '>', $query->asOf))
             ->whereNotExists(function (QueryBuilder $newer) use ($query, $recordedCutoff): void {
                 $newer
                     ->selectRaw('1')

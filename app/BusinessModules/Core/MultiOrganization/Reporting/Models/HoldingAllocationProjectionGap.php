@@ -25,6 +25,7 @@ final class HoldingAllocationProjectionGap extends Model
             'observed_at' => 'immutable_datetime',
             'business_effective_at' => 'immutable_datetime',
             'recorded_at' => 'immutable_datetime',
+            'resolved_business_effective_at' => 'immutable_datetime',
             'resolved_at' => 'immutable_datetime',
         ];
     }

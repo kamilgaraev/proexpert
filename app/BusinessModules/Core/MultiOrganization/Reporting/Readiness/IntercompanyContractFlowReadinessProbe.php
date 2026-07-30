@@ -88,8 +88,10 @@ final readonly class IntercompanyContractFlowReadinessProbe implements ReportDef
                 ->where('business_effective_at', '<=', $snapshot->generated_at)
                 ->where('recorded_at', '<=', $snapshot->recorded_cutoff)
                 ->where(static fn ($query) => $query
-                    ->whereNull('resolved_at')
-                    ->orWhere('resolved_at', '>', $snapshot->recorded_cutoff))
+                    ->where(static fn ($recorded) => $recorded
+                        ->whereNull('resolved_at')
+                        ->orWhere('resolved_at', '>', $snapshot->recorded_cutoff))
+                    ->orWhere('resolved_business_effective_at', '>', $snapshot->generated_at))
                 ->exists();
     }
 }

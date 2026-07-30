@@ -164,6 +164,7 @@ SQL);
             $table->dateTimeTz('observed_at');
             $table->dateTimeTz('business_effective_at');
             $table->dateTimeTz('recorded_at');
+            $table->dateTimeTz('resolved_business_effective_at')->nullable();
             $table->dateTimeTz('resolved_at')->nullable();
             $table->unique(
                 ['organization_id', 'source_type', 'source_id', 'source_version', 'monetary_basis', 'source_hash'],

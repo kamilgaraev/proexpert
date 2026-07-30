@@ -59,7 +59,9 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
             ->toInt();
         $sourceVersion = $event->transactionId ?? (int) $document->getKey();
         $recognizedAt = $event->recognizedAt ?? $document->paid_at;
-        if ($recognizedAt === null || ! is_string($document->currency) || preg_match('/^[A-Z]{3}$/D', mb_strtoupper($document->currency)) !== 1) {
+        $currencyValid = is_string($document->currency)
+            && preg_match('/^[A-Z]{3}$/D', mb_strtoupper($document->currency)) === 1;
+        if ($recognizedAt === null || ! $currencyValid) {
             $this->projector->recordGap([
                 'organization_id' => $organizationId,
                 'source_type' => $sourceType,
@@ -69,7 +71,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
                 'business_effective_at' => $recognizedAt ?? $document->created_at,
             ], array_values(array_filter([
                 $recognizedAt === null ? 'recognized_on' : null,
-                ! is_string($document->currency) ? 'currency' : null,
+                $currencyValid ? null : 'currency',
             ])));
 
             return;
