@@ -537,7 +537,13 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                         ? 'blocked'
                         : ($issue === null ? 'ready' : 'warning'),
                     'source_refs' => $this->json($source->source_refs),
-                    'audit_refs' => $issue === null ? [] : [$this->json($issue->audit_ref)],
+                    'audit_refs' => $issue === null ? [] : [
+                        [
+                            'entity_type' => 'payroll_calculation_issue',
+                            'entity_id' => (int) $issue->id,
+                        ],
+                        $this->json($issue->audit_ref),
+                    ],
                 ];
                 $this->assertMaterializedRowScope($scope, $row);
                 if ($this->matchesIssueFilters($row, $issueCodes, $severities, $statuses)) {
@@ -585,11 +591,14 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 'issue_code' => (string) $issue->issue_code,
                 'severity' => (string) $issue->severity,
                 'status' => $issue->severity === 'blocking' ? 'blocked' : 'warning',
-                'source_refs' => [[
-                    'type' => 'payroll_calculation_issue',
-                    'id' => (int) $issue->id,
-                ]],
-                'audit_refs' => [$this->json($issue->audit_ref)],
+                'source_refs' => [],
+                'audit_refs' => [
+                    [
+                        'entity_type' => 'payroll_calculation_issue',
+                        'entity_id' => (int) $issue->id,
+                    ],
+                    $this->json($issue->audit_ref),
+                ],
             ];
             $this->assertMaterializedRowScope($scope, $row);
             if ($this->matchesIssueFilters($row, $issueCodes, $severities, $statuses)) {

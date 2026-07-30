@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\WaveOne;
 
 use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactResolver;
+use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactLease;
 use DateTimeImmutable;
 use DomainException;
+use Illuminate\Database\ConnectionInterface;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -137,5 +139,58 @@ final class TemporalOwnerFactTest extends TestCase
             [],
             [7 => ['id' => 7, 'project_id' => 20]],
         );
+    }
+
+    #[Test]
+    public function production_schema_has_deterministic_sequence_append_only_guards_and_all_r21_owners(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $migration = file_get_contents(
+            $root.'/app/BusinessModules/Features/WorkforceManagement/migrations/'
+            .'2026_07_26_000150_create_workforce_report_projections.php',
+        );
+        $laborAdapter = file_get_contents(
+            $root.'/app/BusinessModules/Features/TimeTracking/Reporting/Infrastructure/'
+            .'DatabaseProjectLaborCostAdapter.php',
+        );
+
+        self::assertIsString($migration);
+        self::assertIsString($laborAdapter);
+        self::assertStringContainsString("\$table->unsignedBigInteger('sequence')", $migration);
+        self::assertStringContainsString('workforce_owner_facts_sequence_unique', $migration);
+        self::assertStringContainsString('workforce_report_owner_facts_append_only', $migration);
+        self::assertStringContainsString('workforce_report_owner_fact_eligibility_append_only', $migration);
+        self::assertStringContainsString("'project_schedules'", $migration);
+        self::assertStringContainsString("'project_schedules'", $laborAdapter);
+    }
+
+    #[Test]
+    public function lease_attempts_to_drop_every_shadow_table_and_aggregates_cleanup_failure(): void
+    {
+        $attempts = [];
+        $connection = $this->createMock(ConnectionInterface::class);
+        $connection->method('statement')->willReturnCallback(
+            static function (string $sql) use (&$attempts): bool {
+                $attempts[] = $sql;
+                if (count($attempts) === 1) {
+                    throw new \RuntimeException('first drop failed');
+                }
+
+                return true;
+            },
+        );
+        $lease = new TemporalOwnerFactLease($connection, ['projects', 'project_schedules']);
+
+        try {
+            $lease->release();
+            self::fail('Cleanup failure must be reported');
+        } catch (DomainException $exception) {
+            self::assertStringContainsString(
+                'REPORT_TEMPORAL_OWNER_FACT_CLEANUP_FAILED',
+                $exception->getMessage(),
+            );
+        }
+
+        self::assertCount(2, $attempts);
     }
 }

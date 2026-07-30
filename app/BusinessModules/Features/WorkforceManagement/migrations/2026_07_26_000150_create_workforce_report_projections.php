@@ -13,15 +13,20 @@ return new class extends Migration
     {
         Schema::create('workforce_report_owner_facts', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
+            $table->unsignedBigInteger('organization_id');
             $table->string('source_table', 96);
             $table->unsignedBigInteger('source_id');
-            $table->foreignId('project_id')->nullable()->constrained()->nullOnDelete();
+            $table->unsignedBigInteger('project_id')->nullable();
             $table->string('operation', 16);
             $table->timestampTz('recorded_at');
+            $table->unsignedBigInteger('sequence');
             $table->jsonb('payload');
             $table->char('row_hash', 64);
 
+            $table->unique(
+                ['organization_id', 'source_table', 'source_id', 'sequence'],
+                'workforce_owner_facts_sequence_unique',
+            );
             $table->index(
                 ['organization_id', 'source_table', 'source_id', 'recorded_at', 'id'],
                 'workforce_owner_facts_temporal_idx',
@@ -33,7 +38,7 @@ return new class extends Migration
         });
 
         Schema::create('workforce_report_owner_fact_eligibility', function (Blueprint $table): void {
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
+            $table->unsignedBigInteger('organization_id');
             $table->string('source_table', 120);
             $table->timestampTz('eligible_from');
             $table->unsignedBigInteger('source_row_count');
@@ -184,6 +189,7 @@ DECLARE
     owner_project bigint;
     owner_operation text;
     owner_recorded_at timestamptz;
+    owner_sequence bigint;
 BEGIN
     owner_row := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
     owner_org := (owner_row->>'organization_id')::bigint;
@@ -191,6 +197,12 @@ BEGIN
     owner_project := NULLIF(owner_row->>'project_id', '')::bigint;
     owner_operation := CASE WHEN TG_OP = 'DELETE' THEN 'delete' ELSE 'upsert' END;
     owner_recorded_at := clock_timestamp();
+    SELECT COALESCE(MAX(sequence), 0) + 1
+      INTO owner_sequence
+      FROM workforce_report_owner_facts
+     WHERE organization_id = owner_org
+       AND source_table = TG_TABLE_NAME
+       AND source_id = owner_id;
 
     INSERT INTO workforce_report_owner_facts (
         organization_id,
@@ -199,6 +211,7 @@ BEGIN
         project_id,
         operation,
         recorded_at,
+        sequence,
         payload,
         row_hash
     ) VALUES (
@@ -208,6 +221,7 @@ BEGIN
         owner_project,
         owner_operation,
         owner_recorded_at,
+        owner_sequence,
         owner_row,
         repeat(md5(owner_row::text), 2)
     );
@@ -245,6 +259,7 @@ BEGIN
         'work_types',
         'measurement_units',
         'contractors',
+        'project_schedules',
         'projects'
     ] LOOP
         INSERT INTO workforce_report_owner_fact_eligibility (
@@ -303,6 +318,7 @@ SQL,
             'work_types',
             'measurement_units',
             'contractors',
+            'project_schedules',
             'projects',
         ];
         foreach ($ownerTables as $table) {
@@ -321,6 +337,7 @@ SQL,
                     project_id,
                     operation,
                     recorded_at,
+                    sequence,
                     payload,
                     row_hash
                  )
@@ -330,6 +347,7 @@ SQL,
                         NULLIF(to_jsonb(owner_row)->>'project_id', '')::bigint,
                         'upsert',
                         ?,
+                        1,
                         to_jsonb(owner_row),
                         repeat(md5(to_jsonb(owner_row)::text), 2)
                  FROM {$table} owner_row",
@@ -365,6 +383,27 @@ SQL,
                 [$table, $eligibleFrom, $table, $eligibleFrom],
             );
         }
+        DB::unprepared(
+            <<<'SQL'
+CREATE FUNCTION workforce_report_guard_history_append_only() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'immutable workforce report history';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER workforce_report_owner_facts_append_only
+BEFORE UPDATE OR DELETE ON workforce_report_owner_facts
+FOR EACH ROW EXECUTE FUNCTION workforce_report_guard_history_append_only();
+
+CREATE TRIGGER workforce_report_owner_fact_eligibility_append_only
+BEFORE UPDATE OR DELETE ON workforce_report_owner_fact_eligibility
+FOR EACH ROW EXECUTE FUNCTION workforce_report_guard_history_append_only();
+SQL,
+        );
     }
 
     public function down(): void
@@ -388,6 +427,7 @@ SQL,
             'work_types',
             'measurement_units',
             'contractors',
+            'project_schedules',
             'projects',
         ] as $table) {
             DB::statement("DROP TRIGGER IF EXISTS {$table}_report_owner_fact ON {$table}");
@@ -395,6 +435,9 @@ SQL,
         DB::unprepared(
             <<<'SQL'
 DROP TRIGGER IF EXISTS organizations_report_owner_fact_eligibility ON organizations;
+DROP TRIGGER IF EXISTS workforce_report_owner_fact_eligibility_append_only ON workforce_report_owner_fact_eligibility;
+DROP TRIGGER IF EXISTS workforce_report_owner_facts_append_only ON workforce_report_owner_facts;
+DROP FUNCTION IF EXISTS workforce_report_guard_history_append_only();
 DROP FUNCTION IF EXISTS workforce_report_initialize_owner_fact_eligibility();
 DROP TRIGGER IF EXISTS attendance_execution_snapshot_rows_immutable ON attendance_execution_snapshot_rows;
 DROP TRIGGER IF EXISTS workforce_capacity_snapshot_rows_immutable ON workforce_capacity_snapshot_rows;

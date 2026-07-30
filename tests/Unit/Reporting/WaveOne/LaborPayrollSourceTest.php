@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\WaveOne;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Contracts\ManagementPnlComponentSource;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\EffectiveLaborRateSource;
 use App\BusinessModules\Features\TimeTracking\Reporting\DTO\EffectiveLaborRateFact;
 use App\BusinessModules\Features\TimeTracking\Reporting\DTO\ProjectLaborEntryFact;
@@ -14,11 +15,13 @@ use App\BusinessModules\Features\TimeTracking\Reporting\EffectiveLaborRateResolv
 use App\BusinessModules\Features\TimeTracking\Reporting\Formulas\ProjectLaborCostFormula;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostProvider;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostQueryService;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostManagementPnlComponentSource;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollIssueMatcher;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessProvider;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessManagementPnlComponentSource;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessQueryService;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollVersionTransitionResolver;
 use DateTimeImmutable;
@@ -44,6 +47,60 @@ final class LaborPayrollSourceTest extends TestCase
         self::assertContains(ReportDataProvider::class, class_implements(PayrollReadinessProvider::class));
         self::assertContains(ReportRowQuery::class, class_implements(PayrollReadinessQueryService::class));
         self::assertContains(ReportDrillDownProvider::class, class_implements(PayrollReadinessQueryService::class));
+    }
+
+    #[Test]
+    public function labor_and_payroll_publish_exact_management_pnl_components(): void
+    {
+        self::assertContains(
+            ManagementPnlComponentSource::class,
+            class_implements(ProjectLaborCostManagementPnlComponentSource::class),
+        );
+        self::assertContains(
+            ManagementPnlComponentSource::class,
+            class_implements(PayrollReadinessManagementPnlComponentSource::class),
+        );
+        $manifest = require dirname(__DIR__, 4).'/config/Reporting/management-pnl-components.php';
+
+        self::assertSame(
+            ProjectLaborCostManagementPnlComponentSource::class,
+            $manifest['project_labor_cost']['source'],
+        );
+        self::assertSame(
+            PayrollReadinessManagementPnlComponentSource::class,
+            $manifest['payroll_readiness']['source'],
+        );
+        self::assertSame(
+            'approved-time-entry-reporting-fact.v1',
+            $manifest['project_labor_cost']['source_schema_version'],
+        );
+        self::assertSame(
+            'payroll-readiness-snapshot.v1',
+            $manifest['payroll_readiness']['source_schema_version'],
+        );
+    }
+
+    #[Test]
+    public function payroll_issue_drill_reference_is_audit_gated_and_reauthorized(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/WorkforceManagement/Reporting/'
+            .'Infrastructure/DatabasePayrollReadinessAdapter.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString(
+            "'entity_type' => 'payroll_calculation_issue'",
+            $source,
+        );
+        self::assertStringContainsString(
+            "unset(\$row['audit_refs'], \$row['calculation_version_id'], \$row['issue_id'])",
+            $source,
+        );
+        self::assertStringContainsString(
+            "\$this->assertScopedResource(",
+            $source,
+        );
     }
 
     #[Test]

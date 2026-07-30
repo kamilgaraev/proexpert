@@ -147,6 +147,18 @@ final class WorkforcePayrollContentImmutabilityPostgresTest extends TestCase
             ->value('recorded_at');
         $project->update(['name' => 'После изменения']);
 
+        self::assertSame(
+            [1, 2],
+            DB::table('workforce_report_owner_facts')
+                ->where('organization_id', $organization->id)
+                ->where('source_table', 'projects')
+                ->where('source_id', $project->id)
+                ->orderBy('sequence')
+                ->pluck('sequence')
+                ->map(static fn (mixed $sequence): int => (int) $sequence)
+                ->all(),
+        );
+
         $scope = new ReportScope(
             (int) $organization->id,
             [(int) $organization->id],

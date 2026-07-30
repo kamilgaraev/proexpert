@@ -99,6 +99,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             'time_tracking_labor_rate_versions',
             'workforce_employees',
             'projects',
+            'project_schedules',
             'schedule_tasks',
             'work_types',
             'measurement_units',
