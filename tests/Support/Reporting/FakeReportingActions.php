@@ -196,6 +196,12 @@ final class FakeReportingActions
         $this->exceptions[$method] = $exception;
     }
 
+    public function willReturn(string $method, mixed $result): void
+    {
+        $this->assertMethod($method);
+        $this->returns[$method] = $result;
+    }
+
     public function catalog(
         ReportExecutionContext $context,
         ReportCatalogAuthorization $authorization,

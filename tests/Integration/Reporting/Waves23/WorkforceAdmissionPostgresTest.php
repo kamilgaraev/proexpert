@@ -223,6 +223,13 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             ->latest('id')
             ->first();
         self::assertNotNull($evidenceVersion);
+        $ownershipVersion = DB::table('safety_assignment_ownership_versions')
+            ->where('site_assignment_id', $mappingId)
+            ->where('history_complete', true)
+            ->where('tombstone', false)
+            ->latest('id')
+            ->first();
+        self::assertNotNull($ownershipVersion);
         $evidenceIdentity = [
             'evidence_id' => $trainingId,
             'evidence_type' => 'training',
@@ -230,6 +237,8 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             'project_id' => (int) $project->id,
             'safety_site_id' => $siteId,
             'site_assignment_id' => $mappingId,
+            'ownership_version_hash' => (string) $ownershipVersion->source_hash,
+            'ownership_version_id' => (int) $ownershipVersion->id,
             'version_hash' => (string) $evidenceVersion->content_hash,
             'version_id' => (int) $evidenceVersion->id,
             'workforce_assignment_id' => $assignmentId,
@@ -289,7 +298,23 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             (string) $evidenceVersion->content_hash,
             (string) DB::table('safety_evidence_versions')->latest('id')->value('content_hash'),
         );
-        DB::table('safety_admission_snapshots')->where('id', $snapshotId)->update(['sealed_at' => now()]);
+        try {
+            DB::transaction(static function () use ($snapshotId): void {
+                DB::table('safety_admission_snapshots')->where('id', $snapshotId)->update([
+                    'sealed_at' => now(),
+                    'output_hash' => str_repeat('0', 64),
+                    'sealed_content_digest' => str_repeat('0', 64),
+                ]);
+            });
+            self::fail('Snapshot accepted a seal unrelated to its persisted rows');
+        } catch (QueryException $exception) {
+            self::assertSame('23514', $exception->getCode());
+        }
+        DB::table('safety_admission_snapshots')->where('id', $snapshotId)->update([
+            'sealed_at' => now(),
+            'output_hash' => DB::raw("reporting_persisted_rows_digest('safety_admission_rows', id::text)"),
+            'sealed_content_digest' => DB::raw("reporting_persisted_rows_digest('safety_admission_rows', id::text)"),
+        ]);
         try {
             DB::table('safety_admission_rows')->insert([
                 'organization_id' => $organization->id,

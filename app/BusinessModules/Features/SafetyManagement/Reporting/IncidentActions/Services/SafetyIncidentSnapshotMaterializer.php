@@ -252,7 +252,13 @@ final readonly class SafetyIncidentSnapshotMaterializer
                     }
                     DB::table('safety_incident_snapshots')
                         ->where('id', $snapshot->id)
-                        ->update(['sealed_at' => $generatedAt]);
+                        ->update([
+                            'sealed_at' => $generatedAt,
+                            'output_hash' => DB::raw("reporting_persisted_rows_digest('safety_incident_rows', id::text)"),
+                            'sealed_content_digest' => DB::raw("reporting_persisted_rows_digest('safety_incident_rows', id::text)"),
+                        ]);
+                    $snapshot->output_hash = (string) DB::table('safety_incident_snapshots')
+                        ->where('id', $snapshot->id)->value('output_hash');
                     $snapshot->sealed_at = $generatedAt;
 
                     return $snapshot;

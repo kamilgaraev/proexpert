@@ -34,6 +34,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRowsWindow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
@@ -101,9 +102,11 @@ final class HermeticReportingHttpHarness
     private readonly DeterministicReportActorLoader $actors;
     private readonly FakeReportingActions $actions;
     private readonly string $initialOutputFingerprint;
+    private readonly string $definitionCode;
 
-    public function __construct()
+    public function __construct(string $definitionCode = 'report')
     {
+        $this->definitionCode = $definitionCode;
         $this->basePath = dirname(__DIR__, 3);
         $this->boundaries = new HermeticBoundaryLedger();
         $this->boundaries->mark('boundary_objects');
@@ -468,6 +471,135 @@ final class HermeticReportingHttpHarness
         ];
     }
 
+    public function runWaveCursorParity(string $reportCode): array
+    {
+        if (! in_array($reportCode, ['quality_defect_flow', 'safety_incident_actions', 'workforce_admission'], true)) {
+            throw new LogicException('Unknown reporting wave code.');
+        }
+        $this->authorization->permissions = [
+            'admin.access',
+            'reports.view',
+            'reports.run',
+            'reports.export',
+        ];
+        $this->modules->allowed = true;
+        $this->actors->states = ['active', 'active', 'active', 'active'];
+        $quality = new ReportQuality(
+            ReportQualityStatus::COMPLETE,
+            null,
+            [],
+            0,
+            ReportReconciliationStatus::MATCHED,
+            [],
+            [],
+        );
+        $this->actions->willReturn('rows', new ReportPage(
+            [['row_key' => $reportCode.':row-1', 'name' => 'МОСТ']],
+            [],
+            ReportFreshnessStatus::FRESH,
+            $quality,
+            'rows-next-'.$reportCode,
+            25,
+            true,
+            new ReportWindowSort('name', ReportSortDirection::ASC),
+        ));
+        $this->actions->willReturn('drillDown', new ReportDrillDownResult(
+            [['row_key' => $reportCode.':detail-1']],
+            'drill-next-'.$reportCode,
+            [],
+        ));
+
+        $responses = [
+            'run' => $this->dispatch(
+                'POST',
+                '/api/v1/admin/reports/'.$reportCode.'/runs',
+                $this->validRunBody(),
+                true,
+                '01J00000000000000000000010',
+            ),
+            'rows' => $this->dispatch(
+                'GET',
+                '/api/v1/admin/reports/runs/'.self::RUN_ID.'/rows?cursor=rows-in-'.$reportCode.'&limit=25&sort_by=name&sort_dir=asc',
+            ),
+            'drill' => $this->dispatch(
+                'POST',
+                '/api/v1/admin/reports/runs/'.self::RUN_ID.'/drill-down',
+                ['token' => 'source-'.$reportCode, 'cursor' => 'drill-in-'.$reportCode, 'limit' => 25],
+            ),
+            'export' => $this->dispatch(
+                'POST',
+                '/api/v1/admin/reports/runs/'.self::RUN_ID.'/exports',
+                $this->validExportBody(),
+                true,
+                '01J00000000000000000000011',
+            ),
+        ];
+        $runCall = $this->actions->calls['createRun'][0][1] ?? null;
+        $rowsCall = $this->actions->calls['rows'][0][2] ?? null;
+        $drillCall = $this->actions->calls['drillDown'][0][2] ?? null;
+        $exportCall = $this->actions->calls['createExport'][0][2] ?? null;
+        if (! $runCall instanceof \App\BusinessModules\Core\Reporting\Application\Input\CreateReportRunData
+            || $runCall->reportCode !== $reportCode
+            || $runCall->asOf->format(DATE_ATOM) !== '2026-01-01T00:00:00+00:00'
+            || $runCall->filters->values !== []
+            || $runCall->locale !== 'ru-RU'
+            || ! $rowsCall instanceof ReportRowsWindow
+            || $rowsCall->limit !== 25
+            || $rowsCall->sort->field !== 'name'
+            || $rowsCall->sort->direction !== ReportSortDirection::ASC
+            || ! $drillCall instanceof \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest
+            || $drillCall->token !== 'source-'.$reportCode
+            || $drillCall->limit !== 25
+            || ! $exportCall instanceof \App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData
+            || $exportCall->format !== 'csv'
+            || $exportCall->columns !== ['name']
+            || $exportCall->locale !== 'ru-RU'
+            || $exportCall->timezone->getName() !== 'UTC'
+            || $this->boundaries->breaches() !== []) {
+            throw new LogicException('REPORT_HERMETIC_CURSOR_PARITY_BOUNDARY_FAILED');
+        }
+
+        return [
+            'report_code' => $reportCode,
+            'run_contract' => [
+                $runCall->reportCode,
+                $runCall->asOf->format(DATE_ATOM),
+                $runCall->filters->values,
+                $runCall->locale,
+            ],
+            'statuses' => array_map(static fn (array $response): int => $response['status'], $responses),
+            'rows_cursor_in' => $rowsCall->cursor,
+            'rows_cursor_out' => self::responseValue($responses['rows']['body'], 'next_cursor'),
+            'drill_cursor_in' => $drillCall->cursor,
+            'drill_cursor_out' => self::responseValue($responses['drill']['body'], 'next_cursor'),
+            'export_sort' => [$exportCall->sort->field, $exportCall->sort->direction->value],
+            'action_calls' => array_map('count', $this->actions->calls),
+        ];
+    }
+
+    private static function responseValue(string $body, string $key): mixed
+    {
+        $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        $find = static function (mixed $value) use (&$find, $key): mixed {
+            if (! is_array($value)) {
+                return null;
+            }
+            if (array_key_exists($key, $value)) {
+                return $value[$key];
+            }
+            foreach ($value as $child) {
+                $found = $find($child);
+                if ($found !== null) {
+                    return $found;
+                }
+            }
+
+            return null;
+        };
+
+        return $find($decoded);
+    }
+
     private function installThrowingBoundaries(Application $app): void
     {
         foreach ([
@@ -515,6 +647,7 @@ final class HermeticReportingHttpHarness
     private function makeActions(): FakeReportingActions
     {
         $definition = (new ReportDefinitionBuilder())
+            ->code($this->definitionCode)
             ->filters([[
                 'id' => 'period',
                 'type' => 'date',
@@ -588,7 +721,7 @@ final class HermeticReportingHttpHarness
 
     private function bindHttpAuthorizations(Application $app): void
     {
-        $definition = (new ReportDefinitionBuilder())->payload();
+        $definition = (new ReportDefinitionBuilder())->code($this->definitionCode)->payload();
         $scope = new ReportScope(1, [1], [], [], new \DateTimeZone('UTC'));
         $run = (new ReportRunBuilder())->ready();
         if (! $run->resultMetadata instanceof \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata) {
