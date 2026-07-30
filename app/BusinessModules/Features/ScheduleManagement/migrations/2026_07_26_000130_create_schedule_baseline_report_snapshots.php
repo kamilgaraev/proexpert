@@ -86,6 +86,14 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER schedule_task_state_versions_append_only
 BEFORE UPDATE OR DELETE ON schedule_task_state_versions
 FOR EACH ROW EXECUTE FUNCTION schedule_reporting_history_append_only_guard();
+
+CREATE TRIGGER schedule_baseline_versions_append_only
+BEFORE UPDATE OR DELETE ON schedule_baseline_versions
+FOR EACH ROW EXECUTE FUNCTION schedule_reporting_history_append_only_guard();
+
+CREATE TRIGGER schedule_baseline_task_rows_append_only
+BEFORE UPDATE OR DELETE ON schedule_baseline_task_rows
+FOR EACH ROW EXECUTE FUNCTION schedule_reporting_history_append_only_guard();
 SQL);
 
         Schema::create('baseline_schedule_variance_snapshots', function (Blueprint $table): void {

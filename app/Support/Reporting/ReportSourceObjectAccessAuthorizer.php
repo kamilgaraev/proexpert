@@ -42,6 +42,50 @@ final readonly class ReportSourceObjectAccessAuthorizer
         $this->assertResourceSet($context->scope->resources, $canonicalKind, $sourceId, $projectId);
     }
 
+    public function assertReferencesAccessible(
+        ReportExecutionContext $context,
+        array $references,
+        ?int $defaultProjectId = null,
+    ): void {
+        if (! array_is_list($references) || $references === []) {
+            $this->deny();
+        }
+
+        foreach ($references as $reference) {
+            if (! is_array($reference) || array_is_list($reference)) {
+                $this->deny();
+            }
+            $sourceKind = $reference['type'] ?? null;
+            if (! is_string($sourceKind) || trim($sourceKind) === '') {
+                $this->deny();
+            }
+            if ($sourceKind === 'waiver_evidence') {
+                if (! is_string($reference['id'] ?? null) || trim((string) $reference['id']) === '') {
+                    $this->deny();
+                }
+
+                continue;
+            }
+
+            $projectId = $reference['project_id'] ?? $defaultProjectId;
+            if (! is_numeric($projectId) || (int) $projectId < 1) {
+                $this->deny();
+            }
+            $sourceIds = array_key_exists('ids', $reference)
+                ? $reference['ids']
+                : [$reference['id'] ?? null];
+            if (! is_array($sourceIds) || ! array_is_list($sourceIds) || $sourceIds === []) {
+                $this->deny();
+            }
+            foreach ($sourceIds as $sourceId) {
+                if (! is_numeric($sourceId) || (int) $sourceId < 1) {
+                    $this->deny();
+                }
+                $this->assertAccessible($context, $sourceKind, (int) $sourceId, (int) $projectId);
+            }
+        }
+    }
+
     private function assertResourceSet(
         array $resources,
         string $canonicalKind,

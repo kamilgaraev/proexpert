@@ -18,6 +18,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\L
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
 use App\Models\ScheduleTask;
+use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -48,6 +49,17 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         if ($projectIds === []) {
             throw new InvalidArgumentException('lookahead_project_filter_empty');
         }
+        $resourceFilter = new ReportScopedResourceFilter;
+        $scopedTaskIds = $resourceFilter->ids(
+            $scope,
+            ['task', 'schedule_task'],
+            $projectIds,
+        );
+        $scopedConstraintIds = $resourceFilter->ids(
+            $scope,
+            ['constraint', 'work_constraint'],
+            $projectIds,
+        );
         $policySet = $this->policies->activeForProjects($scope->organizationId, $projectIds, $query->asOf);
         $scheduleIds = \App\Models\ProjectSchedule::query()
             ->where('organization_id', $scope->organizationId)
@@ -60,11 +72,19 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         $states = $this->historicalTasks
             ->latestForProjects($scope->organizationId, $projectIds, $query->asOf)
             ->whereIn('scheduleId', $scheduleIds)
+            ->when(
+                $scopedTaskIds !== null,
+                static fn ($items) => $items->whereIn('taskId', $scopedTaskIds),
+            )
             ->values();
         $eligibleTaskIds = ScheduleTask::withTrashed()
             ->where('organization_id', $scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
             ->whereIn('schedule_id', $scheduleIds)
+            ->when(
+                $scopedTaskIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $scopedTaskIds),
+            )
             ->pluck('id')
             ->map('intval')
             ->all();
@@ -83,6 +103,10 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         $events = WorkConstraintTransitionEvent::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('task_id', $taskIds)
+            ->when(
+                $scopedConstraintIds !== null,
+                static fn ($builder) => $builder->whereIn('constraint_id', $scopedConstraintIds),
+            )
             ->where('occurred_at', '<=', $query->asOf)
             ->orderBy('constraint_id')
             ->orderBy('event_version')
@@ -108,6 +132,10 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         $uncapturedConstraintExists = WorkConstraint::withTrashed()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('schedule_task_id', $taskIds)
+            ->when(
+                $scopedConstraintIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $scopedConstraintIds),
+            )
             ->where('created_at', '<=', $query->asOf)
             ->when(
                 $capturedConstraintIds !== [],

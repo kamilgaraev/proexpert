@@ -37,7 +37,7 @@ final class LookaheadConstraintEventPostgresTest extends TestCase
         );
     }
 
-    public function test_two_concurrent_distinct_transitions_receive_consecutive_versions(): void
+    public function test_two_concurrent_identical_transitions_are_idempotent(): void
     {
         $constraint = $this->constraint();
         $constraintId = (int) $constraint->id;
@@ -47,14 +47,14 @@ final class LookaheadConstraintEventPostgresTest extends TestCase
         $children = [];
 
         try {
-            foreach (['resolved', 'closed'] as $index => $status) {
+            foreach ([0, 1] as $index) {
                 $children[] = $harness->spawn(
                     $index,
-                    static function () use ($constraintId, $status): array {
+                    static function () use ($constraintId): array {
                         $event = app(WorkConstraintEventRecorder::class)->record(
                             WorkConstraint::query()->findOrFail($constraintId),
                             'open',
-                            $status,
+                            'resolved',
                             null,
                             new DateTimeImmutable('2026-07-30T12:00:00+00:00'),
                         );
@@ -72,7 +72,7 @@ final class LookaheadConstraintEventPostgresTest extends TestCase
             $harness->waitForChildren($children);
 
             self::assertSame(
-                [1, 2],
+                [1],
                 DB::table('work_constraint_transition_events')
                     ->where('constraint_id', $constraintId)
                     ->orderBy('event_version')
@@ -81,7 +81,7 @@ final class LookaheadConstraintEventPostgresTest extends TestCase
                     ->all(),
             );
             self::assertSame(
-                ['closed', 'resolved'],
+                ['resolved'],
                 DB::table('work_constraint_transition_events')
                     ->where('constraint_id', $constraintId)
                     ->pluck('to_status')
@@ -93,6 +93,36 @@ final class LookaheadConstraintEventPostgresTest extends TestCase
             $harness->terminateAndReap($children);
             $harness->cleanup();
         }
+    }
+
+    public function test_stale_transition_is_rejected_after_stream_tail_changes(): void
+    {
+        $constraint = $this->constraint();
+        $recorder = app(WorkConstraintEventRecorder::class);
+        $recorder->record(
+            $constraint,
+            null,
+            'open',
+            null,
+            new DateTimeImmutable('2026-07-30T11:00:00+00:00'),
+        );
+        $recorder->record(
+            $constraint,
+            'open',
+            'resolved',
+            null,
+            new DateTimeImmutable('2026-07-30T12:00:00+00:00'),
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('work_constraint_event_stale_transition');
+        $recorder->record(
+            $constraint,
+            'open',
+            'closed',
+            null,
+            new DateTimeImmutable('2026-07-30T12:01:00+00:00'),
+        );
     }
 
     public function test_policy_task_state_and_constraint_event_histories_are_append_only(): void
@@ -115,6 +145,34 @@ final class LookaheadConstraintEventPostgresTest extends TestCase
             ->where('task_id', $constraint->schedule_task_id)
             ->value('id');
         self::assertIsNumeric($taskStateId);
+        $baselineVersionId = DB::table('schedule_baseline_versions')->insertGetId([
+            'organization_id' => $constraint->organization_id,
+            'project_id' => $constraint->project_id,
+            'schedule_id' => $constraint->schedule_id,
+            'version' => 1,
+            'captured_at' => now(),
+            'captured_by' => $constraint->created_by_user_id,
+            'critical_path_watermark' => 'test-watermark',
+            'source_hash' => str_repeat('a', 64),
+            'source_payload' => '{}',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $baselineTaskRowId = DB::table('schedule_baseline_task_rows')->insertGetId([
+            'organization_id' => $constraint->organization_id,
+            'baseline_version_id' => $baselineVersionId,
+            'schedule_id' => $constraint->schedule_id,
+            'task_id' => $constraint->schedule_task_id,
+            'wbs_code' => null,
+            'task_name' => 'Race task',
+            'baseline_start' => '2026-08-01',
+            'baseline_end' => '2026-08-02',
+            'baseline_duration_days' => 2,
+            'total_float_days' => 0,
+            'free_float_days' => 0,
+            'is_critical' => true,
+            'dependency_refs' => '[]',
+        ]);
 
         $this->assertMutationRejected(
             static fn (): int => DB::table('lookahead_readiness_policy_versions')
@@ -129,6 +187,16 @@ final class LookaheadConstraintEventPostgresTest extends TestCase
         $this->assertMutationRejected(
             static fn (): int => DB::table('work_constraint_transition_events')
                 ->where('id', $event->id)
+                ->delete(),
+        );
+        $this->assertMutationRejected(
+            static fn (): int => DB::table('schedule_baseline_versions')
+                ->where('id', $baselineVersionId)
+                ->update(['critical_path_watermark' => 'mutated']),
+        );
+        $this->assertMutationRejected(
+            static fn (): int => DB::table('schedule_baseline_task_rows')
+                ->where('id', $baselineTaskRowId)
                 ->delete(),
         );
     }

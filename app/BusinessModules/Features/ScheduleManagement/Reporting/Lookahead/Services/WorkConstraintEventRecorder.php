@@ -14,6 +14,13 @@ use InvalidArgumentException;
 
 final readonly class WorkConstraintEventRecorder
 {
+    private WorkConstraintTransitionGuard $transitions;
+
+    public function __construct(?WorkConstraintTransitionGuard $transitions = null)
+    {
+        $this->transitions = $transitions ?? new WorkConstraintTransitionGuard;
+    }
+
     public function pinLinkedEvidence(
         WorkConstraint $constraint,
         ?int $actorId,
@@ -105,10 +112,16 @@ final readonly class WorkConstraintEventRecorder
                     return $existing;
                 }
 
-                $version = (int) WorkConstraintTransitionEvent::query()
+                $latest = WorkConstraintTransitionEvent::query()
                     ->where('organization_id', $constraint->organization_id)
                     ->where('constraint_id', $constraint->id)
-                    ->max('event_version');
+                    ->orderByDesc('event_version')
+                    ->first();
+                $this->transitions->assertCanAppend(
+                    $fromStatus,
+                    $latest === null ? null : (string) $latest->to_status,
+                );
+                $version = $latest === null ? 0 : (int) $latest->event_version;
 
                 return WorkConstraintTransitionEvent::query()->create([
                     'organization_id' => (int) $constraint->organization_id,

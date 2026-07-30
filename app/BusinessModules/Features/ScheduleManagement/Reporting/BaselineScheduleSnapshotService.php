@@ -18,6 +18,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\BaselineSch
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
+use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -151,6 +152,11 @@ final readonly class BaselineScheduleSnapshotService
         if ($projectIds === []) {
             throw new InvalidArgumentException('baseline_schedule_project_filter_empty');
         }
+        $scopedTaskIds = (new ReportScopedResourceFilter)->ids(
+            $scope,
+            ['task', 'schedule_task'],
+            $projectIds,
+        );
 
         $scheduleIds = $this->positiveIntegerFilter($query, 'schedule_ids');
         $allowedScheduleIds = ProjectSchedule::query()
@@ -165,11 +171,19 @@ final readonly class BaselineScheduleSnapshotService
         $states = $this->historicalTasks
             ->latestForProjects($scope->organizationId, $projectIds, $query->asOf)
             ->whereIn('scheduleId', $allowedScheduleIds)
+            ->when(
+                $scopedTaskIds !== null,
+                static fn ($items) => $items->whereIn('taskId', $scopedTaskIds),
+            )
             ->values();
         $eligibleTaskIds = ScheduleTask::withTrashed()
             ->where('organization_id', $scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
             ->whereIn('schedule_id', $allowedScheduleIds)
+            ->when(
+                $scopedTaskIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $scopedTaskIds),
+            )
             ->pluck('id')
             ->map('intval')
             ->all();

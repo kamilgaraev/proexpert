@@ -44,6 +44,50 @@ final class ReportSourceObjectAccessAuthorizerTest extends TestCase
         );
     }
 
+    #[Test]
+    public function row_and_export_source_references_are_checked_as_one_fail_closed_fence(): void
+    {
+        $authorizer = new ReportSourceObjectAccessAuthorizer;
+        $context = $this->context([
+            new ReportScopedResource('task', 41, 7),
+            new ReportScopedResource('constraint', 51, 7),
+        ]);
+
+        $authorizer->assertReferencesAccessible($context, [
+            ['type' => 'schedule_task', 'id' => 41, 'project_id' => 7],
+            ['type' => 'work_constraint', 'id' => 51, 'project_id' => 7],
+        ]);
+        self::addToAssertionCount(1);
+
+        $this->expectException(ReportContractException::class);
+        $authorizer->assertReferencesAccessible($context, [
+            ['type' => 'schedule_task', 'id' => 42, 'project_id' => 7],
+            ['type' => 'work_constraint', 'id' => 51, 'project_id' => 7],
+        ]);
+    }
+
+    #[Test]
+    public function malformed_row_source_reference_is_denied(): void
+    {
+        $this->expectException(ReportContractException::class);
+
+        (new ReportSourceObjectAccessAuthorizer)->assertReferencesAccessible(
+            $this->context([]),
+            [['type' => 'schedule_task', 'id' => null, 'project_id' => 7]],
+        );
+    }
+
+    #[Test]
+    public function row_without_source_references_is_denied(): void
+    {
+        $this->expectException(ReportContractException::class);
+
+        (new ReportSourceObjectAccessAuthorizer)->assertReferencesAccessible(
+            $this->context([]),
+            [],
+        );
+    }
+
     private function context(array $resources): ReportExecutionContext
     {
         $timezone = new DateTimeZone('Europe/Moscow');

@@ -9,11 +9,28 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\Look
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessPolicyVersion;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessFormula;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessPolicyDefinition;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\WorkConstraintTransitionGuard;
 use DateTimeImmutable;
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 
 final class LookaheadProductionHardeningTest extends TestCase
 {
+    public function test_transition_guard_rejects_a_stale_concurrent_from_status(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('work_constraint_event_stale_transition');
+
+        (new WorkConstraintTransitionGuard)->assertCanAppend('open', 'resolved');
+    }
+
+    public function test_transition_guard_accepts_the_actual_stream_tail(): void
+    {
+        (new WorkConstraintTransitionGuard)->assertCanAppend('resolved', 'resolved');
+
+        self::addToAssertionCount(1);
+    }
+
     public function test_default_policy_has_a_canonical_hash_derived_from_every_business_field(): void
     {
         $definition = LookaheadReadinessPolicyDefinition::default(

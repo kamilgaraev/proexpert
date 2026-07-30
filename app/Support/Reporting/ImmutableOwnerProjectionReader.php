@@ -20,18 +20,22 @@ use InvalidArgumentException;
 
 final readonly class ImmutableOwnerProjectionReader
 {
+    private ReportSourceObjectAccessAuthorizer $sourceAccess;
+
     public function __construct(
         private string $rowModel,
         private string $snapshotModel,
         private array $sortColumns,
         private array $sensitiveColumns = [],
+        ?ReportSourceObjectAccessAuthorizer $sourceAccess = null,
     ) {
-        if (!is_subclass_of($rowModel, Model::class)
-            || !is_subclass_of($snapshotModel, Model::class)
+        if (! is_subclass_of($rowModel, Model::class)
+            || ! is_subclass_of($snapshotModel, Model::class)
             || $sortColumns === []
         ) {
             throw new InvalidArgumentException('owner_projection_reader_invalid');
         }
+        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer;
     }
 
     public function page(
@@ -43,7 +47,7 @@ final readonly class ImmutableOwnerProjectionReader
     ): ReportPage {
         $this->assertSnapshot($context, $snapshot);
         $sortColumn = $this->sortColumns[$sort->field] ?? null;
-        if (!is_string($sortColumn)) {
+        if (! is_string($sortColumn)) {
             throw new InvalidArgumentException('owner_projection_sort_invalid');
         }
 
@@ -95,7 +99,7 @@ final readonly class ImmutableOwnerProjectionReader
         $this->assertSnapshot($context, $snapshot);
         $snapshotRecord = $this->snapshotRecord($context, $snapshot);
         $sortColumn = $this->sortColumns[$sort->field] ?? null;
-        if (!is_string($sortColumn)) {
+        if (! is_string($sortColumn)) {
             throw new InvalidArgumentException('owner_projection_sort_invalid');
         }
 
@@ -150,7 +154,7 @@ final readonly class ImmutableOwnerProjectionReader
     {
         $payload = $this->tokenPayload($token);
         $rowKey = $payload['row_key'] ?? null;
-        if (!is_string($rowKey) || $rowKey === '') {
+        if (! is_string($rowKey) || $rowKey === '') {
             throw new InvalidArgumentException('owner_projection_drill_token_invalid');
         }
 
@@ -178,8 +182,8 @@ final readonly class ImmutableOwnerProjectionReader
             ->where('organization_id', $context->scope->organizationId)
             ->first();
         if ($record === null
-            || !hash_equals((string) $record->getAttribute('source_hash'), $snapshot->sourceHash->value)
-            || !hash_equals((string) $record->getAttribute('definition_hash'), $snapshot->definitionHash->value)
+            || ! hash_equals((string) $record->getAttribute('source_hash'), $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->getAttribute('definition_hash'), $snapshot->definitionHash->value)
         ) {
             throw new InvalidArgumentException('owner_projection_snapshot_missing');
         }
@@ -201,8 +205,14 @@ final readonly class ImmutableOwnerProjectionReader
     private function visiblePayload(ReportExecutionContext $context, Model $record): array
     {
         $payload = (array) $record->getAttribute('payload');
+        $projectId = $payload['project_id'] ?? $record->getAttribute('project_id');
+        $this->sourceAccess->assertReferencesAccessible(
+            $context,
+            (array) $record->getAttribute('source_refs'),
+            is_numeric($projectId) ? (int) $projectId : null,
+        );
         $payload['row_key'] = (string) $record->getAttribute('row_key');
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             foreach ($this->sensitiveColumns as $column) {
                 unset($payload[$column]);
             }
@@ -213,7 +223,7 @@ final readonly class ImmutableOwnerProjectionReader
 
     private function visibleTotals(ReportExecutionContext $context, array $totals): array
     {
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             return $this->redact($totals);
         }
 
@@ -225,6 +235,7 @@ final readonly class ImmutableOwnerProjectionReader
         foreach ($value as $key => $item) {
             if (is_string($key) && in_array($key, $this->sensitiveColumns, true)) {
                 unset($value[$key]);
+
                 continue;
             }
             if (is_array($item)) {
@@ -273,7 +284,7 @@ final readonly class ImmutableOwnerProjectionReader
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
     {
-        return $snapshot->staleAt !== null && $snapshot->staleAt <= new \DateTimeImmutable()
+        return $snapshot->staleAt !== null && $snapshot->staleAt <= new \DateTimeImmutable
             ? ReportFreshnessStatus::STALE
             : ReportFreshnessStatus::FRESH;
     }
@@ -281,9 +292,9 @@ final readonly class ImmutableOwnerProjectionReader
     private function cursorPosition(ReportCursor $cursor): array
     {
         $payload = $this->tokenPayload($cursor->token);
-        if (!array_key_exists('last_sort_value', $payload)
-            || !isset($payload['last_stable_row_key'])
-            || !is_string($payload['last_stable_row_key'])
+        if (! array_key_exists('last_sort_value', $payload)
+            || ! isset($payload['last_stable_row_key'])
+            || ! is_string($payload['last_stable_row_key'])
         ) {
             throw new InvalidArgumentException('owner_projection_cursor_invalid');
         }
@@ -299,7 +310,7 @@ final readonly class ImmutableOwnerProjectionReader
             true,
         );
         $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (!is_array($payload) || array_is_list($payload)) {
+        if (! is_array($payload) || array_is_list($payload)) {
             throw new InvalidArgumentException('owner_projection_token_invalid');
         }
 
