@@ -53,7 +53,12 @@ function platformEvidence(array $args, string $commit): array
         $input = jsonDocument($args[$argument]);
         $document = $input['document'];
         if (($document['artifact_id'] ?? null) !== 'reporting_ci_'.$name || ($document['status'] ?? null) !== 'passed'
-            || ($document['repository_commit'] ?? null) !== $commit || !is_array($document['command_record'] ?? null)) {
+            || ($document['repository_commit'] ?? null) !== $commit
+            || array_keys($document) !== ['artifact_id', 'schema_version', 'status', 'repository_commit', 'source_hashes', 'command_record', 'output', 'published_count', 'binding_count', 'unresolved_risks']
+            || !is_array($document['output'] ?? null) || array_keys($document['output']) !== ['check_id', 'status', 'count']
+            || ($document['output']['check_id'] ?? null) !== 'reporting_ci_'.$name || ($document['output']['status'] ?? null) !== 'passed'
+            || !is_int($document['output']['count'] ?? null) || !is_array($document['command_record'] ?? null)
+            || ($document['command_record']['output_sha256'] ?? null) !== hash('sha256', CanonicalJson::encode($document['output'])."\n")) {
             throw new RuntimeException('plan_one_c_platform_evidence_input_invalid');
         }
         $documents[$name] = $document;
