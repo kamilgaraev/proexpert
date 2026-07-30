@@ -219,6 +219,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS purchase_receipt_line_reversal_identity ON purchase_receipt_lines');
+            DB::statement('DROP FUNCTION IF EXISTS most_purchase_receipt_line_reversal_v1()');
+        }
         Schema::dropIfExists('supply_reliability_rows');
         Schema::dropIfExists('supply_reliability_snapshots');
         Schema::dropIfExists('supply_reliability_policy_versions');
@@ -261,6 +265,45 @@ return new class extends Migration
         DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_value_basis_check CHECK ((value_otif_numerator_minor IS NULL AND value_currency IS NULL AND value_basis IS NULL) OR (value_otif_numerator_minor IS NOT NULL AND value_currency IS NOT NULL AND value_basis IS NOT NULL))');
         DB::statement('ALTER TABLE purchase_receipt_inventory_lots ADD CONSTRAINT receipt_inventory_lot_quantity_check CHECK (original_quantity > 0 AND reversed_quantity >= 0 AND reversed_quantity <= original_quantity)');
         DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION most_purchase_receipt_line_reversal_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.purchase_receipt_id <> OLD.purchase_receipt_id
+       OR NEW.purchase_order_item_id <> OLD.purchase_order_item_id
+       OR NEW.quantity_received <> OLD.quantity_received
+       OR NEW.price <> OLD.price
+       OR NEW.total_amount <> OLD.total_amount THEN
+        RAISE EXCEPTION 'purchase receipt line source identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    IF OLD.reversed_at IS NULL AND NEW.reversed_at IS NULL THEN
+        IF NEW.reversed_by_user_id IS NOT NULL
+           OR NEW.reversal_reason_code IS NOT NULL
+           OR NEW.reversal_warehouse_movement_id IS NOT NULL
+           OR NEW.reversal_idempotency_key IS NOT NULL THEN
+            RAISE EXCEPTION 'purchase receipt reversal must be atomic' USING ERRCODE = '55000';
+        END IF;
+    ELSIF OLD.reversed_at IS NULL THEN
+        IF NEW.reversed_by_user_id IS NULL
+           OR NEW.reversal_reason_code IS NULL
+           OR NEW.reversal_warehouse_movement_id IS NULL
+           OR NEW.reversal_idempotency_key IS NULL THEN
+            RAISE EXCEPTION 'purchase receipt reversal must be complete' USING ERRCODE = '55000';
+        END IF;
+    ELSIF NEW.reversed_at IS DISTINCT FROM OLD.reversed_at
+       OR NEW.reversed_by_user_id IS DISTINCT FROM OLD.reversed_by_user_id
+       OR NEW.reversal_reason_code IS DISTINCT FROM OLD.reversal_reason_code
+       OR NEW.reversal_warehouse_movement_id IS DISTINCT FROM OLD.reversal_warehouse_movement_id
+       OR NEW.reversal_idempotency_key IS DISTINCT FROM OLD.reversal_idempotency_key THEN
+        RAISE EXCEPTION 'purchase receipt reversal is immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER purchase_receipt_line_reversal_identity
+BEFORE UPDATE ON purchase_receipt_lines
+FOR EACH ROW EXECUTE FUNCTION most_purchase_receipt_line_reversal_v1();
+
 CREATE OR REPLACE FUNCTION most_receipt_inventory_lot_identity_v1() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -274,6 +317,14 @@ BEGIN
        OR NEW.unit_code <> OLD.unit_code
        OR NEW.conversion_version <> OLD.conversion_version THEN
         RAISE EXCEPTION 'receipt inventory lot identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    IF OLD.reversed_quantity = 0
+       AND NEW.reversed_quantity NOT IN (0, OLD.original_quantity) THEN
+        RAISE EXCEPTION 'receipt inventory reversal must be exact' USING ERRCODE = '55000';
+    END IF;
+    IF OLD.reversed_quantity = OLD.original_quantity
+       AND NEW.reversed_quantity <> OLD.reversed_quantity THEN
+        RAISE EXCEPTION 'receipt inventory reversal is immutable' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
 END

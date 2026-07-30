@@ -21,6 +21,7 @@ return [
         'project_invalid' => 'Выбранный объект недоступен для списания.',
         'insufficient_stock' => 'Недостаточно активов на складе. Доступно: :available, запрошено: :requested.',
         'insufficient_transfer_stock' => 'Недостаточно активов для перемещения. Доступно: :available, запрошено: :requested.',
+        'transfer_source_required' => 'Не указан исходный склад для перемещения.',
         'insufficient_reserve_stock' => 'Недостаточно активов для резервирования. Доступно: :available, запрошено: :requested.',
         'insufficient_reserved_stock' => 'Недостаточно зарезервированных активов. Зарезервировано: :reserved, запрошено: :requested.',
         'transfer_same_warehouse' => 'Для перемещения внутри одного склада укажите исходную и целевую ячейки.',

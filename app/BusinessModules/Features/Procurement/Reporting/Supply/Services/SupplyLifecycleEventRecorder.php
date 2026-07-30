@@ -41,6 +41,11 @@ final readonly class SupplyLifecycleEventRecorder
         string $reasonCode,
         CarbonImmutable $occurredAt,
     ): SupplyLifecycleEvent {
+        $line->loadMissing('inventoryLot');
+        $lot = $line->inventoryLot;
+        if ($lot === null) {
+            throw new DomainException('Receipt inventory lot is required before reversal.');
+        }
         $original = SupplyLifecycleEvent::query()
             ->where('organization_id', $this->organizationId($line))
             ->where('source_type', 'purchase_receipt_line')
@@ -54,7 +59,7 @@ final readonly class SupplyLifecycleEventRecorder
         return $this->recordLineEvent(
             $line,
             'receipt_reversed',
-            '-'.ltrim((string) $line->quantity_received, '+-'),
+            '-'.ltrim((string) $lot->original_quantity, '+-'),
             $occurredAt,
             $reasonCode,
             (int) $original->id,

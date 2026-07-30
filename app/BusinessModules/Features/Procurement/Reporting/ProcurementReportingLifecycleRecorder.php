@@ -18,6 +18,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrd
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Support\OrganizationBusinessTimezone;
 use Brick\Math\BigDecimal;
 use Carbon\CarbonImmutable;
 use DomainException;
@@ -30,6 +31,7 @@ final readonly class ProcurementReportingLifecycleRecorder
         private ProcurementProcessEventRecorder $processEvents,
         private PurchaseOrderPromiseVersionRecorder $promiseVersions,
         private SupplyLifecycleEventRecorder $supplyEvents,
+        private OrganizationBusinessTimezone $businessTimezone,
     ) {}
 
     public function requestCreated(PurchaseRequest $request, ?int $actorId): void
@@ -224,11 +226,14 @@ final readonly class ProcurementReportingLifecycleRecorder
 
     public function prepareOrderPromises(PurchaseOrder $order): void
     {
-        $order->loadMissing(['items', 'purchaseRequest.lines', 'purchaseRequest.siteRequest']);
+        $order->loadMissing(['organization', 'items', 'purchaseRequest.lines', 'purchaseRequest.siteRequest']);
         if ($order->delivery_date === null) {
             throw new DomainException(trans_message('procurement.purchase_orders.delivery_date_required'));
         }
-        $promisedAt = CarbonImmutable::parse($order->delivery_date)->endOfDay();
+        $promisedAt = CarbonImmutable::parse(
+            $order->delivery_date->format('Y-m-d'),
+            $this->businessTimezone->resolve($order->organization),
+        )->endOfDay();
         foreach ($order->items as $item) {
             $this->pinOrderItemBasis($order, $item);
             $this->promiseVersions->captureOriginal($item->fresh(), $promisedAt);

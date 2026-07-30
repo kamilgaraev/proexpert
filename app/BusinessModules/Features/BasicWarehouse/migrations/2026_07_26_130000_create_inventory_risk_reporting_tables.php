@@ -237,6 +237,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS warehouse_reporting_movement_identity ON warehouse_movements');
+            DB::statement('DROP FUNCTION IF EXISTS most_warehouse_reporting_movement_identity_v1()');
+        }
         Schema::dropIfExists('inventory_risk_rows');
         Schema::dropIfExists('inventory_risk_snapshots');
         Schema::dropIfExists('inventory_reorder_policy_versions');
@@ -278,6 +282,7 @@ SQL);
         DB::statement('ALTER TABLE inventory_risk_rows ADD CONSTRAINT inventory_risk_available_check CHECK (available_quantity = closing_on_hand - reserved_quantity AND available_quantity >= 0)');
         DB::statement('ALTER TABLE inventory_risk_rows ADD CONSTRAINT inventory_risk_values_check CHECK ((turnover IS NULL OR turnover >= 0) AND (cost_turnover IS NULL OR cost_turnover >= 0) AND (days_on_hand IS NULL OR days_on_hand >= 0) AND (consumption_value_minor IS NULL OR consumption_value_minor >= 0) AND (on_hand_value_minor IS NULL OR on_hand_value_minor >= 0) AND (recommended_order_quantity IS NULL OR recommended_order_quantity >= 0))');
         $this->installTransferPairConstraint();
+        $this->installLinkedMovementIdentityConstraint();
         $this->installDailyRecurrenceConstraint();
     }
 
@@ -323,8 +328,14 @@ BEGIN
        AND event_out.transfer_pair_key = NEW.transfer_pair_key
        AND event_out.event_type = 'transfer_out'
        AND movement_out.warehouse_id = event_out.warehouse_id
+       AND movement_out.material_id = event_out.material_id
+       AND movement_out.movement_type = 'transfer_out'
+       AND movement_out.quantity = ABS(event_out.on_hand_delta)
        AND movement_out.to_warehouse_id = event_in.warehouse_id
        AND movement_in.warehouse_id = event_in.warehouse_id
+       AND movement_in.material_id = event_in.material_id
+       AND movement_in.movement_type = 'transfer_in'
+       AND movement_in.quantity = event_in.on_hand_delta
        AND movement_in.from_warehouse_id = event_out.warehouse_id;
     IF pair_count <> 2
        OR dimension_count <> 1
@@ -343,6 +354,38 @@ DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 WHEN (NEW.transfer_pair_key IS NOT NULL)
 EXECUTE FUNCTION most_inventory_transfer_pair_v1()
+SQL);
+    }
+
+    private function installLinkedMovementIdentityConstraint(): void
+    {
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION most_warehouse_reporting_movement_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM warehouse_inventory_events
+         WHERE source_movement_id = OLD.id
+    ) AND (
+        NEW.organization_id <> OLD.organization_id
+        OR NEW.warehouse_id <> OLD.warehouse_id
+        OR NEW.material_id <> OLD.material_id
+        OR NEW.movement_type <> OLD.movement_type
+        OR NEW.quantity <> OLD.quantity
+        OR NEW.movement_date <> OLD.movement_date
+        OR NEW.from_warehouse_id IS DISTINCT FROM OLD.from_warehouse_id
+        OR NEW.to_warehouse_id IS DISTINCT FROM OLD.to_warehouse_id
+    ) THEN
+        RAISE EXCEPTION 'linked warehouse movement identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER warehouse_reporting_movement_identity
+BEFORE UPDATE ON warehouse_movements
+FOR EACH ROW EXECUTE FUNCTION most_warehouse_reporting_movement_identity_v1()
 SQL);
     }
 

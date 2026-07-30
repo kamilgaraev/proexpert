@@ -46,6 +46,17 @@ final class PurchaseReceiptInventoryLot extends Model
                     throw new LogicException('Receipt inventory lot identity is immutable.');
                 }
             }
+            $original = (string) $lot->getOriginal('reversed_quantity');
+            $next = (string) $lot->reversed_quantity;
+            if ($original !== '0.000000' && $original !== '0' && $next !== $original) {
+                throw new LogicException('Receipt inventory reversal is immutable.');
+            }
+            if (
+                in_array($original, ['0', '0.000000'], true)
+                && ! in_array($next, [$original, (string) $lot->original_quantity], true)
+            ) {
+                throw new LogicException('Receipt inventory reversal must be exact.');
+            }
         });
     }
 

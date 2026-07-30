@@ -469,6 +469,7 @@ class PurchaseOrderService
                     'purchase_receipt_line_id' => (int) $line->id,
                     'warehouse_movement_id' => (int) $movement->id,
                     'reason_code' => $reasonCode,
+                    'idempotency_key' => $idempotencyKey,
                     'supply_lifecycle_event_id' => (int) $event->id,
                 ],
             );

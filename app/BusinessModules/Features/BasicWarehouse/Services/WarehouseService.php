@@ -121,6 +121,14 @@ class WarehouseService implements WarehouseReportDataProvider
         DB::beginTransaction();
         try {
             $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, $metadata);
+            if (
+                ($metadata['is_transfer'] ?? false) === true
+                && (int) ($metadata['from_warehouse_id'] ?? 0) < 1
+            ) {
+                throw new \DomainException(
+                    trans_message('warehouse_basic.validation.transfer_source_required')
+                );
+            }
             // Ищем существующую партию с такой же ценой и параметрами
             // (Стратегия: смешиваем партии только если они абсолютно идентичны по цене и срокам)
             $query = WarehouseBalance::where('organization_id', $organizationId)
@@ -179,7 +187,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'warehouse_id' => $warehouseId,
                 'cell_id' => $metadata['cell_id'] ?? null,
                 'material_id' => $materialId,
-                'movement_type' => 'receipt',
+                'movement_type' => ($metadata['is_transfer'] ?? false) === true ? 'transfer_in' : 'receipt',
                 'quantity' => $quantity,
                 'price' => $price,
                 'project_id' => $metadata['project_id'] ?? null,
@@ -188,6 +196,9 @@ class WarehouseService implements WarehouseReportDataProvider
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
                 'operation_category' => $metadata['operation_category'] ?? null,
+                'from_warehouse_id' => ($metadata['is_transfer'] ?? false) === true
+                    ? (int) ($metadata['from_warehouse_id'] ?? 0)
+                    : null,
                 'metadata' => $metadata,
                 'movement_date' => now(),
             ]);
@@ -441,16 +452,11 @@ class WarehouseService implements WarehouseReportDataProvider
                     'reason' => 'Перемещение со склада '.$fromWarehouseId,
                     'is_transfer' => true,
                     'transfer_pair_key' => $transferPairKey,
+                    'from_warehouse_id' => $fromWarehouseId,
                 ])
             );
 
-            // Удаляем лишнее движение, которое создал receiveAsset (нам нужны специфичные типы transfer_in/out)
-            // Или просто обновим его тип и связи
             $movementIn = $targetResult['movement'];
-            $movementIn->update([
-                'movement_type' => 'transfer_in',
-                'from_warehouse_id' => $fromWarehouseId,
-            ]);
 
             // 3. Создаем движение расхода с исходного склада
             $movementOut = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
