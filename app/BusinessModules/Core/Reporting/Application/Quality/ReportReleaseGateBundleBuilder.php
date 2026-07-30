@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
+use Symfony\Component\Process\Process;
 use Symfony\Component\Yaml\Yaml;
 
 final class ReportReleaseGateBundleBuilder
@@ -70,6 +71,9 @@ final class ReportReleaseGateBundleBuilder
         if (preg_match('/^[a-f0-9]{40}$/D', $releaseSha) !== 1
             || preg_match('/^[a-f0-9]{40}$/D', $activationCommitSha) !== 1
             || preg_match('/^[a-f0-9]{40}$/D', $adminEvidenceCommitSha) !== 1
+            || ! $this->commitExists($releaseSha)
+            || ! $this->commitExists($activationCommitSha)
+            || ! $this->commitExists($adminEvidenceCommitSha)
             || $activationCommitSha === $releaseSha
             || ! array_is_list($gates)
             || count($gates) !== 14
@@ -101,7 +105,13 @@ final class ReportReleaseGateBundleBuilder
         }
 
         $qg14 = $gates[13];
-        if ($qg14->command !== $qg14Evidence->commandId || $qg14->count !== $qg14Evidence->combinedForbiddenSymbolMatches) {
+        if ($qg14->command !== $qg14Evidence->commandId
+            || $qg14->count !== $qg14Evidence->combinedForbiddenSymbolMatches
+            || $this->qg14SourceHashes() !== [
+                $qg14Evidence->qg14AdminSha256->value,
+                $qg14Evidence->qg14BackendSha256->value,
+                $qg14Evidence->qg14CombinedSha256->value,
+            ]) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::COMMAND_COUNT_MISMATCH);
         }
 
@@ -186,6 +196,9 @@ final class ReportReleaseGateBundleBuilder
                 $section = is_string($item['evidence_section'] ?? null)
                     ? ($document['evidence_sections'][$item['evidence_section']] ?? null)
                     : null;
+                $sectionKeys = $gate === 'QG-14'
+                    ? ['source_artifact_id', 'gate', 'result', 'observed_count', 'qg14_admin_sha256', 'qg14_backend_sha256', 'qg14_combined_sha256']
+                    : ['source_artifact_id', 'gate', 'result', 'observed_count'];
                 if (! is_array($definition)
                     || ! $this->hasExactKeys($item, ['gate', 'owner_plan', 'command', 'count', 'schema_sha256', 'executed_at', 'evidence_section', 'artifact_sha256'])
                     || $gate !== $definition['id']
@@ -196,11 +209,12 @@ final class ReportReleaseGateBundleBuilder
                     || (self::GATE_SOURCES[$gate] ?? null) !== $source['artifact_id']
                     || ! is_string($item['evidence_section'] ?? null)
                     || ! is_array($section)
-                    || ! $this->hasExactKeys($section, ['source_artifact_id', 'gate', 'result', 'observed_count'])
+                    || ! $this->hasExactKeys($section, $sectionKeys)
                     || ($section['source_artifact_id'] ?? null) !== $source['artifact_id']
                     || ($section['gate'] ?? null) !== $gate
                     || ($section['result'] ?? null) !== 'passed'
                     || ($section['observed_count'] ?? null) !== $item['count']
+                    || ($gate === 'QG-14' && ! $this->hasValidQG14Hashes($section))
                     || ($item['artifact_sha256'] ?? null) !== ($document['section_hashes'][$item['evidence_section']] ?? null)) {
                     throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
                 }
@@ -260,6 +274,11 @@ final class ReportReleaseGateBundleBuilder
         if (! array_is_list($sources) || count($sources) !== 13) {
             return false;
         }
+        if (! $this->commitExists($releaseSha)
+            || ! $this->commitExists($activationCommitSha)
+            || ! $this->commitExists($adminEvidenceCommitSha)) {
+            return false;
+        }
 
         foreach ($sources as $index => $source) {
             [$artifactId, $kind, $path] = self::SOURCE_ARTIFACTS[$index];
@@ -313,6 +332,29 @@ final class ReportReleaseGateBundleBuilder
         }
 
         return $bytes;
+    }
+
+    /** @return list<string> */
+    private function qg14SourceHashes(): array
+    {
+        $document = $this->decodeCanonical($this->artifactBytes('build/reports/intake/plan-4-admin-evidence.json'));
+        $sectionName = null;
+        foreach ($document['quality_gates'] as $gate) {
+            if (($gate['gate'] ?? null) === 'QG-14' && is_string($gate['evidence_section'] ?? null)) {
+                $sectionName = $gate['evidence_section'];
+                break;
+            }
+        }
+        $section = is_string($sectionName) ? ($document['evidence_sections'][$sectionName] ?? null) : null;
+        if (! is_array($section) || ! $this->hasValidQG14Hashes($section)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::COMMAND_COUNT_MISMATCH);
+        }
+
+        return [
+            $section['qg14_admin_sha256'],
+            $section['qg14_backend_sha256'],
+            $section['qg14_combined_sha256'],
+        ];
     }
 
     /** @return array<string, mixed> */
@@ -399,6 +441,40 @@ final class ReportReleaseGateBundleBuilder
             'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => $adminEvidenceCommitSha,
             default => $releaseSha,
         };
+    }
+
+    /** @param array<string, mixed> $section */
+    private function hasValidQG14Hashes(array $section): bool
+    {
+        foreach (['qg14_admin_sha256', 'qg14_backend_sha256', 'qg14_combined_sha256'] as $key) {
+            if (! is_string($section[$key] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $section[$key]) !== 1) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function commitExists(string $commit): bool
+    {
+        if (preg_match('/^[a-f0-9]{40}$/D', $commit) !== 1) {
+            return false;
+        }
+
+        $process = new Process(['git', 'cat-file', '-e', $commit.'^{commit}'], $this->root());
+        $process->run();
+
+        return $process->isSuccessful();
+    }
+
+    private function root(): string
+    {
+        $root = realpath(dirname(__DIR__, 6));
+        if (! is_string($root)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::MISSING);
+        }
+
+        return str_replace('\\', '/', $root);
     }
 
     private function canonicalTime(mixed $value): DateTimeImmutable

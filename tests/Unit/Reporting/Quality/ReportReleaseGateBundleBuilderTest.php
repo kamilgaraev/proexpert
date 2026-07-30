@@ -60,16 +60,16 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
         $bundle = $this->builder()->build(
             $this->gates(),
             $this->qg14Evidence(),
-            str_repeat('a', 40),
+            $this->releaseSha(),
             $this->sources(),
-            str_repeat('b', 40),
-            str_repeat('c', 40),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
             new DateTimeImmutable('2026-07-26T00:00:00Z'),
         );
 
         self::assertSame('release_gates_passed', $bundle->status);
-        self::assertSame(str_repeat('b', 40), $bundle->activationCommitSha);
-        self::assertSame(str_repeat('c', 40), $bundle->adminEvidenceCommitSha);
+        self::assertSame($this->activationSha(), $bundle->activationCommitSha);
+        self::assertSame($this->adminEvidenceSha(), $bundle->adminEvidenceCommitSha);
         self::assertSame(
             hash('sha256', CanonicalJson::encode($bundle->sources)),
             $bundle->sectionHashes['source_artifacts'],
@@ -91,7 +91,7 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
     public function test_rejects_an_arbitrary_command_or_schema_hash_for_a_catalog_gate(): void
     {
         $gates = $this->gates();
-        $gates[0] = new ReportQualityGateEvidence('QG-01', 'backend', ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, 'arbitrary-command', 28, new Sha256Hash(str_repeat('b', 64)), str_repeat('a', 40), str_repeat('c', 40), new DateTimeImmutable('2026-07-26T00:00:00Z'), new Sha256Hash(str_repeat('d', 64)));
+        $gates[0] = new ReportQualityGateEvidence('QG-01', 'backend', ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, 'arbitrary-command', 28, new Sha256Hash(str_repeat('b', 64)), $this->releaseSha(), $this->adminEvidenceSha(), new DateTimeImmutable('2026-07-26T00:00:00Z'), new Sha256Hash(str_repeat('d', 64)));
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE));
 
@@ -107,6 +107,18 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->builder()->loadGateEvidence(
             $sources,
+            $this->releaseSha(),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
+        );
+    }
+
+    public function test_rejects_nonexistent_commit_authority_even_when_sources_are_structured(): void
+    {
+        $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
+
+        $this->builder()->loadGateEvidence(
+            $this->sources(false),
             str_repeat('a', 40),
             str_repeat('b', 40),
             str_repeat('c', 40),
@@ -122,9 +134,9 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->builder()->loadGateEvidence(
             $sources,
-            str_repeat('a', 40),
-            str_repeat('b', 40),
-            str_repeat('c', 40),
+            $this->releaseSha(),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
         );
     }
 
@@ -140,9 +152,9 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->builder()->loadGateEvidence(
             $sources,
-            str_repeat('a', 40),
-            str_repeat('b', 40),
-            str_repeat('c', 40),
+            $this->releaseSha(),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
         );
     }
 
@@ -163,10 +175,35 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->builder()->loadGateEvidence(
             $sources,
-            str_repeat('a', 40),
-            str_repeat('b', 40),
-            str_repeat('c', 40),
+            $this->releaseSha(),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
         );
+    }
+
+    public function test_rejects_qg14_source_hashes_that_do_not_match_joint_evidence(): void
+    {
+        $path = $this->sourceRoot.'/build/reports/intake/plan-4-admin-evidence.json';
+        $document = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        $sectionName = null;
+        foreach ($document['quality_gates'] as $index => $gate) {
+            if (($gate['gate'] ?? null) === 'QG-14') {
+                $sectionName = $gate['evidence_section'];
+                $document['evidence_sections'][$sectionName]['qg14_admin_sha256'] = str_repeat('9', 64);
+                $document['section_hashes'][$sectionName] = hash(
+                    'sha256',
+                    CanonicalJson::encode($document['evidence_sections'][$sectionName]),
+                );
+                $document['quality_gates'][$index]['artifact_sha256'] = $document['section_hashes'][$sectionName];
+                break;
+            }
+        }
+        self::assertIsString($sectionName);
+        file_put_contents($path, CanonicalJson::encode($document)."\n");
+
+        $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::COMMAND_COUNT_MISMATCH));
+
+        $this->build($this->gates());
     }
 
     public function test_rejects_a_dummy_artifact_even_with_a_valid_handoff_shape(): void
@@ -178,9 +215,9 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->builder()->loadGateEvidence(
             $sources,
-            str_repeat('a', 40),
-            str_repeat('b', 40),
-            str_repeat('c', 40),
+            $this->releaseSha(),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
         );
     }
 
@@ -229,9 +266,9 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
     {
         return $this->builder()->loadGateEvidence(
             $this->sources(),
-            str_repeat('a', 40),
-            str_repeat('b', 40),
-            str_repeat('c', 40),
+            $this->releaseSha(),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
         );
     }
 
@@ -239,7 +276,7 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
     {
         $definition = (new ReportPlatformGateCatalog(dirname(__DIR__, 4).'/docs/reports/contracts/report-platform-gates.v1.json'))->records()[(int) substr($id, -2) - 1];
 
-        return new ReportQualityGateEvidence($id, $owner, ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, $definition['command'], $count, new Sha256Hash($definition['schema_sha256']), str_repeat('a', 40), str_repeat('c', 40), new DateTimeImmutable('2026-07-26T00:00:00Z'), new Sha256Hash(str_repeat('d', 64)));
+        return new ReportQualityGateEvidence($id, $owner, ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, $definition['command'], $count, new Sha256Hash($definition['schema_sha256']), $this->releaseSha(), $this->adminEvidenceSha(), new DateTimeImmutable('2026-07-26T00:00:00Z'), new Sha256Hash(str_repeat('d', 64)));
     }
 
     private function qg14Evidence(): JointQG14Evidence
@@ -257,10 +294,10 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
         return $this->builder()->build(
             $gates,
             $this->qg14Evidence(),
-            str_repeat('a', 40),
+            $this->releaseSha(),
             $sources ?? $this->sources(),
-            str_repeat('b', 40),
-            str_repeat('c', 40),
+            $this->activationSha(),
+            $this->adminEvidenceSha(),
             new DateTimeImmutable('2026-07-26T00:00:00Z'),
         );
     }
@@ -299,6 +336,11 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
                 'result' => 'passed',
                 'observed_count' => $definition['minimum_count'],
             ];
+            if ($definition['id'] === 'QG-14') {
+                $evidenceSections[$section]['qg14_admin_sha256'] = $this->qg14Evidence()->qg14AdminSha256->value;
+                $evidenceSections[$section]['qg14_backend_sha256'] = $this->qg14Evidence()->qg14BackendSha256->value;
+                $evidenceSections[$section]['qg14_combined_sha256'] = $this->qg14Evidence()->qg14CombinedSha256->value;
+            }
             $qualityGates[] = [
                 'gate' => $definition['id'],
                 'owner_plan' => $definition['release_owner'],
@@ -311,9 +353,9 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
             ];
         }
         $repositoryCommit = match ($artifactId) {
-            'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => str_repeat('b', 40),
-            'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => str_repeat('c', 40),
-            default => str_repeat('a', 40),
+            'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => $this->activationSha(),
+            'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => $this->adminEvidenceSha(),
+            default => $this->releaseSha(),
         };
         $document = [
             'artifact_id' => $artifactId,
@@ -329,20 +371,20 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
             ),
         ];
         if ($kind !== 'ancestor_evidence') {
-            $document['release_sha'] = str_repeat('a', 40);
+            $document['release_sha'] = $this->releaseSha();
         }
         if ($kind === 'transfer') {
-            $document['activation_commit_sha'] = str_repeat('b', 40);
-            $document['admin_evidence_commit_sha'] = str_repeat('c', 40);
+            $document['activation_commit_sha'] = $this->activationSha();
+            $document['admin_evidence_commit_sha'] = $this->adminEvidenceSha();
         }
 
         return CanonicalJson::encode($document)."\n";
     }
 
     /** @return list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> */
-    private function sources(): array
+    private function sources(bool $useRealCommits = true): array
     {
-        return array_map(function (array $source): array {
+        return array_map(function (array $source) use ($useRealCommits): array {
             $bytes = (string) file_get_contents($this->sourceRoot.'/'.$source[2]);
             $bytesHash = hash('sha256', $bytes);
             $tracked = in_array($source[0], [
@@ -359,14 +401,45 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
                 'bytes_sha256' => $bytesHash,
                 'document_sha256' => $bytesHash,
                 'repository_commit' => match ($source[0]) {
-                    'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => str_repeat('b', 40),
-                    'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => str_repeat('c', 40),
-                    default => str_repeat('a', 40),
+                    'plan-1a-completion', 'plan-1b-completion', 'plan-1c-platform-completion' => $useRealCommits ? $this->activationSha() : str_repeat('b', 40),
+                    'plan4_admin_qg10_qg14_evidence', 'plan4_admin_evidence_transfer' => $useRealCommits ? $this->adminEvidenceSha() : str_repeat('c', 40),
+                    default => $useRealCommits ? $this->releaseSha() : str_repeat('a', 40),
                 },
                 'status' => $tracked ? 'tracked' : $document['status'],
                 'section_hashes' => $tracked ? ['document' => $bytesHash] : $document['section_hashes'],
             ];
         }, $this->sourceDefinitions());
+    }
+
+    private function releaseSha(): string
+    {
+        return $this->gitOutput(['rev-parse', 'HEAD']);
+    }
+
+    private function activationSha(): string
+    {
+        return $this->gitOutput(['rev-parse', 'HEAD~1']);
+    }
+
+    private function adminEvidenceSha(): string
+    {
+        return $this->activationSha();
+    }
+
+    /** @param list<string> $arguments */
+    private function gitOutput(array $arguments): string
+    {
+        $command = 'git -C '.escapeshellarg($this->sourceRoot);
+        foreach ($arguments as $argument) {
+            $command .= ' '.escapeshellarg($argument);
+        }
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+        self::assertSame(0, $exitCode);
+        self::assertCount(1, $output);
+
+        return $output[0];
     }
 
     /** @return list<array{string, string, string}> */

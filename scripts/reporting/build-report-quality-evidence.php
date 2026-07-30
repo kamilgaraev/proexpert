@@ -105,7 +105,7 @@ try {
             hash('sha256', read($options['plan-1c'])),
         ];
         $ledger = $builder->buildReleaseFromActivation($activation, $gates, $prerequisites, $releaseSha, $generatedAt);
-        $serializedGates = serializeReleaseGates($gates);
+        $serializedGates = serializeReleaseGates($gates, $gateDocument);
     }
     $document = ['artifact_id' => 'report_quality_evidence', 'schema_version' => '1.0.0', 'status' => $ledger->status, 'catalog' => ['path' => 'docs/reports/contracts/report-platform-gates.v1.json', 'sha256' => $catalogHash], 'release_sha' => $releaseSha, 'generated_at' => $generatedAt->format('Y-m-d\\TH:i:s\\Z'), 'gates' => $serializedGates];
     $bytes = CanonicalJson::encode($document)."\n";
@@ -130,7 +130,7 @@ function decodeCanonical(string $path): array { $bytes = read($path); $data = js
 function loadManifest(string $path, string $catalog): LoadedReportManifest { $bytes = read($path); $data = Yaml::parse($bytes); if (!is_array($data) || ($data['catalog'] ?? null) !== $catalog || !is_array($data['definitions'] ?? null)) { throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID); } return new LoadedReportManifest($catalog, (string) ($data['contract_version'] ?? ''), new Sha256Hash(hash('sha256', $bytes)), $data['definitions']); }
 function parseGates(array $document, array $records, string $catalogHash, string $releaseSha, DateTimeImmutable $time, string $phase): array { if (array_keys($document) !== ['artifact_id','catalog','gates','generated_at','release_sha','schema_version','status'] || ($document['artifact_id'] ?? null) !== 'report_platform_gate_inputs' || ($document['schema_version'] ?? null) !== '1.0.0' || ($document['status'] ?? null) !== 'platform_gate_inputs_passed' || ($document['catalog']['sha256'] ?? null) !== $catalogHash || ($document['release_sha'] ?? null) !== $releaseSha || ($document['generated_at'] ?? null) !== $time->format('Y-m-d\\TH:i:s\\Z') || !is_array($document['gates'] ?? null) || count($document['gates']) !== 14) { throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID); } $result=[]; foreach ($records as $index=>$record) { $gate=$document['gates'][$index] ?? null; if (!is_array($gate) || ($gate['gate']??null)!==$record['id'] || ($gate['owner_plan']??null)!==$record['release_owner'] || ($gate['phase']??null)!==$phase || ($gate['status']??null)!==$record['platform_status'] || ($gate['command']??null)!==$record['command'] || ($gate['count']??null)!==$record['minimum_count'] || ($gate['schema_sha256']??null)!==$record['schema_sha256'] || ($gate['release_sha']??null)!==$releaseSha || ($gate['commit_sha']??null)!==$releaseSha || ($gate['executed_at']??null)!==$time->format('Y-m-d\\TH:i:s\\Z')) { throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID); } $sources=[]; foreach ($record['source_paths'] as $source) { $sources[]=['path'=>$source,'sha256'=>hash('sha256',gitBlob($releaseSha, $source))]; } if (($gate['source_artifacts']??null)!==$sources) { throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID); } $artifact=$gate['artifact_sha256']??null; $expectedArtifact=$record['platform_status']==='passed' ? hash('sha256',CanonicalJson::encode($sources)) : null; if ($artifact!==$expectedArtifact) { throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID); } $result[]=new ReportQualityGateEvidence($record['id'],$record['release_owner'],ReportQualityEvidencePhase::from($phase),ReportQualityEvidenceStatus::from($record['platform_status']),$record['command'],$record['minimum_count'],new Sha256Hash($record['schema_sha256']),$releaseSha,$releaseSha,$time,is_string($artifact)?new Sha256Hash($artifact):null); } return $result; }
 function serializeGates(array $gates, array $records): array { return array_map(static fn (ReportQualityGateEvidence $g, array $record): array => ['gate'=>$g->gate,'owner_plan'=>$g->ownerPlan,'phase'=>$g->phase->value,'status'=>$g->status->value,'command'=>$g->command,'count'=>$g->count,'schema_sha256'=>$g->schemaHash->value,'release_sha'=>$g->releaseSha,'commit_sha'=>$g->commitSha,'executed_at'=>$g->executedAt->format('Y-m-d\\TH:i:s\\Z'),'artifact_sha256'=>$g->artifactHash?->value,'source_artifacts'=>array_map(static fn (string $path): array => ['path'=>$path,'sha256'=>hash('sha256',gitBlob($g->commitSha, $path))],$record['source_paths'])], $gates, $records); }
-function serializeReleaseGates(array $gates): array { return array_map(static fn (ReportQualityGateEvidence $g): array => ['gate'=>$g->gate,'owner_plan'=>$g->ownerPlan,'phase'=>'release','status'=>'passed','command'=>$g->command,'count'=>$g->count,'schema_sha256'=>$g->schemaHash->value,'release_sha'=>$g->releaseSha,'commit_sha'=>$g->commitSha,'executed_at'=>$g->executedAt->format('Y-m-d\\TH:i:s\\Z'),'artifact_sha256'=>$g->artifactHash?->value,'source_artifacts'=>[]], $gates); }
+function serializeReleaseGates(array $gates, array $document): array { return array_map(static function (ReportQualityGateEvidence $g, array $sourceGate): array { return ['gate'=>$g->gate,'owner_plan'=>$g->ownerPlan,'phase'=>'release','status'=>'passed','command'=>$g->command,'count'=>$g->count,'schema_sha256'=>$g->schemaHash->value,'release_sha'=>$g->releaseSha,'commit_sha'=>$g->commitSha,'executed_at'=>$g->executedAt->format('Y-m-d\\TH:i:s\\Z'),'artifact_sha256'=>$g->artifactHash?->value,'source_artifacts'=>releaseSourceArtifacts($sourceGate)]; }, $gates, $document['gates']); }
 function parseReleaseGates(array $document, array $records, array $sourceGates, string $releaseSha, DateTimeImmutable $generatedAt, string $activationCommit, string $adminEvidenceCommit): array {
     if (($document['release_sha'] ?? null) !== $releaseSha
         || ($document['activation_commit_sha'] ?? null) !== $activationCommit
@@ -159,12 +159,46 @@ function parseReleaseGates(array $document, array $records, array $sourceGates, 
             || ($gate['schema_hashes']??null)!==[$record['schema_sha256']]
             || $gate['executed_at']!==$sourceGate->executedAt->format('Y-m-d\\TH:i:s\\Z')
             || !is_array($gate['evidence_hashes']??null)
-            || ($record['id']!=='QG-14' && ($gate['evidence_hashes']??null)!==[$sourceGate->artifactHash?->value])) {
+            || ($gate['evidence_hashes']??null)!==expectedReleaseEvidenceHashes($gate, $sourceGate)) {
             throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID);
         }
         $result[]=$sourceGate;
     }
     return $result;
+}
+function expectedReleaseEvidenceHashes(array $gate, ReportQualityGateEvidence $sourceGate): array {
+    if (($gate['gate'] ?? null) !== 'QG-14') {
+        return [$sourceGate->artifactHash?->value];
+    }
+    $source = qg14SourceSection();
+    return [$source['qg14_admin_sha256'], $source['qg14_backend_sha256'], $source['qg14_combined_sha256']];
+}
+function qg14SourceSection(): array {
+    $document = decodeCanonical(QUALITY_ROOT.'/build/reports/intake/plan-4-admin-evidence.json');
+    $sectionName = null;
+    foreach ($document['quality_gates'] ?? [] as $gate) {
+        if (($gate['gate'] ?? null) === 'QG-14' && is_string($gate['evidence_section'] ?? null)) {
+            $sectionName = $gate['evidence_section'];
+            break;
+        }
+    }
+    $section = is_string($sectionName) ? ($document['evidence_sections'][$sectionName] ?? null) : null;
+    if (!is_array($section)) {
+        throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID);
+    }
+    foreach (['qg14_admin_sha256','qg14_backend_sha256','qg14_combined_sha256'] as $key) {
+        if (!is_string($section[$key] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $section[$key]) !== 1) {
+            throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID);
+        }
+    }
+    return $section;
+}
+function releaseSourceArtifacts(array $sourceGate): array {
+    $hashes = $sourceGate['evidence_hashes'] ?? null;
+    if (!is_array($hashes) || $hashes === []) {
+        throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID);
+    }
+    return array_map(static fn (string $hash, int $index): array => ['path'=>'build/reports/report-release-gate-bundle/'.strtolower((string)$sourceGate['gate']).'/evidence-'.$index,'sha256'=>$hash], $hashes, array_keys($hashes));
 }
 function assertReleaseGateBundleSchema(array $document): void { $schema=json_decode(read(QUALITY_ROOT.'/docs/reports/contracts/report-release-gate-bundle.schema.json'),false,512,JSON_THROW_ON_ERROR); if(!(new CompliantValidator())->validate(json_decode(CanonicalJson::encode($document),false,512,JSON_THROW_ON_ERROR),$schema)->isValid()){throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::INVALID);} }
 function releaseGateSourceArtifact(string $gate): string { $number=(int)substr($gate,-2); return match(true){$number===1=>'plan-1c-platform-completion',$number<=5=>'plan-2-wave-1-candidate-conformance',$number<=7=>'plan3_waves23_candidate_contribution',$number<=9=>'plan3_waves23_evidence',default=>'plan4_admin_qg10_qg14_evidence'}; }
