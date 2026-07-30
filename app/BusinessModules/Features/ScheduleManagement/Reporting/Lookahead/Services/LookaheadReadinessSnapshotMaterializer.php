@@ -227,6 +227,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'readiness_pct' => $coverage->ratio,
                     'hard_blockers' => $coverage->hardBlockers,
                     'soft_blockers' => $coverage->softBlockers,
+                    'unknown_metrics' => $this->snapshotUnknownMetrics($metrics),
                 ];
                 $sourceRefs = [[
                     'source' => 'schedule',
@@ -426,6 +427,18 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         }
 
         return array_values(array_unique($result));
+    }
+
+    private function snapshotUnknownMetrics(array $metrics): array
+    {
+        foreach ($metrics as $entry) {
+            $metric = $entry[1] ?? null;
+            if ($metric?->warningCode !== null) {
+                return ['waiver_validity'];
+            }
+        }
+
+        return [];
     }
 
     private function matches(mixed $filter, int|string|null $value): bool
