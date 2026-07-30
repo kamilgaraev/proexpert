@@ -11,7 +11,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\DrillDown\QualityDefectFlowDrillDownProvider;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowRow;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers\QualityDefectFlowReportProvider;
@@ -48,7 +50,7 @@ final class QualityDefectFlowContractTest extends TestCase
             'closed_flag' => true,
             'closing_flag' => false,
             'cycle_days' => 4,
-            'evidence_refs' => '[{"id":14,"type":"closure"}]',
+            'evidence_refs' => '[{"id":14,"type":"quality_defect_photo"}]',
         ], true);
         $method = new \ReflectionMethod(QualityDefectFlowRowQuery::class, 'serialize');
         $query = new QualityDefectFlowRowQuery;
@@ -57,10 +59,31 @@ final class QualityDefectFlowContractTest extends TestCase
         $visible = $method->invoke($query, $row, $this->context(true));
 
         self::assertSame([], $redacted['evidence_refs']);
-        self::assertSame([['id' => 14, 'type' => 'closure']], $visible['evidence_refs']);
+        self::assertSame([['id' => 14, 'type' => 'quality_defect_photo']], $visible['evidence_refs']);
     }
 
-    private function context(bool $canViewAudit): ReportExecutionContext
+    #[Test]
+    public function audit_visibility_does_not_bypass_exact_evidence_scope(): void
+    {
+        $row = (new QualityDefectFlowRow)->setRawAttributes([
+            'row_key' => 'defect:9:event:2',
+            'cohort_date' => '2026-06-01',
+            'project_id' => 2,
+            'quality_defect_id' => 9,
+            'event_version' => 2,
+            'evidence_refs' => '[{"id":14,"type":"quality_defect_photo"}]',
+        ], true);
+        $context = $this->context(true, [
+            new ReportScopedResource('quality_defect', 9, 2),
+            new ReportScopedResource('quality_defect_photo', 15, 2),
+        ]);
+
+        $this->expectException(ReportContractException::class);
+        (new \ReflectionMethod(QualityDefectFlowRowQuery::class, 'serialize'))
+            ->invoke(new QualityDefectFlowRowQuery, $row, $context);
+    }
+
+    private function context(bool $canViewAudit, array $resources = []): ReportExecutionContext
     {
         $timezone = new DateTimeZone('Europe/Moscow');
         $scope = new ReportScope(1, [1], [2], [], $timezone);
@@ -69,7 +92,7 @@ final class QualityDefectFlowContractTest extends TestCase
             new ReportActor(1, 'active', []),
             $scope,
             new ReportVisibility(true, true, true, true, false, false, $canViewAudit),
-            new AuthorizationDecisionContext('http', 1, [1], [2], [], $timezone, 'quality-redaction-test', null),
+            new AuthorizationDecisionContext('http', 1, [1], [2], $resources, $timezone, 'quality-redaction-test', null),
         );
     }
 }

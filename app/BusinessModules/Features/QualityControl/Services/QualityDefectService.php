@@ -305,7 +305,7 @@ final class QualityDefectService
                 ->get(['id', 'type'])
                 ->map(static fn ($photo): array => [
                     'id' => (int) $photo->id,
-                    'type' => (string) $photo->type,
+                    'type' => 'quality_defect_photo',
                 ])
                 ->all(),
         ]);

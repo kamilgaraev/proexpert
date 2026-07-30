@@ -33,7 +33,15 @@ final readonly class QualityDefectTransitionRecorder
                 ->first();
             $version = ($last?->event_version ?? 0) + 1;
             $evidenceRefs = is_array($history->reporting_evidence_refs)
-                ? $history->reporting_evidence_refs
+                ? array_map(
+                    static fn (array $evidence): array => [
+                        ...$evidence,
+                        'type' => ($evidence['type'] ?? null) === 'status_comment'
+                            ? 'status_comment'
+                            : 'quality_defect_photo',
+                    ],
+                    $history->reporting_evidence_refs,
+                )
                 : [];
             if (trim((string) $history->comment) !== '') {
                 $evidenceRefs[] = [

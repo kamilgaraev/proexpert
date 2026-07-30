@@ -22,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingA
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelCurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\ProductionReportScopedResourceAuthorizers;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\OutboxReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportCursorCodec;
@@ -57,7 +58,9 @@ final class ReportingContractsServiceProvider extends ServiceProvider
         $this->app->singleton(CurrentReportAbacEvaluator::class, LaravelCurrentReportAbacEvaluator::class);
         $this->app->singleton(
             LaravelReportScopedResourceAuthorizerRegistry::class,
-            static fn (): LaravelReportScopedResourceAuthorizerRegistry => new LaravelReportScopedResourceAuthorizerRegistry([]),
+            fn (): LaravelReportScopedResourceAuthorizerRegistry => new LaravelReportScopedResourceAuthorizerRegistry(
+                $this->app->make(ProductionReportScopedResourceAuthorizers::class)->handlers(),
+            ),
         );
         $this->app->singleton(CurrentReportScopeAuthorizer::class, LaravelCurrentReportScopeAuthorizer::class);
         $this->app->singleton(ReportExecutionClock::class, SystemReportExecutionClock::class);

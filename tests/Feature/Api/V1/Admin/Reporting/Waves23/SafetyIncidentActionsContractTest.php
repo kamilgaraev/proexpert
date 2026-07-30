@@ -11,7 +11,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DrillDown\SafetyIncidentDrillDownProvider;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentRow;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Providers\SafetyIncidentActionsReportProvider;
@@ -51,7 +53,7 @@ final class SafetyIncidentActionsContractTest extends TestCase
             'closed_flag' => true,
             'closure_verified' => true,
             'closure_days' => 3,
-            'evidence_type' => 'safety_incident_evidence',
+            'evidence_type' => 'incident_closure',
             'evidence_id' => 9,
         ], true);
         $method = new \ReflectionMethod(SafetyIncidentRowQuery::class, 'serialize');
@@ -65,7 +67,30 @@ final class SafetyIncidentActionsContractTest extends TestCase
         self::assertArrayNotHasKey('medical_details', $redacted);
     }
 
-    private function context(bool $canViewAudit): ReportExecutionContext
+    #[Test]
+    public function audit_visibility_does_not_bypass_exact_incident_evidence_scope(): void
+    {
+        $row = (new SafetyIncidentRow)->setRawAttributes([
+            'row_key' => 'incident:12:event:1',
+            'event_date' => '2026-06-01',
+            'project_id' => 2,
+            'subject_type' => 'incident',
+            'subject_id' => 12,
+            'event_version' => 1,
+            'evidence_type' => 'incident_closure',
+            'evidence_id' => 'evidence-hash',
+        ], true);
+        $context = $this->context(true, [
+            new ReportScopedResource('safety_incident', 12, 2),
+            new ReportScopedResource('incident_closure', 13, 2),
+        ]);
+
+        $this->expectException(ReportContractException::class);
+        (new \ReflectionMethod(SafetyIncidentRowQuery::class, 'serialize'))
+            ->invoke(new SafetyIncidentRowQuery, $row, $context);
+    }
+
+    private function context(bool $canViewAudit, array $resources = []): ReportExecutionContext
     {
         $timezone = new DateTimeZone('Europe/Moscow');
         $scope = new ReportScope(1, [1], [2], [], $timezone);
@@ -74,7 +99,7 @@ final class SafetyIncidentActionsContractTest extends TestCase
             new ReportActor(1, 'active', []),
             $scope,
             new ReportVisibility(true, true, true, true, false, false, $canViewAudit),
-            new AuthorizationDecisionContext('http', 1, [1], [2], [], $timezone, 'safety-redaction-test', null),
+            new AuthorizationDecisionContext('http', 1, [1], [2], $resources, $timezone, 'safety-redaction-test', null),
         );
     }
 }
