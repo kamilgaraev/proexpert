@@ -70,13 +70,18 @@ final class ReportPlatformGateCatalog
 
     private const OWNERS = ['backend', 'admin', 'both'];
 
-    public function __construct(private string $path)
+    public function __construct(private ?string $path = null, private ?string $bytes = null)
     {
+    }
+
+    public static function fromBytes(string $bytes): self
+    {
+        return new self(bytes: $bytes);
     }
 
     public function records(): array
     {
-        $bytes = @file_get_contents($this->path);
+        $bytes = $this->bytes ?? ($this->path === null ? false : @file_get_contents($this->path));
         if (! is_string($bytes)) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::MISSING);
         }
@@ -125,7 +130,7 @@ final class ReportPlatformGateCatalog
     public function hash(): string
     {
         $this->records();
-        $bytes = file_get_contents($this->path);
+        $bytes = $this->bytes ?? ($this->path === null ? false : file_get_contents($this->path));
         if (! is_string($bytes)) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::MISSING);
         }

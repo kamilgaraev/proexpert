@@ -35,10 +35,12 @@ try {
     assertExactPath($options['gates'], $expectedGates);
     $generatedAt = canonicalTime($options['generated-at']);
     $releaseSha = $options['release-sha'];
-    $catalog = new ReportPlatformGateCatalog(QUALITY_ROOT.'/docs/reports/contracts/report-platform-gates.v1.json');
+    $catalogBytes = gitBlob($releaseSha, 'docs/reports/contracts/report-platform-gates.v1.json');
+    $catalog = ReportPlatformGateCatalog::fromBytes($catalogBytes);
     $records = $catalog->records();
     $gateDocument = decodeCanonical(QUALITY_ROOT.'/'.$expectedGates);
-    $gates = parseGates($gateDocument, $records, hash('sha256', gitBlob($releaseSha, 'docs/reports/contracts/report-platform-gates.v1.json')), $releaseSha, $generatedAt, $phase);
+    $catalogHash = hash('sha256', $catalogBytes);
+    $gates = parseGates($gateDocument, $records, $catalogHash, $releaseSha, $generatedAt, $phase);
     $builder = new ReportReleaseEvidenceBuilder();
     if ($phase === 'platform') {
         foreach (['official', 'plan-1a', 'plan-1b'] as $option) {
@@ -50,7 +52,7 @@ try {
     } else {
         throw new ReportQualityGateException(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityGateFailureCode::PHASE_INCOMPLETE);
     }
-    $document = ['artifact_id' => 'report_quality_evidence', 'schema_version' => '1.0.0', 'status' => $ledger->status, 'catalog' => ['path' => 'docs/reports/contracts/report-platform-gates.v1.json', 'sha256' => hash('sha256', gitBlob($releaseSha, 'docs/reports/contracts/report-platform-gates.v1.json'))], 'release_sha' => $releaseSha, 'generated_at' => $generatedAt->format('Y-m-d\\TH:i:s\\Z'), 'gates' => serializeGates($gates, $records)];
+    $document = ['artifact_id' => 'report_quality_evidence', 'schema_version' => '1.0.0', 'status' => $ledger->status, 'catalog' => ['path' => 'docs/reports/contracts/report-platform-gates.v1.json', 'sha256' => $catalogHash], 'release_sha' => $releaseSha, 'generated_at' => $generatedAt->format('Y-m-d\\TH:i:s\\Z'), 'gates' => serializeGates($gates, $records)];
     $bytes = CanonicalJson::encode($document)."\n";
     publish($options['output'], $bytes, isset($options['check']));
     fwrite(STDOUT, 'report-quality-evidence: '.$ledger->status.PHP_EOL);
