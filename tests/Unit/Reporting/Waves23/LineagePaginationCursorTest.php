@@ -34,14 +34,38 @@ final class LineagePaginationCursorTest extends TestCase
             queryHash: $queryHash,
             rowKey: '7:11:13:17',
             columnId: 'constraint_status',
-            position: '7:91',
+            position: 'e:7:91',
             expiresAt: new DateTimeImmutable('2030-01-01T01:00:00+00:00'),
         );
 
         self::assertSame(
-            '7:91',
+            'e:7:91',
             $codec->decodeDrillDownCursor(
                 $token,
+                3,
+                'lookahead_readiness',
+                self::RUN_ID,
+                $snapshot,
+                $queryHash,
+                '7:11:13:17',
+                'constraint_status',
+            ),
+        );
+        $contextToken = $codec->encodeDrillDownCursor(
+            organizationId: 3,
+            reportCode: 'lookahead_readiness',
+            runId: self::RUN_ID,
+            snapshot: $snapshot,
+            queryHash: $queryHash,
+            rowKey: '7:11:13:17',
+            columnId: 'constraint_status',
+            position: 'c:2',
+            expiresAt: new DateTimeImmutable('2030-01-01T01:00:00+00:00'),
+        );
+        self::assertSame(
+            'c:2',
+            $codec->decodeDrillDownCursor(
+                $contextToken,
                 3,
                 'lookahead_readiness',
                 self::RUN_ID,

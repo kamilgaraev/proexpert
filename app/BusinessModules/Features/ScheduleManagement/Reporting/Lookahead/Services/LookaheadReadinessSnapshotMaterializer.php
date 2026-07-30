@@ -244,7 +244,8 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         $inputSpool->updateCanonicalArrayHash($sourceHashContext);
         hash_update(
             $sourceHashContext,
-            ',"policy_hashes":'.CanonicalJson::encode($policyHashes).'}',
+            ',"lineage_projection_version":2,"policy_hashes":'
+                .CanonicalJson::encode($policyHashes).'}',
         );
         $sourceHash = new Sha256Hash(hash_final($sourceHashContext));
         $existing = LookaheadReadinessSnapshot::query()
@@ -328,6 +329,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'watermarks' => [
                         'policies' => $policyHashes,
                         'events' => 'event_'.$eventWatermark,
+                        'lineage_projection' => 'v2',
                     ],
                     'totals' => $totals,
                     'source_refs' => $sourceRefs,
@@ -365,6 +367,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                         'waiver_evidence_ref' => $constraint?->waiverEvidenceRef,
                         'linked_resource_type' => $constraint?->linkedResourceType,
                         'linked_resource_id' => $constraint?->linkedResourceId,
+                        'lineage_projection_version' => 2,
                         'transition_lineage' => $constraint?->lineage?->canonicalIdentity(),
                         'transition_lineage_as_of' => $constraint === null
                             ? null

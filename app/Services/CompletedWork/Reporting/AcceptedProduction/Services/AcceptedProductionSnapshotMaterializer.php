@@ -49,7 +49,9 @@ final readonly class AcceptedProductionSnapshotMaterializer
         $ownerWatermark = $stream->ownerWatermark;
         $lineageFilter = AcceptedProductionLineageFilter::fromQuery($query)->canonicalIdentity();
         $hashContext = hash_init('sha256');
+        hash_update($hashContext, '{"lineage_projection_version":2,"source":');
         $stream->updateSourceHash($hashContext);
+        hash_update($hashContext, '}');
         $sourceHash = new Sha256Hash(hash_final($hashContext));
         $existing = AcceptedProductionSnapshot::query()
             ->where('organization_id', $scope->organizationId)
@@ -105,6 +107,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'watermarks' => [
                         'acceptance_events' => 'event_'.$watermark,
                         'acceptance_owners' => 'owner_'.$ownerWatermark,
+                        'lineage_projection' => 'v2',
                     ],
                     'totals' => $totals,
                     'source_refs' => $sourceRefs,
@@ -142,6 +145,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         'currency' => $metric->currency,
                         'approved_rate_minor' => $item['fact']->approvedRateMinor,
                         'accepted_amount_minor' => $metric->acceptedAmountMinor,
+                        'lineage_projection_version' => 2,
                         'acceptance_lineage' => $entry->lineage->canonicalIdentity(),
                         'acceptance_lineage_filter' => $lineageFilter,
                         'unknown_metrics' => $metric->acceptedAmountMinor === null ? ['accepted_amount_minor'] : [],

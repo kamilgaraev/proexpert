@@ -224,7 +224,7 @@ final class ReportReadHandlersTest extends TestCase
         $fixture = $this->fixture(
             drillResult: new ReportDrillDownResult(
                 [['row_key' => 'event-1']],
-                '7:91',
+                'e:7:91',
                 [],
             ),
         );
@@ -239,7 +239,7 @@ final class ReportReadHandlersTest extends TestCase
         );
 
         self::assertNotNull($firstPage->nextCursor);
-        self::assertNotSame('7:91', $firstPage->nextCursor);
+        self::assertNotSame('e:7:91', $firstPage->nextCursor);
 
         $handler->handle(
             $this->context,
@@ -247,7 +247,7 @@ final class ReportReadHandlersTest extends TestCase
             new ReportDrillDownRequest($cellToken, $firstPage->nextCursor, 25),
         );
 
-        self::assertSame('7:91', $fixture['drillDown']->calls()[1][2]->cursor);
+        self::assertSame('e:7:91', $fixture['drillDown']->calls()[1][2]->cursor);
     }
 
     public function test_rows_reject_expired_status_before_authorization_or_provider_call(): void

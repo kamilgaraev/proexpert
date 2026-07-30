@@ -296,7 +296,7 @@ final readonly class SignedReportCursorCodec
             || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $runId) !== 1
             || ! self::isCanonicalRowKey($rowKey)
             || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $columnId) !== 1
-            || preg_match('/^[1-9][0-9]*:[1-9][0-9]*$/D', $position) !== 1
+            || preg_match('/^(?:c:[1-9][0-9]*|e:[1-9][0-9]*:[1-9][0-9]*)$/D', $position) !== 1
             || $expiresAt <= $issuedAt
         ) {
             throw $this->invalid();
@@ -356,7 +356,10 @@ final readonly class SignedReportCursorCodec
                 || ! hash_equals($payload['column_id'], $columnId)
                 || ! self::isCanonicalRowKey($payload['row_key'])
                 || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $payload['column_id']) !== 1
-                || preg_match('/^[1-9][0-9]*:[1-9][0-9]*$/D', $payload['position']) !== 1
+                || preg_match(
+                    '/^(?:c:[1-9][0-9]*|e:[1-9][0-9]*:[1-9][0-9]*)$/D',
+                    $payload['position'],
+                ) !== 1
             ) {
                 throw new InvalidArgumentException('report_drill_down_cursor_identity_mismatch');
             }

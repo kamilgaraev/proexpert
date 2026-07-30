@@ -366,6 +366,10 @@ final class Waves23ProductionContractsTest extends TestCase
             'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/DrillDown/'
             .'LookaheadReadinessDrillDownProvider.php',
         );
+        $drilldownSource = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/DrillDown/'
+            .'EloquentLookaheadReadinessDrillDownSource.php',
+        );
 
         self::assertStringContainsString('CanonicalLineageSummary', $state);
         self::assertStringContainsString('LookaheadConstraintHistoryReducer', $historyStream);
@@ -376,13 +380,16 @@ final class Waves23ProductionContractsTest extends TestCase
         );
         self::assertStringContainsString("'transition_lineage_as_of'", $materializer);
         self::assertStringNotContainsString('transitionLineage', $materializer);
-        self::assertStringContainsString('WorkConstraintTransitionEvent::query()', $drilldown);
-        self::assertStringContainsString('LineageCursorPosition::decode($request->cursor)', $drilldown);
-        self::assertStringContainsString("where('occurred_at', '<=', \$lineageAsOf)", $drilldown);
-        self::assertStringContainsString('$lineage->firstVersion', $drilldown);
-        self::assertStringContainsString('$lineage->firstId', $drilldown);
-        self::assertStringContainsString('$lineage->lastVersion', $drilldown);
-        self::assertStringContainsString('$lineage->lastId', $drilldown);
+        self::assertStringContainsString('WorkConstraintTransitionEvent::query()', $drilldownSource);
+        self::assertStringContainsString('DrillDownPageCursor::decode($request->cursor)', $drilldown);
+        self::assertStringContainsString("'lineage_projection_version' => 2", $materializer);
+        self::assertStringContainsString('"lineage_projection_version":2', $materializer);
+        self::assertStringContainsString("'lineage_projection' => 'v2'", $materializer);
+        self::assertStringContainsString("where('occurred_at', '<=', \$asOf)", $drilldownSource);
+        self::assertStringContainsString('$lineage->firstVersion', $drilldownSource);
+        self::assertStringContainsString('$lineage->firstId', $drilldownSource);
+        self::assertStringContainsString('$lineage->lastVersion', $drilldownSource);
+        self::assertStringContainsString('$lineage->lastId', $drilldownSource);
         self::assertStringContainsString("DB::table('lookahead_readiness_rows')->insert(\$rowBatch)", $materializer);
     }
 
@@ -405,6 +412,10 @@ final class Waves23ProductionContractsTest extends TestCase
             'app/Services/CompletedWork/Reporting/AcceptedProduction/DrillDown/'
             .'AcceptedProductionDrillDownProvider.php',
         );
+        $drilldownSource = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/DrillDown/'
+            .'EloquentAcceptedProductionDrillDownSource.php',
+        );
 
         self::assertStringContainsString('CanonicalLineageSummary $lineage', $entry);
         self::assertStringContainsString('AcceptedProductionEventReducer', $universe);
@@ -412,15 +423,19 @@ final class Waves23ProductionContractsTest extends TestCase
         self::assertStringNotContainsString('public array $events', $entry);
         self::assertStringNotContainsString("'event_ids'", $materializer);
         self::assertStringNotContainsString("'ids' =>", $materializer);
-        self::assertStringContainsString('ProductionAcceptanceEvent::query()', $drilldown);
-        self::assertStringContainsString('LineageCursorPosition::decode($request->cursor)', $drilldown);
+        self::assertStringContainsString('ProductionAcceptanceEvent::query()', $drilldownSource);
+        self::assertStringContainsString('DrillDownPageCursor::decode($request->cursor)', $drilldown);
         self::assertStringContainsString('$this->sourceAccess->assertReferencesAccessible(', $drilldown);
         self::assertStringContainsString("'acceptance_lineage_filter'", $materializer);
-        self::assertStringContainsString('$this->applyLineageFilter(', $drilldown);
-        self::assertStringContainsString('$lineage->firstVersion', $drilldown);
-        self::assertStringContainsString('$lineage->firstId', $drilldown);
-        self::assertStringContainsString('$lineage->lastVersion', $drilldown);
-        self::assertStringContainsString('$lineage->lastId', $drilldown);
+        self::assertStringContainsString("'lineage_projection_version' => 2", $materializer);
+        self::assertStringContainsString('"lineage_projection_version":2', $materializer);
+        self::assertStringContainsString("'lineage_projection' => 'v2'", $materializer);
+        self::assertStringContainsString('$filter->applyTo($query)', $drilldownSource);
+        self::assertStringContainsString('$lineage->firstVersion', $drilldownSource);
+        self::assertStringContainsString('$lineage->firstId', $drilldownSource);
+        self::assertStringContainsString('$lineage->lastVersion', $drilldownSource);
+        self::assertStringContainsString('$lineage->lastId', $drilldownSource);
+        self::assertStringContainsString('new ReportResourceLink(', $drilldown);
     }
 
     #[Test]
