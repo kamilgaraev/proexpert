@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 
 final readonly class DatabasePurchaseReceiptReturnUnitOfWork implements PurchaseReceiptReturnUnitOfWork
 {
+    public const LOCK_SQL = 'SELECT pg_advisory_xact_lock(hashtextextended(?, ?))';
+
     public function run(
         int $organizationId,
         string $idempotencyKey,
@@ -17,7 +19,7 @@ final readonly class DatabasePurchaseReceiptReturnUnitOfWork implements Purchase
     ): mixed {
         return DB::transaction(function () use ($organizationId, $idempotencyKey, $operation): mixed {
             DB::selectOne(
-                'SELECT pg_advisory_xact_lock(hashtextextended(?, ?))',
+                self::LOCK_SQL,
                 ['purchase-receipt-return:'.$idempotencyKey, $organizationId],
             );
 

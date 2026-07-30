@@ -7,7 +7,6 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Supply\Backfill;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
-use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
@@ -27,6 +26,7 @@ final readonly class SupplyReliabilityBackfill
         private PurchaseOrderPromiseVersionRecorder $promises,
         private SentPurchaseOrderLineOwnerRecorder $sentOwners,
         private SupplyLifecycleEventRecorder $events,
+        private SupplyBackfillEvidenceHasher $evidence,
     ) {}
 
     public function backfillSlice(int $organizationId, int $cursor, int $limit = self::MAX_SLICE): OwnerBackfillBatch
@@ -66,7 +66,6 @@ final readonly class SupplyReliabilityBackfill
             ->orderBy('purchase_order_items.id')
             ->limit($limit)
             ->get();
-        $input = [];
         $projected = [];
         $projectedOwnerIds = [];
         $gaps = 0;
@@ -84,14 +83,6 @@ final readonly class SupplyReliabilityBackfill
             $unitCode = $metadata['reporting_unit_code'] ?? null;
             $conversionVersion = $metadata['reporting_conversion_version'] ?? null;
             $capturedOwner = $metadata['reporting_sent_owner_dimensions'] ?? null;
-            $input[] = [
-                'item_id' => (int) $item->id,
-                'sent_at' => $order->sent_at?->format(DATE_ATOM),
-                'sent_evidence' => $sentEvidence,
-                'confirmed_evidence' => $confirmedEvidence,
-                'cancelled_evidence' => $cancelledEvidence,
-                'promise_evidence' => $promiseEvidence,
-            ];
             if (! is_string($promiseEvidence)
                 || trim($promiseEvidence) === ''
                 || ! is_string($sentEvidence)
@@ -300,29 +291,15 @@ final readonly class SupplyReliabilityBackfill
         }
         $nextCursor = $items->isEmpty() ? $cursor : (int) $items->last()->id;
         $done = $nextCursor >= (int) $watermark->target_item_id || $items->count() < $limit;
-        $output = SupplyLifecycleEvent::query()
-            ->where('organization_id', $organizationId)
-            ->whereIn('id', $projected)
-            ->orderBy('id')
-            ->pluck('source_hash')
-            ->all();
-        $output = [
-            ...SentPurchaseOrderLineOwner::query()
-                ->where('organization_id', $organizationId)
-                ->whereIn('id', $projectedOwnerIds)
-                ->orderBy('id')
-                ->pluck('source_hash')
-                ->all(),
-            ...$output,
-        ];
-        $inputHash = hash('sha256', CanonicalJson::encode([
-            'previous' => $watermark->input_hash,
-            'slice' => $input,
-        ]));
-        $outputHash = hash('sha256', CanonicalJson::encode([
-            'previous' => $watermark->output_hash,
-            'slice' => $output,
-        ]));
+        $inputHash = $this->evidence->inputSlice(
+            is_string($watermark->input_hash) ? $watermark->input_hash : null,
+            $items,
+        );
+        $outputHash = $this->evidence->outputSlice(
+            is_string($watermark->output_hash) ? $watermark->output_hash : null,
+            $organizationId,
+            $items->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+        );
         $cumulativeGaps = (int) $watermark->gap_count + $gaps;
         $watermark->forceFill([
             'completed_item_id' => max((int) $watermark->completed_item_id, $nextCursor),

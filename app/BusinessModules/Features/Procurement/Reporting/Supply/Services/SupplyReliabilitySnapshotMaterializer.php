@@ -11,18 +11,18 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLifecycleFact;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLineFact;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityPolicyVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityRow;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilitySnapshot;
+use App\Support\Reporting\OwnerReportFilterApplier;
+use App\Support\Reporting\OwnerSnapshotFirstWriter;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
-use App\Support\Reporting\OwnerSnapshotFirstWriter;
-use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use DateTimeImmutable;
@@ -142,8 +142,6 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             'period' => 'owner_promise.promised_at',
             'promised_month' => DB::raw("to_char(owner_promise.promised_at, 'YYYY-MM')"),
         ]);
-        $eligibleSentCount = (clone $ownerQuery)->distinct()->count('sent_purchase_order_line_owners.purchase_order_item_id');
-        $eligibleSentMaxItemId = (int) ((clone $ownerQuery)->max('sent_purchase_order_line_owners.purchase_order_item_id') ?? 0);
         $ownerItems = $ownerQuery
             ->select('sent_purchase_order_line_owners.*')
             ->orderBy('sent_purchase_order_line_owners.purchase_order_item_id')
@@ -196,6 +194,8 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $filteredItemIds = $promises->pluck('purchase_order_item_id')->all();
             $ownerItems = $ownerItems->whereIn('purchase_order_item_id', $filteredItemIds)->values();
         }
+        $eligibleSentCount = $ownerItems->unique('purchase_order_item_id')->count();
+        $eligibleSentMaxItemId = (int) ($ownerItems->max('purchase_order_item_id') ?? 0);
         $sourceHash = $this->sourceHashes->make(
             $query->canonicalJson,
             [
@@ -231,7 +231,6 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $promises,
             $query,
             $sourceHash,
-            $ownerItems,
             $eligibleSentCount,
         ) {
             $rows = [];

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reporting;
 
+use App\BusinessModules\Features\Procurement\Services\DatabasePurchaseReceiptReturnUnitOfWork;
 use PDO;
 use PDOException;
 use PHPUnit\Framework\TestCase;
@@ -12,6 +13,12 @@ final class SupplyReturnPostgresNegativeFixtureTest extends TestCase
 {
     private PDO $database;
 
+    private string $dsn;
+
+    private string $user;
+
+    private string $password;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -19,10 +26,13 @@ final class SupplyReturnPostgresNegativeFixtureTest extends TestCase
         if (! is_string($dsn) || $dsn === '') {
             self::markTestSkipped('Set SUPPLY_REPORTS_PG_DSN to run PostgreSQL negative fixtures.');
         }
+        $this->dsn = $dsn;
+        $this->user = (string) getenv('SUPPLY_REPORTS_PG_USER');
+        $this->password = (string) getenv('SUPPLY_REPORTS_PG_PASSWORD');
         $this->database = new PDO(
-            $dsn,
-            (string) getenv('SUPPLY_REPORTS_PG_USER'),
-            (string) getenv('SUPPLY_REPORTS_PG_PASSWORD'),
+            $this->dsn,
+            $this->user,
+            $this->password,
             [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
         );
         $this->database->beginTransaction();
@@ -51,6 +61,69 @@ final class SupplyReturnPostgresNegativeFixtureTest extends TestCase
         $this->seedSource(eventItemId: 10, movementQuantity: '3');
 
         $this->expectConstraintViolation(fn () => $this->insertReturn());
+    }
+
+    public function test_uow_replay_accepts_same_fingerprint_and_rejects_conflict(): void
+    {
+        $this->database->exec(
+            "INSERT INTO return_operation_fixture VALUES (19, 'return-key-0003', repeat('a', 64))",
+        );
+        $same = $this->database->query(
+            'SELECT payload_fingerprint FROM return_operation_fixture '
+            ."WHERE organization_id = 19 AND idempotency_key = 'return-key-0003'",
+        )->fetchColumn();
+        self::assertSame(str_repeat('a', 64), $same);
+
+        try {
+            $this->database->exec(
+                'INSERT INTO return_operation_fixture VALUES '
+                ."(19, 'return-key-0003', repeat('b', 64))",
+            );
+            self::fail('A changed idempotency payload was accepted.');
+        } catch (PDOException $exception) {
+            self::assertSame('23505', $exception->getCode());
+        }
+    }
+
+    public function test_uow_rolls_back_every_write_when_operation_fails(): void
+    {
+        $this->database->exec('SAVEPOINT return_operation');
+        $this->database->exec(
+            "INSERT INTO return_operation_fixture VALUES (19, 'return-key-0004', repeat('c', 64))",
+        );
+        $this->database->exec('ROLLBACK TO SAVEPOINT return_operation');
+
+        self::assertSame(
+            0,
+            (int) $this->database->query(
+                'SELECT COUNT(*) FROM return_operation_fixture '
+                ."WHERE idempotency_key = 'return-key-0004'",
+            )->fetchColumn(),
+        );
+    }
+
+    public function test_uow_advisory_key_serializes_competing_transaction(): void
+    {
+        $primary = $this->database->prepare(DatabasePurchaseReceiptReturnUnitOfWork::LOCK_SQL);
+        $primary->execute(['purchase-receipt-return:return-key-0005', 19]);
+        $competitor = new PDO(
+            $this->dsn,
+            $this->user,
+            $this->password,
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
+        );
+        $competitor->beginTransaction();
+        $competitor->exec("SET LOCAL lock_timeout = '100ms'");
+
+        try {
+            $statement = $competitor->prepare(DatabasePurchaseReceiptReturnUnitOfWork::LOCK_SQL);
+            $statement->execute(['purchase-receipt-return:return-key-0005', 19]);
+            self::fail('Competing return acquired the same transaction lock.');
+        } catch (PDOException $exception) {
+            self::assertSame('55P03', $exception->getCode());
+        } finally {
+            $competitor->rollBack();
+        }
     }
 
     private function installFixtureSchema(): void
@@ -109,6 +182,12 @@ CREATE TEMP TABLE purchase_receipt_returns (
     quantity numeric(24, 6) NOT NULL,
     occurred_at timestamptz NOT NULL,
     idempotency_key text NOT NULL
+);
+CREATE TEMP TABLE return_operation_fixture (
+    organization_id bigint NOT NULL,
+    idempotency_key text NOT NULL,
+    payload_fingerprint char(64) NOT NULL,
+    UNIQUE (organization_id, idempotency_key)
 )
 SQL);
     }
