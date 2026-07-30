@@ -41,6 +41,17 @@ final class ReportPlatformGateCatalogTest extends TestCase
         $this->assertInvalid($document);
     }
 
+    public function test_passed_gates_require_their_exact_non_empty_source_path_catalog(): void
+    {
+        $document = json_decode((string) file_get_contents($this->path()), true, 512, JSON_THROW_ON_ERROR);
+        $document['gates'][0]['source_paths'] = [];
+        $this->assertInvalid($document);
+
+        $document = json_decode((string) file_get_contents($this->path()), true, 512, JSON_THROW_ON_ERROR);
+        $document['gates'][3]['source_paths'][0] = 'tests/Fixtures/Reporting/Manifest/official.valid.yaml';
+        $this->assertInvalid($document);
+    }
+
     private function catalog(): ReportPlatformGateCatalog
     {
         return new ReportPlatformGateCatalog($this->path());

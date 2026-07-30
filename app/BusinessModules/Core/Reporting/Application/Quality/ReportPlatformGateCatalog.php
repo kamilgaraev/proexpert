@@ -13,6 +13,33 @@ final class ReportPlatformGateCatalog
 
     private const PLATFORM_PASSED = ['QG-01', 'QG-04', 'QG-05', 'QG-06', 'QG-09'];
 
+    private const PASSED_SOURCE_PATHS = [
+        'QG-01' => [
+            'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml',
+            'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json',
+            'app/BusinessModules/Core/Reporting/resources/official-document-catalog.v1.yaml',
+        ],
+        'QG-04' => [
+            'tests/Fixtures/Reporting/Manifest/management.valid.yaml',
+            'docs/reports/contracts/report-conformance-evidence.schema.json',
+            'tests/Architecture/Reporting/ReportConformanceEvidenceSchemaTest.php',
+        ],
+        'QG-05' => [
+            'docs/reports/contracts/reporting-admin-resources.v1.schema.json',
+            'tests/Architecture/Reporting/CandidatePublishedBoundaryTest.php',
+            'tests/Architecture/Reporting/ReportWorkspaceRouteContractTest.php',
+        ],
+        'QG-06' => [
+            'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+            'docs/reports/contracts/reporting-admin-resources.v1.schema.json',
+            'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        ],
+        'QG-09' => [
+            'docs/reports/contracts/plan-1b-evidence.schema.json',
+            'tests/Architecture/Reporting/PlanOneBCrossFileSymbolTest.php',
+        ],
+    ];
+
     private const OWNERS = ['backend', 'admin', 'both'];
 
     public function __construct(private string $path)
@@ -54,7 +81,7 @@ final class ReportPlatformGateCatalog
                 || preg_match('/^[a-f0-9]{64}$/', $gate['schema_sha256']) !== 1
                 || ! is_array($gate['source_paths'] ?? null) || ! array_is_list($gate['source_paths'])
                 || count($gate['source_paths']) !== count(array_unique($gate['source_paths']))
-                || (! in_array($id, self::PLATFORM_PASSED, true) && $gate['source_paths'] !== [])) {
+                || $gate['source_paths'] !== (self::PASSED_SOURCE_PATHS[$id] ?? [])) {
                 throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
             }
             foreach ($gate['source_paths'] as $path) {

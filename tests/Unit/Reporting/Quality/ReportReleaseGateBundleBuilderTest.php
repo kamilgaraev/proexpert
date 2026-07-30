@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Quality;
 
 use App\BusinessModules\Core\Reporting\Application\Quality\ReportReleaseGateBundleBuilder;
+use App\BusinessModules\Core\Reporting\Application\Quality\ReportPlatformGateCatalog;
 use App\BusinessModules\Core\Reporting\Domain\DTO\JointQG14Evidence;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQualityGateEvidence;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityEvidencePhase;
@@ -41,18 +42,30 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
         (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), [], new DateTimeImmutable('2026-07-26T00:00:00Z'));
     }
 
+    public function test_rejects_an_arbitrary_command_or_schema_hash_for_a_catalog_gate(): void
+    {
+        $gates = $this->gates();
+        $gates[0] = new ReportQualityGateEvidence('QG-01', 'backend', ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, 'arbitrary-command', 28, new Sha256Hash(str_repeat('b', 64)), str_repeat('a', 40), str_repeat('c', 40), new DateTimeImmutable('2026-07-26T00:00:00Z'), new Sha256Hash(str_repeat('d', 64)));
+
+        $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE));
+
+        (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), [], new DateTimeImmutable('2026-07-26T00:00:00Z'));
+    }
+
     /** @return list<ReportQualityGateEvidence> */
     private function gates(): array
     {
         $owners = ['backend', 'backend', 'backend', 'backend', 'backend', 'backend', 'backend', 'backend', 'backend', 'admin', 'admin', 'admin', 'admin', 'both'];
-        $counts = [28, 56, 500, 28, 28, 46, 28, 28, 1, 28, 252, 25, 3, 0];
+        $counts = [28, 56, 500, 28, 1, 46, 28, 28, 1, 28, 252, 25, 3, 0];
 
         return array_map(fn (int $index): ReportQualityGateEvidence => $this->gate(sprintf('QG-%02d', $index + 1), $owners[$index], $counts[$index]), array_keys($owners));
     }
 
     private function gate(string $id, string $owner, int $count): ReportQualityGateEvidence
     {
-        return new ReportQualityGateEvidence($id, $owner, ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, $id === 'QG-14' ? 'qg14_forbidden_symbols' : 'command-' . strtolower($id), $count, new Sha256Hash(str_repeat('b', 64)), str_repeat('a', 40), str_repeat('c', 40), new DateTimeImmutable('2026-07-26T00:00:00Z'), new Sha256Hash(str_repeat('d', 64)));
+        $definition = (new ReportPlatformGateCatalog(dirname(__DIR__, 4).'/docs/reports/contracts/report-platform-gates.v1.json'))->records()[(int) substr($id, -2) - 1];
+
+        return new ReportQualityGateEvidence($id, $owner, ReportQualityEvidencePhase::RELEASE, ReportQualityEvidenceStatus::PASSED, $definition['command'], $count, new Sha256Hash($definition['schema_sha256']), str_repeat('a', 40), str_repeat('c', 40), new DateTimeImmutable('2026-07-26T00:00:00Z'), new Sha256Hash(str_repeat('d', 64)));
     }
 
     private function qg14Evidence(): JointQG14Evidence

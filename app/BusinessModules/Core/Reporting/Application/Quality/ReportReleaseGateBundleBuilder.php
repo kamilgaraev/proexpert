@@ -14,12 +14,11 @@ use DateTimeImmutable;
 
 final class ReportReleaseGateBundleBuilder
 {
-    private const OWNERS = [
-        'backend', 'backend', 'backend', 'backend', 'backend', 'backend', 'backend', 'backend', 'backend',
-        'admin', 'admin', 'admin', 'admin', 'both',
-    ];
+    private const MINIMUM_COUNT_GATES = ['QG-03', 'QG-11'];
 
-    private const EXACT_COUNTS = [1 => 28, 2 => 56, 4 => 28, 5 => 28, 6 => 46, 8 => 28, 10 => 28, 12 => 25, 13 => 3, 14 => 0];
+    public function __construct(private readonly ?ReportPlatformGateCatalog $catalog = null)
+    {
+    }
 
     /** @param list<ReportQualityGateEvidence> $gates */
     public function build(array $gates, JointQG14Evidence $qg14Evidence, string $releaseSha, array $sources, DateTimeImmutable $generatedAt): ReportReleaseGateBundle
@@ -28,17 +27,19 @@ final class ReportReleaseGateBundleBuilder
             throw new ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH);
         }
 
+        $catalog = $this->catalog()->records();
+
         foreach ($gates as $index => $gate) {
-            $number = $index + 1;
+            $definition = $catalog[$index];
             if (! $gate instanceof ReportQualityGateEvidence
-                || $gate->gate !== sprintf('QG-%02d', $number)
+                || $gate->gate !== $definition['id']
                 || $gate->phase !== ReportQualityEvidencePhase::RELEASE
                 || $gate->status !== ReportQualityEvidenceStatus::PASSED
                 || $gate->releaseSha !== $releaseSha
-                || $gate->ownerPlan !== self::OWNERS[$index]
-                || (isset(self::EXACT_COUNTS[$number]) && $gate->count !== self::EXACT_COUNTS[$number])
-                || ($number === 3 && $gate->count < 500)
-                || ($number === 11 && $gate->count < 252)) {
+                || $gate->ownerPlan !== $definition['release_owner']
+                || $gate->command !== $definition['command']
+                || $gate->schemaHash->value !== $definition['schema_sha256']
+                || ! $this->matchesCount($gate, $definition)) {
                 throw new ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE);
             }
         }
@@ -56,6 +57,23 @@ final class ReportReleaseGateBundleBuilder
             $sources,
             $generatedAt,
             ['backend' => 9, 'admin' => 4, 'joint' => 1],
+        );
+    }
+
+    /** @param array{id: string, minimum_count: int} $definition */
+    private function matchesCount(ReportQualityGateEvidence $gate, array $definition): bool
+    {
+        if (in_array($definition['id'], self::MINIMUM_COUNT_GATES, true)) {
+            return $gate->count >= $definition['minimum_count'];
+        }
+
+        return $gate->count === $definition['minimum_count'];
+    }
+
+    private function catalog(): ReportPlatformGateCatalog
+    {
+        return $this->catalog ?? new ReportPlatformGateCatalog(
+            dirname(__DIR__, 6).'/docs/reports/contracts/report-platform-gates.v1.json',
         );
     }
 }
