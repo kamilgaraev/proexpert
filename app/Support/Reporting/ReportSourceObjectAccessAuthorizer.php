@@ -51,6 +51,7 @@ final readonly class ReportSourceObjectAccessAuthorizer
             $this->deny();
         }
 
+        $referencedKinds = [];
         foreach ($references as $reference) {
             if (! is_array($reference) || array_is_list($reference)) {
                 $this->deny();
@@ -63,9 +64,11 @@ final readonly class ReportSourceObjectAccessAuthorizer
                 if (! is_string($reference['id'] ?? null) || trim((string) $reference['id']) === '') {
                     $this->deny();
                 }
+                $referencedKinds[$sourceKind] = true;
 
                 continue;
             }
+            $referencedKinds[self::KIND_ALIASES[$sourceKind] ?? $sourceKind] = true;
 
             $projectId = $reference['project_id'] ?? $defaultProjectId;
             if (! is_numeric($projectId) || (int) $projectId < 1) {
@@ -84,6 +87,8 @@ final readonly class ReportSourceObjectAccessAuthorizer
                 $this->assertAccessible($context, $sourceKind, (int) $sourceId, (int) $projectId);
             }
         }
+        $this->assertRestrictedKindsReferenced($context->authorization->resources, $referencedKinds);
+        $this->assertRestrictedKindsReferenced($context->scope->resources, $referencedKinds);
     }
 
     private function assertResourceSet(
@@ -109,6 +114,19 @@ final readonly class ReportSourceObjectAccessAuthorizer
         }
         if ($restricted && ! isset($restrictedIds[$sourceId])) {
             $this->deny();
+        }
+    }
+
+    private function assertRestrictedKindsReferenced(array $resources, array $referencedKinds): void
+    {
+        foreach ($resources as $resource) {
+            if (! $resource instanceof ReportScopedResource) {
+                $this->deny();
+            }
+            $kind = self::KIND_ALIASES[$resource->kind] ?? $resource->kind;
+            if (! isset($referencedKinds[$kind])) {
+                $this->deny();
+            }
         }
     }
 

@@ -13,6 +13,7 @@ use App\BusinessModules\Features\ScheduleManagement\Models\ScheduleBaselineVersi
 use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Support\Reporting\ReportScopedResourceFilter;
 use App\Support\Reporting\ReportSourceReadinessFactory;
 
 final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSourceReadinessProbe
@@ -20,6 +21,7 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
     public function __construct(
         private ReportSourceReadinessFactory $readiness,
         private HistoricalScheduleTaskStateQuery $historicalTasks,
+        private ReportScopedResourceFilter $resourceFilter,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -44,12 +46,26 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
         if ($projectIds === []) {
             throw new \InvalidArgumentException('baseline_schedule_project_filter_empty');
         }
+        $scopedScheduleIds = $this->resourceFilter->ids(
+            $context->scope,
+            ['schedule'],
+            $projectIds,
+        );
+        $scopedTaskIds = $this->resourceFilter->ids(
+            $context->scope,
+            ['task', 'schedule_task'],
+            $projectIds,
+        );
         $scheduleFilter = $this->positiveIntegerFilter($query, 'schedule_ids');
         $candidateSchedules = ProjectSchedule::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
             ->whereIn('project_id', $projectIds)
             ->where('is_template', false)
+            ->when(
+                $scopedScheduleIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $scopedScheduleIds),
+            )
             ->when($scheduleFilter !== [], fn ($builder) => $builder->whereIn('id', $scheduleFilter))
             ->orderBy('id')
             ->get(['id']);
@@ -58,11 +74,19 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
             ? collect()
             : $this->historicalTasks
                 ->latestForProjects($context->scope->organizationId, $projectIds, $query->asOf)
-                ->whereIn('scheduleId', $scheduleIds);
+                ->whereIn('scheduleId', $scheduleIds)
+                ->when(
+                    $scopedTaskIds !== null,
+                    static fn ($items) => $items->whereIn('taskId', $scopedTaskIds),
+                );
         $allTasks = ScheduleTask::withTrashed()
             ->where('organization_id', $context->scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
             ->whereIn('schedule_id', $scheduleIds)
+            ->when(
+                $scopedTaskIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $scopedTaskIds),
+            )
             ->orderBy('id')
             ->get(['id', 'schedule_id']);
         $allStatesByTask = $allStates->keyBy('taskId');

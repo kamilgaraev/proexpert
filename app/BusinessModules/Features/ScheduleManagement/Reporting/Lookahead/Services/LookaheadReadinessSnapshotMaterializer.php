@@ -17,6 +17,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\Look
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessRow;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\LookaheadResourceCandidateQuery;
 use App\Models\ScheduleTask;
 use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
@@ -33,6 +34,8 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         private LookaheadReadinessPolicyService $policies,
         private LookaheadReadinessFormula $formula,
         private HistoricalScheduleTaskStateQuery $historicalTasks,
+        private LookaheadResourceScope $resourceScope,
+        private LookaheadResourceCandidateQuery $resourceCandidates,
     ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
@@ -50,6 +53,11 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             throw new InvalidArgumentException('lookahead_project_filter_empty');
         }
         $resourceFilter = new ReportScopedResourceFilter;
+        $scopedScheduleIds = $resourceFilter->ids(
+            $scope,
+            ['schedule'],
+            $projectIds,
+        );
         $scopedTaskIds = $resourceFilter->ids(
             $scope,
             ['task', 'schedule_task'],
@@ -66,15 +74,26 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ->whereIn('project_id', $projectIds)
             ->where('created_at', '<=', $query->asOf)
             ->where('is_template', false)
+            ->when(
+                $scopedScheduleIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $scopedScheduleIds),
+            )
             ->pluck('id')
             ->map('intval')
             ->all();
+        $constraintTaskIds = $this->resourceCandidates->taskIds(
+            $scope,
+            $projectIds,
+            $scheduleIds,
+            $query->asOf,
+        );
+        $resourceTaskIds = $this->intersectNullableIds($scopedTaskIds, $constraintTaskIds);
         $states = $this->historicalTasks
             ->latestForProjects($scope->organizationId, $projectIds, $query->asOf)
             ->whereIn('scheduleId', $scheduleIds)
             ->when(
-                $scopedTaskIds !== null,
-                static fn ($items) => $items->whereIn('taskId', $scopedTaskIds),
+                $resourceTaskIds !== null,
+                static fn ($items) => $items->whereIn('taskId', $resourceTaskIds),
             )
             ->values();
         $eligibleTaskIds = ScheduleTask::withTrashed()
@@ -82,8 +101,8 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ->where('created_at', '<=', $query->asOf)
             ->whereIn('schedule_id', $scheduleIds)
             ->when(
-                $scopedTaskIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $scopedTaskIds),
+                $resourceTaskIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $resourceTaskIds),
             )
             ->pluck('id')
             ->map('intval')
@@ -129,7 +148,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ->pluck('constraint_id')
             ->map(static fn ($id): int => (int) $id)
             ->all();
-        $uncapturedConstraintExists = WorkConstraint::withTrashed()
+        $uncapturedConstraints = WorkConstraint::withTrashed()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('schedule_task_id', $taskIds)
             ->when(
@@ -141,7 +160,22 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 $capturedConstraintIds !== [],
                 static fn ($builder) => $builder->whereNotIn('id', $capturedConstraintIds),
             )
-            ->exists();
+            ->get();
+        $uncapturedConstraintExists = $uncapturedConstraints->contains(
+            function (WorkConstraint $constraint) use ($scope): bool {
+                $linkedResource = $this->linkedResourceFromConstraint($constraint);
+
+                return $this->resourceScope->allowsConstraintIdentity(
+                    $scope,
+                    (int) $constraint->project_id,
+                    (int) $constraint->schedule_id,
+                    (int) $constraint->schedule_task_id,
+                    (int) $constraint->id,
+                    $linkedResource['type'] ?? null,
+                    $linkedResource['id'] ?? null,
+                );
+            },
+        );
         if ($uncapturedConstraintExists) {
             throw new InvalidArgumentException('lookahead_constraint_history_incomplete');
         }
@@ -164,7 +198,18 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     linkedResourceId: $linkedResource['id'] ?? null,
                 );
             }
-            if (! $this->matchesConstraintFilters($query, $constraints)) {
+            $constraints = $this->resourceScope->filterConstraints(
+                $scope,
+                (int) $state->projectId,
+                (int) $state->scheduleId,
+                (int) $state->taskId,
+                $constraints,
+            );
+            if ($constraints === null) {
+                continue;
+            }
+            $constraints = $this->filterConstraints($query, $constraints);
+            if ($constraints === null) {
                 continue;
             }
             $inputs[] = new LookaheadEligibilityInput(
@@ -329,6 +374,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                         'payload' => $payload,
                         'source_refs' => [
                             ['type' => 'schedule_task', 'id' => $input->taskId, 'project_id' => $input->projectId],
+                            ['type' => 'schedule', 'id' => $input->scheduleId, 'project_id' => $input->projectId],
                             [
                                 'type' => 'schedule_task_state_version',
                                 'id' => $input->taskStateVersion,
@@ -387,6 +433,24 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         return null;
     }
 
+    private function linkedResourceFromConstraint(WorkConstraint $constraint): ?array
+    {
+        $metadata = (array) $constraint->metadata;
+        $linked = $metadata['linked_action'] ?? $metadata['linked_entity'] ?? null;
+        if (! is_array($linked)
+            || ! is_string($linked['type'] ?? null)
+            || ! is_numeric($linked['id'] ?? null)
+            || (int) $linked['id'] < 1
+        ) {
+            return null;
+        }
+
+        return [
+            'type' => $linked['type'],
+            'id' => (int) $linked['id'],
+        ];
+    }
+
     private function matchesTaskFilters(ReportQuery $query, object $state): bool
     {
         $values = $query->filters->values;
@@ -408,26 +472,36 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             && $this->matches($values['task_statuses'] ?? [], $state->status);
     }
 
-    private function matchesConstraintFilters(ReportQuery $query, array $constraints): bool
+    private function intersectNullableIds(?array $left, ?array $right): ?array
+    {
+        if ($left === null) {
+            return $right;
+        }
+        if ($right === null) {
+            return $left;
+        }
+
+        return array_values(array_intersect($left, $right));
+    }
+
+    private function filterConstraints(ReportQuery $query, array $constraints): ?array
     {
         $values = $query->filters->values;
         $types = $values['constraint_types'] ?? $values['types'] ?? [];
         $severities = $values['severities'] ?? [];
         $statuses = $values['statuses'] ?? [];
         if ($types === [] && $severities === [] && $statuses === []) {
-            return true;
+            return $constraints;
         }
 
-        foreach ($constraints as $constraint) {
-            if ($this->matches($types, $constraint->type)
+        $filtered = array_values(array_filter(
+            $constraints,
+            fn ($constraint): bool => $this->matches($types, $constraint->type)
                 && $this->matches($severities, $constraint->severity)
-                && $this->matches($statuses, $constraint->status)
-            ) {
-                return true;
-            }
-        }
+                && $this->matches($statuses, $constraint->status),
+        ));
 
-        return false;
+        return $filtered === [] ? null : $filtered;
     }
 
     private function positiveIntegerFilter(ReportQuery $query, string $key): array

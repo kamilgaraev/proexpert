@@ -18,6 +18,11 @@ use PHPUnit\Framework\TestCase;
 
 final class ReportSourceObjectAccessAuthorizerTest extends TestCase
 {
+    public static function setUpBeforeClass(): void
+    {
+        require_once dirname(__DIR__, 4).'/app/Support/Reporting/ReportSourceObjectAccessAuthorizer.php';
+    }
+
     #[Test]
     public function exact_task_restriction_allows_only_the_authorized_drilldown_source(): void
     {
@@ -85,6 +90,20 @@ final class ReportSourceObjectAccessAuthorizerTest extends TestCase
         (new ReportSourceObjectAccessAuthorizer)->assertReferencesAccessible(
             $this->context([]),
             [],
+        );
+    }
+
+    #[Test]
+    public function row_missing_an_active_resource_dimension_is_denied_for_page_and_export(): void
+    {
+        $this->expectException(ReportContractException::class);
+
+        (new ReportSourceObjectAccessAuthorizer)->assertReferencesAccessible(
+            $this->context([
+                new ReportScopedResource('task', 41, 7),
+                new ReportScopedResource('constraint', 51, 7),
+            ]),
+            [['type' => 'schedule_task', 'id' => 41, 'project_id' => 7]],
         );
     }
 

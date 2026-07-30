@@ -13,6 +13,11 @@ use PHPUnit\Framework\TestCase;
 
 final class ReportScopedResourceFilterTest extends TestCase
 {
+    public static function setUpBeforeClass(): void
+    {
+        require_once dirname(__DIR__, 4).'/app/Support/Reporting/ReportScopedResourceFilter.php';
+    }
+
     #[Test]
     public function matching_resource_kinds_restrict_materialized_ids_by_project(): void
     {
@@ -68,6 +73,67 @@ final class ReportScopedResourceFilterTest extends TestCase
             $scope,
             ['task', 'schedule_task'],
             [8],
+        ));
+    }
+
+    #[Test]
+    public function row_must_satisfy_every_active_applicable_resource_dimension(): void
+    {
+        $scope = new ReportScope(
+            1,
+            [1],
+            [7],
+            [
+                new ReportScopedResource('task', 41, 7),
+                new ReportScopedResource('constraint', 51, 7),
+                new ReportScopedResource('purchase_request', 61, 7),
+            ],
+            new DateTimeZone('Europe/Moscow'),
+        );
+        $filter = new ReportScopedResourceFilter;
+        $applicableKinds = [
+            'task',
+            'schedule_task',
+            'constraint',
+            'work_constraint',
+            'purchase_request',
+        ];
+
+        self::assertTrue($filter->allowsReferences($scope, 7, [
+            ['type' => 'schedule_task', 'id' => 41, 'project_id' => 7],
+            ['type' => 'work_constraint', 'id' => 51, 'project_id' => 7],
+            ['type' => 'purchase_request', 'id' => 61, 'project_id' => 7],
+        ], $applicableKinds));
+        self::assertFalse($filter->allowsReferences($scope, 7, [
+            ['type' => 'schedule_task', 'id' => 41, 'project_id' => 7],
+            ['type' => 'work_constraint', 'id' => 51, 'project_id' => 7],
+        ], $applicableKinds));
+        self::assertFalse($filter->allowsReferences($scope, 7, [
+            ['type' => 'schedule_task', 'id' => 41, 'project_id' => 7],
+            ['type' => 'work_constraint', 'id' => 51, 'project_id' => 7],
+            ['type' => 'purchase_request', 'id' => 62, 'project_id' => 7],
+        ], $applicableKinds));
+    }
+
+    #[Test]
+    public function active_kind_restricted_to_another_project_denies_every_row_in_selected_project(): void
+    {
+        $scope = new ReportScope(
+            1,
+            [1],
+            [7, 8],
+            [new ReportScopedResource('constraint', 51, 7)],
+            new DateTimeZone('Europe/Moscow'),
+        );
+
+        self::assertFalse((new ReportScopedResourceFilter)->allowsReferences(
+            $scope,
+            8,
+            [
+                ['type' => 'schedule_task', 'id' => 41, 'project_id' => 8],
+                ['type' => 'work_constraint', 'id' => 51, 'project_id' => 8],
+            ],
+            ['task', 'schedule_task', 'constraint', 'work_constraint'],
         ));
     }
 }

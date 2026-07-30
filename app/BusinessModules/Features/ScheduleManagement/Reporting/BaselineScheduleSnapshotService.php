@@ -173,7 +173,13 @@ final readonly class BaselineScheduleSnapshotService
         if ($projectIds === []) {
             throw new InvalidArgumentException('baseline_schedule_project_filter_empty');
         }
-        $scopedTaskIds = (new ReportScopedResourceFilter)->ids(
+        $resourceFilter = new ReportScopedResourceFilter;
+        $scopedScheduleIds = $resourceFilter->ids(
+            $scope,
+            ['schedule'],
+            $projectIds,
+        );
+        $scopedTaskIds = $resourceFilter->ids(
             $scope,
             ['task', 'schedule_task'],
             $projectIds,
@@ -185,6 +191,10 @@ final readonly class BaselineScheduleSnapshotService
             ->whereIn('project_id', $projectIds)
             ->where('created_at', '<=', $query->asOf)
             ->where('is_template', false)
+            ->when(
+                $scopedScheduleIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $scopedScheduleIds),
+            )
             ->when($scheduleIds !== [], fn ($builder) => $builder->whereIn('id', $scheduleIds))
             ->pluck('id')
             ->map('intval')

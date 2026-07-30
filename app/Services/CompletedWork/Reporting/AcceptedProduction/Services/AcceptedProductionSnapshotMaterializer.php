@@ -79,8 +79,8 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 }
 
                 return $actLineIds === null
-                    || (string) $event->source_line_type !== 'performance_act_line'
-                    || in_array((int) $event->source_line_id, $actLineIds, true);
+                    || ((string) $event->source_line_type === 'performance_act_line'
+                        && in_array((int) $event->source_line_id, $actLineIds, true));
             })
             ->values();
         $events = $allEvents
