@@ -734,6 +734,10 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString('setConnection($this->database->getName())', $store);
         self::assertStringContainsString("->where('organization_id', \$unit->organization_id)", $store);
         self::assertStringContainsString("->where('source_version', \$unit->source_version)", $store);
+        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_QUEUED", $store);
+        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_PROCESSING", $store);
+        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_FAILED", $store);
+        self::assertStringContainsString("->where('status', '<>', ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED)", $store);
         self::assertStringContainsString("'processing_stage' => 'preflight'", $store);
         self::assertStringNotContainsString("'processing_stage' => 'processing'", $store);
         self::assertIsString($finalizer);
@@ -744,6 +748,22 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertIsString($provider);
         self::assertStringContainsString('RecoverEstimateGenerationUnitsJob', $provider);
         self::assertStringContainsString('->everyMinute()', $provider);
+    }
+
+    #[Test]
+    public function document_manifest_creates_queued_page_placeholders(): void
+    {
+        $creator = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/CreateDocumentProcessingUnits.php');
+        $detail = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Http/Resources/EstimateGenerationDocumentDetailResource.php');
+
+        self::assertIsString($creator);
+        self::assertStringContainsString('ensureQueuedPages', $creator);
+        self::assertStringContainsString('EstimateGenerationDocumentPage::query()->firstOrCreate', $creator);
+        self::assertStringContainsString("'page_count' => \$models->pluck('unit_index')->unique()->count()", $creator);
+        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_QUEUED", $creator);
+        self::assertIsString($detail);
+        self::assertStringContainsString('self::pageStatus($page)', $detail);
+        self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_QUEUED', $detail);
     }
 
     #[Test]

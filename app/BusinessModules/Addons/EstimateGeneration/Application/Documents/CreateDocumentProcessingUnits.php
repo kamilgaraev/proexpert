@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DocumentManifestPublicationFence;
@@ -55,6 +56,9 @@ final readonly class CreateDocumentProcessingUnits
 
         if ($existing->isNotEmpty()) {
             $this->publish($claim, static fn (): bool => true);
+            if (in_array((string) $document->status, ['uploaded', 'queued', 'processing'], true)) {
+                $this->ensureQueuedPages($document, $existing, $sourceVersion);
+            }
 
             return $existing;
         }
@@ -136,7 +140,7 @@ final readonly class CreateDocumentProcessingUnits
 
                     }
 
-                    return EstimateGenerationProcessingUnit::query()
+                    $models = EstimateGenerationProcessingUnit::query()
                         ->where('organization_id', $document->organization_id)
                         ->where('project_id', $document->project_id)
                         ->where('session_id', $document->session_id)
@@ -145,6 +149,17 @@ final readonly class CreateDocumentProcessingUnits
                         ->orderBy('unit_type')
                         ->orderBy('unit_index')
                         ->get();
+
+                    $this->ensureQueuedPages($document, $models, $sourceVersion);
+                    $document->forceFill([
+                        'status' => 'queued',
+                        'processing_stage' => 'preflight',
+                        'progress_percent' => max(5, (int) $document->progress_percent),
+                        'page_count' => $models->pluck('unit_index')->unique()->count(),
+                        'processed_page_count' => 0,
+                    ])->save();
+
+                    return $models;
                 },
             );
 
@@ -157,5 +172,31 @@ final readonly class CreateDocumentProcessingUnits
     private function publish(CheckpointClaim $claim, callable $publication): mixed
     {
         return $this->publicationFence->publish($claim, $publication);
+    }
+
+    /**
+     * @param  Collection<int, EstimateGenerationProcessingUnit>  $units
+     */
+    private function ensureQueuedPages(EstimateGenerationDocument $document, Collection $units, string $sourceVersion): void
+    {
+        foreach ($units as $unit) {
+            EstimateGenerationDocumentPage::query()->firstOrCreate(
+                [
+                    'document_id' => $document->id,
+                    'page_number' => $unit->unit_index,
+                ],
+                [
+                    'processing_unit_id' => $unit->id,
+                    'source_version' => $sourceVersion,
+                    'organization_id' => $document->organization_id,
+                    'project_id' => $document->project_id,
+                    'session_id' => $document->session_id,
+                    'language_codes' => [],
+                    'normalized_payload' => [],
+                    'quality_flags' => [],
+                    'status' => ManageEstimateGenerationDocumentPages::STATUS_QUEUED,
+                ],
+            );
+        }
     }
 }

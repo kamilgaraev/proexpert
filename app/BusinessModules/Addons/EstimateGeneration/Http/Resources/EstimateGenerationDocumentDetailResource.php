@@ -38,7 +38,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'text_hash' => $page->text_hash,
                 'confidence' => $page->confidence,
                 'normalized_payload' => $page->normalized_payload ?? [],
-                'status' => $page->status ?? ManageEstimateGenerationDocumentPages::STATUS_READY,
+                'status' => self::pageStatus($page),
                 'excluded' => (string) $page->status === ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED,
                 'excluded_at' => $page->excluded_at?->toISOString(),
                 'excluded_reason' => $page->excluded_reason,
@@ -133,6 +133,17 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         }, []);
 
         return $payload;
+    }
+
+    private static function pageStatus(mixed $page): string
+    {
+        if (is_string($page->status) && $page->status !== '') {
+            return $page->status;
+        }
+
+        return $page->output_version !== null || $page->text !== null
+            ? ManageEstimateGenerationDocumentPages::STATUS_READY
+            : ManageEstimateGenerationDocumentPages::STATUS_QUEUED;
     }
 
     /**

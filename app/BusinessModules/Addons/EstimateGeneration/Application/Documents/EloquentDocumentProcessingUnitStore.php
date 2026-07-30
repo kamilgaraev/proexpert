@@ -215,10 +215,29 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
     public function fail(DocumentProcessingUnitClaim $claim, string $code, string $fingerprint, DateTimeImmutable $now): bool
     {
-        return $this->claimQuery($claim)
-            ->where('status', DocumentProcessingUnitStatus::Running->value)
-            ->where('claim_token', $claim->token)->where('lease_expires_at', '>', $now)
-            ->update(['status' => DocumentProcessingUnitStatus::Failed->value, 'claim_token' => null, 'lease_expires_at' => null, 'failure_code' => $code, 'failure_fingerprint' => $fingerprint, 'failed_at' => $now, 'updated_at' => $now]) === 1;
+        return $this->database->transaction(function () use ($claim, $code, $fingerprint, $now): bool {
+            $updated = $this->claimQuery($claim)
+                ->where('status', DocumentProcessingUnitStatus::Running->value)
+                ->where('claim_token', $claim->token)->where('lease_expires_at', '>', $now)
+                ->update(['status' => DocumentProcessingUnitStatus::Failed->value, 'claim_token' => null, 'lease_expires_at' => null, 'failure_code' => $code, 'failure_fingerprint' => $fingerprint, 'failed_at' => $now, 'updated_at' => $now]) === 1;
+
+            if ($updated) {
+                $this->pageQuery()
+                    ->where('organization_id', $claim->organizationId)
+                    ->where('project_id', $claim->projectId)
+                    ->where('session_id', $claim->sessionId)
+                    ->where('document_id', $claim->documentId)
+                    ->where('processing_unit_id', $claim->unitId)
+                    ->where('source_version', $claim->sourceVersion)
+                    ->where('status', '<>', ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED)
+                    ->update([
+                        'status' => ManageEstimateGenerationDocumentPages::STATUS_FAILED,
+                        'updated_at' => $now,
+                    ]);
+            }
+
+            return $updated;
+        }, 3);
     }
 
     public function supersedeDocumentSource(int $documentId, string $currentSourceVersion): void
@@ -269,7 +288,8 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ['document_id' => $unit->document_id, 'page_number' => $unit->unit_index],
             ['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version,
                 'organization_id' => $unit->organization_id, 'project_id' => $unit->project_id,
-                'session_id' => $unit->session_id, 'language_codes' => [], 'normalized_payload' => [], 'quality_flags' => []],
+                'session_id' => $unit->session_id, 'language_codes' => [], 'normalized_payload' => [], 'quality_flags' => [],
+                'status' => ManageEstimateGenerationDocumentPages::STATUS_QUEUED],
         );
         $page = $this->pageQuery()->whereKey($winner->getKey())->lockForUpdate()->firstOrFail();
         if ((int) $page->organization_id !== (int) $unit->organization_id
@@ -277,6 +297,9 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             || (int) $page->session_id !== (int) $unit->session_id
             || (int) $page->document_id !== (int) $unit->document_id) {
             throw new DocumentUnitProcessingException('unit_page_scope_mismatch');
+        }
+        if ((string) $page->status === ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED) {
+            throw new DocumentUnitProcessingException('unit_page_excluded');
         }
         (new DocumentUnitPageReservationPolicy)->assertReservable(
             new DocumentUnitPageReservationState(
@@ -301,6 +324,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
         if ($page->processing_unit_id === null) {
             $page->forceFill(['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version])->save();
         }
+        $page->forceFill(['status' => ManageEstimateGenerationDocumentPages::STATUS_PROCESSING])->save();
 
         return (int) $page->getKey();
     }
