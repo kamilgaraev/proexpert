@@ -27,6 +27,19 @@ final class CanonicalReportSourceHashBuilder
 
     public function build(ReportQuery $query, ReportSnapshotRef $snapshot, ReportResult $result): Sha256Hash
     {
+        if (! hash_equals($snapshot->sourceHash->value, $result->provenance->sourceHash->value)
+            || ! hash_equals($snapshot->sourceHash->value, $result->metadata->snapshot->sourceHash->value)) {
+            throw new InvalidArgumentException('report_source_hash_identity_mismatch');
+        }
+
+        return $snapshot->sourceHash;
+    }
+
+    public function snapshotIdentity(
+        ReportQuery $query,
+        ReportSnapshotRef $snapshot,
+        ReportResult $result,
+    ): Sha256Hash {
         $sourceRefs = [];
         $identities = [];
         foreach ($result->provenance->sourceRefs as $ref) {

@@ -58,8 +58,33 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
 
         self::assertSame(
             self::BASELINE_HASH,
+            (new CanonicalReportSourceHashBuilder)->snapshotIdentity($query, $snapshot, $result)->value,
+        );
+    }
+
+    public function test_build_returns_the_authoritative_materialized_source_hash(): void
+    {
+        [$query, $snapshot, $result] = $this->fixture($this->baselineSources());
+
+        self::assertSame(
+            $snapshot->sourceHash->value,
             (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result)->value,
         );
+    }
+
+    public function test_build_rejects_snapshot_and_provenance_source_hash_mismatch(): void
+    {
+        [$query, $snapshot, $result] = $this->fixture($this->baselineSources());
+        [, , $mismatched] = $this->fixture(
+            $this->baselineSources(),
+            [],
+            ['source_hash' => str_repeat('f', 64)],
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_source_hash_identity_mismatch');
+
+        (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $mismatched);
     }
 
     #[DataProvider('closedProjectionMutationProvider')]
@@ -74,8 +99,8 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertNotSame(
-            $builder->build($baselineQuery, $baselineSnapshot, $baselineResult)->value,
-            $builder->build($mutatedQuery, $mutatedSnapshot, $mutatedResult)->value,
+            $builder->snapshotIdentity($baselineQuery, $baselineSnapshot, $baselineResult)->value,
+            $builder->snapshotIdentity($mutatedQuery, $mutatedSnapshot, $mutatedResult)->value,
             $mutation,
         );
     }
@@ -128,10 +153,10 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         ]);
         $before = $result->provenance->sourceRefs;
 
-        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
+        $hash = (new CanonicalReportSourceHashBuilder)->snapshotIdentity($query, $snapshot, $result);
         [, , $reordered] = $this->fixture(array_reverse($before));
 
-        self::assertSame($hash->value, (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $reordered)->value);
+        self::assertSame($hash->value, (new CanonicalReportSourceHashBuilder)->snapshotIdentity($query, $snapshot, $reordered)->value);
         self::assertSame($before, $result->provenance->sourceRefs);
     }
 
@@ -163,8 +188,8 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertSame(
-            $builder->build($query, $snapshot, $result)->value,
-            $builder->build($query, $snapshot, $reversed)->value,
+            $builder->snapshotIdentity($query, $snapshot, $result)->value,
+            $builder->snapshotIdentity($query, $snapshot, $reversed)->value,
             $field,
         );
     }
@@ -243,8 +268,8 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertSame(
-            $builder->build($query, $snapshot, $result)->value,
-            $builder->build($query, $changedSnapshot, $changedResult)->value,
+            $builder->snapshotIdentity($query, $snapshot, $result)->value,
+            $builder->snapshotIdentity($query, $changedSnapshot, $changedResult)->value,
         );
     }
 
@@ -263,8 +288,8 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertSame(
-            $builder->build($query, $firstSnapshot, $firstResult)->value,
-            $builder->build($query, $secondSnapshot, $secondResult)->value,
+            $builder->snapshotIdentity($query, $firstSnapshot, $firstResult)->value,
+            $builder->snapshotIdentity($query, $secondSnapshot, $secondResult)->value,
         );
     }
 
@@ -277,7 +302,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('report_source_hash_invalid');
-        (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
+        (new CanonicalReportSourceHashBuilder)->snapshotIdentity($query, $snapshot, $result);
     }
 
     #[DataProvider('invalidDecimalProvider')]
@@ -287,7 +312,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('report_source_hash_invalid');
-        (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
+        (new CanonicalReportSourceHashBuilder)->snapshotIdentity($query, $snapshot, $result);
     }
 
     public static function invalidDecimalProvider(): array
@@ -309,7 +334,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
     {
         [$query, $snapshot, $result] = $this->fixture([$this->source('alpha', 'v1', 3, 'a')], ['metric' => $value]);
 
-        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result)->value);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', (new CanonicalReportSourceHashBuilder)->snapshotIdentity($query, $snapshot, $result)->value);
     }
 
     public static function validDecimalProvider(): array

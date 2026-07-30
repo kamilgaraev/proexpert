@@ -6,6 +6,7 @@ namespace Tests\Integration\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
@@ -118,7 +119,13 @@ final class ReportingSealRacePostgresTest extends TestCase
         try {
             $workers = [];
             foreach ([1, 2] as $worker) {
-                $workers[] = $race->spawn($worker, static function () use ($kind, $snapshotId): array {
+                $workers[] = $race->spawn($worker, static function () use ($kind, $snapshotId, $private): array {
+                    config([
+                        'reporting.snapshot_signing.active_key_id' => 'race-contract-v1',
+                        'reporting.snapshot_signing.active_private_key' => $private,
+                    ]);
+                    app()->forgetInstance(CanonicalReportSnapshotSealer::class);
+                    app()->forgetInstance(ReportSnapshotSealStore::class);
                     $seal = app(ReportSnapshotSealStore::class)->create(
                         $kind,
                         $snapshotId,
@@ -135,6 +142,7 @@ final class ReportingSealRacePostgresTest extends TestCase
             $race->waitForChildren($workers);
 
             self::assertSame($race->result(1), $race->result(2));
+            self::assertSame('race-contract-v1', $race->result(1)['key_id']);
             self::assertSame(1, DB::table('report_snapshot_seals')
                 ->where('snapshot_kind', $kind)
                 ->where('snapshot_id', $snapshotId)

@@ -30,13 +30,14 @@ return new class extends Migration
             $table->unsignedBigInteger('sealed_count')->default(0);
             $table->unsignedBigInteger('failed_count')->default(0);
             $table->char('failure_fingerprint', 64)->nullable();
+            $table->string('remediation', 255)->nullable();
             $table->timestampTz('started_at')->nullable();
             $table->timestampTz('completed_at')->nullable();
             $table->timestampTz('updated_at');
         });
         DB::statement("ALTER TABLE report_snapshot_seals ADD CONSTRAINT report_snapshot_seals_crypto_check CHECK (algorithm = 'ed25519-sha256' AND key_id ~ '^[a-z][a-z0-9_.:-]{2,127}$' AND sealed_payload_hash ~ '^[a-f0-9]{64}$' AND signature ~ '^[A-Za-z0-9_-]{86}$')");
         DB::statement("ALTER TABLE report_snapshot_seal_backfills ADD CONSTRAINT report_snapshot_seal_backfills_status_check CHECK (status IN ('running', 'ready', 'failed'))");
-        DB::statement("ALTER TABLE report_snapshot_seal_backfills ADD CONSTRAINT report_snapshot_seal_backfills_coverage_check CHECK (sealed_count <= source_count AND ((status = 'ready' AND sealed_count = source_count AND completed_at IS NOT NULL AND failure_fingerprint IS NULL) OR status <> 'ready'))");
+        DB::statement("ALTER TABLE report_snapshot_seal_backfills ADD CONSTRAINT report_snapshot_seal_backfills_coverage_check CHECK (sealed_count <= source_count AND ((status = 'ready' AND sealed_count = source_count AND completed_at IS NOT NULL AND failure_fingerprint IS NULL AND remediation IS NULL) OR (status = 'failed' AND completed_at IS NOT NULL AND failure_fingerprint IS NOT NULL AND remediation IS NOT NULL) OR status = 'running'))");
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION immutable_report_snapshot_seal_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
