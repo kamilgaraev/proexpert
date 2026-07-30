@@ -28,8 +28,8 @@ final readonly class InventoryRiskGrainUniverse
         ?Collection $pinnedEvents = null,
     ): Collection {
         $events = $pinnedEvents ?? WarehouseInventoryEvent::query()
-            ->where('inventory_demand_snapshots.organization_id', $organizationId)
-            ->where('occurred_at', '<=', $asOf)
+            ->where('warehouse_inventory_events.organization_id', $organizationId)
+            ->where('warehouse_inventory_events.occurred_at', '<=', $asOf)
             ->when(
                 $allowedWarehouseIds !== null,
                 static fn (Builder $builder): Builder => $builder->whereIn('warehouse_id', $allowedWarehouseIds),
@@ -43,10 +43,11 @@ final readonly class InventoryRiskGrainUniverse
         $demands = InventoryDemandSnapshot::query()
             ->join('materials as inventory_demand_filter_material', 'inventory_demand_filter_material.id', '=', 'inventory_demand_snapshots.material_id')
             ->where('inventory_demand_snapshots.organization_id', $organizationId)
-            ->where('effective_from', '<=', $asOf)
+            ->where('inventory_demand_snapshots.effective_from', '<=', $asOf)
+            ->where('inventory_demand_snapshots.approved_at', '<=', $asOf)
             ->where(static fn (Builder $builder): Builder => $builder
-                ->whereNull('effective_to')
-                ->orWhere('effective_to', '>', $asOf))
+                ->whereNull('inventory_demand_snapshots.effective_to')
+                ->orWhere('inventory_demand_snapshots.effective_to', '>', $asOf))
             ->when(
                 $allowedWarehouseIds !== null,
                 static fn (Builder $builder): Builder => $builder->where(
@@ -74,11 +75,11 @@ final readonly class InventoryRiskGrainUniverse
 
         $policies = InventoryReorderPolicyVersion::query()
             ->join('materials as inventory_policy_filter_material', 'inventory_policy_filter_material.id', '=', 'inventory_reorder_policy_versions.material_id')
-            ->where('organization_id', $organizationId)
-            ->where('effective_from', '<=', $asOf)
+            ->where('inventory_reorder_policy_versions.organization_id', $organizationId)
+            ->where('inventory_reorder_policy_versions.effective_from', '<=', $asOf)
             ->where(static fn (Builder $builder): Builder => $builder
-                ->whereNull('effective_to')
-                ->orWhere('effective_to', '>', $asOf))
+                ->whereNull('inventory_reorder_policy_versions.effective_to')
+                ->orWhere('inventory_reorder_policy_versions.effective_to', '>', $asOf))
             ->when(
                 $allowedWarehouseIds !== null,
                 static fn (Builder $builder): Builder => $builder->where(

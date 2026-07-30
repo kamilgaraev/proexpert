@@ -17,11 +17,13 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\Procuremen
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SentPurchaseOrderLineOwnerRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Support\OrganizationBusinessTimezone;
 use Brick\Math\BigDecimal;
 use Carbon\CarbonImmutable;
 use DomainException;
+use Illuminate\Support\Facades\DB;
 
 use function trans_message;
 
@@ -30,6 +32,7 @@ final readonly class ProcurementReportingLifecycleRecorder
     public function __construct(
         private ProcurementProcessEventRecorder $processEvents,
         private PurchaseOrderPromiseVersionRecorder $promiseVersions,
+        private SentPurchaseOrderLineOwnerRecorder $sentLineOwners,
         private SupplyLifecycleEventRecorder $supplyEvents,
         private OrganizationBusinessTimezone $businessTimezone,
     ) {}
@@ -195,6 +198,7 @@ final readonly class ProcurementReportingLifecycleRecorder
     {
         $order->loadMissing(['items', 'purchaseRequest.lines', 'purchaseRequest.siteRequest']);
         foreach ($order->items as $item) {
+            $this->sentLineOwners->record($item, CarbonImmutable::instance($order->sent_at));
             $promise = $this->originalPromise($order, $item);
             $this->supplyEvents->record(
                 $promise,
@@ -307,7 +311,11 @@ final readonly class ProcurementReportingLifecycleRecorder
         if (! $previouslyReceived->isPositive()) {
             $eventCodes[] = 'first_receipt';
         }
-        if ($received->isGreaterThanOrEqualTo((string) $item->quantity)) {
+        if ($this->isRequestLineFullyReceivedAsOf(
+            (int) $order->organization_id,
+            $requestLineId,
+            $occurredAt,
+        )) {
             $eventCodes[] = 'fully_received';
         }
         foreach ($eventCodes as $eventCode) {
@@ -407,5 +415,41 @@ final readonly class ProcurementReportingLifecycleRecorder
             ->where('purchase_request_line_id', $lineId)
             ->where('event_code', $eventCode)
             ->exists();
+    }
+
+    private function isRequestLineFullyReceivedAsOf(
+        int $organizationId,
+        int $purchaseRequestLineId,
+        CarbonImmutable $asOf,
+    ): bool {
+        $aggregate = DB::table('sent_purchase_order_line_owners as sent_owner')
+            ->join('purchase_order_promise_versions as sent_promise', function ($join): void {
+                $join->on(
+                    'sent_promise.purchase_order_item_id',
+                    '=',
+                    'sent_owner.purchase_order_item_id',
+                )->where('sent_promise.promise_version', 1);
+            })
+            ->leftJoin('supply_lifecycle_events as sent_event', function ($join) use ($asOf): void {
+                $join->on('sent_event.promise_version_id', '=', 'sent_promise.id')
+                    ->where('sent_event.occurred_at', '<=', $asOf);
+            })
+            ->where('sent_owner.organization_id', $organizationId)
+            ->where('sent_owner.purchase_request_line_id', $purchaseRequestLineId)
+            ->selectRaw(
+                'COUNT(DISTINCT sent_owner.purchase_order_item_id) AS owner_count, '
+                .'COUNT(DISTINCT sent_promise.purchase_order_item_id) AS promise_count, '
+                .'COALESCE(SUM(DISTINCT sent_promise.ordered_quantity), 0) AS ordered_quantity, '
+                ."COALESCE(SUM(CASE WHEN sent_event.event_type IN "
+                ."('received','receipt_reversed','returned') THEN sent_event.signed_quantity ELSE 0 END), 0) "
+                .'AS received_quantity',
+            )
+            ->first();
+
+        return $aggregate !== null
+            && (int) $aggregate->owner_count > 0
+            && (int) $aggregate->owner_count === (int) $aggregate->promise_count
+            && BigDecimal::of((string) $aggregate->received_quantity)
+                ->isGreaterThanOrEqualTo((string) $aggregate->ordered_quantity);
     }
 }

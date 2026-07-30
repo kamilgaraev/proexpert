@@ -17,11 +17,23 @@ class SupplierProposalVersionService
 
     public function createInitialVersion(SupplierProposal $proposal, ?int $actorId = null): SupplierProposalVersion
     {
-        $proposal->loadMissing(['lines.material', 'lines.supplierRequestLine', 'intake']);
+        $proposal->loadMissing([
+            'lines.material',
+            'lines.supplierRequestLine',
+            'intake',
+            'supplierRequest.purchaseRequest.siteRequest',
+        ]);
+        $purchaseRequestId = (int) $proposal->supplierRequest?->purchase_request_id;
+        $projectId = (int) $proposal->supplierRequest?->purchaseRequest?->siteRequest?->project_id;
+        if ($purchaseRequestId < 1 || $projectId < 1) {
+            throw new \DomainException('Supplier proposal immutable owner dimensions are required.');
+        }
         $commercialSnapshot = $this->commercialSnapshot($proposal);
         $dimensionSnapshot = [
             'supplier_party_id' => $proposal->supplier_party_id,
             'supplier_request_id' => $proposal->supplier_request_id,
+            'purchase_request_id' => $purchaseRequestId,
+            'project_id' => $projectId,
             'currency' => $proposal->currency,
             'lines' => array_map(
                 static fn (array $line): array => [

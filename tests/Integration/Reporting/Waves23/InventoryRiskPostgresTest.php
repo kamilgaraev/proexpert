@@ -30,4 +30,39 @@ final class InventoryRiskPostgresTest extends Waves23PostgresTestCase
                 ->exists(), $index);
         }
     }
+
+    public function test_planning_evidence_columns_match_the_drill_down_contract(): void
+    {
+        foreach ([
+            'inventory_risk_rows' => [
+                'demand_snapshot_id',
+                'reorder_policy_version_id',
+                'balance_date',
+                'unit_dimension',
+                'unit_code',
+                'conversion_version',
+            ],
+            'inventory_demand_snapshots' => [
+                'source_version',
+                'approved_quantity',
+                'horizon_days',
+                'approved_at',
+                'effective_from',
+                'effective_to',
+            ],
+            'inventory_reorder_policy_versions' => [
+                'policy_version',
+                'minimum_quantity',
+                'reorder_point_quantity',
+                'target_quantity',
+                'safety_stock_quantity',
+                'effective_from',
+                'effective_to',
+            ],
+        ] as $table => $columns) {
+            foreach ($columns as $column) {
+                self::assertNotNull($this->column($table, $column), $table.'.'.$column);
+            }
+        }
+    }
 }

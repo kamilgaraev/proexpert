@@ -214,11 +214,11 @@ final class SupplyReportingHardeningTest extends TestCase
         );
         self::assertStringContainsString('->whereNotExists(', $source);
         self::assertStringContainsString("'readiness_event.promise_version_id'", $source);
-        self::assertStringContainsString("'purchase_order_promise_versions.id'", $source);
+        self::assertStringContainsString("'owner_promise.id'", $source);
         self::assertStringContainsString('$missingSent', $source);
         self::assertStringNotContainsString('->get([', $source);
         self::assertStringNotContainsString('->pluck(', $source);
-        self::assertStringContainsString('PurchaseOrderPromiseVersion::query()', $source);
+        self::assertStringContainsString('SentPurchaseOrderLineOwner::query()', $source);
         self::assertStringNotContainsString('PurchaseOrderItem::query()', $source);
         self::assertStringContainsString('$missingPromise', $source);
         self::assertStringContainsString('$eligible - $projected', $source);
@@ -392,10 +392,10 @@ final class SupplyReportingHardeningTest extends TestCase
         );
 
         foreach ([
-            'purchase_order_promise_versions.warehouse_id',
-            'purchase_order_promise_versions.buyer_id',
-            'purchase_order_promise_versions.priority',
-            'purchase_order_promise_versions.promised_at',
+            'sent_purchase_order_line_owners.warehouse_id',
+            'sent_purchase_order_line_owners.buyer_id',
+            'sent_purchase_order_line_owners.priority',
+            'owner_promise.promised_at',
             'statusAt(',
             'matchesDelayFilter(',
         ] as $immutableFilter) {
@@ -552,6 +552,42 @@ final class SupplyReportingHardeningTest extends TestCase
             'inventory_policy_filter_material',
             $universe,
         );
+        self::assertStringContainsString(
+            "->where('warehouse_inventory_events.organization_id', \$organizationId)",
+            $universe,
+        );
+        self::assertStringContainsString(
+            "->where('inventory_demand_snapshots.approved_at', '<=', \$asOf)",
+            $universe,
+        );
+    }
+
+    public function test_inventory_planning_only_drill_down_uses_pinned_effective_evidence(): void
+    {
+        $provider = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/Reporting/InventoryRisk/DrillDown/'
+            .'InventoryRiskDrillDownProvider.php',
+        );
+
+        foreach ([
+            "'demand_snapshot_id'",
+            "'reorder_policy_version_id'",
+            "->whereKey((int) \$demandId)",
+            "->whereKey((int) \$policyId)",
+            "->where('organization_id', \$context->scope->organizationId)",
+            "'warehouse'",
+            "->where('unit_dimension', \$row->getAttribute('unit_dimension'))",
+            "->where('unit_code', \$row->getAttribute('unit_code'))",
+            "->where('conversion_version', \$row->getAttribute('conversion_version'))",
+            "->where('effective_from', '<=', \$asOf)",
+            "->orWhere('effective_to', '>', \$asOf)",
+            "->where('approved_at', '<=', \$asOf)",
+            "\$balanceDate = \$row->getAttribute('balance_date')",
+            "'as_of' => \$asOf",
+            "'evidence_kind' => \$kind",
+        ] as $contract) {
+            self::assertStringContainsString($contract, $provider, $contract);
+        }
     }
 
     public function test_award_recorder_validates_every_comparable_version_owner(): void

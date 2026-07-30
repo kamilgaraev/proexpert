@@ -108,6 +108,38 @@ return new class extends Migration
                 ->restrictOnDelete();
         });
 
+        Schema::create('sent_purchase_order_line_owners', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('purchase_order_id');
+            $table->unsignedBigInteger('purchase_order_item_id');
+            $table->unsignedInteger('source_version');
+            $table->unsignedBigInteger('purchase_request_id');
+            $table->unsignedBigInteger('purchase_request_line_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('supplier_id')->nullable();
+            $table->unsignedBigInteger('warehouse_id')->nullable();
+            $table->unsignedBigInteger('material_id')->nullable();
+            $table->unsignedBigInteger('buyer_id')->nullable();
+            $table->string('priority', 32)->nullable();
+            $table->string('unit_dimension', 32);
+            $table->string('unit_code', 32);
+            $table->string('conversion_version', 64);
+            $table->timestampTz('effective_from');
+            $table->char('source_hash', 64);
+            $table->timestampTz('recorded_at')->useCurrent();
+            $table->unique(
+                ['organization_id', 'purchase_order_item_id', 'source_version'],
+                'sent_po_line_owner_source_unique',
+            );
+            $table->index(
+                ['organization_id', 'project_id', 'effective_from', 'purchase_order_item_id'],
+                'sent_po_line_owner_timeline_idx',
+            );
+            $table->foreign('purchase_order_id')->references('id')->on('purchase_orders')->restrictOnDelete();
+            $table->foreign('purchase_order_item_id')->references('id')->on('purchase_order_items')->restrictOnDelete();
+        });
+
         Schema::create('supply_lifecycle_events', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -242,6 +274,7 @@ return new class extends Migration
 
         $this->installConstraints();
         $this->installAppendOnlyTriggers([
+            'sent_purchase_order_line_owners',
             'purchase_order_promise_versions',
             'supply_lifecycle_events',
             'supply_reliability_policy_versions',
@@ -289,6 +322,7 @@ return new class extends Migration
         Schema::dropIfExists('supply_reliability_policy_versions');
         Schema::dropIfExists('supply_lifecycle_events');
         Schema::dropIfExists('purchase_order_promise_versions');
+        Schema::dropIfExists('sent_purchase_order_line_owners');
         Schema::dropIfExists('purchase_receipt_inventory_lots');
         Schema::table('purchase_receipt_lines', function (Blueprint $table): void {
             $table->dropForeign(['reversed_by_user_id']);

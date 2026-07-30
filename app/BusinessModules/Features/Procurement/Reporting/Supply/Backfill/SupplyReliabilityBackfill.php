@@ -8,7 +8,9 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SentPurchaseOrderLineOwnerRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder;
 use App\Support\Reporting\OwnerBackfillBatch;
 use Carbon\CarbonImmutable;
@@ -21,6 +23,7 @@ final readonly class SupplyReliabilityBackfill
 
     public function __construct(
         private PurchaseOrderPromiseVersionRecorder $promises,
+        private SentPurchaseOrderLineOwnerRecorder $sentOwners,
         private SupplyLifecycleEventRecorder $events,
     ) {}
 
@@ -39,6 +42,7 @@ final readonly class SupplyReliabilityBackfill
             ->get();
         $input = [];
         $projected = [];
+        $projectedOwnerIds = [];
         $gaps = 0;
         foreach ($items as $item) {
             $order = $item->purchaseOrder;
@@ -53,6 +57,7 @@ final readonly class SupplyReliabilityBackfill
             $unitDimension = $metadata['reporting_unit_dimension'] ?? null;
             $unitCode = $metadata['reporting_unit_code'] ?? null;
             $conversionVersion = $metadata['reporting_conversion_version'] ?? null;
+            $capturedOwner = $metadata['reporting_sent_owner_dimensions'] ?? null;
             $input[] = [
                 'item_id' => (int) $item->id,
                 'sent_at' => $order->sent_at?->format(DATE_ATOM),
@@ -71,6 +76,7 @@ final readonly class SupplyReliabilityBackfill
                 || trim($unitCode) === ''
                 || ! is_string($conversionVersion)
                 || trim($conversionVersion) === ''
+                || ! is_array($capturedOwner)
                 || ! is_string($orderMetadata['tax_basis'] ?? null)
                 || ! is_string($orderMetadata['freight_basis'] ?? null)) {
                 $gaps++;
@@ -101,11 +107,17 @@ final readonly class SupplyReliabilityBackfill
                     'confirmed_at' => $confirmedEvidence,
                     'cancelled_at' => $cancelledEvidence,
                 ]));
-                $order->forceFill([
-                    'sent_at' => $sentAt,
-                    'confirmed_at' => $confirmedAt,
-                    'cancelled_at' => $cancelledAt,
-                ])->save();
+                $owner = $this->sentOwners->recordBackfill(
+                    $item,
+                    $sentAt,
+                    $capturedOwner + [
+                        'source_version' => 1,
+                        'unit_dimension' => $unitDimension,
+                        'unit_code' => $unitCode,
+                        'conversion_version' => $conversionVersion,
+                    ],
+                );
+                $projectedOwnerIds[] = (int) $owner->id;
                 $basis = array_merge([
                     'reporting_source_version' => 1,
                     'unit_dimension' => $unitDimension,
@@ -256,10 +268,19 @@ final readonly class SupplyReliabilityBackfill
             ->orderBy('id')
             ->pluck('source_hash')
             ->all();
+        $output = [
+            ...SentPurchaseOrderLineOwner::query()
+                ->where('organization_id', $organizationId)
+                ->whereIn('id', $projectedOwnerIds)
+                ->orderBy('id')
+                ->pluck('source_hash')
+                ->all(),
+            ...$output,
+        ];
 
         return new OwnerBackfillBatch(
             $items->count(),
-            count($projected),
+            count($projected) + count($projectedOwnerIds),
             $gaps,
             $nextCursor,
             $items->count() < $limit,

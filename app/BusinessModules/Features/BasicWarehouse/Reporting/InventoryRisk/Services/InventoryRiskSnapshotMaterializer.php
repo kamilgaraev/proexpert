@@ -146,6 +146,7 @@ final readonly class InventoryRiskSnapshotMaterializer
         $demands = InventoryDemandSnapshot::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('effective_from', '<=', $query->asOf)
+            ->where('approved_at', '<=', $query->asOf)
             ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf))
             ->when(
                 $context->scope->projectIds !== [],

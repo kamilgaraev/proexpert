@@ -91,9 +91,9 @@ final readonly class SupplierAwardDecisionVersionRecorder
                     $version->dimension_hash,
                 )
                 || (int) ($version->dimension_snapshot['supplier_party_id'] ?? 0) !== (int) $version->supplier_party_id
-                || (int) ($version->dimension_snapshot['purchase_request_id'] ?? $authoritativePurchaseRequestId)
+                || (int) ($version->dimension_snapshot['purchase_request_id'] ?? 0)
                     !== $authoritativePurchaseRequestId
-                || (int) ($version->dimension_snapshot['project_id'] ?? $authoritativeProjectId)
+                || (int) ($version->dimension_snapshot['project_id'] ?? 0)
                     !== $authoritativeProjectId) {
                 throw new DomainException('Comparable proposal version lacks immutable award ownership.');
             }

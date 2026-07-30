@@ -22,8 +22,8 @@ return new class extends Migration
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('decision_id');
             $table->unsignedInteger('decision_version');
-            $table->unsignedBigInteger('purchase_request_id')->nullable();
-            $table->unsignedBigInteger('project_id')->nullable();
+            $table->unsignedBigInteger('purchase_request_id');
+            $table->unsignedBigInteger('project_id');
             $table->unsignedBigInteger('selected_supplier_party_id');
             $table->jsonb('dimension_snapshot');
             $table->char('dimension_hash', 64);
