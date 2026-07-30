@@ -31,8 +31,26 @@ final readonly class SupplyReliabilityBackfill
 
     public function backfillSlice(int $organizationId, int $cursor, int $limit = self::MAX_SLICE): OwnerBackfillBatch
     {
+        return DB::transaction(
+            fn (): OwnerBackfillBatch => $this->backfillSliceLocked($organizationId, $cursor, $limit),
+            3,
+        );
+    }
+
+    private function backfillSliceLocked(
+        int $organizationId,
+        int $cursor,
+        int $limit,
+    ): OwnerBackfillBatch {
         $limit = min(self::MAX_SLICE, max(1, $limit));
         $watermark = $this->watermark($organizationId);
+        if (DB::getDriverName() === 'pgsql') {
+            DB::select('SELECT pg_advisory_xact_lock(?, ?)', [$organizationId, 17]);
+            $watermark->refresh();
+        }
+        if ($cursor !== (int) $watermark->completed_item_id) {
+            throw new DomainException('Supply backfill cursor does not match persisted coverage.');
+        }
         $items = PurchaseOrderItem::query()
             ->with([
                 'purchaseOrder.purchaseRequest.siteRequest',
@@ -282,10 +300,6 @@ final readonly class SupplyReliabilityBackfill
         }
         $nextCursor = $items->isEmpty() ? $cursor : (int) $items->last()->id;
         $done = $nextCursor >= (int) $watermark->target_item_id || $items->count() < $limit;
-        $watermark->forceFill([
-            'completed_item_id' => max((int) $watermark->completed_item_id, $nextCursor),
-            'completed_at' => $done ? now() : null,
-        ])->save();
         $output = SupplyLifecycleEvent::query()
             ->where('organization_id', $organizationId)
             ->whereIn('id', $projected)
@@ -301,6 +315,24 @@ final readonly class SupplyReliabilityBackfill
                 ->all(),
             ...$output,
         ];
+        $inputHash = hash('sha256', CanonicalJson::encode([
+            'previous' => $watermark->input_hash,
+            'slice' => $input,
+        ]));
+        $outputHash = hash('sha256', CanonicalJson::encode([
+            'previous' => $watermark->output_hash,
+            'slice' => $output,
+        ]));
+        $cumulativeGaps = (int) $watermark->gap_count + $gaps;
+        $watermark->forceFill([
+            'completed_item_id' => max((int) $watermark->completed_item_id, $nextCursor),
+            'processed_item_count' => (int) $watermark->processed_item_count + $items->count(),
+            'gap_count' => $cumulativeGaps,
+            'coverage_status' => $done ? ($cumulativeGaps === 0 ? 'complete' : 'gaps') : 'running',
+            'input_hash' => $inputHash,
+            'output_hash' => $outputHash,
+            'completed_at' => $done ? now() : null,
+        ])->save();
 
         return new OwnerBackfillBatch(
             $items->count(),
@@ -308,8 +340,8 @@ final readonly class SupplyReliabilityBackfill
             $gaps,
             $nextCursor,
             $done,
-            hash('sha256', CanonicalJson::encode($input)),
-            hash('sha256', CanonicalJson::encode($output)),
+            $inputHash,
+            $outputHash,
         );
     }
 
@@ -319,7 +351,10 @@ final readonly class SupplyReliabilityBackfill
             if (DB::getDriverName() === 'pgsql') {
                 DB::select('SELECT pg_advisory_xact_lock(?, ?)', [$organizationId, 17]);
             }
-            $existing = SupplyReliabilityBackfillWatermark::query()->find($organizationId);
+            $existing = SupplyReliabilityBackfillWatermark::query()
+                ->whereKey($organizationId)
+                ->lockForUpdate()
+                ->first();
             if ($existing instanceof SupplyReliabilityBackfillWatermark) {
                 return $existing;
             }
@@ -335,6 +370,11 @@ final readonly class SupplyReliabilityBackfill
                 'organization_id' => $organizationId,
                 'target_item_id' => (int) ($target?->target_item_id ?? 0),
                 'completed_item_id' => 0,
+                'processed_item_count' => 0,
+                'gap_count' => 0,
+                'coverage_status' => 'running',
+                'input_hash' => null,
+                'output_hash' => null,
                 'target_sent_at' => $target?->target_sent_at,
                 'completed_at' => null,
             ]);

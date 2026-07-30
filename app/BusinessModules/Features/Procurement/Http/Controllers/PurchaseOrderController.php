@@ -451,7 +451,7 @@ class PurchaseOrderController extends Controller
                 (string) $request->validated('quantity'),
                 (string) $request->validated('reason_code'),
                 (string) $request->validated('idempotency_key'),
-                (int) $request->user()->getAuthIdentifier(),
+                $request->user(),
             );
 
             return AdminResponse::success(

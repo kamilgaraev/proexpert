@@ -37,13 +37,17 @@ final class SupplyReturnPostgresContractTest extends TestCase
         $service = $this->source(
             'app/BusinessModules/Features/Procurement/Services/PurchaseOrderService.php',
         );
+        $unitOfWork = $this->source(
+            'app/BusinessModules/Features/Procurement/Services/'
+            .'DatabasePurchaseReceiptReturnUnitOfWork.php',
+        );
 
-        self::assertStringContainsString('pg_advisory_xact_lock', $service);
-        self::assertStringContainsString("['purchase-receipt-return:'.\$idempotencyKey", $service);
+        self::assertStringContainsString('pg_advisory_xact_lock', $unitOfWork);
+        self::assertStringContainsString("['purchase-receipt-return:'.\$idempotencyKey", $unitOfWork);
         self::assertStringContainsString('CanonicalJson::encode([', $service);
         self::assertStringContainsString('payload_fingerprint', $service);
         self::assertStringContainsString('receipt_return_idempotency_conflict', $service);
-        self::assertStringContainsString('}, 3);', $service);
+        self::assertStringContainsString('}, 3);', $unitOfWork);
     }
 
     private function source(string $path): string

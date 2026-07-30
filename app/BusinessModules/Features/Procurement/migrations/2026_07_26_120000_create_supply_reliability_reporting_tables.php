@@ -168,6 +168,11 @@ return new class extends Migration
             $table->unsignedBigInteger('organization_id')->primary();
             $table->unsignedBigInteger('target_item_id');
             $table->unsignedBigInteger('completed_item_id')->default(0);
+            $table->unsignedBigInteger('processed_item_count')->default(0);
+            $table->unsignedBigInteger('gap_count')->default(0);
+            $table->string('coverage_status', 16)->default('running');
+            $table->char('input_hash', 64)->nullable();
+            $table->char('output_hash', 64)->nullable();
             $table->timestampTz('target_sent_at')->nullable();
             $table->timestampTz('completed_at')->nullable();
             $table->timestampsTz();
@@ -415,6 +420,7 @@ return new class extends Migration
         DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_value_basis_check CHECK ((value_otif_numerator_minor IS NULL AND value_currency IS NULL AND value_basis IS NULL) OR (value_otif_numerator_minor IS NOT NULL AND value_currency IS NOT NULL AND value_basis IS NOT NULL))');
         DB::statement('ALTER TABLE purchase_receipt_inventory_lots ADD CONSTRAINT receipt_inventory_lot_quantity_check CHECK (original_quantity > 0 AND reversed_quantity >= 0 AND returned_quantity >= 0 AND reversed_quantity + returned_quantity <= original_quantity)');
         DB::statement('ALTER TABLE purchase_receipt_returns ADD CONSTRAINT receipt_return_quantity_check CHECK (quantity > 0 AND source_version > 0)');
+        DB::statement("ALTER TABLE supply_reliability_backfill_watermarks ADD CONSTRAINT supply_backfill_coverage_status_check CHECK (coverage_status IN ('running','complete','gaps'))");
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION most_purchase_receipt_return_identity_v1() RETURNS trigger
 LANGUAGE plpgsql
@@ -423,16 +429,29 @@ DECLARE source_line purchase_receipt_lines%ROWTYPE;
 DECLARE source_receipt purchase_receipts%ROWTYPE;
 DECLARE source_movement warehouse_movements%ROWTYPE;
 DECLARE source_event supply_lifecycle_events%ROWTYPE;
+DECLARE source_item purchase_order_items%ROWTYPE;
+DECLARE source_promise purchase_order_promise_versions%ROWTYPE;
 BEGIN
     SELECT * INTO source_line FROM purchase_receipt_lines WHERE id = NEW.purchase_receipt_line_id;
     SELECT * INTO source_receipt FROM purchase_receipts WHERE id = source_line.purchase_receipt_id;
     SELECT * INTO source_movement FROM warehouse_movements WHERE id = NEW.warehouse_movement_id;
     SELECT * INTO source_event FROM supply_lifecycle_events WHERE id = NEW.supply_lifecycle_event_id;
+    SELECT * INTO source_item FROM purchase_order_items WHERE id = source_line.purchase_order_item_id;
+    SELECT * INTO source_promise
+      FROM purchase_order_promise_versions
+     WHERE id = source_event.promise_version_id;
     IF source_line.id IS NULL
        OR source_receipt.id IS NULL
        OR source_movement.id IS NULL
        OR source_event.id IS NULL
        OR NEW.organization_id <> source_receipt.organization_id
+       OR source_line.purchase_order_item_id <> source_event.purchase_order_item_id
+       OR source_receipt.purchase_order_id <> source_event.purchase_order_id
+       OR source_item.purchase_order_id <> source_receipt.purchase_order_id
+       OR source_promise.id IS NULL
+       OR source_promise.organization_id <> NEW.organization_id
+       OR source_promise.purchase_order_id <> source_receipt.purchase_order_id
+       OR source_promise.purchase_order_item_id <> source_line.purchase_order_item_id
        OR NEW.source_type <> 'warehouse_movement'
        OR NEW.source_id <> source_movement.id
        OR source_movement.organization_id <> NEW.organization_id
@@ -1057,6 +1076,8 @@ DECLARE source_receipt purchase_receipts%ROWTYPE;
 DECLARE source_lot purchase_receipt_inventory_lots%ROWTYPE;
 DECLARE reversal_movement warehouse_movements%ROWTYPE;
 DECLARE return_movement warehouse_movements%ROWTYPE;
+DECLARE return_line purchase_receipt_lines%ROWTYPE;
+DECLARE return_receipt purchase_receipts%ROWTYPE;
 BEGIN
     SELECT * INTO source_promise
       FROM purchase_order_promise_versions
@@ -1089,6 +1110,12 @@ BEGIN
         SELECT * INTO return_movement
           FROM warehouse_movements
          WHERE id = NEW.source_id;
+        SELECT * INTO return_line
+          FROM purchase_receipt_lines
+         WHERE id = NULLIF(return_movement.metadata->>'returned_purchase_receipt_line_id', '')::bigint;
+        SELECT * INTO return_receipt
+          FROM purchase_receipts
+         WHERE id = return_line.purchase_receipt_id;
     END IF;
 
     IF source_promise.id IS NULL
@@ -1147,6 +1174,14 @@ BEGIN
                NEW.source_type <> 'warehouse_movement'
                OR return_movement.id IS NULL
                OR return_movement.organization_id <> NEW.organization_id
+               OR return_line.id IS NULL
+               OR return_receipt.id IS NULL
+               OR return_line.purchase_order_item_id <> NEW.purchase_order_item_id
+               OR return_receipt.purchase_order_id <> NEW.purchase_order_id
+               OR return_receipt.organization_id <> NEW.organization_id
+               OR return_receipt.warehouse_id <> return_movement.warehouse_id
+               OR return_line.purchase_order_item_id <> source_promise.purchase_order_item_id
+               OR return_receipt.purchase_order_id <> source_promise.purchase_order_id
                OR return_movement.operation_category <> 'procurement_receipt_return'
                OR return_movement.movement_type <> 'write_off'
                OR return_movement.project_id IS DISTINCT FROM source_promise.project_id

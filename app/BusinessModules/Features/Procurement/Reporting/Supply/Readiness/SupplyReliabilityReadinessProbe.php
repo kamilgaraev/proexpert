@@ -11,8 +11,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
-use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityPolicyVersion;
-use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
@@ -23,7 +21,6 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
 {
     public function __construct(
         private ReportSourceAccessPolicy $sourceAccess,
-        private OwnerReportFilterApplier $filters,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -44,18 +41,44 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             $context->scope->resources,
             'purchase_order_item',
         );
-        $policy = SupplyReliabilityPolicyVersion::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('effective_from', '<=', $query->asOf)
-            ->where(static fn ($builder) => $builder
-                ->whereNull('effective_to')
-                ->orWhere('effective_to', '>', $query->asOf))
-            ->orderByDesc('effective_from')
-            ->orderByDesc('policy_version')
-            ->first();
-        $tolerance = $policy instanceof SupplyReliabilityPolicyVersion
-            ? (string) $policy->quantity_tolerance
-            : '0';
+        $authoritativeItems = DB::table('purchase_order_items as authoritative_item')
+            ->join(
+                'purchase_orders as authoritative_order',
+                'authoritative_order.id',
+                '=',
+                'authoritative_item.purchase_order_id',
+            )
+            ->join(
+                'purchase_requests as authoritative_request',
+                'authoritative_request.id',
+                '=',
+                'authoritative_order.purchase_request_id',
+            )
+            ->join(
+                'site_requests as authoritative_site_request',
+                'authoritative_site_request.id',
+                '=',
+                'authoritative_request.site_request_id',
+            )
+            ->where('authoritative_order.organization_id', $context->scope->organizationId)
+            ->where('authoritative_request.organization_id', $context->scope->organizationId)
+            ->where('authoritative_site_request.organization_id', $context->scope->organizationId)
+            ->whereNotNull('authoritative_order.sent_at')
+            ->where('authoritative_order.sent_at', '<=', $query->asOf)
+            ->when(
+                $allowedItemIds !== null,
+                static fn ($builder) => $builder->whereIn('authoritative_item.id', $allowedItemIds),
+            )
+            ->when(
+                $projects !== [],
+                static fn ($builder) => $builder->whereIn(
+                    'authoritative_site_request.project_id',
+                    $projects,
+                ),
+            );
+        $authoritativeItemIds = (clone $authoritativeItems)->select('authoritative_item.id');
+        $eligible = (clone $authoritativeItems)->distinct()->count('authoritative_item.id');
+        $eligibleMaxItemId = (int) ((clone $authoritativeItems)->max('authoritative_item.id') ?? 0);
         $promises = SentPurchaseOrderLineOwner::query()
             ->leftJoin('purchase_order_promise_versions as owner_promise', function ($join): void {
                 $join->on(
@@ -65,6 +88,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                 )->where('owner_promise.promise_version', 1);
             })
             ->where('sent_purchase_order_line_owners.organization_id', $context->scope->organizationId)
+            ->whereIn('sent_purchase_order_line_owners.purchase_order_item_id', $authoritativeItemIds)
             ->where('sent_purchase_order_line_owners.effective_from', '<=', $query->asOf)
             ->when(
                 $allowedItemIds !== null,
@@ -80,41 +104,20 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     $projects,
                 ),
             );
-        $this->filters->apply($promises, $this->filters->only($query->filters, [
-            'supplier', 'supplier_id', 'project', 'project_id', 'warehouse', 'warehouse_id',
-            'material', 'material_id', 'buyer', 'priority', 'status', 'period', 'promised_month',
-            'delay',
-        ]), [
-            'supplier' => 'sent_purchase_order_line_owners.supplier_id',
-            'supplier_id' => 'sent_purchase_order_line_owners.supplier_id',
-            'project' => 'sent_purchase_order_line_owners.project_id',
-            'project_id' => 'sent_purchase_order_line_owners.project_id',
-            'warehouse' => 'sent_purchase_order_line_owners.warehouse_id',
-            'warehouse_id' => 'sent_purchase_order_line_owners.warehouse_id',
-            'material' => 'sent_purchase_order_line_owners.material_id',
-            'material_id' => 'sent_purchase_order_line_owners.material_id',
-            'buyer' => 'sent_purchase_order_line_owners.buyer_id',
-            'priority' => 'sent_purchase_order_line_owners.priority',
-            'status' => $this->statusExpression($query, $tolerance),
-            'period' => 'owner_promise.promised_at',
-            'promised_month' => DB::raw("to_char(owner_promise.promised_at, 'YYYY-MM')"),
-            'delay' => $this->delayExpression($query, $tolerance),
-        ]);
-        $eligiblePromiseIds = (clone $promises)->whereNotNull('owner_promise.id')->select('owner_promise.id');
-        $eligible = (clone $promises)->distinct()->count(
+        $reconciliationOwners = clone $promises;
+        $eligiblePromiseIds = (clone $reconciliationOwners)
+            ->whereNotNull('owner_promise.id')
+            ->select('owner_promise.id');
+        $owned = (clone $reconciliationOwners)->distinct()->count(
             'sent_purchase_order_line_owners.purchase_order_item_id',
         );
-        $eligibleMaxItemId = (int) ((clone $promises)->max('sent_purchase_order_line_owners.purchase_order_item_id') ?? 0);
-        $owned = $eligible;
-        $projected = (clone $promises)->whereNotNull('owner_promise.id')->distinct()->count(
+        $projected = (clone $reconciliationOwners)->whereNotNull('owner_promise.id')->distinct()->count(
             'sent_purchase_order_line_owners.purchase_order_item_id',
         );
         $missingOwner = max(0, $eligible - $owned);
         $missingPromise = max(0, $owned - $projected);
-        $eligibleItemIds = (clone $promises)->select(
-            'sent_purchase_order_line_owners.purchase_order_item_id',
-        );
-        $missingSent = (clone $promises)
+        $eligibleItemIds = (clone $authoritativeItems)->select('authoritative_item.id');
+        $missingSent = (clone $reconciliationOwners)
             ->whereNotNull('owner_promise.id')
             ->whereNotExists(function ($builder) use ($context, $query): void {
                 $builder->selectRaw('1')
@@ -135,9 +138,15 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         $watermark = SupplyReliabilityBackfillWatermark::query()
             ->where('organization_id', $context->scope->organizationId)
             ->first();
-        $incompleteBackfill = $watermark instanceof SupplyReliabilityBackfillWatermark
-            && (int) $watermark->completed_item_id
+        $incompleteBackfill = ! $watermark instanceof SupplyReliabilityBackfillWatermark
+            || (int) $watermark->completed_item_id
                 < min((int) $watermark->target_item_id, $eligibleMaxItemId)
+            || $watermark->coverage_status !== 'complete'
+            || (int) $watermark->gap_count > 0
+            || ! is_string($watermark->input_hash)
+            || strlen($watermark->input_hash) !== 64
+            || ! is_string($watermark->output_hash)
+            || strlen($watermark->output_hash) !== 64
             ? 1
             : 0;
         $missingReceiptLifecycle = DB::table('purchase_receipt_lines as readiness_line')
@@ -212,7 +221,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                         ->where('returned_event.event_type', 'returned');
                 }))
             ->count();
-        $missingOrderLifecycle = (clone $promises)
+        $missingOrderLifecycle = (clone $reconciliationOwners)
             ->join(
                 'purchase_orders as readiness_order',
                 'readiness_order.id',
@@ -242,7 +251,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                         }));
             })
             ->count();
-        $unknown = (clone $promises)
+        $unknown = (clone $reconciliationOwners)
             ->where(function ($builder): void {
                 $builder->whereIn('sent_purchase_order_line_owners.unit_dimension', ['', 'unknown'])
                     ->orWhereIn('sent_purchase_order_line_owners.conversion_version', ['', 'unknown', 'unproven'])
@@ -272,62 +281,11 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                 + $missingOrderLifecycle
                 + $incompleteBackfill,
             $unknown,
-            (clone $promises)->where('sent_purchase_order_line_owners.source_version', '<', 1)->count()
+            (clone $reconciliationOwners)->where('sent_purchase_order_line_owners.source_version', '<', 1)->count()
                 + (clone $lifecycle)->where('source_version', '<', 1)->count(),
-            (clone $promises)->whereRaw('LENGTH(sent_purchase_order_line_owners.source_hash) <> 64')->count()
+            (clone $reconciliationOwners)->whereRaw('LENGTH(sent_purchase_order_line_owners.source_hash) <> 64')->count()
                 + (clone $lifecycle)->whereRaw('LENGTH(source_hash) <> 64')->count(),
             new DateTimeImmutable,
-        );
-    }
-
-    private function statusExpression(
-        ReportQuery $query,
-        string $tolerance,
-    ): \Illuminate\Contracts\Database\Query\Expression {
-        $cutoff = $query->asOf->format(DATE_ATOM);
-
-        return DB::raw(
-            '(CASE '
-            .'WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_cancel '
-            .'WHERE status_cancel.promise_version_id = owner_promise.id '
-            ."AND status_cancel.event_type = 'cancelled' AND status_cancel.occurred_at <= '{$cutoff}') "
-            ."THEN 'cancelled' "
-            .'WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty '
-            .'WHERE status_qty.promise_version_id = owner_promise.id '
-            ."AND status_qty.occurred_at <= '{$cutoff}'), 0) >= "
-            ."(owner_promise.ordered_quantity - {$tolerance}) "
-            ."THEN 'delivered' "
-            .'WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty '
-            .'WHERE status_qty.promise_version_id = owner_promise.id '
-            ."AND status_qty.occurred_at <= '{$cutoff}'), 0) > 0 THEN 'partially_delivered' "
-            .'WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_confirm '
-            .'WHERE status_confirm.promise_version_id = owner_promise.id '
-            ."AND status_confirm.event_type = 'confirmed' AND status_confirm.occurred_at <= '{$cutoff}') "
-            ."THEN 'confirmed' ELSE 'sent' END)",
-        );
-    }
-
-    private function delayExpression(
-        ReportQuery $query,
-        string $tolerance,
-    ): \Illuminate\Contracts\Database\Query\Expression {
-        $cutoff = $query->asOf->format(DATE_ATOM);
-        $receipt = '(SELECT MIN(delay_event.occurred_at) FROM supply_lifecycle_events delay_event '
-            .'WHERE delay_event.promise_version_id = owner_promise.id '
-            ."AND delay_event.occurred_at <= '{$cutoff}' "
-            .'AND (SELECT COALESCE(SUM(delay_running.signed_quantity), 0) '
-            .'FROM supply_lifecycle_events delay_running '
-            .'WHERE delay_running.promise_version_id = owner_promise.id '
-            .'AND (delay_running.occurred_at < delay_event.occurred_at '
-            .'OR (delay_running.occurred_at = delay_event.occurred_at AND delay_running.id <= delay_event.id))) '
-            .">= (owner_promise.ordered_quantity - {$tolerance}))";
-
-        return DB::raw(
-            "(CASE WHEN {$receipt} IS NULL THEN 'unreceived' "
-            ."WHEN {$receipt} <= owner_promise.promised_at THEN 'on_time' "
-            ."WHEN {$receipt} <= owner_promise.promised_at + INTERVAL '3 days' THEN 'delay_1_3' "
-            ."WHEN {$receipt} <= owner_promise.promised_at + INTERVAL '7 days' THEN 'delay_4_7' "
-            ."ELSE 'delay_over_7' END)",
         );
     }
 }

@@ -440,11 +440,11 @@ final class SupplyReportingHardeningTest extends TestCase
             self::assertStringContainsString($immutableFilter, $materializer);
         }
         self::assertStringContainsString(
-            "status_confirm.occurred_at <= '{\$cutoff}'",
+            "'authoritative_order.sent_at', '<=', \$query->asOf",
             $readiness,
         );
         self::assertStringContainsString(
-            "status_cancel.occurred_at <= '{\$cutoff}'",
+            "'occurred_at', '<=', \$query->asOf",
             $readiness,
         );
         self::assertStringNotContainsString("owner_order.metadata->>'buyer_id'", $materializer);
@@ -610,8 +610,8 @@ final class SupplyReportingHardeningTest extends TestCase
         foreach ([
             "'demand_snapshot_id'",
             "'reorder_policy_version_id'",
-            "->whereKey((int) \$demandId)",
-            "->whereKey((int) \$policyId)",
+            '->whereKey((int) $demandId)',
+            '->whereKey((int) $policyId)',
             "->where('organization_id', \$context->scope->organizationId)",
             "'warehouse'",
             "->where('unit_dimension', \$row->getAttribute('unit_dimension'))",
@@ -715,13 +715,13 @@ final class SupplyReportingHardeningTest extends TestCase
             .'ProcurementReportingLifecycleRecorder.php',
         );
         foreach ([
-            "source_order.confirmed_at IS NULL",
-            "source_order.cancelled_at IS NULL",
-            "NEW.signed_quantity <> source_line.quantity_received",
-            "NEW.signed_quantity <> -reversed_event.signed_quantity",
-            "source_line.reversal_warehouse_movement_id IS NULL",
-            "most_purchase_request_supply_identity_v1",
-            "most_site_request_supply_identity_v1",
+            'source_order.confirmed_at IS NULL',
+            'source_order.cancelled_at IS NULL',
+            'NEW.signed_quantity <> source_line.quantity_received',
+            'NEW.signed_quantity <> -reversed_event.signed_quantity',
+            'source_line.reversal_warehouse_movement_id IS NULL',
+            'most_purchase_request_supply_identity_v1',
+            'most_site_request_supply_identity_v1',
         ] as $fence) {
             self::assertStringContainsString($fence, $migration);
         }

@@ -29,16 +29,15 @@ final class SupplyReportingBehaviorContractTest extends TestCase
         $readiness = file_get_contents($root.'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/SupplyReliabilityReadinessProbe.php');
 
         self::assertStringContainsString('public function returnReceiptLine(', $service);
-        self::assertStringContainsString('DB::transaction(', $service);
+        self::assertStringContainsString('returnUnitOfWork->run(', $service);
         self::assertStringContainsString('returnQuantity(', $inventory);
         self::assertStringContainsString("'operation_category' => 'procurement_receipt_return'", $inventory);
         self::assertStringContainsString("'returned'", $lifecycle);
         self::assertStringContainsString('ReturnPurchaseReceiptLineRequest', $controller);
         self::assertStringContainsString('receipt-lines/{line}/return', $routes);
-        self::assertStringContainsString('AuthorizationService::class', $request);
-        self::assertStringContainsString("'procurement.purchase_orders.receive'", $request);
+        self::assertStringContainsString('PurchaseReceiptReturnAuthorizer::class', $request);
+        self::assertStringContainsString('canReturn(', $request);
         self::assertStringContainsString('payload_fingerprint', $service);
-        self::assertStringContainsString('pg_advisory_xact_lock', $service);
         self::assertStringContainsString('PurchaseReceiptReturn::query()->create', $service);
         self::assertStringContainsString('returned_quantity', $inventory);
         self::assertStringContainsString('reporting_inventory_project_id', $inventory);

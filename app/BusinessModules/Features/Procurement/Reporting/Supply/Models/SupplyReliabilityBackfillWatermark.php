@@ -17,6 +17,8 @@ final class SupplyReliabilityBackfillWatermark extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'processed_item_count' => 'integer',
+        'gap_count' => 'integer',
         'target_sent_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',
     ];

@@ -8,6 +8,8 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnAuthorizer;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnUnitOfWork;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -39,6 +41,8 @@ class PurchaseOrderService
         private readonly ProjectMaterialDeliveryService $deliveryService,
         private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
         private readonly PurchaseReceiptInventoryService $receiptInventory,
+        private readonly PurchaseReceiptReturnAuthorizer $returnAuthorizer,
+        private readonly PurchaseReceiptReturnUnitOfWork $returnUnitOfWork,
     ) {}
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
@@ -536,32 +540,26 @@ class PurchaseOrderService
         string $quantity,
         string $reasonCode,
         string $idempotencyKey,
-        int $actorId,
+        User $actor,
     ): PurchaseOrder {
-        return DB::transaction(function () use (
+        return $this->returnUnitOfWork->run($organizationId, $idempotencyKey, function () use (
             $organizationId,
             $purchaseOrderId,
             $lineId,
             $quantity,
             $reasonCode,
             $idempotencyKey,
-            $actorId,
+            $actor,
         ): PurchaseOrder {
-            DB::selectOne(
-                'SELECT pg_advisory_xact_lock(hashtextextended(?, ?))',
-                ['purchase-receipt-return:'.$idempotencyKey, $organizationId],
+            $line = $this->returnAuthorizer->assertCanReturn(
+                $actor,
+                $organizationId,
+                $purchaseOrderId,
+                $lineId,
             );
-            $line = PurchaseReceiptLine::query()
-                ->with(['purchaseReceipt.purchaseOrder', 'purchaseOrderItem', 'inventoryLot'])
-                ->whereKey($lineId)
-                ->whereHas('purchaseReceipt', static fn ($query) => $query
-                    ->where('organization_id', $organizationId)
-                    ->where('purchase_order_id', $purchaseOrderId))
-                ->lockForUpdate()
-                ->first();
-            if (! $line instanceof PurchaseReceiptLine) {
-                throw new \DomainException(trans_message('procurement.purchase_orders.receipt_line_not_found'));
-            }
+            $line = PurchaseReceiptLine::query()->whereKey($line->id)->lockForUpdate()->firstOrFail();
+            $line->loadMissing(['purchaseReceipt.purchaseOrder', 'purchaseOrderItem', 'inventoryLot']);
+            $actorId = (int) $actor->getAuthIdentifier();
             $payloadFingerprint = hash('sha256', CanonicalJson::encode([
                 'actor_id' => $actorId,
                 'organization_id' => $organizationId,
@@ -616,7 +614,7 @@ class PurchaseOrderService
             ]);
 
             return $line->purchaseReceipt->purchaseOrder->fresh(['items.receiptLines', 'receipts.lines']);
-        }, 3);
+        });
     }
 
     public function createContractFromOrder(PurchaseOrder $order): ContractDossierCreationResult
