@@ -966,11 +966,27 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         array $tables,
     ): void {
         $asOf = $query->asOf->format('Y-m-d H:i:sP');
+        $resourceProjectIds = array_map(
+            static fn (object $resource): int => $resource->id,
+            array_values(array_filter(
+                $scope->resources,
+                static fn (object $resource): bool => $resource->kind === 'project',
+            )),
+        );
+        $projectIds = array_values(array_unique([...$scope->projectIds, ...$resourceProjectIds]));
         foreach ($tables as $table) {
-            if ($this->connection->table($table)
+            if ($this->connection->table('workforce_report_owner_facts')
                 ->where('organization_id', $scope->organizationId)
-                ->where('created_at', '<=', $asOf)
-                ->where('updated_at', '>', $asOf)
+                ->where('source_table', $table)
+                ->where('recorded_at', '>', $asOf)
+                ->when(
+                    $projectIds !== [],
+                    static fn (Builder $builder): Builder => $builder->where(
+                        static fn (Builder $scopeBuilder): Builder => $scopeBuilder
+                            ->whereNull('project_id')
+                            ->orWhereIn('project_id', $projectIds),
+                    ),
+                )
                 ->exists()) {
                 throw new DomainException('TIME_TRACKING_HISTORICAL_SOURCE_UNAVAILABLE');
             }

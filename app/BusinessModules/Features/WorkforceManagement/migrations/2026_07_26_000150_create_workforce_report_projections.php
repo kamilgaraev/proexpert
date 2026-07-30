@@ -10,6 +10,27 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
+        Schema::create('workforce_report_owner_facts', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
+            $table->string('source_table', 96);
+            $table->unsignedBigInteger('source_id');
+            $table->foreignId('project_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('operation', 16);
+            $table->timestampTz('recorded_at');
+            $table->jsonb('payload');
+            $table->char('row_hash', 64);
+
+            $table->index(
+                ['organization_id', 'source_table', 'source_id', 'recorded_at', 'id'],
+                'workforce_owner_facts_temporal_idx',
+            );
+            $table->index(
+                ['organization_id', 'project_id', 'recorded_at'],
+                'workforce_owner_facts_scope_idx',
+            );
+        });
+
         Schema::create('workforce_report_snapshots', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
@@ -142,6 +163,50 @@ return new class extends Migration {
 
         DB::unprepared(
             <<<'SQL'
+CREATE FUNCTION workforce_report_capture_owner_fact() RETURNS trigger AS $$
+DECLARE
+    owner_row jsonb;
+    owner_org bigint;
+    owner_id bigint;
+    owner_project bigint;
+    owner_operation text;
+    owner_recorded_at timestamptz;
+BEGIN
+    owner_row := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+    owner_org := (owner_row->>'organization_id')::bigint;
+    owner_id := (owner_row->>'id')::bigint;
+    owner_project := NULLIF(owner_row->>'project_id', '')::bigint;
+    owner_operation := CASE WHEN TG_OP = 'DELETE' THEN 'delete' ELSE 'upsert' END;
+    owner_recorded_at := COALESCE(
+        NULLIF(owner_row->>'updated_at', '')::timestamptz,
+        NULLIF(owner_row->>'created_at', '')::timestamptz,
+        clock_timestamp()
+    );
+
+    INSERT INTO workforce_report_owner_facts (
+        organization_id,
+        source_table,
+        source_id,
+        project_id,
+        operation,
+        recorded_at,
+        payload,
+        row_hash
+    ) VALUES (
+        owner_org,
+        TG_TABLE_NAME,
+        owner_id,
+        owner_project,
+        owner_operation,
+        owner_recorded_at,
+        owner_row,
+        repeat(md5(owner_row::text), 2)
+    );
+
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE FUNCTION workforce_report_guard_immutable() RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION 'immutable workforce report snapshot';
@@ -161,20 +226,100 @@ BEFORE UPDATE OR DELETE ON attendance_execution_snapshot_rows
 FOR EACH ROW EXECUTE FUNCTION workforce_report_guard_immutable();
 SQL,
         );
+
+        $ownerTables = [
+            'workforce_staff_units',
+            'workforce_departments',
+            'workforce_positions',
+            'workforce_employees',
+            'workforce_employee_assignments',
+            'workforce_work_schedules',
+            'workforce_work_schedule_days',
+            'workforce_absences',
+            'workforce_absence_types',
+            'workforce_attendance_corrections',
+            'workforce_attendance_scan_events',
+            'time_tracking_labor_rate_versions',
+            'time_entries',
+            'completed_works',
+            'schedule_tasks',
+            'work_types',
+            'measurement_units',
+            'contractors',
+            'projects',
+        ];
+        foreach ($ownerTables as $table) {
+            DB::statement(
+                "CREATE TRIGGER {$table}_report_owner_fact
+                 AFTER INSERT OR UPDATE OR DELETE ON {$table}
+                 FOR EACH ROW EXECUTE FUNCTION workforce_report_capture_owner_fact()",
+            );
+            DB::statement(
+                "INSERT INTO workforce_report_owner_facts (
+                    organization_id,
+                    source_table,
+                    source_id,
+                    project_id,
+                    operation,
+                    recorded_at,
+                    payload,
+                    row_hash
+                 )
+                 SELECT organization_id,
+                        ?,
+                        id,
+                        NULLIF(to_jsonb(owner_row)->>'project_id', '')::bigint,
+                        'upsert',
+                        COALESCE(
+                            NULLIF(to_jsonb(owner_row)->>'updated_at', '')::timestamptz,
+                            NULLIF(to_jsonb(owner_row)->>'created_at', '')::timestamptz,
+                            clock_timestamp()
+                        ),
+                        to_jsonb(owner_row),
+                        repeat(md5(to_jsonb(owner_row)::text), 2)
+                 FROM {$table} owner_row",
+                [$table],
+            );
+        }
     }
 
     public function down(): void
     {
+        foreach ([
+            'workforce_staff_units',
+            'workforce_departments',
+            'workforce_positions',
+            'workforce_employees',
+            'workforce_employee_assignments',
+            'workforce_work_schedules',
+            'workforce_work_schedule_days',
+            'workforce_absences',
+            'workforce_absence_types',
+            'workforce_attendance_corrections',
+            'workforce_attendance_scan_events',
+            'time_tracking_labor_rate_versions',
+            'time_entries',
+            'completed_works',
+            'schedule_tasks',
+            'work_types',
+            'measurement_units',
+            'contractors',
+            'projects',
+        ] as $table) {
+            DB::statement("DROP TRIGGER IF EXISTS {$table}_report_owner_fact ON {$table}");
+        }
         DB::unprepared(
             <<<'SQL'
 DROP TRIGGER IF EXISTS attendance_execution_snapshot_rows_immutable ON attendance_execution_snapshot_rows;
 DROP TRIGGER IF EXISTS workforce_capacity_snapshot_rows_immutable ON workforce_capacity_snapshot_rows;
 DROP TRIGGER IF EXISTS workforce_report_snapshots_immutable ON workforce_report_snapshots;
 DROP FUNCTION IF EXISTS workforce_report_guard_immutable();
+DROP FUNCTION IF EXISTS workforce_report_capture_owner_fact();
 SQL,
         );
         Schema::dropIfExists('attendance_execution_snapshot_rows');
         Schema::dropIfExists('workforce_capacity_snapshot_rows');
         Schema::dropIfExists('workforce_report_snapshots');
+        Schema::dropIfExists('workforce_report_owner_facts');
     }
 };

@@ -130,6 +130,27 @@ final class WorkforceOperationsSourceTest extends TestCase
     }
 
     #[Test]
+    public function day_level_correction_fails_closed_when_multiple_shift_grains_exist(): void
+    {
+        $adapter = new DatabaseWorkforceReportAdapter(
+            $this->createMock(ConnectionInterface::class),
+            new WorkforceCapacityFormula,
+            new AttendanceExecutionFormula,
+        );
+        $method = new ReflectionMethod($adapter, 'attendanceGrains');
+        $method->setAccessible(true);
+        $scans = new Collection([
+            (object) ['id' => 1, 'metadata' => json_encode(['site_id' => 10, 'shift_id' => 20])],
+            (object) ['id' => 2, 'metadata' => json_encode(['site_id' => 10, 'shift_id' => 21])],
+        ]);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('ATTENDANCE_CORRECTION_GRAIN_AMBIGUOUS');
+
+        $method->invoke($adapter, $scans, 10, 20, true);
+    }
+
+    #[Test]
     public function adjacent_assignments_use_half_open_shared_boundary(): void
     {
         $resolver = new EffectiveAssignmentResolver($this->assignmentSource([

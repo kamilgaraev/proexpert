@@ -17,8 +17,10 @@ use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostQuerySer
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollIssueMatcher;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessProvider;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessQueryService;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollVersionTransitionResolver;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
@@ -281,6 +283,50 @@ final class LaborPayrollSourceTest extends TestCase
         self::assertSame(['RUB' => '800.00'], $result['source_amounts']);
         self::assertSame(0, $result['blocking_issues']);
         self::assertTrue($result['ready']);
+    }
+
+    #[Test]
+    public function payroll_state_is_resolved_from_append_only_transitions_at_exact_as_of(): void
+    {
+        $resolver = new PayrollVersionTransitionResolver;
+        $transitions = [
+            (object) ['status' => 'built', 'transitioned_at' => '2026-07-10T08:00:00+00:00', 'id' => 1],
+            (object) ['status' => 'validated', 'transitioned_at' => '2026-07-10T09:00:00+00:00', 'id' => 2],
+            (object) ['status' => 'locked', 'transitioned_at' => '2026-07-10T12:00:00+00:00', 'id' => 3],
+        ];
+
+        self::assertSame(
+            'validated',
+            $resolver->at($transitions, new DateTimeImmutable('2026-07-10T10:00:00+00:00')),
+        );
+        self::assertSame(
+            'locked',
+            $resolver->at($transitions, new DateTimeImmutable('2026-07-10T12:00:00+00:00')),
+        );
+    }
+
+    #[Test]
+    public function payroll_issue_is_linked_only_to_its_exact_filtered_source_row(): void
+    {
+        $matcher = new PayrollIssueMatcher;
+        $issues = [
+            (object) [
+                'source_row_id' => 11,
+                'employee_id' => 7,
+                'project_id' => 20,
+                'severity' => 'blocking',
+            ],
+            (object) [
+                'source_row_id' => 12,
+                'employee_id' => 7,
+                'project_id' => 20,
+                'severity' => 'warning',
+            ],
+        ];
+
+        self::assertSame(11, $matcher->forSourceRow($issues, 11)?->source_row_id);
+        self::assertSame(12, $matcher->forSourceRow($issues, 12)?->source_row_id);
+        self::assertNull($matcher->forSourceRow($issues, 13));
     }
 
     private function rateSource(array $rates): EffectiveLaborRateSource

@@ -48,6 +48,34 @@ return new class extends Migration {
              CHECK (status IN ('built', 'validated', 'locked'))",
         );
 
+        Schema::create('workforce_payroll_calculation_transitions', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
+            $table->unsignedBigInteger('calculation_version_id');
+            $table->string('status', 32);
+            $table->foreignId('actor_id')->nullable()->constrained('users')->restrictOnDelete();
+            $table->timestampTz('transitioned_at');
+            $table->char('transition_hash', 64);
+
+            $table->foreign(['organization_id', 'calculation_version_id'])
+                ->references(['organization_id', 'id'])
+                ->on('workforce_payroll_calculation_versions')
+                ->cascadeOnDelete();
+            $table->unique(
+                ['organization_id', 'calculation_version_id', 'status'],
+                'workforce_payroll_transition_state_unique',
+            );
+            $table->index(
+                ['organization_id', 'calculation_version_id', 'transitioned_at', 'id'],
+                'workforce_payroll_transition_as_of_idx',
+            );
+        });
+        DB::statement(
+            "ALTER TABLE workforce_payroll_calculation_transitions
+             ADD CONSTRAINT workforce_payroll_transition_status_check
+             CHECK (status IN ('built', 'validated', 'locked'))",
+        );
+
         Schema::create('workforce_payroll_calculation_source_rows', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
@@ -88,6 +116,9 @@ return new class extends Migration {
             $table->unsignedBigInteger('calculation_version_id');
             $table->foreignId('source_issue_id')->nullable()
                 ->constrained('workforce_payroll_validation_issues')
+                ->restrictOnDelete();
+            $table->foreignId('source_row_id')->nullable()
+                ->constrained('workforce_payroll_source_rows')
                 ->restrictOnDelete();
             $table->string('severity', 40);
             $table->string('issue_code', 120);
@@ -191,6 +222,7 @@ DECLARE parent_status text;
 BEGIN
     IF TG_TABLE_NAME IN (
         'workforce_payroll_calculation_source_rows',
+        'workforce_payroll_calculation_transitions',
         'payroll_readiness_snapshot_rows'
     ) THEN
         RAISE EXCEPTION 'immutable payroll record';
@@ -234,6 +266,10 @@ CREATE TRIGGER workforce_payroll_source_rows_immutable
 BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_source_rows
 FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
 
+CREATE TRIGGER workforce_payroll_transitions_immutable
+BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_transitions
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
+
 CREATE TRIGGER workforce_payroll_calculation_issues_immutable
 BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_issues
 FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
@@ -261,6 +297,7 @@ DROP TRIGGER IF EXISTS payroll_readiness_snapshot_rows_immutable ON payroll_read
 DROP TRIGGER IF EXISTS workforce_payroll_period_sources_immutable ON workforce_payroll_source_rows;
 DROP TRIGGER IF EXISTS workforce_payroll_calculation_versions_immutable ON workforce_payroll_calculation_versions;
 DROP TRIGGER IF EXISTS workforce_payroll_calculation_issues_immutable ON workforce_payroll_calculation_issues;
+DROP TRIGGER IF EXISTS workforce_payroll_transitions_immutable ON workforce_payroll_calculation_transitions;
 DROP TRIGGER IF EXISTS workforce_payroll_source_rows_immutable ON workforce_payroll_calculation_source_rows;
 DROP FUNCTION IF EXISTS workforce_payroll_guard_immutable();
 SQL,
@@ -268,6 +305,7 @@ SQL,
         Schema::dropIfExists('payroll_readiness_snapshot_rows');
         Schema::dropIfExists('workforce_payroll_calculation_issues');
         Schema::dropIfExists('workforce_payroll_calculation_source_rows');
+        Schema::dropIfExists('workforce_payroll_calculation_transitions');
         Schema::dropIfExists('workforce_payroll_calculation_versions');
     }
 };

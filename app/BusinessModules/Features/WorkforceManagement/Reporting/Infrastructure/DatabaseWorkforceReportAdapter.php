@@ -653,13 +653,12 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 $absence = $absences->get($assignment->employee_id, collect())->first(
                     static fn (object $row): bool => (string) $row->start_date <= $date && (string) $row->end_date >= $date,
                 );
-                $grains = $correction !== null || $dayScans->isEmpty()
-                    ? collect([['scans' => collect(), 'metadata' => []]])
-                    : $this->attendanceGrains(
-                        $dayScans,
-                        $assignment->project_id === null ? null : (int) $assignment->project_id,
-                        $assignment->work_schedule_id === null ? null : (int) $assignment->work_schedule_id,
-                    );
+                $grains = $this->attendanceGrains(
+                    $dayScans,
+                    $assignment->project_id === null ? null : (int) $assignment->project_id,
+                    $assignment->work_schedule_id === null ? null : (int) $assignment->work_schedule_id,
+                    $correction !== null,
+                );
                 $eligiblePerGrain = $grains->count() === 1
                     ? BigDecimal::of($eligible)
                     : BigDecimal::of($eligible)->dividedBy($grains->count(), 8, RoundingMode::HalfUp);
@@ -1612,8 +1611,13 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         Collection $scans,
         ?int $fallbackSiteId,
         ?int $fallbackShiftId,
+        bool $hasDayLevelCorrection = false,
     ): Collection {
-        return $scans
+        if ($scans->isEmpty()) {
+            return collect([['scans' => collect(), 'metadata' => []]]);
+        }
+
+        $grains = $scans
             ->groupBy(function (object $scan) use ($fallbackSiteId, $fallbackShiftId): string {
                 $metadata = $scan->metadata === null ? [] : $this->json($scan->metadata);
 
@@ -1631,6 +1635,12 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 ];
             })
             ->values();
+
+        if ($hasDayLevelCorrection && $grains->count() > 1) {
+            throw new DomainException('ATTENDANCE_CORRECTION_GRAIN_AMBIGUOUS');
+        }
+
+        return $grains;
     }
 
     private function assertNoPostAsOfMutations(
@@ -1639,11 +1649,27 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         array $tables,
     ): void {
         $asOf = $query->asOf->format('Y-m-d H:i:sP');
+        $resourceProjectIds = array_map(
+            static fn (object $resource): int => $resource->id,
+            array_values(array_filter(
+                $scope->resources,
+                static fn (object $resource): bool => $resource->kind === 'project',
+            )),
+        );
+        $projectIds = array_values(array_unique([...$scope->projectIds, ...$resourceProjectIds]));
         foreach ($tables as $table) {
-            if ($this->connection->table($table)
+            if ($this->connection->table('workforce_report_owner_facts')
                 ->where('organization_id', $scope->organizationId)
-                ->where('created_at', '<=', $asOf)
-                ->where('updated_at', '>', $asOf)
+                ->where('source_table', $table)
+                ->where('recorded_at', '>', $asOf)
+                ->when(
+                    $projectIds !== [],
+                    static fn (Builder $builder): Builder => $builder->where(
+                        static fn (Builder $scopeBuilder): Builder => $scopeBuilder
+                            ->whereNull('project_id')
+                            ->orWhereIn('project_id', $projectIds),
+                    ),
+                )
                 ->exists()) {
                 throw new DomainException('WORKFORCE_HISTORICAL_SOURCE_UNAVAILABLE');
             }

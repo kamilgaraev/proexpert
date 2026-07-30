@@ -33,6 +33,8 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\Payroll
 use App\BusinessModules\Features\WorkforceManagement\Reporting\DTO\PayrollCalculationVersion;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollIssueMatcher;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollVersionTransitionResolver;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DateInterval;
@@ -115,6 +117,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
+            $this->recordTransition($organizationId, $versionId, 'built', $actorId, $now);
 
             foreach ($sourceRows->chunk(500) as $chunk) {
                 $this->connection->table('workforce_payroll_calculation_source_rows')->insert(
@@ -179,12 +182,17 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                     ->orderBy('id')
                     ->get();
                 $this->assertIssueOwnership($organizationId, $issues);
+                $issueSourceRows = $this->issueSourceRowMap(
+                    $organizationId,
+                    $calculationVersionId,
+                );
                 foreach ($issues->chunk(500) as $chunk) {
                     $this->connection->table('workforce_payroll_calculation_issues')->insert(
                         $chunk->map(fn (object $issue): array => [
                             'organization_id' => $organizationId,
                             'calculation_version_id' => $calculationVersionId,
                             'source_issue_id' => (int) $issue->id,
+                            'source_row_id' => $this->issueSourceRowId($issue, $issueSourceRows),
                             'severity' => (string) $issue->severity,
                             'issue_code' => (string) $issue->issue_code,
                             'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
@@ -195,6 +203,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                             ]),
                             'row_hash' => hash('sha256', CanonicalJson::encode([
                                 'id' => (int) $issue->id,
+                                'source_row_id' => $this->issueSourceRowId($issue, $issueSourceRows),
                                 'severity' => (string) $issue->severity,
                                 'issue_code' => (string) $issue->issue_code,
                                 'employee_id' => $issue->employee_id === null ? null : (int) $issue->employee_id,
@@ -226,6 +235,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                                 'organization_id' => (int) $source->organization_id,
                                 'calculation_version_id' => (int) $source->calculation_version_id,
                                 'source_issue_id' => null,
+                                'source_row_id' => (int) $source->source_row_id,
                                 'severity' => 'blocking',
                                 'issue_code' => 'PAYROLL_EFFECTIVE_RATE_MISSING',
                                 'employee_id' => (int) $source->employee_id,
@@ -257,6 +267,13 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                         'validated_at' => now(),
                         'updated_at' => now(),
                     ]);
+                $this->recordTransition(
+                    $organizationId,
+                    $calculationVersionId,
+                    'validated',
+                    $actorId,
+                    now(),
+                );
 
                 return $this->versionById($organizationId, $calculationVersionId);
             },
@@ -305,6 +322,13 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                         'locked_at' => now(),
                         'updated_at' => now(),
                     ]);
+                $this->recordTransition(
+                    $organizationId,
+                    $calculationVersionId,
+                    'locked',
+                    $actorId,
+                    now(),
+                );
 
                 return $this->versionById($organizationId, $calculationVersionId);
             },
@@ -349,44 +373,59 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         $this->assertOrganizationIds('workforce_employees', $scope, $employeeIds);
         $this->assertOrganizationIds('projects', $scope, $projectIds);
 
-        $versions = $this->connection->table('workforce_payroll_calculation_versions as version')
+        $candidateVersions = $this->connection->table('workforce_payroll_calculation_versions as version')
             ->join('workforce_payroll_periods as period', static function (JoinClause $join): void {
                 $join->on('period.id', '=', 'version.payroll_period_id')
                     ->on('period.organization_id', '=', 'version.organization_id');
             })
             ->where('version.organization_id', $scope->organizationId)
             ->whereIn('version.payroll_period_id', $periodIds)
-            ->whereIn('version.status', ['validated', 'locked'])
             ->where('version.created_at', '<=', $query->asOf->format('Y-m-d H:i:sP'))
-            ->where(static function (Builder $builder) use ($query): void {
-                $asOf = $query->asOf->format('Y-m-d H:i:sP');
-                $builder->where(static fn (Builder $validated): Builder => $validated
-                    ->where('version.status', 'validated')
-                    ->where('version.validated_at', '<=', $asOf))
-                    ->orWhere(static fn (Builder $locked): Builder => $locked
-                        ->where('version.status', 'locked')
-                        ->where('version.locked_at', '<=', $asOf));
-            })
-            ->whereRaw(
-                "version.version = (
-                    SELECT MAX(v2.version)
-                    FROM workforce_payroll_calculation_versions v2
-                    WHERE v2.organization_id = version.organization_id
-                      AND v2.payroll_period_id = version.payroll_period_id
-                      AND v2.created_at <= ?
-                      AND (
-                          (v2.status = 'validated' AND v2.validated_at <= ?)
-                          OR (v2.status = 'locked' AND v2.locked_at <= ?)
-                      )
-                )",
-                array_fill(0, 3, $query->asOf->format('Y-m-d H:i:sP')),
-            )
+            ->orderBy('version.payroll_period_id')
+            ->orderByDesc('version.version')
             ->get([
                 'version.*',
                 'period.period_start',
                 'period.period_end',
                 'period.project_id as period_project_id',
             ]);
+        $candidateVersionIds = $candidateVersions
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        $transitions = $candidateVersionIds === []
+            ? collect()
+            : $this->connection->table('workforce_payroll_calculation_transitions')
+                ->where('organization_id', $scope->organizationId)
+                ->whereIn('calculation_version_id', $candidateVersionIds)
+                ->where('transitioned_at', '<=', $query->asOf->format('Y-m-d H:i:sP'))
+                ->orderBy('transitioned_at')
+                ->orderBy('id')
+                ->get()
+                ->groupBy(static fn (object $transition): int => (int) $transition->calculation_version_id);
+        $transitionResolver = new PayrollVersionTransitionResolver;
+        $versions = $candidateVersions
+            ->filter(static function (object $version) use (
+                $transitions,
+                $transitionResolver,
+                $query,
+            ): bool {
+                $status = $transitionResolver->at(
+                    $transitions->get((int) $version->id, collect()),
+                    $query->asOf,
+                );
+                if (! in_array($status, ['validated', 'locked'], true)) {
+                    return false;
+                }
+                $version->status = $status;
+
+                return true;
+            })
+            ->groupBy(static fn (object $version): int => (int) $version->payroll_period_id)
+            ->map(static fn (Collection $periodVersions): object => $periodVersions
+                ->sortByDesc(static fn (object $version): int => (int) $version->version)
+                ->first())
+            ->values();
         if ($versions->count() !== count($periodIds)) {
             throw new DomainException('PAYROLL_READINESS_VALIDATED_VERSION_REQUIRED');
         }
@@ -443,14 +482,6 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             })
             ->where('issue.organization_id', $scope->organizationId)
             ->whereIn('issue.calculation_version_id', $versionIds)
-            ->when(
-                $projectIds !== [],
-                static fn (Builder $builder): Builder => $builder->whereIn('issue.project_id', $projectIds),
-            )
-            ->when(
-                $employeeIds !== [],
-                static fn (Builder $builder): Builder => $builder->whereIn('issue.employee_id', $employeeIds),
-            )
             ->orderBy('issue.calculation_version_id')
             ->orderByRaw("CASE WHEN issue.severity = 'blocking' THEN 0 ELSE 1 END")
             ->orderBy('issue.id')
@@ -464,6 +495,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         $issuesByVersion = $issues->groupBy(
             static fn (object $issue): int => (int) $issue->calculation_version_id,
         );
+        $issueMatcher = new PayrollIssueMatcher;
 
         $rows = [];
         foreach ($sourceRows as $source) {
@@ -471,10 +503,9 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             if ($version === null) {
                 throw new DomainException('PAYROLL_CALCULATION_VERSION_NOT_FOUND');
             }
-            $issue = $this->dominantIssue(
+            $issue = $issueMatcher->forSourceRow(
                 $issuesByVersion->get((int) $version->id, collect()),
-                (int) $source->employee_id,
-                $source->project_id === null ? null : (int) $source->project_id,
+                (int) $source->source_row_id,
             );
             $row = [
                 'row_key' => hash('sha256', 'source|'.$version->id.'|'.$source->source_row_id),
@@ -510,6 +541,15 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             }
         }
         foreach ($issues as $issue) {
+            if ($issue->source_row_id !== null
+                || ($projectIds !== []
+                    && ($issue->project_id === null
+                        || ! in_array((int) $issue->project_id, $projectIds, true)))
+                || ($employeeIds !== []
+                    && ($issue->employee_id === null
+                        || ! in_array((int) $issue->employee_id, $employeeIds, true)))) {
+                continue;
+            }
             if ($sourceTypes !== []) {
                 continue;
             }
@@ -1381,6 +1421,66 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         });
     }
 
+    private function issueSourceRowMap(int $organizationId, int $calculationVersionId): array
+    {
+        $rows = $this->connection->table('workforce_payroll_calculation_source_rows')
+            ->where('organization_id', $organizationId)
+            ->where('calculation_version_id', $calculationVersionId)
+            ->orderBy('id')
+            ->get(['source_row_id', 'source_refs']);
+        $map = [];
+        foreach ($rows as $row) {
+            $sourceRowId = (int) $row->source_row_id;
+            $map['payroll_source_row:'.$sourceRowId][$sourceRowId] = $sourceRowId;
+            foreach ($this->json($row->source_refs) as $ref) {
+                if (isset($ref['type'], $ref['id'])) {
+                    $map[(string) $ref['type'].':'.(int) $ref['id']][$sourceRowId] = $sourceRowId;
+                }
+            }
+        }
+
+        return $map;
+    }
+
+    private function issueSourceRowId(object $issue, array $sourceRowsByRef): ?int
+    {
+        if ($issue->entity_type === null || $issue->entity_id === null) {
+            return null;
+        }
+        $matches = array_values(
+            $sourceRowsByRef[(string) $issue->entity_type.':'.(int) $issue->entity_id] ?? [],
+        );
+        if (count($matches) > 1) {
+            throw new DomainException('PAYROLL_VALIDATION_ISSUE_SOURCE_AMBIGUOUS');
+        }
+
+        return $matches[0] ?? null;
+    }
+
+    private function recordTransition(
+        int $organizationId,
+        int $calculationVersionId,
+        string $status,
+        int $actorId,
+        mixed $transitionedAt,
+    ): void {
+        $timestamp = (string) $transitionedAt;
+        $this->connection->table('workforce_payroll_calculation_transitions')->insert([
+            'organization_id' => $organizationId,
+            'calculation_version_id' => $calculationVersionId,
+            'status' => $status,
+            'actor_id' => $actorId,
+            'transitioned_at' => $transitionedAt,
+            'transition_hash' => hash('sha256', CanonicalJson::encode([
+                'organization_id' => $organizationId,
+                'calculation_version_id' => $calculationVersionId,
+                'status' => $status,
+                'actor_id' => $actorId,
+                'transitioned_at' => $timestamp,
+            ])),
+        ]);
+    }
+
     private function assertPayrollSourceOwnership(int $organizationId, Collection $rows): void
     {
         foreach ([
@@ -1499,15 +1599,6 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         if ($found !== $ids) {
             throw new DomainException('PAYROLL_VALIDATION_ISSUE_SOURCE_INVALID');
         }
-    }
-
-    private function dominantIssue(Collection $issues, int $employeeId, ?int $projectId): ?object
-    {
-        return $issues->first(static fn (object $issue): bool => (
-            $issue->employee_id === null || (int) $issue->employee_id === $employeeId
-        ) && (
-            $issue->project_id === null || (int) $issue->project_id === $projectId
-        ));
     }
 
     private function versionById(int $organizationId, int $versionId): PayrollCalculationVersion
