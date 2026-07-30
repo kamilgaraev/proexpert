@@ -34,7 +34,7 @@ final readonly class PlanOneCPlatformEvidenceBuilder
             || $planOneB->bytesHash->value !== self::PLAN_ONE_B_SHA256) {
             throw new RuntimeException('plan_one_c_platform_evidence_invalid');
         }
-        if (array_diff(array_keys($platformEvidence), ['published_count', 'binding_count', 'unresolved_risks']) !== []) throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        $verifiedPlatformEvidence = $this->verifyPlatformEvidence($platformEvidence, $repositoryCommit);
         $artifacts = [];
         foreach ($bundle->artifacts as $artifact) $artifacts[$artifact->id] = $artifact->sha256->value;
         $document = [
@@ -58,9 +58,14 @@ final readonly class PlanOneCPlatformEvidenceBuilder
             'plan_1b_document_sha256' => $planOneB->bytesHash->value,
             'plan_1c_document_sha256' => $planOneC->bytesHash->value,
             'prerequisite_bundle_sha256' => $bundle->manifestHash->value,
-            'published_count' => $platformEvidence['published_count'] ?? 0,
-            'binding_count' => $platformEvidence['binding_count'] ?? 0,
-            'unresolved_risks' => $platformEvidence['unresolved_risks'] ?? [],
+            'platform_quality_sha256' => $verifiedPlatformEvidence['platform_quality_sha256'],
+            'platform_quality_catalog_sha256' => $verifiedPlatformEvidence['platform_quality_catalog_sha256'],
+            'source_hashes' => $this->sourceHashes(),
+            'command_records' => $verifiedPlatformEvidence['command_records'],
+            'ci_artifact_hashes' => $verifiedPlatformEvidence['ci_artifact_hashes'],
+            'published_count' => $verifiedPlatformEvidence['published_count'],
+            'binding_count' => $verifiedPlatformEvidence['binding_count'],
+            'unresolved_risks' => $verifiedPlatformEvidence['unresolved_risks'],
         ];
         $this->validate($document);
 
@@ -110,6 +115,175 @@ final readonly class PlanOneCPlatformEvidenceBuilder
             || !is_array($document['unresolved_risks'] ?? null) || $document['unresolved_risks'] !== []) {
             throw new RuntimeException('plan_one_c_platform_evidence_invalid');
         }
+    }
+
+    /** @return array{platform_quality_sha256:string, platform_quality_catalog_sha256:string, source_hashes:array<string,string>, command_records:array<string,array<string,mixed>>, ci_artifact_hashes:array<string,string>, published_count:int, binding_count:int, unresolved_risks:list<mixed>} */
+    private function verifyPlatformEvidence(array $evidence, string $commit): array
+    {
+        $names = ['workspace', 'saved_views', 'subscriptions', 'integration', 'fake_sequence'];
+        if (array_keys($evidence) !== ['platform_quality', 'ci_artifacts', 'published_count', 'binding_count', 'unresolved_risks']) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+        $quality = $evidence['platform_quality'] ?? null;
+        $ci = $evidence['ci_artifacts'] ?? null;
+        if (!is_array($quality) || !is_array($ci) || array_keys($ci) !== $names
+            || !is_int($evidence['published_count']) || !is_int($evidence['binding_count'])
+            || !is_array($evidence['unresolved_risks'])) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+        $qualityHash = $this->documentHash($quality);
+        $catalog = $this->decode($this->read($this->root().'/docs/reports/contracts/report-platform-gates.v1.json'));
+        if (($quality['artifact_id'] ?? null) !== 'report_quality_evidence'
+            || ($quality['schema_version'] ?? null) !== '1.0.0'
+            || ($quality['status'] ?? null) !== 'platform_passed'
+            || ($quality['release_sha'] ?? null) !== $commit
+            || !is_array($quality['catalog'] ?? null)
+            || ($quality['catalog']['path'] ?? null) !== 'docs/reports/contracts/report-platform-gates.v1.json'
+            || ($quality['catalog']['sha256'] ?? null) !== $this->sha256('docs/reports/contracts/report-platform-gates.v1.json')
+            || !is_array($quality['gates'] ?? null) || count($quality['gates']) !== 14) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+        $this->validateQualityArtifact($quality);
+        $qualityCommands = [];
+        $gates = [];
+        $catalogGates = $catalog['gates'] ?? null;
+        if (!is_array($catalogGates) || !array_is_list($catalogGates) || count($catalogGates) !== 14) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+        foreach ($quality['gates'] as $index => $gate) {
+            $catalogGate = $catalogGates[$index] ?? null;
+            if (!is_array($gate) || !is_string($gate['gate'] ?? null) || isset($gates[$gate['gate']])
+                || !is_array($catalogGate) || ($gate['gate'] ?? null) !== ($catalogGate['id'] ?? null)
+                || ($gate['owner_plan'] ?? null) !== ($catalogGate['release_owner'] ?? null)
+                || ($gate['phase'] ?? null) !== 'platform' || ($gate['status'] ?? null) !== ($catalogGate['platform_status'] ?? null)
+                || ($gate['command'] ?? null) !== ($catalogGate['command'] ?? null)
+                || ($gate['count'] ?? null) !== ($catalogGate['minimum_count'] ?? null)
+                || ($gate['schema_sha256'] ?? null) !== ($catalogGate['schema_sha256'] ?? null)
+                || ($gate['commit_sha'] ?? null) !== $commit || ($gate['release_sha'] ?? null) !== $commit
+                || !$this->matchesQualityArtifactHash($gate, $catalogGate)
+                || !$this->matchesQualitySources($gate, $catalogGate)) {
+                throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+            }
+            $gates[$gate['gate']] = true;
+        }
+        if (array_keys($gates) !== array_map(static fn (int $number): string => sprintf('QG-%02d', $number), range(1, 14))) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+        $qualityCommands['platform_quality'] = [
+            'command' => 'build-report-quality-evidence',
+            'status' => 'passed',
+            'count' => count($quality['gates']),
+            'duration_ms' => 0,
+            'output_sha256' => $qualityHash,
+        ];
+        $hashes = ['platform_quality' => $qualityHash];
+        foreach ($names as $name) {
+            $artifact = $ci[$name];
+            if (!is_array($artifact) || ($artifact['artifact_id'] ?? null) !== 'reporting_ci_'.$name
+                || ($artifact['schema_version'] ?? null) !== '1.0.0' || ($artifact['status'] ?? null) !== 'passed'
+                || ($artifact['repository_commit'] ?? null) !== $commit || ($artifact['source_hashes'] ?? null) !== $this->sourceHashes()) {
+                throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+            }
+            if (($artifact['published_count'] ?? null) !== $evidence['published_count']
+                || ($artifact['binding_count'] ?? null) !== $evidence['binding_count']
+                || ($artifact['unresolved_risks'] ?? null) !== $evidence['unresolved_risks']) {
+                throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+            }
+            $hash = $this->documentHash($artifact);
+            $qualityCommands[$name] = $this->commandRecord($artifact['command_record'] ?? null);
+            $hashes[$name] = $hash;
+        }
+        if ($evidence['published_count'] !== $this->releasePublishedCount()
+            || $evidence['binding_count'] !== $this->releasePublishedCount()
+            || $evidence['unresolved_risks'] !== []) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+        return ['platform_quality_sha256' => $qualityHash, 'platform_quality_catalog_sha256' => $quality['catalog']['sha256'], 'source_hashes' => $this->sourceHashes(), 'command_records' => $qualityCommands, 'ci_artifact_hashes' => $hashes, 'published_count' => $evidence['published_count'], 'binding_count' => $evidence['binding_count'], 'unresolved_risks' => $evidence['unresolved_risks']];
+    }
+
+    /** @return array{command:string,status:string,count:int,duration_ms:int,output_sha256:string} */
+    private function commandRecord(mixed $record): array
+    {
+        if (!is_array($record) || array_keys($record) !== ['command', 'status', 'count', 'duration_ms', 'output_sha256']
+            || !is_string($record['command']) || $record['command'] === '' || ($record['status'] ?? null) !== 'passed'
+            || !is_int($record['count']) || $record['count'] < 1 || !is_int($record['duration_ms']) || $record['duration_ms'] < 0
+            || !is_string($record['output_sha256'] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $record['output_sha256']) !== 1) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+        return $record;
+    }
+
+    private function validateQualityArtifact(array $artifact): void
+    {
+        $schema = $this->decode($this->read($this->root().'/docs/reports/contracts/report-quality-evidence.schema.json'));
+        try {
+            $valid = (new CompliantValidator())->validate(
+                json_decode(json_encode($artifact, JSON_THROW_ON_ERROR), false, 512, JSON_THROW_ON_ERROR),
+                json_decode(json_encode($schema, JSON_THROW_ON_ERROR), false, 512, JSON_THROW_ON_ERROR),
+            )->isValid();
+        } catch (JsonException) {
+            $valid = false;
+        }
+        if (!$valid) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+    }
+
+    private function matchesQualityArtifactHash(array $gate, array $catalogGate): bool
+    {
+        $artifactHash = $gate['artifact_sha256'] ?? null;
+        if (($catalogGate['platform_status'] ?? null) === 'passed') {
+            return is_string($artifactHash) && preg_match('/^[a-f0-9]{64}$/D', $artifactHash) === 1;
+        }
+
+        return $artifactHash === null;
+    }
+
+    private function matchesQualitySources(array $gate, array $catalogGate): bool
+    {
+        $sources = $catalogGate['source_paths'] ?? null;
+        if (!is_array($sources) || !array_is_list($sources) || !is_array($gate['source_artifacts'] ?? null)) {
+            return false;
+        }
+        $expected = [];
+        foreach ($sources as $source) {
+            if (!is_string($source)) {
+                return false;
+            }
+            $expected[] = ['path' => $source, 'sha256' => $this->sha256($source)];
+        }
+
+        return $gate['source_artifacts'] === $expected;
+    }
+
+    private function releasePublishedCount(): int
+    {
+        $lock = $this->decode($this->read($this->root().'/docs/reports/contracts/plan-1c-contract-lock.json'));
+        $count = $lock['quality']['release_published_count'] ?? null;
+
+        if (!is_int($count) || $count < 1) {
+            throw new RuntimeException('plan_one_c_platform_evidence_invalid');
+        }
+
+        return $count;
+    }
+
+    /** @return array{manifest:string,resource:string,permission:string,translation:string,route:string,schema:string} */
+    private function sourceHashes(): array
+    {
+        return [
+            'manifest' => $this->sha256('app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'),
+            'resource' => $this->sha256('docs/reports/contracts/reporting-admin-resources.v1.schema.json'),
+            'permission' => $this->sha256('config/RoleDefinitions/admin/web_admin.json'),
+            'translation' => $this->sha256('lang/ru/permissions.php'),
+            'route' => $this->sha256('routes/api.php'),
+            'schema' => $this->sha256('app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json'),
+        ];
+    }
+
+    private function documentHash(array $document): string
+    {
+        return hash('sha256', CanonicalJson::encode($document)."\n");
     }
 
     /** @return list<string> */
