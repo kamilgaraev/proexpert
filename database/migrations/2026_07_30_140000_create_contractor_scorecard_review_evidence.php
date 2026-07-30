@@ -61,6 +61,8 @@ return new class extends Migration
             $table->decimal('safety_score', 8, 4)->nullable();
             $table->decimal('financial_discipline_score', 8, 4)->nullable();
             $table->timestampTz('created_at', 6);
+            $table->timestampTz('review_observed_at', 6);
+            $table->char('review_evidence_hash', 64);
             $table->char('membership_evidence_hash', 64);
             $table->string('row_key', 128);
             $table->unique(

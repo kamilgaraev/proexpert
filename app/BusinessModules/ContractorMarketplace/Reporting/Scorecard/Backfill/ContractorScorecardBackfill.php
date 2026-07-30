@@ -5,19 +5,22 @@ declare(strict_types=1);
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Backfill;
 
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorMembershipEvidenceResolver;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorReviewEventProjector;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceBackfill;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillBatch;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillResult;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final readonly class ContractorScorecardBackfill implements ReportSourceBackfill
 {
-    public function __construct(private ContractorMembershipEvidenceResolver $memberships) {}
+    public function __construct(
+        private ContractorMembershipEvidenceResolver $memberships,
+        private ContractorReviewEventProjector $events,
+    ) {}
 
     public function sourceCode(): string
     {
@@ -102,42 +105,29 @@ final readonly class ContractorScorecardBackfill implements ReportSourceBackfill
             ->orderBy('observed_at')
             ->orderBy('id')
             ->get();
-        $reviews = [];
-        foreach ($events as $event) {
-            $payload = is_string($event->payload) ? json_decode($event->payload, true) : $event->payload;
-            if (! is_array($payload)) {
-                continue;
-            }
-            $reviews[(int) $event->review_id] = [
-                'evidence_hash' => (string) $event->evidence_hash,
-                'is_deleted' => (bool) $event->is_deleted,
-                'payload' => $payload,
-            ];
-        }
+        $reviews = $this->events->project(
+            $events,
+            $context->organizationId,
+            $context->scope->projectIds,
+            null,
+        );
         $projection = [];
         $projected = 0;
         $unknown = 0;
         foreach ($batch->sourceKeys as $reviewId) {
             $review = $reviews[$reviewId] ?? null;
-            if (! is_array($review) || $review['is_deleted']) {
+            if (! is_array($review)) {
                 $unknown++;
 
                 continue;
             }
             $payload = $review['payload'];
             $projectId = (int) ($payload['project_id'] ?? 0);
-            if (
-                (int) ($payload['reviewer_organization_id'] ?? 0) !== $context->organizationId
-                || ($context->scope->projectIds !== []
-                    && ! in_array($projectId, $context->scope->projectIds, true))
-            ) {
-                $unknown++;
-
-                continue;
-            }
             try {
-                $createdAt = CarbonImmutable::parse((string) ($payload['created_at'] ?? ''));
-                $membership = $this->memberships->resolve($context->organizationId, $createdAt);
+                $membership = $this->memberships->resolve(
+                    $context->organizationId,
+                    $review['membership_observed_at'],
+                );
             } catch (\Throwable) {
                 $unknown++;
 
@@ -163,6 +153,7 @@ final readonly class ContractorScorecardBackfill implements ReportSourceBackfill
                 'profile_id' => $profileId,
                 'project_id' => $projectId,
                 'review_evidence_hash' => $review['evidence_hash'],
+                'review_observed_at' => $review['observed_at']->toISOString(),
                 'review_id' => $reviewId,
             ];
             $projected++;

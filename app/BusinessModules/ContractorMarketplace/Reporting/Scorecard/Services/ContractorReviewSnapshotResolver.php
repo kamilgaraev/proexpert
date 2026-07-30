@@ -17,7 +17,10 @@ use InvalidArgumentException;
 
 final readonly class ContractorReviewSnapshotResolver
 {
-    public function __construct(private ContractorMembershipEvidenceResolver $memberships) {}
+    public function __construct(
+        private ContractorMembershipEvidenceResolver $memberships,
+        private ContractorReviewEventProjector $events,
+    ) {}
 
     public function resolve(ReportQuery $query): ReportSnapshotRef
     {
@@ -38,40 +41,17 @@ final readonly class ContractorReviewSnapshotResolver
             ->orderBy('observed_at')
             ->orderBy('id')
             ->get();
-        $latest = [];
-        foreach ($events as $event) {
-            $payload = is_string($event->payload) ? json_decode($event->payload, true) : $event->payload;
-            if (! is_array($payload)) {
-                throw new InvalidArgumentException('contractor_review_evidence_invalid');
-            }
-            $latest[(int) $event->review_id] = [
-                'event_id' => (int) $event->id,
-                'evidence_hash' => (string) $event->evidence_hash,
-                'is_deleted' => (bool) $event->is_deleted,
-                'observed_at' => CarbonImmutable::parse($event->observed_at),
-                'payload' => $payload,
-            ];
-        }
-        $candidates = [];
-        foreach ($latest as $reviewId => $event) {
-            $payload = $event['payload'];
-            $createdAt = CarbonImmutable::parse((string) ($payload['created_at'] ?? $event['observed_at']));
-            if (
-                $event['is_deleted']
-                || (int) ($payload['reviewer_organization_id'] ?? 0) !== $query->scope->organizationId
-                || ($query->scope->projectIds !== []
-                    && ! in_array((int) ($payload['project_id'] ?? 0), $query->scope->projectIds, true))
-                || ! $this->matchesCohort($createdAt, $query->filters->values['cohort'] ?? null)
-            ) {
-                continue;
-            }
-            $candidates[$reviewId] = ['created_at' => $createdAt, ...$event];
-        }
+        $candidates = $this->events->project(
+            $events,
+            $query->scope->organizationId,
+            $query->scope->projectIds,
+            $query->filters->values['cohort'] ?? null,
+        );
         $timestamps = array_values(array_map(
-            static fn (array $candidate): CarbonImmutable => $candidate['created_at'],
+            static fn (array $candidate): CarbonImmutable => $candidate['membership_observed_at'],
             array_filter(
                 $candidates,
-                static fn (array $candidate): bool => $candidate['created_at']->gte($coverageStartedAt),
+                static fn (array $candidate): bool => $candidate['membership_observed_at']->gte($coverageStartedAt),
             ),
         ));
         $membershipAt = $this->memberships->resolveMany(
@@ -82,7 +62,7 @@ final readonly class ContractorReviewSnapshotResolver
         $unknownCount = 0;
         foreach ($candidates as $reviewId => $candidate) {
             $payload = $candidate['payload'];
-            $membership = $membershipAt[$candidate['created_at']->toISOString()] ?? null;
+            $membership = $membershipAt[$candidate['membership_observed_at']->toISOString()] ?? null;
             $profileId = (int) ($payload['contractor_profile_id'] ?? 0);
             $categoryId = (int) ($payload['category_id'] ?? 0);
             if (
@@ -110,6 +90,8 @@ final readonly class ContractorReviewSnapshotResolver
                     ? (string) $payload['financial_discipline_score']
                     : null,
                 'created_at' => $candidate['created_at'],
+                'review_observed_at' => $candidate['observed_at'],
+                'review_evidence_hash' => $candidate['evidence_hash'],
                 'membership_evidence_hash' => $membership->sourceHash,
                 'row_key' => 'marketplace_review:'.$reviewId,
             ];
@@ -121,10 +103,7 @@ final readonly class ContractorReviewSnapshotResolver
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'as_of' => $query->asOf->format(DATE_ATOM),
             'coverage_hash' => (string) $coverage->evidence_hash,
-            'events' => array_map(static fn (array $event): array => [
-                'event_id' => $event['event_id'],
-                'evidence_hash' => $event['evidence_hash'],
-            ], $latest),
+            'events' => ContractorReviewEventProjector::identityEvents($candidates),
             'filters' => $query->filters->values,
             'membership_evidence_hash' => $asOfMembership->sourceHash,
             'scope' => $query->scope->canonicalIdentity(),
@@ -203,21 +182,4 @@ final readonly class ContractorReviewSnapshotResolver
         );
     }
 
-    private function matchesCohort(CarbonImmutable $createdAt, mixed $cohort): bool
-    {
-        if ($cohort === null) {
-            return true;
-        }
-        if (! is_string($cohort)) {
-            return false;
-        }
-        if (preg_match('/^\d{4}-\d{2}$/D', $cohort) === 1) {
-            return $createdAt->format('Y-m') === $cohort;
-        }
-        if (preg_match('/^(\d{4})-Q([1-4])$/D', $cohort, $matches) === 1) {
-            return $createdAt->year === (int) $matches[1] && $createdAt->quarter === (int) $matches[2];
-        }
-
-        return preg_match('/^\d{4}$/D', $cohort) === 1 && $createdAt->format('Y') === $cohort;
-    }
 }
