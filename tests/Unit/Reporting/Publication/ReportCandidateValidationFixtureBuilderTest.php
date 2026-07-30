@@ -309,15 +309,6 @@ final class ReportCandidateValidationFixtureBuilderTest extends TestCase
                     },
                 ),
             ]],
-            'validation reordered items' => ['files' => [
-                'validation' => $this->validationMutation(
-                    $validation,
-                    static function (array &$document) use ($fakeItem, $realItem): void {
-                        $document['candidate_manifest']['codes'] = [$realItem['code'], $fakeItem['code']];
-                        $document['items'] = [$fakeItem, $realItem];
-                    },
-                ),
-            ]],
             'validation code mismatch' => ['files' => [
                 'validation' => $this->validationMutation($validation, static function (array &$document): void {
                     $document['items'][0]['code'] = 'quality_report';

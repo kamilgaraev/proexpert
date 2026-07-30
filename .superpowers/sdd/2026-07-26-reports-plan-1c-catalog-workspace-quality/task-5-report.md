@@ -19,16 +19,14 @@ Task 5 реализован изолированно на ветке `feat/repor
 - `ReportPublicationLock`;
 - `PublishedDefinitionRelease`.
 
-`ReportDefinitionVersionPolicy` разделяет schema-valid formula, source-schema,
-public contract и renderer fingerprints. Formula fingerprint использует
-version из typed passed conformance evidence; source fingerprint включает
-manifest filters/grain и typed source-schema identity; contract использует
-filters/columns/sorts/formats/catalog group; renderer использует реальные
-title/category/wave поля manifest. Незаконные скрытые `formula`/`source` keys
-не используются. Изменение dimension требует строго большей соответствующей
-semantic version; bump без реального dimension/evidence и semantic version
-drift отклоняются. Permission/readiness-only изменение сохраняет все semantic
-versions.
+`ReportDefinitionVersionPolicy` разделяет formula, source-schema, public
+contract и renderer dimensions. Обязательные manifest
+`semantic_fingerprints.formula/source` не зависят от version strings и
+проверяются по actual typed conformance: formula использует totals hash и
+упорядоченную component-class identity, source — source hash, filters и grain.
+Изменение fingerprint требует строго большей соответствующей semantic version;
+bump при неизменном fingerprint отклоняется. Permission/readiness-only
+изменение сохраняет все semantic versions.
 
 `ReportManifestPromotionService` выполняет полный fail-closed promotion:
 
@@ -67,6 +65,10 @@ release SHA и UTC timestamp без дробных секунд. `PublishedDefin
   пересчитанный lock digest и уникальность event id;
 - заменяет существующий ledger только preverified staged bytes через portable
   same-directory backup/rename/rollback, без `ftruncate()` final path;
+- ведёт canonical sidecar journal под тем же `flock` и перед каждым read/append
+  восстанавливает old final после crash между `final → backup` и
+  `staged → final` либо завершает cleanup уже проверенного new final;
+- никогда не принимает orphan backup за текущий ledger;
 - при любой ошибке rename/reread восстанавливает ledger и удаляет уже
   опубликованные артефакты.
 
@@ -124,7 +126,7 @@ RED:
 
 GREEN после implementation и review fixes:
 
-- exact four-file PHPUnit gate: `OK (26 tests, 214 assertions)`;
+- exact four-file PHPUnit gate: `OK (28 tests, 231 assertions)`;
 - exact offline `--check`: `promotion-check: PASS`.
 
 Покрыты semantic drift, unrelated block, reload published wrapper, strict
@@ -203,6 +205,26 @@ conformance с пересчитанным digest.
   stale candidate/evidence/output, canonical validation/path/item matrix,
   forged passed inputs, `--check` no-write, normal ledger publication/reread,
   schema enums и semantic ledger tampering.
+
+### Review round 2
+
+Закрыты три blocking finding:
+
+- semantic fingerprints стали schema-required, независимыми от versions и
+  cryptographically bound к actual conformance formula/source identity;
+- existing-ledger replacement получил deterministic journal recovery;
+  child-process regression реально завершает процесс после `final → backup`,
+  а новый процесс восстанавливает полную старую историю до следующего append;
+- negative matrix содержит isolated source-schema drift, formula/source
+  bump-without-change и чистую перестановку exact двух schema-valid candidates
+  при неизменном составе registry/validation.
+
+## Финализация review round 2
+
+- Подтверждено отсутствие и неотслеживаемость четырёх generated-артефактов publication round 2.
+- Пройдены isolated-регрессии: source-schema drift (1 test, 4 assertions), formula bump без изменения fingerprint (1 test, 2 assertions), перестановка exact двух candidate (1 test, 3 assertions) и child-process crash recovery (1 test, 12 assertions).
+- Combined targeted Task 19 gate: `OK (28 tests, 231 assertions)`.
+- Changed PHP scope: PHPStan без ошибок; Pint `--test` успешно пройден для 6 изменённых PHP-файлов.
 
 ## Concerns
 

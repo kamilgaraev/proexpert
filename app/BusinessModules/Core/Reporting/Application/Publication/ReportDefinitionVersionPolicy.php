@@ -18,6 +18,10 @@ final class ReportDefinitionVersionPolicy
         'renderer' => 'rendererChanged',
     ];
 
+    public function __construct(
+        private readonly ReportDefinitionSemanticFingerprint $fingerprints = new ReportDefinitionSemanticFingerprint,
+    ) {}
+
     public function assertAllowed(
         array $current,
         array $candidate,
@@ -30,7 +34,13 @@ final class ReportDefinitionVersionPolicy
             throw new InvalidArgumentException('report_definition_version_evidence_mismatch');
         }
 
-        $diff = $this->diff($current, $candidate, $conformance);
+        $candidateFingerprints = $this->semanticFingerprints($candidate);
+        if (! hash_equals($candidateFingerprints['formula'], $this->fingerprints->formula($conformance))
+            || ! hash_equals($candidateFingerprints['source'], $this->fingerprints->source($candidate, $conformance))) {
+            throw new InvalidArgumentException('report_definition_semantic_fingerprint_evidence_mismatch');
+        }
+
+        $diff = $this->diff($current, $candidate);
         foreach (self::VERSION_DIMENSIONS as $version => $property) {
             $comparison = version_compare($candidateVersions[$version], $currentVersions[$version]);
             if ($diff->{$property} && $comparison <= 0) {
@@ -47,25 +57,19 @@ final class ReportDefinitionVersionPolicy
     public function diff(
         array $current,
         array $candidate,
-        ReportDefinitionConformanceEvidence $conformance,
     ): ReportDefinitionSemanticDiff {
-        $currentVersions = $this->versions($current);
+        $currentFingerprints = $this->semanticFingerprints($current);
+        $candidateFingerprints = $this->semanticFingerprints($candidate);
 
         return new ReportDefinitionSemanticDiff(
-            formulaChanged: $this->fingerprint([
-                'formula_version' => $currentVersions['formula'],
-            ]) !== $this->fingerprint([
-                'formula_version' => $conformance->formula->formulaVersion,
-            ]),
-            sourceSchemaChanged: $this->fingerprint([
-                'filters' => $current['filters'] ?? null,
-                'grain' => $current['grain'] ?? null,
-                'source_schema_version' => $currentVersions['source_schema'],
-            ]) !== $this->fingerprint([
-                'filters' => $candidate['filters'] ?? null,
-                'grain' => $candidate['grain'] ?? null,
-                'source_schema_version' => $conformance->sourceSchemaVersion,
-            ]),
+            formulaChanged: ! hash_equals(
+                $currentFingerprints['formula'],
+                $candidateFingerprints['formula'],
+            ),
+            sourceSchemaChanged: ! hash_equals(
+                $currentFingerprints['source'],
+                $candidateFingerprints['source'],
+            ),
             contractChanged: $this->changed(
                 $current,
                 $candidate,
@@ -103,6 +107,25 @@ final class ReportDefinitionVersionPolicy
         }
 
         return $normalized;
+    }
+
+    private function semanticFingerprints(array $definition): array
+    {
+        $fingerprints = $definition['semantic_fingerprints'] ?? null;
+        if (! is_array($fingerprints)
+            || array_is_list($fingerprints)
+            || array_keys($fingerprints) !== ['formula', 'source']) {
+            throw new InvalidArgumentException('report_definition_semantic_fingerprints_invalid');
+        }
+
+        foreach ($fingerprints as $fingerprint) {
+            if (! is_string($fingerprint)
+                || preg_match('/^[a-f0-9]{64}$/D', $fingerprint) !== 1) {
+                throw new InvalidArgumentException('report_definition_semantic_fingerprints_invalid');
+            }
+        }
+
+        return $fingerprints;
     }
 
     private function changed(array $current, array $candidate, array $keys): bool

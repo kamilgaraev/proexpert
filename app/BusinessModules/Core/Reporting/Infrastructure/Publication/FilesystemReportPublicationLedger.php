@@ -20,10 +20,13 @@ final readonly class FilesystemReportPublicationLedger
 
     private Closure $atomicRename;
 
+    private Closure $afterLedgerBackup;
+
     public function __construct(
         private Draft202012SchemaValidator $validator,
         string $schemaPath,
         ?Closure $atomicRename = null,
+        ?Closure $afterLedgerBackup = null,
     ) {
         $bytes = @file_get_contents($schemaPath);
         if (! is_string($bytes)) {
@@ -40,6 +43,8 @@ final readonly class FilesystemReportPublicationLedger
         $this->schema = $schema;
         $this->atomicRename = $atomicRename
             ?? static fn (string $temporary, string $final): bool => rename($temporary, $final);
+        $this->afterLedgerBackup = $afterLedgerBackup
+            ?? static function (): void {};
     }
 
     public function append(string $path, ReportPublicationLock $lock): void
@@ -85,6 +90,7 @@ final readonly class FilesystemReportPublicationLedger
         array $artifacts,
         Closure $verifyArtifact,
     ): void {
+        $this->recoverUnderLock($ledgerPath);
         $originalLedger = file_exists($ledgerPath) ? $this->read($ledgerPath) : null;
         [$ledgerBytes, $changed] = $this->nextBytes($originalLedger, $lock);
         if (! $changed && $artifacts === []) {
@@ -163,13 +169,23 @@ final readonly class FilesystemReportPublicationLedger
             return;
         }
 
-        $backup = tempnam(dirname($path), '.report-ledger-backup-');
-        if (! is_string($backup) || ! unlink($backup)) {
-            throw new RuntimeException('report_publication_ledger_backup_failed');
+        $backup = $path.'.backup';
+        $journal = $path.'.journal';
+        if (file_exists($backup) || is_link($backup) || file_exists($journal) || is_link($journal)) {
+            throw new RuntimeException('report_publication_ledger_recovery_state_invalid');
         }
+        $this->writeJournal($journal, [
+            'artifact_id' => 'report_publication_ledger_transaction',
+            'new_hash' => hash('sha256', $replacement),
+            'old_hash' => hash('sha256', $original),
+            'stage_name' => basename($temporary),
+            'state' => 'pending',
+        ]);
         if (! ($this->atomicRename)($path, $backup)) {
+            unlink($journal);
             throw new RuntimeException('report_publication_ledger_backup_failed');
         }
+        ($this->afterLedgerBackup)($path, $backup, $temporary, $journal);
 
         try {
             if (! ($this->atomicRename)($temporary, $path)) {
@@ -179,7 +195,17 @@ final readonly class FilesystemReportPublicationLedger
             if (! unlink($backup)) {
                 throw new RuntimeException('report_publication_ledger_backup_cleanup_failed');
             }
+            if (! unlink($journal)) {
+                throw new RuntimeException('report_publication_ledger_journal_cleanup_failed');
+            }
         } catch (Throwable $exception) {
+            if (! is_file($backup)
+                && is_file($path)
+                && hash_equals(hash('sha256', $replacement), hash('sha256', $this->read($path)))) {
+                throw $exception instanceof RuntimeException
+                    ? $exception
+                    : new RuntimeException('report_publication_ledger_replace_failed', 0, $exception);
+            }
             if (is_file($path) && ! unlink($path)) {
                 throw new RuntimeException('report_publication_ledger_rollback_failed', 0, $exception);
             }
@@ -188,10 +214,114 @@ final readonly class FilesystemReportPublicationLedger
                 || ! hash_equals($original, $this->read($path))) {
                 throw new RuntimeException('report_publication_ledger_rollback_failed', 0, $exception);
             }
+            if (is_file($journal)) {
+                unlink($journal);
+            }
             throw $exception instanceof RuntimeException
                 ? $exception
                 : new RuntimeException('report_publication_ledger_replace_failed', 0, $exception);
         }
+    }
+
+    private function recoverUnderLock(string $path): void
+    {
+        $journalPath = $path.'.journal';
+        $backupPath = $path.'.backup';
+        if (! file_exists($journalPath)) {
+            if (file_exists($backupPath) || is_link($backupPath)) {
+                throw new RuntimeException('report_publication_ledger_orphan_backup');
+            }
+
+            return;
+        }
+        if (is_link($journalPath) || ! is_file($journalPath)
+            || is_link($backupPath)
+            || (file_exists($backupPath) && ! is_file($backupPath))) {
+            throw new RuntimeException('report_publication_ledger_recovery_state_invalid');
+        }
+
+        $journal = $this->readJournal($journalPath);
+        $stagedPath = dirname($path).DIRECTORY_SEPARATOR.$journal['stage_name'];
+        if (dirname($stagedPath) !== dirname($path)
+            || preg_match('/^(?:\\.report-publication-|\\.re)[A-Za-z0-9._-]+$/D', $journal['stage_name']) !== 1) {
+            throw new RuntimeException('report_publication_ledger_recovery_state_invalid');
+        }
+
+        if (! file_exists($path)) {
+            if (! is_file($backupPath)
+                || ! hash_equals($journal['old_hash'], hash('sha256', $this->read($backupPath)))) {
+                throw new RuntimeException('report_publication_ledger_recovery_failed');
+            }
+            $this->validatedDocument($this->read($backupPath));
+            if (! ($this->atomicRename)($backupPath, $path)) {
+                throw new RuntimeException('report_publication_ledger_recovery_failed');
+            }
+            $this->validatedDocument($this->read($path));
+        } else {
+            $finalBytes = $this->read($path);
+            $finalHash = hash('sha256', $finalBytes);
+            if (! hash_equals($journal['new_hash'], $finalHash)
+                && ! hash_equals($journal['old_hash'], $finalHash)) {
+                throw new RuntimeException('report_publication_ledger_recovery_failed');
+            }
+            $this->validatedDocument($finalBytes);
+            if (file_exists($backupPath)) {
+                $backupBytes = $this->read($backupPath);
+                if (! hash_equals($journal['old_hash'], hash('sha256', $backupBytes))) {
+                    throw new RuntimeException('report_publication_ledger_recovery_failed');
+                }
+                $this->validatedDocument($backupBytes);
+                if (! unlink($backupPath)) {
+                    throw new RuntimeException('report_publication_ledger_recovery_failed');
+                }
+            }
+        }
+
+        if (file_exists($stagedPath) && ! unlink($stagedPath)) {
+            throw new RuntimeException('report_publication_ledger_recovery_failed');
+        }
+        if (! unlink($journalPath)) {
+            throw new RuntimeException('report_publication_ledger_recovery_failed');
+        }
+    }
+
+    private function writeJournal(string $path, array $journal): void
+    {
+        $bytes = CanonicalJson::encode($journal)."\n";
+        $temporary = $this->stage($path, $bytes);
+        if (! ($this->atomicRename)($temporary, $path)) {
+            if (is_file($temporary)) {
+                unlink($temporary);
+            }
+            throw new RuntimeException('report_publication_ledger_journal_write_failed');
+        }
+        if (! hash_equals($bytes, $this->read($path))) {
+            throw new RuntimeException('report_publication_ledger_journal_write_failed');
+        }
+    }
+
+    private function readJournal(string $path): array
+    {
+        $bytes = $this->read($path);
+        try {
+            $journal = json_decode($bytes, true, 16, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new RuntimeException('report_publication_ledger_journal_invalid', 0, $exception);
+        }
+        if (! is_array($journal)
+            || array_keys($journal) !== ['artifact_id', 'new_hash', 'old_hash', 'stage_name', 'state']
+            || $journal['artifact_id'] !== 'report_publication_ledger_transaction'
+            || $journal['state'] !== 'pending'
+            || ! is_string($journal['new_hash'])
+            || preg_match('/^[a-f0-9]{64}$/D', $journal['new_hash']) !== 1
+            || ! is_string($journal['old_hash'])
+            || preg_match('/^[a-f0-9]{64}$/D', $journal['old_hash']) !== 1
+            || ! is_string($journal['stage_name'])
+            || CanonicalJson::encode($journal)."\n" !== $bytes) {
+            throw new RuntimeException('report_publication_ledger_journal_invalid');
+        }
+
+        return $journal;
     }
 
     private function nextBytes(?string $currentBytes, ReportPublicationLock $lock): array

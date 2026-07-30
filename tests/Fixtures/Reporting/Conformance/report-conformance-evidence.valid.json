@@ -17,8 +17,8 @@
         }
     ],
     "contract_version": "1.0.0",
-    "definition_hash": "16aef1f1449a7eda9e5f218f264a8f5aa5b4cb1ad1f5c50206f8a43cade6a53e",
-    "digest": "155d9ddb9fbb951625dbad3c53a69df509665a8386bf5e21318488fa667439f0",
+    "definition_hash": "2e34f63203e6fcbe26e2ec831bfb088e89de048c9c090b4dc8604757680ad417",
+    "digest": "ffaf4847bc6e01903d16baf64865aff45250643d5bfa557fcdd93e4755cd9d93",
     "fixture_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "formula": {
         "assertion_codes": [

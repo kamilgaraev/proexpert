@@ -119,6 +119,58 @@ final class ReportManifestPromotionServiceTest extends TestCase
         );
     }
 
+    public function test_validation_with_exact_two_candidate_set_in_reversed_order_is_rejected(): void
+    {
+        [$service, $current, $candidateManifest, $candidate, , $conformance] = $this->validArguments();
+        $document = [
+            'catalog' => $candidateManifest->catalog,
+            'contract_version' => $candidateManifest->contractVersion,
+            'definitions' => $candidateManifest->definitions,
+        ];
+        $document['definitions'][1]['readiness']['publication'] = 'candidate';
+        $bytes = \Symfony\Component\Yaml\Yaml::dump(
+            $document,
+            20,
+            2,
+            \Symfony\Component\Yaml\Yaml::DUMP_OBJECT_AS_MAP,
+        );
+        $twoCandidateManifest = $this->loader()->loadManagement(
+            'data://text/plain;base64,'.base64_encode($bytes),
+            $this->root().'/app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json',
+        );
+        $registry = new YamlCandidateReportDefinitionRegistry(
+            $twoCandidateManifest,
+            new ReportDefinitionFactory,
+        );
+        $codes = $registry->candidateCodes();
+        self::assertCount(2, $codes);
+        $reversed = array_reverse($codes);
+        $items = [];
+        foreach ($reversed as $code) {
+            $definition = $registry->candidate($code);
+            $items[] = new ReportCandidateValidationItem(
+                $definition->code,
+                $definition->definitionHash,
+                true,
+                [],
+            );
+        }
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_promotion_validation_set_mismatch');
+
+        $service->promote(
+            $current,
+            $twoCandidateManifest,
+            $candidate,
+            new ReportCandidateValidationResult($items),
+            $conformance,
+            $twoCandidateManifest->bytesHash,
+            str_repeat('1', 40),
+            new DateTimeImmutable('2026-07-26T00:00:00Z'),
+        );
+    }
+
     public function test_filesystem_ledger_is_idempotent_and_rejects_conflicting_event_bytes(): void
     {
         $directory = sys_get_temp_dir().'/most-report-ledger-'.bin2hex(random_bytes(8));
@@ -255,7 +307,7 @@ final class ReportManifestPromotionServiceTest extends TestCase
             $schemaPath,
             static function (string $temporary, string $final) use (&$renameCalls): bool {
                 $renameCalls++;
-                if ($renameCalls === 2) {
+                if ($renameCalls === 3) {
                     return false;
                 }
 
@@ -276,6 +328,126 @@ final class ReportManifestPromotionServiceTest extends TestCase
                 }
             }
             foreach (glob($directory.'/.report-*') ?: [] as $candidate) {
+                if (is_file($candidate)) {
+                    unlink($candidate);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
+    public function test_new_process_recovers_full_old_history_after_crash_between_ledger_renames(): void
+    {
+        $directory = sys_get_temp_dir().'/most-report-crash-recovery-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $path = $directory.'/ledger.json';
+        $schemaPath = $this->root().'/docs/reports/contracts/report-publication-ledger.schema.json';
+        $ledger = new FilesystemReportPublicationLedger(
+            new Draft202012SchemaValidator(new CompliantValidator),
+            $schemaPath,
+        );
+        $ledger->append($path, $this->lock(str_repeat('1', 40), '4'));
+        $original = (string) file_get_contents($path);
+        $child = <<<'PHP'
+require $argv[1];
+$hash = static fn (string $value) => new App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash(
+    str_repeat($value, 64),
+);
+$ledger = new App\BusinessModules\Core\Reporting\Infrastructure\Publication\FilesystemReportPublicationLedger(
+    new App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator(
+        new Opis\JsonSchema\CompliantValidator,
+    ),
+    $argv[2],
+    null,
+    $argv[5] === 'crash' ? static function (): void { exit(86); } : null,
+);
+$ledger->append(
+    $argv[3],
+    new App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationLock(
+        'project_portfolio_health',
+        $hash('1'),
+        $hash('2'),
+        $hash('3'),
+        $hash($argv[4]),
+        $hash('5'),
+        str_repeat('1', 40),
+        new DateTimeImmutable('2026-07-26T00:00:00Z'),
+    ),
+);
+PHP;
+
+        try {
+            $crash = $this->runChild([
+                PHP_BINARY,
+                '-r',
+                $child,
+                $this->root().'/vendor/autoload.php',
+                $schemaPath,
+                $path,
+                '6',
+                'crash',
+            ]);
+            self::assertSame(86, $crash['exit'], $crash['output']);
+            self::assertFileDoesNotExist($path);
+            self::assertFileExists($path.'.backup');
+            self::assertFileExists($path.'.journal');
+
+            $recovery = $this->runChild([
+                PHP_BINARY,
+                '-r',
+                $child,
+                $this->root().'/vendor/autoload.php',
+                $schemaPath,
+                $path,
+                '4',
+                'recover',
+            ]);
+            self::assertSame(0, $recovery['exit'], $recovery['output']);
+            self::assertSame($original, file_get_contents($path));
+            self::assertFileDoesNotExist($path.'.backup');
+            self::assertFileDoesNotExist($path.'.journal');
+
+            $ledger->append($path, $this->lock(str_repeat('1', 40), '6'));
+            self::assertCount(
+                2,
+                json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR)['events'],
+            );
+        } finally {
+            foreach (glob($directory.'/*') ?: [] as $candidate) {
+                if (is_file($candidate)) {
+                    unlink($candidate);
+                }
+            }
+            foreach (glob($directory.'/.report-*') ?: [] as $candidate) {
+                if (is_file($candidate)) {
+                    unlink($candidate);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
+    public function test_orphan_backup_is_never_promoted_to_current_ledger(): void
+    {
+        $directory = sys_get_temp_dir().'/most-report-orphan-backup-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $path = $directory.'/ledger.json';
+        $ledger = new FilesystemReportPublicationLedger(
+            new Draft202012SchemaValidator(new CompliantValidator),
+            $this->root().'/docs/reports/contracts/report-publication-ledger.schema.json',
+        );
+        $ledger->append($path, $this->lock(str_repeat('1', 40), '4'));
+        self::assertTrue(rename($path, $path.'.backup'));
+
+        try {
+            $ledger->append($path, $this->lock(str_repeat('1', 40), '6'));
+            self::fail('An orphan backup must not be treated as the current ledger.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('report_publication_ledger_orphan_backup', $exception->getMessage());
+            self::assertFileDoesNotExist($path);
+            self::assertFileExists($path.'.backup');
+        } finally {
+            foreach ([$path, $path.'.backup', $path.'.lock'] as $candidate) {
                 if (is_file($candidate)) {
                     unlink($candidate);
                 }
@@ -475,7 +647,17 @@ PHP;
                 true,
                 ['formula.identity.passed'],
             ),
-            ['Tests\\Support\\Reporting\\CatalogTestDataProvider' => new Sha256Hash(str_repeat('a', 64))],
+            [
+                'Tests\\Support\\Reporting\\CatalogTestDataProvider' => new Sha256Hash(
+                    '8aacb749c1d87ad6468ee7312f90b8d213635e36dc7d286b043b658ea7578d98',
+                ),
+                'Tests\\Support\\Reporting\\CatalogTestDrillDownProvider' => new Sha256Hash(
+                    '8aacb749c1d87ad6468ee7312f90b8d213635e36dc7d286b043b658ea7578d98',
+                ),
+                'Tests\\Support\\Reporting\\CatalogTestRowQuery' => new Sha256Hash(
+                    '8aacb749c1d87ad6468ee7312f90b8d213635e36dc7d286b043b658ea7578d98',
+                ),
+            ],
             2,
             'passed',
             str_repeat('1', 40),
@@ -497,6 +679,33 @@ PHP;
             $candidate,
             $validation,
             $conformance,
+        ];
+    }
+
+    private function runChild(array $command): array
+    {
+        $process = proc_open(
+            $command,
+            [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes,
+            null,
+            null,
+            ['bypass_shell' => true],
+        );
+        self::assertIsResource($process);
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        return [
+            'exit' => proc_close($process),
+            'output' => $stdout.$stderr,
         ];
     }
 

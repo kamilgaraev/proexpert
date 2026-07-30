@@ -38,6 +38,15 @@
         "renderer": {"$ref": "#/$defs/version"}
       }
     },
+    "semantic_fingerprints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formula", "source"],
+      "properties": {
+        "formula": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "source": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
     "readiness": {
       "type": "object",
       "additionalProperties": false,
@@ -61,7 +70,7 @@
     "definition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "title_key", "catalog_group", "category", "grain", "wave", "filters", "columns", "sorts", "formats", "versions", "permissions", "readiness", "capabilities"],
+      "required": ["code", "title_key", "catalog_group", "category", "grain", "wave", "filters", "columns", "sorts", "formats", "versions", "semantic_fingerprints", "permissions", "readiness", "capabilities"],
       "properties": {
         "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
         "title_key": {"type": "string", "pattern": "^reports\\.catalog\\.[a-z][a-z0-9_]+$"},
@@ -74,6 +83,7 @@
         "sorts": {"type": "array", "items": {"type": "object"}},
         "formats": {"type": "array", "items": {"enum": ["csv", "xlsx", "pdf"]}, "uniqueItems": true},
         "versions": {"$ref": "#/$defs/versions"},
+        "semantic_fingerprints": {"$ref": "#/$defs/semantic_fingerprints"},
         "permissions": {"$ref": "#/$defs/permissions"},
         "readiness": {"$ref": "#/$defs/readiness"},
         "capabilities": {"$ref": "#/$defs/capabilities"}

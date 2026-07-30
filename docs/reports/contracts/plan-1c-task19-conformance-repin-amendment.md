@@ -36,19 +36,22 @@ Task 5 script повторно валидирует fixture через Task 3 Dr
 fixture registry. Caller-authored fixture hash, даже с пересчитанным digest,
 отклоняется.
 
-## Review round 1: semantic version evidence
+## Review round 2: trusted semantic fingerprints
 
-Дополнительные поля в Task 1 manifest schema не вводятся. Semantic version
-policy использует только уже разрешённые поля:
+В Task 1 management manifest schema forward-only добавлен обязательный закрытый
+блок `semantic_fingerprints` с независимыми SHA-256 для `formula` и `source`.
+Версии не входят в fingerprint payload и не используются как замена
+семантической идентичности.
 
-- formula identity — `versions.formula`, подтверждённый typed
-  `ReportFormulaConformanceEvidence::formulaVersion`;
-- source identity — `filters`, `grain`, `versions.source_schema`,
-  подтверждённый typed `ReportDefinitionConformanceEvidence::sourceSchemaVersion`;
-- public contract — `filters`, `columns`, `sorts`, `formats`, `catalog_group`;
-- renderer — `title_key`, `category`, `wave`.
+- formula fingerprint строится из totals hash и упорядоченной identity всех
+  conformance component classes;
+- source fingerprint строится из source hash, filters и grain;
+- candidate fingerprints повторно вычисляются из typed passed conformance
+  evidence до сравнения с current manifest;
+- изменение fingerprint требует строго большей соответствующей версии;
+- bump версии при неизменном fingerprint отклоняется.
 
-Таким образом, forward-only amendment не добавляет скрытые schema-invalid
-arrays. Filter change осознанно требует одновременно source-schema и contract
-version bump. Formula/source version-only bump допускается только при точном
-typed conformance identity; stale evidence отклоняется.
+Production-loaded schema-valid regressions отдельно покрывают formula/source
+change-without-bump, bump-without-change и isolated source-schema drift.
+Изменение filters по-прежнему требует одновременно source-schema и public
+contract version bump.
