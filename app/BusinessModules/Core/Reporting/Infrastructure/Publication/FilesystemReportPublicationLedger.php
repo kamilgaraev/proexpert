@@ -22,11 +22,14 @@ final readonly class FilesystemReportPublicationLedger
 
     private Closure $afterLedgerBackup;
 
+    private Closure $cleanupJournal;
+
     public function __construct(
         private Draft202012SchemaValidator $validator,
         string $schemaPath,
         ?Closure $atomicRename = null,
         ?Closure $afterLedgerBackup = null,
+        ?Closure $cleanupJournal = null,
     ) {
         $bytes = @file_get_contents($schemaPath);
         if (! is_string($bytes)) {
@@ -45,6 +48,8 @@ final readonly class FilesystemReportPublicationLedger
             ?? static fn (string $temporary, string $final): bool => rename($temporary, $final);
         $this->afterLedgerBackup = $afterLedgerBackup
             ?? static function (): void {};
+        $this->cleanupJournal = $cleanupJournal
+            ?? static fn (string $path): bool => unlink($path);
     }
 
     public function append(string $path, ReportPublicationLock $lock): void
@@ -195,9 +200,6 @@ final readonly class FilesystemReportPublicationLedger
             if (! unlink($backup)) {
                 throw new RuntimeException('report_publication_ledger_backup_cleanup_failed');
             }
-            if (! unlink($journal)) {
-                throw new RuntimeException('report_publication_ledger_journal_cleanup_failed');
-            }
         } catch (Throwable $exception) {
             if (! is_file($backup)
                 && is_file($path)
@@ -220,6 +222,16 @@ final readonly class FilesystemReportPublicationLedger
             throw $exception instanceof RuntimeException
                 ? $exception
                 : new RuntimeException('report_publication_ledger_replace_failed', 0, $exception);
+        }
+
+        $this->cleanupJournalAfterCommit($journal);
+    }
+
+    private function cleanupJournalAfterCommit(string $path): void
+    {
+        try {
+            ($this->cleanupJournal)($path);
+        } catch (Throwable) {
         }
     }
 

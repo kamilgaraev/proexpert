@@ -55,3 +55,11 @@ Production-loaded schema-valid regressions отдельно покрывают f
 change-without-bump, bump-without-change и isolated source-schema drift.
 Изменение filters по-прежнему требует одновременно source-schema и public
 contract version bump.
+
+## Review round 3: publication commit point
+
+После verified new ledger и удаления backup публикация считается зафиксированной.
+Неудачная очистка sidecar journal не отменяет output, lock или ledger: journal
+остаётся canonical cleanup-only tombstone. Следующий read/append под тем же
+`flock` валидирует new final и удаляет этот journal, не создавая повторное событие
+и не сокращая историю ledger.

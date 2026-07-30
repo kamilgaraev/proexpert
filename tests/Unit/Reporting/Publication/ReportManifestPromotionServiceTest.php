@@ -336,6 +336,79 @@ final class ReportManifestPromotionServiceTest extends TestCase
         }
     }
 
+    public function test_committed_publication_survives_journal_cleanup_failure_and_recovers_without_history_loss(): void
+    {
+        $directory = sys_get_temp_dir().'/most-report-committed-journal-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $ledgerPath = $directory.'/ledger.json';
+        $outputPath = $directory.'/published.yaml';
+        $lockPath = $directory.'/lock.json';
+        $schemaPath = $this->root().'/docs/reports/contracts/report-publication-ledger.schema.json';
+        $validator = new Draft202012SchemaValidator(new CompliantValidator);
+        $firstLock = $this->lock(str_repeat('1', 40), '4');
+        $secondLock = $this->lock(str_repeat('1', 40), '6');
+        (new FilesystemReportPublicationLedger($validator, $schemaPath))->append($ledgerPath, $firstLock);
+        $cleanupAttempts = 0;
+        $ledger = new FilesystemReportPublicationLedger(
+            $validator,
+            $schemaPath,
+            null,
+            null,
+            static function (string $path) use (&$cleanupAttempts): bool {
+                $cleanupAttempts++;
+
+                return false;
+            },
+        );
+
+        try {
+            $ledger->publish(
+                $ledgerPath,
+                $secondLock,
+                [$outputPath => "published\n", $lockPath => "{}\n"],
+                static function (): void {},
+            );
+
+            self::assertSame(1, $cleanupAttempts);
+            self::assertFileExists($ledgerPath);
+            self::assertFileExists($outputPath);
+            self::assertFileExists($lockPath);
+            self::assertFileExists($ledgerPath.'.lock');
+            self::assertFileExists($ledgerPath.'.journal');
+            self::assertFileDoesNotExist($ledgerPath.'.backup');
+            self::assertSame("published\n", file_get_contents($outputPath));
+            self::assertSame("{}\n", file_get_contents($lockPath));
+            $committedHistory = (string) file_get_contents($ledgerPath);
+            self::assertCount(
+                2,
+                json_decode($committedHistory, true, 512, JSON_THROW_ON_ERROR)['events'],
+            );
+
+            (new FilesystemReportPublicationLedger($validator, $schemaPath))->append($ledgerPath, $secondLock);
+
+            self::assertFileDoesNotExist($ledgerPath.'.journal');
+            self::assertSame($committedHistory, file_get_contents($ledgerPath));
+            self::assertCount(
+                2,
+                json_decode((string) file_get_contents($ledgerPath), true, 512, JSON_THROW_ON_ERROR)['events'],
+            );
+            self::assertSame("published\n", file_get_contents($outputPath));
+            self::assertSame("{}\n", file_get_contents($lockPath));
+        } finally {
+            foreach ([$outputPath, $lockPath, $ledgerPath, $ledgerPath.'.backup', $ledgerPath.'.journal', $ledgerPath.'.lock'] as $path) {
+                if (is_file($path)) {
+                    unlink($path);
+                }
+            }
+            foreach (glob($directory.'/.report-*') ?: [] as $path) {
+                if (is_file($path)) {
+                    unlink($path);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
     public function test_new_process_recovers_full_old_history_after_crash_between_ledger_renames(): void
     {
         $directory = sys_get_temp_dir().'/most-report-crash-recovery-'.bin2hex(random_bytes(8));

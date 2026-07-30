@@ -68,8 +68,11 @@ release SHA и UTC timestamp без дробных секунд. `PublishedDefin
 - ведёт canonical sidecar journal под тем же `flock` и перед каждым read/append
   восстанавливает old final после crash между `final → backup` и
   `staged → final` либо завершает cleanup уже проверенного new final;
+- после проверки new ledger и удаления backup фиксирует transaction commit point:
+  неудачная очистка journal оставляет проверяемый journal для следующего
+  read/append и не откатывает published output/lock;
 - никогда не принимает orphan backup за текущий ledger;
-- при любой ошибке rename/reread восстанавливает ledger и удаляет уже
+- до commit point при ошибке rename/reread восстанавливает ledger и удаляет уже
   опубликованные артефакты.
 
 ## Deterministic provenance и offline script
@@ -140,9 +143,12 @@ conformance с пересчитанным digest.
 - `app/BusinessModules/Core/Reporting/Domain/DTO/ReportPublicationLock.php`
 - `app/BusinessModules/Core/Reporting/Domain/DTO/PublishedDefinitionRelease.php`
 - `app/BusinessModules/Core/Reporting/Application/Publication/ReportDefinitionCanonicalProjector.php`
+- `app/BusinessModules/Core/Reporting/Application/Publication/ReportDefinitionSemanticFingerprint.php`
 - `app/BusinessModules/Core/Reporting/Application/Publication/ReportDefinitionVersionPolicy.php`
 - `app/BusinessModules/Core/Reporting/Application/Publication/ReportManifestPromotionService.php`
 - `app/BusinessModules/Core/Reporting/Infrastructure/Publication/FilesystemReportPublicationLedger.php`
+- `app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json`
+- `app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml`
 - `docs/reports/contracts/report-publication-lock.schema.json`
 - `docs/reports/contracts/report-publication-ledger.schema.json`
 - `docs/reports/contracts/report-candidate-validation.schema.json`
@@ -154,6 +160,12 @@ conformance с пересчитанным digest.
 - `tests/Fixtures/Reporting/Publication/published.expected.yaml`
 - `tests/Fixtures/Reporting/Publication/report-publication-lock.valid.json`
 - `tests/Fixtures/Reporting/Conformance/report-conformance-evidence.valid.json`
+- `tests/Fixtures/Reporting/Manifest/management.candidate-empty-capability.yaml`
+- `tests/Fixtures/Reporting/Manifest/management.contains-m29.yaml`
+- `tests/Fixtures/Reporting/Manifest/management.duplicate-code.yaml`
+- `tests/Fixtures/Reporting/Manifest/management.invalid-group.yaml`
+- `tests/Fixtures/Reporting/Manifest/management.invalid-readiness.yaml`
+- `tests/Fixtures/Reporting/Manifest/management.unknown-permission.yaml`
 - `tests/Support/Reporting/Publication/ReportCandidateValidationFixtureBuilder.php`
 - `tests/Unit/Reporting/Publication/ReportDefinitionVersionPolicyTest.php`
 - `tests/Unit/Reporting/Publication/ReportManifestPromotionServiceTest.php`
@@ -225,6 +237,18 @@ conformance с пересчитанным digest.
 - Пройдены isolated-регрессии: source-schema drift (1 test, 4 assertions), formula bump без изменения fingerprint (1 test, 2 assertions), перестановка exact двух candidate (1 test, 3 assertions) и child-process crash recovery (1 test, 12 assertions).
 - Combined targeted Task 19 gate: `OK (28 tests, 231 assertions)`.
 - Changed PHP scope: PHPStan без ошибок; Pint `--test` успешно пройден для 6 изменённых PHP-файлов.
+
+## Финализация review round 3
+
+- После verified new ledger и удаления backup журнал считается cleanup-only
+  tombstone: сбой его удаления не запускает rollback output/lock/ledger.
+- Injected regression подтверждает сохранность двух ledger events, output и lock
+  при отказе cleanup; следующий append валидирует и удаляет journal без
+  дублирования события или потери истории: `OK (1 test, 16 assertions)`.
+- Минимальная совместимая crash-recovery regression: `OK (1 test, 12 assertions)`.
+- Точный состав Task 19 test gate теперь содержит 29 тестов и 247 assertions;
+  полный gate повторно не запускался, так как исполняемый охват round 2 не
+  менялся за пределами новой изолированной регрессии.
 
 ## Concerns
 
