@@ -198,6 +198,25 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         self::assertSame('accepted_production_owner_history_unproven', $gaps[0]['reason']);
     }
 
+    public function test_signature_after_as_of_does_not_remove_the_earlier_approval_candidate(): void
+    {
+        [$scope, $actId] = $this->insertLifecycleOwner(
+            approvalDate: '2026-07-20',
+            rejectedAt: null,
+            signedAt: '2026-08-02T12:00:00Z',
+        );
+
+        $gaps = (new AcceptedProductionLifecycleCompleteness)->inspect(
+            $scope,
+            new DateTimeImmutable('2026-07-30T23:59:59Z'),
+            collect(),
+        );
+
+        self::assertCount(1, $gaps);
+        self::assertSame($actId, $gaps[0]['performance_act_id']);
+        self::assertSame('accepted_production_owner_history_unproven', $gaps[0]['reason']);
+    }
+
     private function insertEvent(
         int $organizationId,
         int $projectId,
@@ -253,6 +272,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         string $approvalDate,
         ?string $rejectedAt,
         ?string $currentStatus = null,
+        ?string $signedAt = null,
     ): array {
         $organization = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
@@ -283,6 +303,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             'is_approved' => $currentStatus === null && $rejectedAt === null,
             'approval_date' => $approvalDate,
             'rejected_at' => $rejectedAt,
+            'signed_at' => $signedAt,
             'created_at' => '2026-07-10T00:00:00Z',
             'updated_at' => '2026-07-10T00:00:00Z',
         ]);

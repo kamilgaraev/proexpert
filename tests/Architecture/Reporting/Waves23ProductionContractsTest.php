@@ -184,12 +184,26 @@ final class Waves23ProductionContractsTest extends TestCase
 
         self::assertStringContainsString("where('signed_at', '<=', \$asOf)", $lifecycle);
         self::assertStringContainsString("where('approval_date', '<=', \$asOf)", $lifecycle);
+        self::assertStringNotContainsString("whereNull('signed_at')", $lifecycle);
         self::assertStringContainsString('rejected_at', $lifecycle);
         self::assertStringContainsString('accepted_production_owner_history_unproven', $lifecycle);
         self::assertStringNotContainsString("where('is_approved'", $lifecycle);
         self::assertStringNotContainsString("orWhereIn('status'", $lifecycle);
         self::assertStringContainsString('$this->completeness->inspect(', $readiness);
         self::assertStringContainsString('$this->completeness->assertComplete(', $materializer);
+    }
+
+    #[Test]
+    public function production_quality_is_derived_from_the_persisted_snapshot_envelope(): void
+    {
+        $reader = $this->source('app/Support/Reporting/ImmutableOwnerProjectionReader.php');
+
+        self::assertStringContainsString(
+            '$snapshotTotals = (array) $snapshotRecord->getAttribute(\'totals\')',
+            $reader,
+        );
+        self::assertStringContainsString('quality: $this->quality($snapshotTotals)', $reader);
+        self::assertStringNotContainsString('quality: $this->quality($rows)', $reader);
     }
 
     #[Test]

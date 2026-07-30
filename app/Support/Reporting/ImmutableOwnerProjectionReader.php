@@ -68,12 +68,13 @@ final readonly class ImmutableOwnerProjectionReader
         }
 
         $snapshotRecord = $this->snapshotRecord($context, $snapshot);
+        $snapshotTotals = (array) $snapshotRecord->getAttribute('totals');
 
         return new ReportPage(
             rows: $rows,
-            totals: $this->visibleTotals($context, (array) $snapshotRecord->getAttribute('totals')),
+            totals: $this->visibleTotals($context, $snapshotTotals),
             freshness: $this->freshness($snapshot),
-            quality: $this->quality($rows),
+            quality: $this->quality($snapshotTotals),
             nextCursor: null,
             limit: $limit,
             hasMore: $hasMore,
@@ -234,16 +235,10 @@ final readonly class ImmutableOwnerProjectionReader
         return $value;
     }
 
-    private function quality(array $rows): ReportQuality
+    private function quality(array $totals): ReportQuality
     {
         $unknown = [];
-        foreach ($rows as $row) {
-            foreach (($row['unknown_metrics'] ?? []) as $metric) {
-                if (is_string($metric)) {
-                    $unknown[$metric] = true;
-                }
-            }
-        }
+        $this->collectUnknownMetrics($totals, $unknown);
         $unknown = array_keys($unknown);
         sort($unknown, SORT_STRING);
 
@@ -256,6 +251,24 @@ final readonly class ImmutableOwnerProjectionReader
             $unknown,
             [],
         );
+    }
+
+    private function collectUnknownMetrics(array $value, array &$unknown): void
+    {
+        foreach ($value as $key => $item) {
+            if ($key === 'unknown_metrics' && is_array($item)) {
+                foreach ($item as $metric) {
+                    if (is_string($metric)) {
+                        $unknown[$metric] = true;
+                    }
+                }
+
+                continue;
+            }
+            if (is_array($item)) {
+                $this->collectUnknownMetrics($item, $unknown);
+            }
+        }
     }
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus

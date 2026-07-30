@@ -36,7 +36,6 @@ final readonly class AcceptedProductionLifecycleCompleteness
                         ->whereNotNull('signed_at')
                         ->where('signed_at', '<=', $asOf))
                     ->orWhere(static fn ($approved) => $approved
-                        ->whereNull('signed_at')
                         ->whereNotNull('approval_date')
                         ->where('approval_date', '<=', $asOf));
             })
