@@ -19,6 +19,7 @@ use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 final class SafetyComplianceService
 {
@@ -115,7 +116,36 @@ final class SafetyComplianceService
             ? CarbonImmutable::today()
             : CarbonImmutable::instance($context->date);
 
-        return $this->employeeLifecycleFlags($this->findEmployee($context), $date);
+        $employee = $this->findEmployee($context);
+        $asOf = $this->evidenceCutoff($context);
+        $lifecycle = DB::table('safety_workforce_lifecycle_events')
+            ->where('organization_id', $context->organizationId)
+            ->where('subject_type', 'employee')
+            ->where('subject_id', $context->employeeId)
+            ->where('occurred_at', '<=', $asOf)
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('event_version')
+            ->first();
+        if ($lifecycle === null || ! (bool) $lifecycle->history_complete) {
+            return [$this->flag('employee_lifecycle_unverified', 'critical')];
+        }
+
+        return $this->lifecycleEventFlags($lifecycle, $date);
+    }
+
+    private function lifecycleEventFlags(object $event, CarbonInterface $date): array
+    {
+        $flags = [];
+        if ($event->valid_from !== null && CarbonImmutable::parse((string) $event->valid_from)->greaterThan($date)) {
+            $flags[] = $this->flag('employee_not_hired', 'critical');
+        }
+        if ($event->valid_to !== null && CarbonImmutable::parse((string) $event->valid_to)->lessThanOrEqualTo($date)) {
+            $flags[] = $this->flag('employee_dismissed', 'critical');
+        } elseif ($event->status !== 'active') {
+            $flags[] = $this->flag('employee_inactive', 'critical');
+        }
+
+        return $flags;
     }
 
     private function findEmployee(SafetyComplianceContext $context): WorkforceEmployee

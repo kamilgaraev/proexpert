@@ -22,6 +22,7 @@ final class SafetyManagementServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\IncidentActions\Queries\SafetyIncidentRowQuery::class);
         $this->app->singleton(Reporting\IncidentActions\DrillDown\SafetyIncidentDrillDownProvider::class);
         $this->app->singleton(Reporting\IncidentActions\Backfill\SafetyIncidentBackfill::class);
+        $this->app->singleton(Reporting\IncidentActions\Backfill\SafetyExposureBackfill::class);
         $this->app->singleton(Reporting\IncidentActions\Readiness\SafetyIncidentReadinessProbe::class);
         $this->app->singleton(Reporting\Admission\Services\SafetySiteAssignmentService::class);
         $this->app->singleton(Reporting\Admission\Services\WorkforceAdmissionFormula::class);

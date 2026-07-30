@@ -67,6 +67,22 @@ final readonly class SafetySiteAssignmentService
                 throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
             }
 
+            $existing = SafetySiteWorkforceAssignment::query()
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('safety_site_id', $siteId)
+                ->where('workforce_assignment_id', $workforceAssignmentId)
+                ->whereDate('valid_from', $validFrom)
+                ->where(static function ($query) use ($validTo): void {
+                    $validTo === null
+                        ? $query->whereNull('valid_to')
+                        : $query->whereDate('valid_to', $validTo);
+                })
+                ->first();
+            if ($existing instanceof SafetySiteWorkforceAssignment) {
+                return $existing;
+            }
+
             $overlap = SafetySiteWorkforceAssignment::query()
                 ->where('organization_id', $organizationId)
                 ->where('workforce_assignment_id', $workforceAssignmentId)

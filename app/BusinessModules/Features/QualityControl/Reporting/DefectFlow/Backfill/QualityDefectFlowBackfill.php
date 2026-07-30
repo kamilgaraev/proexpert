@@ -45,6 +45,13 @@ final readonly class QualityDefectFlowBackfill
 
                 continue;
             }
+            if ($history->changed_at === null
+                || $history->defect->updated_at === null
+                || $history->defect->updated_at->greaterThan($history->changed_at)) {
+                $gaps++;
+
+                continue;
+            }
             $inputHashes[] = hash('sha256', CanonicalJson::encode([
                 'changed_at' => $history->changed_at?->toAtomString(),
                 'changed_by' => $history->changed_by,

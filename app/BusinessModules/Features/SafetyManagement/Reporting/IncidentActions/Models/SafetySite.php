@@ -14,5 +14,7 @@ final class SafetySite extends Model
 
     protected $casts = [
         'is_active' => 'boolean',
+        'active_from' => 'date',
+        'active_until' => 'date',
     ];
 }

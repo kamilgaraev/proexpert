@@ -47,6 +47,43 @@ final class ScopedReportSourceGuard
         self::deny();
     }
 
+    public static function assertExactAccessible(
+        ReportExecutionContext $context,
+        ReportScopedResource $resource,
+    ): void {
+        self::assertProjectAccessible($context, $resource->projectId ?? 0);
+
+        $scoped = $context->authorization->resources;
+        if ($scoped === []) {
+            return;
+        }
+
+        foreach ($scoped as $authorized) {
+            if (! $authorized instanceof ReportScopedResource) {
+                self::deny();
+            }
+            if ($authorized->kind === 'project' && $authorized->id === $resource->projectId) {
+                return;
+            }
+            if ($authorized->kind === $resource->kind
+                && $authorized->id === $resource->id
+                && ($authorized->projectId === null || $authorized->projectId === $resource->projectId)) {
+                return;
+            }
+        }
+
+        self::deny();
+    }
+
+    private static function assertProjectAccessible(ReportExecutionContext $context, int $projectId): void
+    {
+        if ($projectId < 1
+            || ($context->scope->projectIds !== [] && ! in_array($projectId, $context->scope->projectIds, true))
+            || ($context->authorization->projectIds !== [] && ! in_array($projectId, $context->authorization->projectIds, true))) {
+            self::deny();
+        }
+    }
+
     private static function deny(): never
     {
         throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);

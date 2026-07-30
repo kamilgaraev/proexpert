@@ -130,7 +130,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
             schemaVersion: 'quality_defect_flow_v1',
             watermark: 'w_'.$snapshot->source_watermark->format('YmdHis'),
             rowCount: (int) $snapshot->row_count,
-            hash: new Sha256Hash((string) $snapshot->source_hash),
+            hash: new Sha256Hash((string) $snapshot->input_hash),
         );
     }
 

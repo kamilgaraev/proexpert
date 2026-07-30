@@ -12,6 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         DB::statement('CREATE EXTENSION IF NOT EXISTS btree_gist');
+        DB::statement('CREATE EXTENSION IF NOT EXISTS pgcrypto');
 
         Schema::create('safety_site_workforce_assignments', function (Blueprint $table): void {
             $table->id();
@@ -56,6 +57,30 @@ return new class extends Migration
             $table->index(
                 ['organization_id', 'project_id', 'safety_site_id', 'effective_from', 'effective_until'],
                 'safety_admission_policy_effective_idx'
+            );
+        });
+
+        Schema::create('safety_workforce_lifecycle_events', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->constrained()->restrictOnDelete();
+            $table->string('subject_type', 24);
+            $table->unsignedBigInteger('subject_id');
+            $table->unsignedBigInteger('event_version');
+            $table->string('status', 40);
+            $table->date('valid_from')->nullable();
+            $table->date('valid_to')->nullable();
+            $table->timestampTz('occurred_at');
+            $table->boolean('history_complete');
+            $table->char('source_hash', 64);
+            $table->timestampTz('recorded_at');
+
+            $table->unique(
+                ['organization_id', 'subject_type', 'subject_id', 'event_version'],
+                'safety_workforce_lifecycle_event_unique',
+            );
+            $table->index(
+                ['organization_id', 'subject_type', 'subject_id', 'occurred_at', 'event_version'],
+                'safety_workforce_lifecycle_event_order_idx',
             );
         });
 
@@ -140,7 +165,28 @@ return new class extends Migration
         DB::statement("ALTER TABLE safety_admission_snapshots ADD CONSTRAINT safety_admission_snapshot_hashes_check CHECK (scope_hash ~ '^[a-f0-9]{64}$' AND definition_hash ~ '^[a-f0-9]{64}$' AND query_hash ~ '^[a-f0-9]{64}$' AND input_hash ~ '^[a-f0-9]{64}$' AND output_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$')");
         DB::statement('ALTER TABLE safety_admission_snapshots ADD CONSTRAINT safety_admission_snapshot_counts_check CHECK (evaluated_people = admitted_people + partial_people + not_admitted_people AND projected_count <= eligible_count AND row_count = projected_count)');
         DB::statement("ALTER TABLE safety_admission_rows ADD CONSTRAINT safety_admission_row_type_check CHECK (row_type = 'requirement')");
+        DB::statement("ALTER TABLE safety_workforce_lifecycle_events ADD CONSTRAINT safety_workforce_lifecycle_subject_check CHECK (subject_type IN ('employee', 'assignment'))");
+        DB::statement("ALTER TABLE safety_workforce_lifecycle_events ADD CONSTRAINT safety_workforce_lifecycle_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')");
         DB::unprepared(<<<'SQL'
+INSERT INTO safety_workforce_lifecycle_events (
+    organization_id, subject_type, subject_id, event_version, status, valid_from, valid_to,
+    occurred_at, history_complete, source_hash, recorded_at
+)
+SELECT organization_id, 'employee', id, 1, employment_status, hire_date, dismissal_date,
+       COALESCE(updated_at, created_at), updated_at IS NOT DISTINCT FROM created_at,
+       encode(digest(concat_ws('|', organization_id, 'employee', id, 1, employment_status, hire_date, dismissal_date, COALESCE(updated_at, created_at), updated_at IS NOT DISTINCT FROM created_at), 'sha256'), 'hex'),
+       clock_timestamp()
+FROM workforce_employees;
+INSERT INTO safety_workforce_lifecycle_events (
+    organization_id, subject_type, subject_id, event_version, status, valid_from, valid_to,
+    occurred_at, history_complete, source_hash, recorded_at
+)
+SELECT organization_id, 'assignment', id, 1, status, valid_from, valid_to,
+       COALESCE(updated_at, created_at), updated_at IS NOT DISTINCT FROM created_at,
+       encode(digest(concat_ws('|', organization_id, 'assignment', id, 1, status, valid_from, valid_to, COALESCE(updated_at, created_at), updated_at IS NOT DISTINCT FROM created_at), 'sha256'), 'hex'),
+       clock_timestamp()
+FROM workforce_employee_assignments;
+
 CREATE FUNCTION safety_admission_immutable_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -153,13 +199,76 @@ FOR EACH ROW EXECUTE FUNCTION safety_admission_immutable_guard();
 CREATE TRIGGER safety_admission_policies_immutable
 BEFORE UPDATE OR DELETE ON safety_admission_policy_versions
 FOR EACH ROW EXECUTE FUNCTION safety_admission_immutable_guard();
+CREATE TRIGGER safety_workforce_lifecycle_events_immutable
+BEFORE UPDATE OR DELETE ON safety_workforce_lifecycle_events
+FOR EACH ROW EXECUTE FUNCTION safety_admission_immutable_guard();
+
+CREATE FUNCTION safety_capture_workforce_lifecycle() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    lifecycle_subject_type text;
+    lifecycle_status text;
+    lifecycle_valid_from date;
+    lifecycle_valid_to date;
+    lifecycle_occurred_at timestamptz;
+    lifecycle_version bigint;
+    lifecycle_complete boolean;
+    previous_complete boolean;
+    lifecycle_payload text;
+BEGIN
+    lifecycle_subject_type := CASE WHEN TG_TABLE_NAME = 'workforce_employees' THEN 'employee' ELSE 'assignment' END;
+    lifecycle_status := to_jsonb(NEW)->>'employment_status';
+    IF lifecycle_subject_type = 'assignment' THEN
+        lifecycle_status := to_jsonb(NEW)->>'status';
+        lifecycle_valid_from := (to_jsonb(NEW)->>'valid_from')::date;
+        lifecycle_valid_to := (to_jsonb(NEW)->>'valid_to')::date;
+    ELSE
+        lifecycle_valid_from := (to_jsonb(NEW)->>'hire_date')::date;
+        lifecycle_valid_to := (to_jsonb(NEW)->>'dismissal_date')::date;
+    END IF;
+    lifecycle_occurred_at := COALESCE(NEW.updated_at, NEW.created_at, clock_timestamp());
+    SELECT history_complete INTO previous_complete
+    FROM safety_workforce_lifecycle_events
+    WHERE organization_id = NEW.organization_id
+      AND subject_type = lifecycle_subject_type
+      AND subject_id = NEW.id
+    ORDER BY event_version DESC
+    LIMIT 1;
+    lifecycle_complete := COALESCE(previous_complete, TG_OP = 'INSERT');
+    SELECT COALESCE(MAX(event_version), 0) + 1 INTO lifecycle_version
+    FROM safety_workforce_lifecycle_events
+    WHERE organization_id = NEW.organization_id
+      AND subject_type = lifecycle_subject_type
+      AND subject_id = NEW.id;
+    lifecycle_payload := concat_ws('|', NEW.organization_id, lifecycle_subject_type, NEW.id, lifecycle_version, lifecycle_status, lifecycle_valid_from, lifecycle_valid_to, lifecycle_occurred_at, lifecycle_complete);
+    INSERT INTO safety_workforce_lifecycle_events (
+        organization_id, subject_type, subject_id, event_version, status, valid_from, valid_to,
+        occurred_at, history_complete, source_hash, recorded_at
+    ) VALUES (
+        NEW.organization_id, lifecycle_subject_type, NEW.id, lifecycle_version, lifecycle_status,
+        lifecycle_valid_from, lifecycle_valid_to, lifecycle_occurred_at, lifecycle_complete,
+        encode(digest(lifecycle_payload, 'sha256'), 'hex'), clock_timestamp()
+    );
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER workforce_employees_reporting_lifecycle
+AFTER INSERT OR UPDATE OF employment_status, hire_date, dismissal_date ON workforce_employees
+FOR EACH ROW EXECUTE FUNCTION safety_capture_workforce_lifecycle();
+CREATE TRIGGER workforce_assignments_reporting_lifecycle
+AFTER INSERT OR UPDATE OF status, valid_from, valid_to ON workforce_employee_assignments
+FOR EACH ROW EXECUTE FUNCTION safety_capture_workforce_lifecycle();
 SQL);
     }
 
     public function down(): void
     {
+        DB::statement('DROP TRIGGER IF EXISTS workforce_assignments_reporting_lifecycle ON workforce_employee_assignments');
+        DB::statement('DROP TRIGGER IF EXISTS workforce_employees_reporting_lifecycle ON workforce_employees');
+        DB::statement('DROP FUNCTION IF EXISTS safety_capture_workforce_lifecycle()');
         Schema::dropIfExists('safety_admission_rows');
         Schema::dropIfExists('safety_admission_snapshots');
+        Schema::dropIfExists('safety_workforce_lifecycle_events');
         Schema::dropIfExists('safety_admission_policy_versions');
         Schema::dropIfExists('safety_site_workforce_assignments');
         DB::statement('DROP FUNCTION IF EXISTS safety_admission_immutable_guard()');

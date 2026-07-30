@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyCorrectiveAction;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
@@ -13,7 +14,6 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Mode
 use App\Models\Contractor;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final readonly class SafetyTransitionRecorder
@@ -25,7 +25,9 @@ final readonly class SafetyTransitionRecorder
         ?int $actorUserId,
         DateTimeInterface $occurredAt,
     ): SafetyTransitionEvent {
-        return DB::transaction(function () use ($subject, $fromStatus, $toStatus, $actorUserId, $occurredAt): SafetyTransitionEvent {
+        return ReportSnapshotFirstWriter::run(
+            'safety_transition:'.$subject->organization_id.':'.$this->subjectType($subject).':'.$subject->id,
+            function () use ($subject, $fromStatus, $toStatus, $actorUserId, $occurredAt): SafetyTransitionEvent {
             $subjectType = $this->subjectType($subject);
             $existing = SafetyTransitionEvent::query()
                 ->where('organization_id', $subject->organization_id)
@@ -82,7 +84,8 @@ final readonly class SafetyTransitionRecorder
                 'event_hash' => hash('sha256', CanonicalJson::encode($payload)),
                 'recorded_at' => now(),
             ]);
-        });
+            },
+        );
     }
 
     private function subjectType(Model $subject): string

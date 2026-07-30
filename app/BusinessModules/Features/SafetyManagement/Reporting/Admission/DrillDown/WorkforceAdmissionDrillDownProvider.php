@@ -40,6 +40,16 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
 
         $medical = $row->requirement_type === 'medical_exam';
         $canViewMedical = $context->visibility->canViewSensitive;
+        if ($row->evidence_id !== null) {
+            ScopedReportSourceGuard::assertExactAccessible(
+                $context,
+                new ReportScopedResource(
+                    $medical ? 'safety_medical_exam' : 'safety_'.$row->requirement_type,
+                    (int) $row->evidence_id,
+                    (int) $row->project_id,
+                ),
+            );
+        }
         $status = (string) $row->status;
         if ($medical && ! $canViewMedical) {
             $status = (bool) $row->blocked
@@ -65,7 +75,7 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
         if (! $medical) {
             $values['evidence_id'] = $row->evidence_id;
         } elseif ($canViewMedical) {
-            $values['evidence_id'] = null;
+            $values['evidence_id'] = $row->evidence_id;
             $values['medical_details'] = $row->medical_details;
         }
 
@@ -76,7 +86,7 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
                 'safety_requirement',
                 'requirement_'.(int) $row->id,
                 $route,
-                ['id' => $medical ? (int) $row->employee_id : ((int) $row->evidence_id > 0 ? (int) $row->evidence_id : (int) $row->employee_id)],
+                ['id' => (int) $row->evidence_id],
                 $medical && ! $canViewMedical ? 'forbidden' : 'available',
             )],
         );

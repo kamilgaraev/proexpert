@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowPolicyVersion;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowRow;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowSnapshot;
@@ -35,7 +36,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $context->scope->projectIds,
             $context->scope->resources,
             $query,
-            $periodTo,
+            $asOf,
         );
         $events = $this->filterSubjects($events, $query, $periodFrom, $periodTo);
         $projectIds = $events->pluck('project_id')
@@ -47,6 +48,15 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             ->all();
         $policies = $this->policies($organizationId, $projectIds, $asOf);
         $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies);
+        $ownerTransitionCount = $this->ownerTransitionCount(
+            $organizationId,
+            $context->scope->projectIds,
+            $asOf,
+            $query,
+        );
+        if ($ownerTransitionCount !== null) {
+            $analysis['gaps'] += max(0, $ownerTransitionCount - $events->count());
+        }
         $policyIds = collect($policies)->pluck('id')->map(static fn (mixed $id): int => (int) $id)->unique()->sort()->values()->all();
         $inputHash = hash('sha256', CanonicalJson::encode([
             'event_hashes' => $events->pluck('event_hash')->all(),
@@ -74,7 +84,32 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             return $existing;
         }
 
-        return DB::transaction(function () use (
+        return ReportSnapshotFirstWriter::run(
+            'quality_defect_flow:'.$organizationId.':'.$scopeHash.':'.$sourceHash,
+            function () use (
+                $organizationId,
+                $asOf,
+                $policyIds,
+                $events,
+                $analysis,
+                $inputHash,
+                $outputHash,
+                $sourceHash,
+                $scopeHash,
+                $query,
+            ): QualityDefectFlowSnapshot {
+                $existing = QualityDefectFlowSnapshot::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('scope_hash', $scopeHash)
+                    ->where('as_of', $asOf)
+                    ->where('formula_version', $query->definition->formulaVersion)
+                    ->where('source_hash', $sourceHash)
+                    ->first();
+                if ($existing instanceof QualityDefectFlowSnapshot) {
+                    return $existing;
+                }
+
+                return DB::transaction(function () use (
             $organizationId,
             $asOf,
             $policyIds,
@@ -130,8 +165,10 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                 ] + $row);
             }
 
-            return $snapshot;
-        });
+                    return $snapshot;
+                });
+            },
+        );
     }
 
     private function events(
@@ -285,6 +322,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         $lastStatus = [];
         $lastOccurredAt = [];
         $openingState = [];
+        $periodState = [];
         $created = 0;
         $reopened = 0;
         $closed = 0;
@@ -335,11 +373,13 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
             if ($occurredAt < $periodFrom) {
                 $openingState[$defectId] = ! $isClosed;
+                $periodState[$defectId] = ! $isClosed;
                 continue;
             }
             if ($occurredAt > $periodTo) {
                 continue;
             }
+            $periodState[$defectId] = ! $isClosed;
 
             $createdFlag = $event->from_status === null;
             $created += $createdFlag ? 1 : 0;
@@ -372,7 +412,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
         $opening = count(array_filter($openingState));
         $closing = $this->formula->rollForward($opening, $created, $reopened, $closed);
-        $actualClosing = count(array_filter($states, static fn (array $state): bool => $state['current_open']));
+        $actualClosing = count(array_filter($periodState));
         if ($closing !== $actualClosing) {
             $gaps += abs($closing - $actualClosing);
         }
@@ -405,7 +445,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $lastRowByDefect[$row['quality_defect_id']] = $index;
         }
         foreach ($lastRowByDefect as $defectId => $index) {
-            $rows[$index]['closing_flag'] = $states[$defectId]['current_open'];
+            $rows[$index]['closing_flag'] = $periodState[$defectId] ?? false;
             $rows[$index]['opening_flag'] = $openingState[$defectId] ?? false;
         }
 
@@ -435,6 +475,28 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         if ($values !== []) {
             $builder->whereIn($column, $values);
         }
+    }
+
+    private function ownerTransitionCount(
+        int $organizationId,
+        array $projectIds,
+        CarbonImmutable $asOf,
+        ReportQuery $query,
+    ): ?int {
+        foreach (['contractor_id', 'schedule_task_id', 'task_id', 'severity', 'status', 'cohort_from', 'cohort_to'] as $filter) {
+            if ($this->filterValues($query->filters->values[$filter] ?? null) !== []) {
+                return null;
+            }
+        }
+        $builder = DB::table('quality_defect_status_history as history')
+            ->join('quality_defects as defect', 'defect.id', '=', 'history.quality_defect_id')
+            ->where('history.organization_id', $organizationId)
+            ->where('history.changed_at', '<=', $asOf);
+        if ($projectIds !== []) {
+            $builder->whereIn('defect.project_id', $projectIds);
+        }
+
+        return $builder->count();
     }
 
     private function applyResourceScope(Builder $builder, array $resources): void

@@ -214,6 +214,16 @@ final class QualityDefectService
         ?string $comment = null,
     ): QualityDefect {
         return DB::transaction(function () use ($defect, $toStatus, $userId, $extra, $comment): QualityDefect {
+            $requestedFromStatus = $defect->status;
+            $locked = QualityDefect::query()
+                ->whereKey($defect->id)
+                ->where('organization_id', $defect->organization_id)
+                ->lockForUpdate()
+                ->first();
+            if (! $locked instanceof QualityDefect || $locked->status !== $requestedFromStatus) {
+                throw new DomainException(trans_message('quality_control.errors.validation_failed'));
+            }
+            $defect = $locked;
             $fromStatus = $defect->status;
             $defect->update(array_merge($extra, [
                 'status' => $toStatus,

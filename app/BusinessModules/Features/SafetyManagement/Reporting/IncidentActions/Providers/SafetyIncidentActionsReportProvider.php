@@ -87,7 +87,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
                     'safety_incident_actions_v1',
                     'w_'.$record->source_watermark->format('YmdHis'),
                     (int) $record->row_count,
-                    new Sha256Hash((string) $record->source_hash),
+                    new Sha256Hash((string) $record->input_hash),
                 )],
                 $snapshot->sourceHash,
                 null,

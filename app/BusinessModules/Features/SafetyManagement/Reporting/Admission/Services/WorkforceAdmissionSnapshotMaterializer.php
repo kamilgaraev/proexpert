@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceRequirementResult;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DTO\AdmissionRequirementState;
@@ -49,6 +50,10 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             $query,
         );
         $projection = $this->projection($organizationId, $assignments, $date, $asOf, $query);
+        $ownerSourceCount = $this->ownerSourceCount($organizationId, $date, $asOf, $query);
+        $mappingGapCount = max(0, $ownerSourceCount - $assignments->count());
+        $projection['gap_count'] += $mappingGapCount;
+        $projection['eligible_count'] += $mappingGapCount;
         $policyIds = collect($projection['policies'])
             ->pluck('id')
             ->map(static fn (mixed $id): int => (int) $id)
@@ -105,7 +110,32 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             return $existing;
         }
 
-        return DB::transaction(function () use (
+        return ReportSnapshotFirstWriter::run(
+            'workforce_admission:'.$organizationId.':'.$scopeHash.':'.$sourceHash,
+            function () use (
+                $query,
+                $organizationId,
+                $date,
+                $assignments,
+                $projection,
+                $policyIds,
+                $inputHash,
+                $outputHash,
+                $sourceHash,
+                $scopeHash,
+            ): SafetyAdmissionSnapshot {
+                $existing = SafetyAdmissionSnapshot::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('scope_hash', $scopeHash)
+                    ->where('snapshot_date', $date->toDateString())
+                    ->where('formula_version', $query->definition->formulaVersion)
+                    ->where('source_hash', $sourceHash)
+                    ->first();
+                if ($existing instanceof SafetyAdmissionSnapshot) {
+                    return $existing;
+                }
+
+                return DB::transaction(function () use (
             $query,
             $organizationId,
             $date,
@@ -158,8 +188,10 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 ] + $row);
             }
 
-            return $snapshot;
-        });
+                    return $snapshot;
+                });
+            },
+        );
     }
 
     private function assignments(
@@ -191,6 +223,37 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             ->orderBy('employee_id')
             ->orderBy('id')
             ->get();
+    }
+
+    private function ownerSourceCount(
+        int $organizationId,
+        CarbonImmutable $date,
+        CarbonImmutable $asOf,
+        ReportQuery $query,
+    ): int {
+        $builder = DB::table('workforce_employee_assignments')
+            ->where('organization_id', $organizationId)
+            ->whereNotNull('project_id')
+            ->where('created_at', '<=', $asOf)
+            ->whereDate('valid_from', '<=', $date->toDateString())
+            ->where(static function ($builder) use ($date): void {
+                $builder->whereNull('valid_to')->orWhereDate('valid_to', '>=', $date->toDateString());
+            })
+            ->where(static function ($builder) use ($asOf): void {
+                $builder->whereNull('deleted_at')->orWhere('deleted_at', '>', $asOf);
+            });
+        foreach ([
+            'project_id' => $query->filters->values['project_id'] ?? null,
+            'employee_id' => $query->filters->values['employee_id'] ?? null,
+            'id' => $query->filters->values['workforce_assignment_id'] ?? null,
+        ] as $column => $filter) {
+            $values = $this->filterValues($filter);
+            if ($values !== []) {
+                $builder->whereIn($column, $values);
+            }
+        }
+
+        return $builder->count();
     }
 
     private function projection(
@@ -266,13 +329,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 $date->toDateString(),
                 $states,
             );
-            $metrics[] = $metric;
-            $blockerCount += count($metric->blockerCodes);
-            $assignmentUnknowns = count(array_filter(
-                $states,
-                static fn (AdmissionRequirementState $state): bool => ! $state->verified,
-            ));
-            $unknownCount += $assignmentUnknowns;
+            $includedStates = [];
             foreach ($states as $state) {
                 $evidenceHashes[] = hash('sha256', CanonicalJson::encode([
                     'assignment_id' => (int) $assignment->workforce_assignment_id,
@@ -282,11 +339,6 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'status' => $state->status,
                     'valid_until' => $state->validUntil?->format('Y-m-d'),
                 ]));
-                $expiringCount += $state->validUntil !== null
-                    && $state->validUntil >= $date
-                    && $state->validUntil <= $date->addDays((int) $policy->expiring_soon_days)
-                    ? 1
-                    : 0;
                 $blocked = in_array($state->code, $metric->blockerCodes, true);
                 $row = [
                     'project_id' => (int) $assignment->project_id,
@@ -309,14 +361,37 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'verified' => $state->verified,
                     'valid_until' => $state->validUntil?->format('Y-m-d'),
                     'evidence_type' => $state->evidenceType,
-                    'evidence_id' => $state->type === 'medical_exam' ? null : $state->evidenceId,
-                    'medical_details' => null,
+                    'evidence_id' => $state->evidenceId,
+                    'medical_details' => $state->type === 'medical_exam' ? [
+                        'source_type' => 'medical_exam',
+                        'source_id' => $state->evidenceId,
+                    ] : null,
                     'blocker_codes' => $blocked ? [$state->code] : [],
                 ];
                 if ($this->rowMatchesFilters($row, $query)) {
                     $rows[] = $row;
+                    $includedStates[] = $state;
                 }
             }
+            if ($includedStates === []) {
+                continue;
+            }
+            $metrics[] = $metric;
+            $includedCodes = array_map(
+                static fn (AdmissionRequirementState $state): string => $state->code,
+                $includedStates,
+            );
+            $blockerCount += count(array_intersect($metric->blockerCodes, $includedCodes));
+            $unknownCount += count(array_filter(
+                $includedStates,
+                static fn (AdmissionRequirementState $state): bool => ! $state->verified,
+            ));
+            $expiringCount += count(array_filter(
+                $includedStates,
+                static fn (AdmissionRequirementState $state): bool => $state->validUntil !== null
+                    && $state->validUntil >= $date
+                    && $state->validUntil <= $date->addDays((int) $policy->expiring_soon_days),
+            ));
         }
 
         sort($evidenceHashes, SORT_STRING);
@@ -341,6 +416,14 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         CarbonImmutable $date,
         CarbonImmutable $asOf,
     ): array {
+        $lifecycle = DB::table('safety_workforce_lifecycle_events')
+            ->where('organization_id', $mapping->organization_id)
+            ->where('subject_type', 'assignment')
+            ->where('subject_id', $mapping->workforce_assignment_id)
+            ->where('occurred_at', '<=', $asOf)
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('event_version')
+            ->first();
         $record = DB::table('workforce_employee_assignments')
             ->where('id', $mapping->workforce_assignment_id)
             ->where('organization_id', $mapping->organization_id)
@@ -374,15 +457,15 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             'valid_to' => $record->valid_to === null ? null : (string) $record->valid_to,
         ];
         $active = false;
-        if ($record !== null) {
+        if ($record !== null && $lifecycle !== null && (bool) $lifecycle->history_complete) {
             try {
-                $active = $record->status === 'active'
+                $active = $lifecycle->status === 'active'
                     && CarbonImmutable::parse((string) $record->created_at) <= $asOf
                     && ($record->deleted_at === null || CarbonImmutable::parse((string) $record->deleted_at) > $asOf)
-                    && CarbonImmutable::parse((string) $record->valid_from)->toDateString() <= $date->toDateString()
+                    && CarbonImmutable::parse((string) $lifecycle->valid_from)->toDateString() <= $date->toDateString()
                     && (
-                        $record->valid_to === null
-                        || CarbonImmutable::parse((string) $record->valid_to)->toDateString() >= $date->toDateString()
+                        $lifecycle->valid_to === null
+                        || CarbonImmutable::parse((string) $lifecycle->valid_to)->toDateString() >= $date->toDateString()
                     );
             } catch (Throwable) {
                 $active = false;
@@ -391,7 +474,11 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
 
         return [
             'active' => $active,
-            'source_hash' => hash('sha256', CanonicalJson::encode($source)),
+            'source_hash' => hash('sha256', CanonicalJson::encode([
+                'record' => $source,
+                'lifecycle_hash' => $lifecycle?->source_hash,
+                'lifecycle_history_complete' => $lifecycle === null ? false : (bool) $lifecycle->history_complete,
+            ])),
         ];
     }
 

@@ -83,7 +83,9 @@ final readonly class SafetyIncidentBackfill
 
     private function incident(SafetyIncident $incident): array
     {
-        $events = [$this->recorder->record($incident, null, 'reported', $incident->reported_by_user_id, $incident->occurred_at)];
+        $events = $this->historicallyStable($incident, $incident->occurred_at)
+            ? [$this->recorder->record($incident, null, 'reported', $incident->reported_by_user_id, $incident->occurred_at)]
+            : [];
         $steps = [
             ['reported', 'triage', $incident->triaged_by_user_id, $incident->triaged_at],
             ['triage', 'investigation', $incident->assigned_to_user_id, $incident->investigation_started_at],
@@ -107,7 +109,9 @@ final readonly class SafetyIncidentBackfill
     private function violation(SafetyViolation $violation): array
     {
         return [
-            $this->recorder->record($violation, null, 'open', $violation->created_by_user_id, $violation->created_at),
+            ...($this->historicallyStable($violation, $violation->created_at)
+                ? [$this->recorder->record($violation, null, 'open', $violation->created_by_user_id, $violation->created_at)]
+                : []),
             ...$this->steps($violation, [['open', 'resolved', $violation->resolved_by_user_id, $violation->resolved_at]]),
         ];
     }
@@ -115,7 +119,9 @@ final readonly class SafetyIncidentBackfill
     private function action(SafetyCorrectiveAction $action): array
     {
         return [
-            $this->recorder->record($action, null, 'open', $action->created_by_user_id, $action->created_at),
+            ...($this->historicallyStable($action, $action->created_at)
+                ? [$this->recorder->record($action, null, 'open', $action->created_by_user_id, $action->created_at)]
+                : []),
             ...$this->steps($action, [
                 ['open', 'resolved', $action->resolved_by_user_id, $action->resolved_at],
                 ['resolved', 'verified', $action->verified_by_user_id, $action->verified_at],
@@ -128,6 +134,9 @@ final readonly class SafetyIncidentBackfill
         $events = [];
         foreach ($steps as [$from, $to, $actor, $occurredAt]) {
             if ($occurredAt instanceof CarbonInterface) {
+                if (! $this->historicallyStable($subject, $occurredAt)) {
+                    continue;
+                }
                 $events[] = $this->recorder->record($subject, $from, $to, $actor, $occurredAt);
             }
         }
@@ -274,5 +283,14 @@ final readonly class SafetyIncidentBackfill
         };
 
         return hash('sha256', CanonicalJson::encode($payload));
+    }
+
+    private function historicallyStable(
+        SafetyIncident|SafetyViolation|SafetyCorrectiveAction $subject,
+        ?CarbonInterface $occurredAt,
+    ): bool {
+        return $occurredAt !== null
+            && $subject->updated_at !== null
+            && ! $subject->updated_at->greaterThan($occurredAt);
     }
 }

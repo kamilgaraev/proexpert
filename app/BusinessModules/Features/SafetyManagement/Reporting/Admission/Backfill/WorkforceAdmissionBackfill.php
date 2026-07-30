@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Backfill;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetySiteWorkforceAssignment;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Services\SafetySiteAssignmentService;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 final readonly class WorkforceAdmissionBackfill
 {
+    public function __construct(private SafetySiteAssignmentService $assignmentService) {}
+
     public function sourceCode(): string
     {
         return 'safety_site_workforce_assignments';
@@ -22,9 +25,12 @@ final readonly class WorkforceAdmissionBackfill
 
     public function nextBatch(int $organizationId, int $afterId, int $limit = 500): Collection
     {
-        return SafetySiteWorkforceAssignment::query()
+        return DB::table('workforce_employee_assignments')
             ->where('organization_id', $organizationId)
             ->where('id', '>', $afterId)
+            ->where('status', 'active')
+            ->whereNotNull('project_id')
+            ->whereNull('deleted_at')
             ->orderBy('id')
             ->limit(min(max($limit, 1), 500))
             ->get();
@@ -36,36 +42,53 @@ final readonly class WorkforceAdmissionBackfill
         $outputHashes = [];
         $gaps = 0;
         foreach ($batch as $assignment) {
-            if (! $assignment instanceof SafetySiteWorkforceAssignment) {
+            if (! is_object($assignment)) {
+                $gaps++;
+
+                continue;
+            }
+            $siteIds = DB::table('safety_sites')
+                ->where('organization_id', $assignment->organization_id)
+                ->where('project_id', $assignment->project_id)
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->pluck('id');
+            if ($siteIds->count() !== 1) {
                 $gaps++;
 
                 continue;
             }
             $payload = [
                 'employee_id' => (int) $assignment->employee_id,
-                'mapping_source' => (string) $assignment->mapping_source,
+                'mapping_source' => 'workforce_employee_assignments',
                 'organization_id' => (int) $assignment->organization_id,
                 'project_id' => (int) $assignment->project_id,
-                'safety_site_id' => (int) $assignment->safety_site_id,
-                'valid_from' => $assignment->valid_from->toDateString(),
-                'valid_to' => $assignment->valid_to?->toDateString(),
-                'workforce_assignment_id' => (int) $assignment->workforce_assignment_id,
+                'safety_site_id' => (int) $siteIds->first(),
+                'valid_from' => (string) $assignment->valid_from,
+                'valid_to' => $assignment->valid_to === null ? null : (string) $assignment->valid_to,
+                'workforce_assignment_id' => (int) $assignment->id,
             ];
             $expected = hash('sha256', CanonicalJson::encode($payload));
-            if (! hash_equals($expected, (string) $assignment->source_hash)) {
-                $gaps++;
-
-                continue;
-            }
-            if ($assignment->mapping_source !== 'workforce_employee_assignments') {
+            try {
+                $mapping = $this->assignmentService->assign(
+                    $payload['organization_id'],
+                    $payload['project_id'],
+                    $payload['safety_site_id'],
+                    $payload['workforce_assignment_id'],
+                    $payload['employee_id'],
+                    $payload['valid_from'],
+                    $payload['valid_to'],
+                    $payload['mapping_source'],
+                );
+            } catch (\Throwable) {
                 $gaps++;
 
                 continue;
             }
             $inputHashes[] = $expected;
             $outputHashes[] = hash('sha256', CanonicalJson::encode([
-                'mapping_id' => (int) $assignment->id,
-                'source_hash' => (string) $assignment->source_hash,
+                'mapping_id' => (int) $mapping->id,
+                'source_hash' => (string) $mapping->source_hash,
             ]));
         }
 

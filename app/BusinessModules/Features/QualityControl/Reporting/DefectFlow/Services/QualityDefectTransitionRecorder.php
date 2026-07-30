@@ -5,16 +5,18 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectTransitionEvent;
-use Illuminate\Support\Facades\DB;
 
 final readonly class QualityDefectTransitionRecorder
 {
     public function record(QualityDefect $defect, QualityDefectStatusHistory $history): QualityDefectTransitionEvent
     {
-        return DB::transaction(function () use ($defect, $history): QualityDefectTransitionEvent {
+        return ReportSnapshotFirstWriter::run(
+            'quality_defect_transition:'.$defect->organization_id.':'.$defect->id,
+            function () use ($defect, $history): QualityDefectTransitionEvent {
             $existing = QualityDefectTransitionEvent::query()
                 ->where('organization_id', $defect->organization_id)
                 ->where('status_history_id', $history->id)
@@ -30,8 +32,10 @@ final readonly class QualityDefectTransitionRecorder
                 ->orderByDesc('event_version')
                 ->first();
             $version = ($last?->event_version ?? 0) + 1;
+            $changedAt = $history->changed_at;
             $evidenceRefs = $defect->photos()
                 ->where('organization_id', $defect->organization_id)
+                ->when($changedAt !== null, static fn ($query) => $query->where('created_at', '<=', $changedAt))
                 ->orderBy('id')
                 ->get(['id', 'type'])
                 ->map(static fn ($photo): array => [
@@ -67,6 +71,7 @@ final readonly class QualityDefectTransitionRecorder
                 'event_hash' => hash('sha256', CanonicalJson::encode($payload)),
                 'recorded_at' => now(),
             ]);
-        });
+            },
+        );
     }
 }

@@ -135,6 +135,16 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
 
         $medical = $row->requirement_type === 'medical_exam';
         $canViewMedical = $context->visibility->canViewSensitive;
+        if ($row->evidence_id !== null) {
+            ScopedReportSourceGuard::assertExactAccessible(
+                $context,
+                new ReportScopedResource(
+                    $medical ? 'safety_medical_exam' : 'safety_'.$row->requirement_type,
+                    (int) $row->evidence_id,
+                    (int) $row->project_id,
+                ),
+            );
+        }
         $status = (string) $row->status;
         if ($medical && ! $canViewMedical) {
             $status = (bool) $row->blocked
@@ -160,7 +170,7 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
         if (! $medical) {
             $values['evidence_id'] = $row->evidence_id;
         } elseif ($canViewMedical) {
-            $values['evidence_id'] = null;
+            $values['evidence_id'] = $row->evidence_id;
             $values['medical_details'] = $row->medical_details;
         }
 

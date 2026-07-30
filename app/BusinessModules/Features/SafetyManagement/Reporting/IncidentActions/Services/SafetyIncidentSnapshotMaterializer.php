@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DTO\SafetyTransitionFact;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentPolicyVersion;
@@ -38,7 +39,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $context->scope->projectIds,
             $context->scope->resources,
             $query,
-            $periodTo,
+            $asOf,
         );
         $events = $this->filterSubjects($events, $query, $periodFrom, $periodTo);
         $projectIds = $events->pluck('project_id')
@@ -65,6 +66,14 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $periodTo,
         );
         $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies, $sites);
+        $ownerSubjectCount = $this->ownerSubjectCount($organizationId, $context->scope->projectIds, $asOf, $query);
+        if ($ownerSubjectCount !== null) {
+            $projectedSubjectCount = $events
+                ->map(static fn (SafetyTransitionEvent $event): string => $event->subject_type.':'.$event->subject_id)
+                ->unique()
+                ->count();
+            $analysis['gaps'] += max(0, $ownerSubjectCount - $projectedSubjectCount);
+        }
         $coverage = $this->exposureCoverage(
             $organizationId,
             $context->scope->projectIds,
@@ -120,7 +129,34 @@ final readonly class SafetyIncidentSnapshotMaterializer
             return $existing;
         }
 
-        return DB::transaction(function () use (
+        return ReportSnapshotFirstWriter::run(
+            'safety_incident_actions:'.$organizationId.':'.$scopeHash.':'.$sourceHash,
+            function () use (
+                $query,
+                $organizationId,
+                $asOf,
+                $policyIds,
+                $events,
+                $analysis,
+                $coverage,
+                $frequency,
+                $inputHash,
+                $outputHash,
+                $sourceHash,
+                $scopeHash,
+            ): SafetyIncidentSnapshot {
+                $existing = SafetyIncidentSnapshot::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('scope_hash', $scopeHash)
+                    ->where('as_of', $asOf)
+                    ->where('formula_version', $query->definition->formulaVersion)
+                    ->where('source_hash', $sourceHash)
+                    ->first();
+                if ($existing instanceof SafetyIncidentSnapshot) {
+                    return $existing;
+                }
+
+                return DB::transaction(function () use (
             $query,
             $organizationId,
             $asOf,
@@ -174,8 +210,10 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 ] + $row);
             }
 
-            return $snapshot;
-        });
+                    return $snapshot;
+                });
+            },
+        );
     }
 
     private function events(
@@ -355,6 +393,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $lastOccurredAt = [];
         $states = [];
         $openingState = [];
+        $periodState = [];
         $gaps = 0;
         $unknowns = 0;
         $incidentSubjects = [];
@@ -424,11 +463,13 @@ final readonly class SafetyIncidentSnapshotMaterializer
             }
             if ($occurredAt < $periodFrom) {
                 $openingState[$key] = ! $closureVerified;
+                $periodState[$key] = ! $closureVerified;
                 continue;
             }
             if ($occurredAt > $periodTo) {
                 continue;
             }
+            $periodState[$key] = ! $closureVerified;
 
             $created = $event->from_status === null;
             if ($created && $event->subject_type === 'incident') {
@@ -494,7 +535,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $lastRow[$row['subject_type'].':'.$row['subject_id']] = $index;
         }
         foreach ($lastRow as $key => $index) {
-            $rows[$index]['closing_flag'] = $states[$key]['current_open'];
+            $rows[$index]['closing_flag'] = $periodState[$key] ?? false;
             $rows[$index]['opening_flag'] = $openingState[$key] ?? false;
         }
 
@@ -508,7 +549,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             'action_overdue_count' => $actionOverdue,
             'action_closed_on_time_count' => $actionClosedOnTime,
             'opening_backlog_count' => count(array_filter($openingState)),
-            'closing_backlog_count' => count(array_filter($states, static fn (array $state): bool => $state['current_open'])),
+            'closing_backlog_count' => count(array_filter($periodState)),
         ];
     }
 
@@ -523,8 +564,12 @@ final readonly class SafetyIncidentSnapshotMaterializer
     ): array {
         $sites = SafetySite::query()
             ->where('organization_id', $organizationId)
-            ->where('is_active', true)
             ->where('created_at', '<=', $periodTo)
+            ->whereDate('active_from', '<=', $periodTo->toDateString())
+            ->where(static function (Builder $builder) use ($periodFrom): void {
+                $builder->whereNull('active_until')
+                    ->orWhereDate('active_until', '>=', $periodFrom->toDateString());
+            })
             ->when($projectIds !== [], static fn (Builder $builder) => $builder->whereIn('project_id', $projectIds));
         $this->applyFilter($sites, 'project_id', $query->filters->values['project_id'] ?? null);
         $this->applyFilter($sites, 'id', $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
@@ -564,6 +609,31 @@ final readonly class SafetyIncidentSnapshotMaterializer
             'projected_days' => $actualKeys->count(),
             'hours' => sprintf('%d.%04d', intdiv($scaledHours, 10_000), $scaledHours % 10_000),
         ];
+    }
+
+    private function ownerSubjectCount(
+        int $organizationId,
+        array $projectIds,
+        CarbonImmutable $asOf,
+        ReportQuery $query,
+    ): ?int {
+        foreach (['safety_site_id', 'site_id', 'contractor_id', 'subject_type', 'category', 'severity', 'owner_user_id', 'status', 'due_from', 'due_to'] as $filter) {
+            if ($this->filterValues($query->filters->values[$filter] ?? null) !== []) {
+                return null;
+            }
+        }
+        $count = 0;
+        foreach (['safety_incidents', 'safety_violations', 'safety_corrective_actions'] as $table) {
+            $builder = DB::table($table)
+                ->where('organization_id', $organizationId)
+                ->where('created_at', '<=', $asOf);
+            if ($projectIds !== []) {
+                $builder->whereIn('project_id', $projectIds);
+            }
+            $count += $builder->count();
+        }
+
+        return $count;
     }
 
     private function isConfiguredTerminal(

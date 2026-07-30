@@ -21,6 +21,8 @@ return new class extends Migration
             $table->string('name');
             $table->string('timezone', 80);
             $table->boolean('is_active')->default(true);
+            $table->date('active_from');
+            $table->date('active_until')->nullable();
             $table->timestampTz('created_at');
             $table->timestampTz('updated_at');
 
@@ -178,6 +180,7 @@ return new class extends Migration
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_version_check CHECK (event_version > 0)');
         DB::statement("ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_hash_check CHECK (event_hash ~ '^[a-f0-9]{64}$')");
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_timestamps_check CHECK ((resolved_at IS NULL OR resolved_at <= occurred_at) AND (verified_at IS NULL OR (resolved_at IS NOT NULL AND verified_at >= resolved_at AND verified_at <= occurred_at)))');
+        DB::statement('ALTER TABLE safety_sites ADD CONSTRAINT safety_site_active_dates_check CHECK (active_until IS NULL OR active_until >= active_from)');
         DB::statement('ALTER TABLE safety_transition_events ADD CONSTRAINT safety_transition_event_evidence_check CHECK ((evidence_type IS NULL) = (evidence_id IS NULL))');
         DB::statement('ALTER TABLE safety_exposure_days ADD CONSTRAINT safety_exposure_non_negative_check CHECK (exposure_hours >= 0 AND person_shifts >= 0)');
         DB::statement("ALTER TABLE safety_exposure_days ADD CONSTRAINT safety_exposure_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')");
