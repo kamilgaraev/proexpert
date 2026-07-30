@@ -13,6 +13,7 @@ final class ReportContractException extends RuntimeException
     private const SAFE_FIELD_NAMES = [
         'as_of',
         'organization_id',
+        'owner_id',
         'user_id',
         'permission',
         'permissions',
@@ -28,6 +29,11 @@ final class ReportContractException extends RuntimeException
         'locale',
         'saved_view_id',
         'report_code',
+        'report_codes',
+        'display_preferences',
+        'catalog_group_order',
+        'collapsed_catalog_groups',
+        'landing_section',
         'run_id',
         'export_id',
         'cursor',
@@ -79,12 +85,12 @@ final class ReportContractException extends RuntimeException
             $fields = [$fields];
         }
 
-        if (!is_array($fields) || !array_is_list($fields) || $fields === []) {
+        if (! is_array($fields) || ! array_is_list($fields) || $fields === []) {
             throw new InvalidArgumentException('report_safe_fields_invalid');
         }
 
         foreach ($fields as $field) {
-            if (!is_string($field) || !in_array($field, self::SAFE_FIELD_NAMES, true)) {
+            if (! is_string($field) || ! in_array($field, self::SAFE_FIELD_NAMES, true)) {
                 throw new InvalidArgumentException('report_safe_fields_invalid');
             }
         }

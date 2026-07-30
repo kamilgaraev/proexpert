@@ -7,6 +7,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownCon
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRowsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportWorkspacePreferencesController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
@@ -18,6 +19,18 @@ Route::prefix('api/v1/admin/reports')
         Route::get('/catalog', ReportCatalogController::class)
             ->middleware('authorize:reports.view')
             ->name('catalog');
+        Route::get('/workspace', [ReportWorkspacePreferencesController::class, 'show'])
+            ->middleware('authorize:reports.view')
+            ->name('workspace.show');
+        Route::post('/workspace/recent/{reportCode}', [ReportWorkspacePreferencesController::class, 'recordRecent'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('workspace.recent.store');
+        Route::put('/workspace/favourites', [ReportWorkspacePreferencesController::class, 'setFavourites'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('workspace.favourites.update');
+        Route::patch('/workspace/preferences', [ReportWorkspacePreferencesController::class, 'updatePreferences'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('workspace.preferences.update');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware(['authorize:reports.view', 'authorize:reports.run'])
             ->name('runs.store');

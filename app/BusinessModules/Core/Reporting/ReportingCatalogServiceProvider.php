@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingA
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportWorkspacePreferencesStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportCatalogMetadataRegistry;
@@ -21,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportSche
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\PublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportWorkspacePreferencesStore;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 
@@ -50,6 +52,10 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             ManifestReportSchedulingCapabilityRegistry::class,
         );
         $this->app->singleton(GetReportCatalogAction::class, GetReportCatalogHandler::class);
+        $this->app->singleton(
+            ReportWorkspacePreferencesStore::class,
+            EloquentReportWorkspacePreferencesStore::class,
+        );
         $this->app->singleton(
             CandidateReportDefinitionRegistry::class,
             YamlCandidateReportDefinitionRegistry::class,
