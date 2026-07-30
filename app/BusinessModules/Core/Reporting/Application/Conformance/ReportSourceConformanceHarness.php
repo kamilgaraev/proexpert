@@ -50,6 +50,10 @@ final class ReportSourceConformanceHarness
         'unique_row_keys',
     ];
 
+    public function __construct(
+        private readonly ReportConformanceDrillExpectationResolver $drillExpectations,
+    ) {}
+
     public function verify(
         CandidateReportDefinition $candidate,
         ReportDefinitionBinding $binding,
@@ -99,6 +103,43 @@ final class ReportSourceConformanceHarness
         }
 
         try {
+            $drillExpectation = $this->drillExpectations->resolve($fixture->fixtureHash);
+        } catch (Throwable) {
+            return $this->evidence(
+                $definition,
+                $binding,
+                $fixture,
+                $sourceHash,
+                $snapshotKind,
+                $snapshotId,
+                $rowCount,
+                $rowsHash,
+                $totalsHash,
+                $sourceChecks,
+                $formulaChecks,
+                $commitSha,
+                $generatedAt,
+            );
+        }
+        if (! hash_equals($fixture->fixtureHash->value, $drillExpectation->fixtureHash->value)) {
+            return $this->evidence(
+                $definition,
+                $binding,
+                $fixture,
+                $sourceHash,
+                $snapshotKind,
+                $snapshotId,
+                $rowCount,
+                $rowsHash,
+                $totalsHash,
+                $sourceChecks,
+                $formulaChecks,
+                $commitSha,
+                $generatedAt,
+            );
+        }
+
+        try {
             $progress = new ReportProgress(0);
             $snapshot = $binding->dataProvider->materialize($context, $query, $progress);
             $result = $binding->dataProvider->result($context, $snapshot);
@@ -118,7 +159,7 @@ final class ReportSourceConformanceHarness
             ) as $row) {
                 $rows[] = $row;
             }
-            $drillInput = $this->drillDownInput($fixture);
+            $drillInput = $this->drillDownInput($fixture, $drillExpectation);
             $drill = $binding->drillDownProvider->drillDown(
                 $context,
                 $snapshot,
@@ -145,6 +186,7 @@ final class ReportSourceConformanceHarness
             $sourceChecks['drill_semantics'] = $this->drillSemanticsMatch(
                 $definition,
                 $fixture,
+                $drillExpectation,
                 $rows,
                 $drillInput,
                 $drill,
@@ -280,15 +322,16 @@ final class ReportSourceConformanceHarness
     private function drillSemanticsMatch(
         ReportDefinition $definition,
         ReportConformanceFixture $fixture,
+        ReportConformanceDrillExpectation $expectation,
         array $rows,
         ReportDrillDownInput $input,
         ReportDrillDownResult $drill,
     ): bool {
         $rowKeys = array_column($rows, 'row_key');
         $columnIds = array_column($definition->columns, 'id');
-        if (! in_array($fixture->drillDownCell->rowKey, $rowKeys, true)
-            || ! in_array($fixture->drillDownCell->columnId, $columnIds, true)
-            || $input->cell != $fixture->drillDownCell
+        if (! in_array($expectation->cell->rowKey, $rowKeys, true)
+            || ! in_array($expectation->cell->columnId, $columnIds, true)
+            || $input->cell != $expectation->cell
             || $input->cursor !== $fixture->drillDown->cursor
             || $input->limit !== $fixture->drillDown->limit
             || ($drill->nextCursor !== null
@@ -305,7 +348,7 @@ final class ReportSourceConformanceHarness
             return false;
         }
 
-        return hash_equals($fixture->expectedDrillDownHash->value, $actualHash->value);
+        return hash_equals($expectation->expectedResultHash->value, $actualHash->value);
     }
 
     private function resultSemanticsMatch(
@@ -525,10 +568,12 @@ final class ReportSourceConformanceHarness
         return false;
     }
 
-    private function drillDownInput(ReportConformanceFixture $fixture): ReportDrillDownInput
-    {
+    private function drillDownInput(
+        ReportConformanceFixture $fixture,
+        ReportConformanceDrillExpectation $expectation,
+    ): ReportDrillDownInput {
         return new ReportDrillDownInput(
-            $fixture->drillDownCell,
+            $expectation->cell,
             $fixture->drillDown->cursor,
             $fixture->drillDown->limit,
         );
@@ -616,6 +661,7 @@ final class ReportSourceConformanceHarness
             $binding->dataProvider::class,
             $binding->drillDownProvider::class,
             $binding->rowQuery::class,
+            $this->drillExpectations::class,
         ];
         $hashes = [];
         foreach ($components as $class) {

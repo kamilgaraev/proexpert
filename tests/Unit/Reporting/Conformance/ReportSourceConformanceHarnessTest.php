@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Conformance;
 
+use App\BusinessModules\Core\Reporting\Application\Conformance\ReportConformanceDrillExpectation;
+use App\BusinessModules\Core\Reporting\Application\Conformance\ReportConformanceDrillExpectationResolver;
 use App\BusinessModules\Core\Reporting\Application\Conformance\ReportSourceConformanceHarness;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
@@ -40,7 +42,9 @@ use DateTimeZone;
 use InvalidArgumentException;
 use Opis\JsonSchema\CompliantValidator;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
 use ReflectionMethod;
+use RuntimeException;
 use Tests\Support\Reporting\FakeReportDataProvider;
 use Tests\Support\Reporting\FakeReportDrillDownProvider;
 use Tests\Support\Reporting\FakeReportRowQuery;
@@ -58,6 +62,41 @@ final class ReportSourceConformanceHarnessTest extends TestCase
             CandidateReportDefinition::class,
             $method->getParameters()[0]->getType()?->getName(),
         );
+    }
+
+    public function test_fixture_constructor_and_harness_dependency_are_exact(): void
+    {
+        $fixtureConstructor = (new ReflectionClass(ReportConformanceFixture::class))->getConstructor();
+        self::assertNotNull($fixtureConstructor);
+        self::assertSame([
+            ['fixtureHash', Sha256Hash::class],
+            ['expectedRowCount', 'int'],
+            ['sort', \App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort::class],
+            ['pageLimit', 'int'],
+            ['cursorChunkSize', 'int'],
+            ['drillDown', \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest::class],
+            ['expectedTotalsHash', Sha256Hash::class],
+        ], array_map(
+            static fn (\ReflectionParameter $parameter): array => [
+                $parameter->getName(),
+                $parameter->getType()?->getName(),
+            ],
+            $fixtureConstructor->getParameters(),
+        ));
+        foreach ($fixtureConstructor->getParameters() as $parameter) {
+            self::assertFalse($parameter->isOptional());
+            self::assertFalse($parameter->isDefaultValueAvailable());
+        }
+
+        $harnessConstructor = (new ReflectionClass(ReportSourceConformanceHarness::class))->getConstructor();
+        self::assertNotNull($harnessConstructor);
+        self::assertCount(1, $harnessConstructor->getParameters());
+        self::assertSame(
+            ReportConformanceDrillExpectationResolver::class,
+            $harnessConstructor->getParameters()[0]->getType()?->getName(),
+        );
+        self::assertFalse($harnessConstructor->getParameters()[0]->isOptional());
+        self::assertFalse($harnessConstructor->getParameters()[0]->isDefaultValueAvailable());
     }
 
     public function test_candidate_fixture_produces_complete_passed_evidence(): void
@@ -233,18 +272,18 @@ final class ReportSourceConformanceHarnessTest extends TestCase
     public function test_drill_target_and_result_identity_are_exact(): void
     {
         foreach ([
-            (new ReportConformanceFixtureBuilder)
-                ->drillDownCell(new ReportDrillDownCell('missing-row', 'name'))
-                ->build(),
-            (new ReportConformanceFixtureBuilder)
-                ->drillDownCell(new ReportDrillDownCell('row-1', 'missing_column'))
-                ->build(),
-            (new ReportConformanceFixtureBuilder)
-                ->expectedDrillDownHash(new Sha256Hash(str_repeat('e', 64)))
-                ->build(),
-        ] as $fixture) {
+            [new ReportDrillDownCell('missing-row', 'name'), null],
+            [new ReportDrillDownCell('row-1', 'missing_column'), null],
+            [new ReportDrillDownCell('row-1', 'name'), new Sha256Hash(str_repeat('e', 64))],
+        ] as [$cell, $expectedHash]) {
             $scenario = $this->scenario();
-            $scenario['fixture'] = $fixture;
+            $scenario['drillResolver'] = new FakeReportConformanceDrillExpectationResolver(
+                new ReportConformanceDrillExpectation(
+                    $scenario['fixture']->fixtureHash,
+                    $cell,
+                    $expectedHash ?? $scenario['drillExpectation']->expectedResultHash,
+                ),
+            );
 
             $evidence = $this->verify($scenario);
 
@@ -258,6 +297,32 @@ final class ReportSourceConformanceHarnessTest extends TestCase
         self::assertSame('row-1', $input->cell->rowKey);
         self::assertSame('name', $input->cell->columnId);
         self::assertNotSame($scenario['fixture']->drillDown->token, $input->cell->rowKey);
+    }
+
+    public function test_missing_or_mismatched_drill_expectation_fails_before_owner_ports(): void
+    {
+        foreach ([
+            new FakeReportConformanceDrillExpectationResolver(null),
+            new FakeReportConformanceDrillExpectationResolver(
+                new ReportConformanceDrillExpectation(
+                    new Sha256Hash(str_repeat('e', 64)),
+                    new ReportDrillDownCell('row-1', 'name'),
+                    new Sha256Hash(
+                        'c621ab66913de009c148301a72538f1e3c8ae7899452800387e8eb4cb6448641',
+                    ),
+                ),
+            ),
+        ] as $resolver) {
+            $scenario = $this->scenario();
+            $scenario['drillResolver'] = $resolver;
+
+            $evidence = $this->verify($scenario);
+
+            self::assertFalse($evidence->passed());
+            self::assertContains('source.drill_semantics.failed', $evidence->source->assertionCodes);
+            self::assertSame(1, $resolver->calls());
+            $this->assertOwnerPortsWereNotCalled($scenario['binding']);
+        }
     }
 
     public function test_nonfinite_cursor_value_returns_failed_evidence(): void
@@ -499,7 +564,7 @@ final class ReportSourceConformanceHarnessTest extends TestCase
 
     private function verify(array $scenario): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence
     {
-        return (new ReportSourceConformanceHarness)->verify(
+        return (new ReportSourceConformanceHarness($scenario['drillResolver']))->verify(
             $scenario['candidate'],
             $scenario['binding'],
             $scenario['context'],
@@ -633,15 +698,25 @@ final class ReportSourceConformanceHarnessTest extends TestCase
             new FakeReportDrillDownProvider($drill),
             null,
         );
+        $fixture = (new ReportConformanceFixtureBuilder)
+            ->expectedRowCount($rowCount)
+            ->build();
+        $drillExpectation = new ReportConformanceDrillExpectation(
+            $fixture->fixtureHash,
+            new ReportDrillDownCell('row-1', 'name'),
+            new Sha256Hash(
+                'c621ab66913de009c148301a72538f1e3c8ae7899452800387e8eb4cb6448641',
+            ),
+        );
 
         return [
             'candidate' => $candidate,
             'binding' => $binding,
             'context' => $context,
             'query' => $query,
-            'fixture' => (new ReportConformanceFixtureBuilder)
-                ->expectedRowCount($rowCount)
-                ->build(),
+            'fixture' => $fixture,
+            'drillExpectation' => $drillExpectation,
+            'drillResolver' => new FakeReportConformanceDrillExpectationResolver($drillExpectation),
         ];
     }
 
@@ -755,5 +830,27 @@ final readonly class NonProgressingConformanceDataProvider implements ReportData
         ReportSnapshotRef $snapshot,
     ): ReportResult {
         return $this->reportResult;
+    }
+}
+
+final class FakeReportConformanceDrillExpectationResolver implements ReportConformanceDrillExpectationResolver
+{
+    private int $calls = 0;
+
+    public function __construct(
+        private readonly ?ReportConformanceDrillExpectation $expectation,
+    ) {}
+
+    public function resolve(Sha256Hash $fixtureHash): ReportConformanceDrillExpectation
+    {
+        $this->calls++;
+
+        return $this->expectation
+            ?? throw new RuntimeException('report_conformance_drill_expectation_missing');
+    }
+
+    public function calls(): int
+    {
+        return $this->calls;
     }
 }

@@ -17,8 +17,6 @@ final readonly class ReportConformanceFixture
         public int $cursorChunkSize,
         public ReportDrillDownRequest $drillDown,
         public Sha256Hash $expectedTotalsHash,
-        public ReportDrillDownCell $drillDownCell,
-        public Sha256Hash $expectedDrillDownHash,
     ) {
         if ($expectedRowCount < 0
             || $pageLimit < 1

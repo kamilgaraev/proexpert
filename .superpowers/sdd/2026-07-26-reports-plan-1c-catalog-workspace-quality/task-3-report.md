@@ -120,7 +120,7 @@ GREEN:
 
 - `hasMore` теперь строго эквивалентен наличию непустого canonical next cursor;
 - page limit, sort, row prefix и cursor chunk semantics проверяются точно;
-- fixture расширен явным `ReportDrillDownCell` и SHA-256 полного ожидаемого drill result;
+- в round 1 drill expectation первоначально был добавлен в fixture; это решение заменено отдельным typed resolver в round 2;
 - opaque signed request token не используется как row key;
 - drill target row/column проверяются по candidate definition и cursor rows;
 - drill rows, next cursor и typed resource links входят в result-identity hash.
@@ -148,4 +148,42 @@ GREEN:
 - Pint changed PHP files: PASS после двух точечных style fixes;
 - `git diff --check`: замечаний нет;
 - published registry/assembler/map dependencies отсутствуют;
+- Task 4 / global Task 18 не начинался.
+
+## Independent review round 2
+
+Статус: `FIXED`.
+
+Закрыто новое блокирующее замечание к публичному контракту fixture.
+
+### Канонический fixture contract
+
+- `ReportConformanceFixture` восстановлен до точных семи обязательных constructor fields в каноническом порядке;
+- `ReportDrillDownCell` и ожидаемый SHA-256 drill result удалены из DTO и test fixture builder;
+- reflection regression фиксирует точные имена, типы, порядок, обязательность и отсутствие default values;
+- evidence schema и canonical JSON fixture не изменялись: внутренние поля conformance fixture в evidence не сериализуются.
+
+### Typed drill expectation dependency
+
+- добавлены immutable `ReportConformanceDrillExpectation` и typed `ReportConformanceDrillExpectationResolver`;
+- resolver принимает `fixtureHash`, а harness требует его единственным обязательным constructor dependency без fallback/default;
+- resolved expectation обязан содержать тот же `fixtureHash`;
+- missing expectation, exception resolver или hash mismatch возвращают failed evidence до первого owner-port вызова;
+- точные проверки drill target row/column, request cursor/limit и полного result hash сохранены;
+- resolver включён в component class hashes evidence;
+- тесты используют детерминированный resolver и не создают runtime registry/map.
+
+### TDD и проверки round 2
+
+RED:
+
+- amended exact two-file PHPUnit gate завершился exit 1;
+- первая ошибка: отсутствовал `ReportConformanceDrillExpectationResolver`.
+
+GREEN:
+
+- amended exact two-file PHPUnit gate: `26 tests`, `160 assertions`, `2 skipped` только из-за недоступности file symlink на текущей Windows;
+- PHPStan changed production scope: `[OK] No errors`, `--memory-limit=1G`;
+- Pint changed production/test PHP files: PASS, исправлен один style issue;
+- schema/canonical evidence fixture не изменялись;
 - Task 4 / global Task 18 не начинался.
