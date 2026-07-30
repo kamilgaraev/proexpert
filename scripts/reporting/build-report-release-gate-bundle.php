@@ -82,7 +82,8 @@ function buildReleaseGateBundle(array $input, string $root): array
             || ($source['artifact_id'] ?? null) !== $artifactId
             || ($source['kind'] ?? null) !== $kind
             || ($source['path'] ?? null) !== $path
-            || ! is_string($source['bytes_sha256'] ?? null) || preg_match('/^[a-f0-9]{64}$/', $source['bytes_sha256']) !== 1) {
+            || ! is_string($source['bytes_sha256'] ?? null) || preg_match('/^[a-f0-9]{64}$/', $source['bytes_sha256']) !== 1
+            || ! matchesSourceArtifactBytes($root, $path, $source['bytes_sha256'])) {
             throw new ReportQualityGateException(ReportQualityGateFailureCode::INVALID);
         }
     }
@@ -142,6 +143,13 @@ function releaseSourceArtifacts(): array
         ['report_management_catalog_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'],
         ['report_publication_ledger_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/report-publication-ledger.v1.json'],
     ];
+}
+
+function matchesSourceArtifactBytes(string $root, string $path, string $expectedHash): bool
+{
+    $bytes = @file_get_contents($root.'/'.$path);
+
+    return is_string($bytes) && hash_equals(hash('sha256', $bytes), $expectedHash);
 }
 
 /** @param array<string, int> $actual @param array<string, int> $required */

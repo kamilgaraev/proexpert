@@ -17,9 +17,43 @@ use PHPUnit\Framework\TestCase;
 
 final class ReportReleaseGateBundleBuilderTest extends TestCase
 {
+    private string $sourceRoot;
+
+    /** @var list<string> */
+    private array $createdSourceArtifacts = [];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->sourceRoot = dirname(__DIR__, 4);
+        foreach ($this->sourceDefinitions() as [$artifactId, , $path]) {
+            $artifactPath = $this->sourceRoot.'/'.$path;
+            if (! file_exists($artifactPath)) {
+                $directory = dirname($artifactPath);
+                if (! is_dir($directory) && ! mkdir($directory, 0777, true) && ! is_dir($directory)) {
+                    throw new \RuntimeException('Unable to create release artifact fixture directory.');
+                }
+                file_put_contents($artifactPath, $artifactId."\n");
+                $this->createdSourceArtifacts[] = $artifactPath;
+            }
+        }
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->createdSourceArtifacts as $artifactPath) {
+            unlink($artifactPath);
+            for ($directory = dirname($artifactPath); $directory !== $this->sourceRoot && @rmdir($directory); $directory = dirname($directory)) {
+            }
+        }
+
+        parent::tearDown();
+    }
+
     public function test_builds_a_closed_fourteen_gate_bundle_with_the_9_4_1_ownership_map(): void
     {
-        $bundle = (new ReportReleaseGateBundleBuilder())->build(
+        $bundle = $this->builder()->build(
             $this->gates(),
             $this->qg14Evidence(),
             str_repeat('a', 40),
@@ -39,7 +73,7 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE));
 
-        (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), $this->sources(), new DateTimeImmutable('2026-07-26T00:00:00Z'));
+        $this->builder()->build($gates, $this->qg14Evidence(), str_repeat('a', 40), $this->sources(), new DateTimeImmutable('2026-07-26T00:00:00Z'));
     }
 
     public function test_rejects_an_arbitrary_command_or_schema_hash_for_a_catalog_gate(): void
@@ -49,7 +83,7 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE));
 
-        (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), $this->sources(), new DateTimeImmutable('2026-07-26T00:00:00Z'));
+        $this->builder()->build($gates, $this->qg14Evidence(), str_repeat('a', 40), $this->sources(), new DateTimeImmutable('2026-07-26T00:00:00Z'));
     }
 
     public function test_rejects_a_bundle_without_exactly_thirteen_distinct_source_artifacts(): void
@@ -59,7 +93,17 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
 
-        (new ReportReleaseGateBundleBuilder())->build($this->gates(), $this->qg14Evidence(), str_repeat('a', 40), $sources, new DateTimeImmutable('2026-07-26T00:00:00Z'));
+        $this->builder()->build($this->gates(), $this->qg14Evidence(), str_repeat('a', 40), $sources, new DateTimeImmutable('2026-07-26T00:00:00Z'));
+    }
+
+    public function test_rejects_source_artifact_hash_that_does_not_match_its_file_bytes(): void
+    {
+        $sources = $this->sources();
+        $sources[0]['bytes_sha256'] = str_repeat('f', 64);
+
+        $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
+
+        $this->builder()->build($this->gates(), $this->qg14Evidence(), str_repeat('a', 40), $sources, new DateTimeImmutable('2026-07-26T00:00:00Z'));
     }
 
     /** @return list<ReportQualityGateEvidence> */
@@ -83,10 +127,26 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
         return new JointQG14Evidence(0, 0, 0, new Sha256Hash(str_repeat('1', 64)), new Sha256Hash(str_repeat('2', 64)), new Sha256Hash(str_repeat('3', 64)), ['node', 'scripts/verify-reporting-cutover.mjs', '--admin-root=C:/admin', '--backend-root=C:/backend'], 'qg14_forbidden_symbols');
     }
 
+    private function builder(): ReportReleaseGateBundleBuilder
+    {
+        return new ReportReleaseGateBundleBuilder();
+    }
+
     /** @return list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> */
     private function sources(): array
     {
-        $sources = [
+        return array_map(fn (array $source): array => [
+            'artifact_id' => $source[0],
+            'kind' => $source[1],
+            'path' => $source[2],
+            'bytes_sha256' => hash_file('sha256', $this->sourceRoot.'/'.$source[2]),
+        ], $this->sourceDefinitions());
+    }
+
+    /** @return list<array{string, string, string}> */
+    private function sourceDefinitions(): array
+    {
+        return [
             ['plan-1a-completion', 'ancestor_evidence', 'build/reports/plan-1a-completion.json'],
             ['plan-1b-completion', 'ancestor_evidence', 'build/reports/plan-1b-completion.json'],
             ['plan-1c-platform-completion', 'ancestor_evidence', 'build/reports/plan-1c-platform-completion.json'],
@@ -101,12 +161,5 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
             ['report_management_catalog_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'],
             ['report_publication_ledger_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/report-publication-ledger.v1.json'],
         ];
-
-        return array_map(static fn (array $source): array => [
-            'artifact_id' => $source[0],
-            'kind' => $source[1],
-            'path' => $source[2],
-            'bytes_sha256' => str_repeat('a', 64),
-        ], $sources);
     }
 }

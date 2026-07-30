@@ -109,11 +109,19 @@ final class ReportReleaseGateBundleBuilder
                 || ($source['kind'] ?? null) !== $kind
                 || ($source['path'] ?? null) !== $path
                 || preg_match('/^[a-f0-9]{64}$/', $source['bytes_sha256'] ?? null) !== 1
+                || ! $this->matchesArtifactBytes($path, $source['bytes_sha256'])
             ) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private function matchesArtifactBytes(string $path, string $expectedHash): bool
+    {
+        $bytes = @file_get_contents(dirname(__DIR__, 6).'/'.$path);
+
+        return is_string($bytes) && hash_equals(hash('sha256', $bytes), $expectedHash);
     }
 }
