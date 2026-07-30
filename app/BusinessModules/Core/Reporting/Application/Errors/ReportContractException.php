@@ -42,6 +42,10 @@ final class ReportContractException extends RuntimeException
         'sort_dir',
         'token',
         'timezone',
+        'name',
+        'visibility',
+        'is_default',
+        'saved_view_id',
     ];
 
     public readonly ReportErrorCode $errorCode;

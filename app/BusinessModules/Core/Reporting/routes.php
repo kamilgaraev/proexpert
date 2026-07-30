@@ -7,6 +7,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownCon
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRowsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportWorkspacePreferencesController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors;
 use App\Support\Routing\AdminRouteStack;
@@ -31,6 +32,18 @@ Route::prefix('api/v1/admin/reports')
         Route::patch('/workspace/preferences', [ReportWorkspacePreferencesController::class, 'updatePreferences'])
             ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
             ->name('workspace.preferences.update');
+        Route::get('/saved-views', [ReportSavedViewController::class, 'index'])
+            ->middleware('authorize:reports.view')->name('saved-views.index');
+        Route::post('/saved-views', [ReportSavedViewController::class, 'store'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])->name('saved-views.store');
+        Route::get('/saved-views/{savedViewId}', [ReportSavedViewController::class, 'show'])
+            ->middleware('authorize:reports.view')->name('saved-views.show');
+        Route::patch('/saved-views/{savedViewId}', [ReportSavedViewController::class, 'update'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])->name('saved-views.update');
+        Route::delete('/saved-views/{savedViewId}', [ReportSavedViewController::class, 'destroy'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])->name('saved-views.destroy');
+        Route::post('/saved-views/{savedViewId}/set-default', [ReportSavedViewController::class, 'setDefault'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])->name('saved-views.set-default');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware(['authorize:reports.view', 'authorize:reports.run'])
             ->name('runs.store');

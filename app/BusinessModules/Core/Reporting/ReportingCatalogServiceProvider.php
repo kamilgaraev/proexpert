@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataReg
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportWorkspacePreferencesStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
@@ -22,6 +23,8 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportSche
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\PublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
+use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSavedViewCursorCodec;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportWorkspacePreferencesStore;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
@@ -56,6 +59,8 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             ReportWorkspacePreferencesStore::class,
             EloquentReportWorkspacePreferencesStore::class,
         );
+        $this->app->singleton(ReportSavedViewStore::class, EloquentReportSavedViewStore::class);
+        $this->app->singleton(SignedReportSavedViewCursorCodec::class, fn (): SignedReportSavedViewCursorCodec => new SignedReportSavedViewCursorCodec((string) config('app.key')));
         $this->app->singleton(
             CandidateReportDefinitionRegistry::class,
             YamlCandidateReportDefinitionRegistry::class,
