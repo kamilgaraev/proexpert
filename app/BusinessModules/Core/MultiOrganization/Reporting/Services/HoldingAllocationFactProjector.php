@@ -7,12 +7,12 @@ namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFact;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationProjectionGap;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingContractVersionEvidence;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Enums\Contract\ContractAllocationTypeEnum;
 use App\Models\Contract;
 use App\Models\ContractAllocationHistory;
-use App\Models\Contractor;
 use App\Models\ContractProjectAllocation;
 use Brick\Math\BigDecimal;
 use Brick\Math\Exception\MathException;
@@ -58,6 +58,20 @@ final readonly class HoldingAllocationFactProjector
             return null;
         }
         $state = $this->allocationState((int) $allocation->getKey(), (int) $history->getKey());
+        $contractVersion = HoldingContractVersionEvidence::query()
+            ->where('allocation_history_id', $history->getKey())
+            ->first();
+        if (! $this->validContractVersion($contractVersion, $contract, $history)) {
+            $this->recordGap([
+                'organization_id' => (int) $contract->organization_id,
+                'source_type' => 'contract',
+                'source_id' => (int) $allocation->getKey(),
+                'source_version' => (int) $history->getKey(),
+                'monetary_basis' => 'contracted',
+            ], ['contract_version_evidence']);
+
+            return null;
+        }
         $type = ContractAllocationTypeEnum::tryFrom((string) ($state['allocation_type'] ?? ''));
         $active = ($state['is_active'] ?? true) !== false && $history->action !== 'deleted';
         if (! $type instanceof ContractAllocationTypeEnum
@@ -89,9 +103,7 @@ final readonly class HoldingAllocationFactProjector
 
             return null;
         }
-        $counterpartyOrganizationId = $contract->contractor_id === null
-            ? null
-            : Contractor::query()->whereKey($contract->contractor_id)->value('source_organization_id');
+        $counterpartyOrganizationId = $contractVersion->counterparty_organization_id;
 
         $fixedMinor = $type === ContractAllocationTypeEnum::FIXED
             ? $this->moneyToMinor($active ? (string) ($state['allocated_amount'] ?? '0') : '0')
@@ -99,7 +111,7 @@ final readonly class HoldingAllocationFactProjector
         $percentage = $type === ContractAllocationTypeEnum::PERCENTAGE
             ? ($active ? (string) ($state['allocated_percentage'] ?? '0') : '0')
             : null;
-        $contractMinor = $this->moneyToMinor((string) $contract->total_amount);
+        $contractMinor = $this->moneyToMinor((string) $contractVersion->total_amount);
         $source = [
             'organization_id' => (int) $contract->organization_id,
             'holding_id' => $hierarchy->holdingId,
@@ -129,6 +141,7 @@ final readonly class HoldingAllocationFactProjector
             'source_refs' => [[
                 'type' => 'contract_allocation',
                 'id' => (int) $allocation->getKey(),
+                'contract_id' => (int) $contractVersion->contract_id,
                 'version' => (int) $history->getKey(),
             ]],
         ];
@@ -393,6 +406,24 @@ final readonly class HoldingAllocationFactProjector
         }
 
         return $state;
+    }
+
+    private function validContractVersion(
+        mixed $evidence,
+        Contract $contract,
+        ContractAllocationHistory $history,
+    ): bool {
+        if (! $evidence instanceof HoldingContractVersionEvidence
+            || (int) $evidence->allocation_history_id !== (int) $history->getKey()
+            || (int) $evidence->contract_id !== (int) $contract->getKey()
+            || (int) $evidence->organization_id !== (int) $contract->organization_id
+            || ! is_numeric($evidence->total_amount)
+            || $evidence->recorded_at === null
+            || $history->created_at === null) {
+            return false;
+        }
+
+        return true;
     }
 
     private function linkedEvidence(Contract $contract, int $projectId, \DateTimeInterface $asOf): array

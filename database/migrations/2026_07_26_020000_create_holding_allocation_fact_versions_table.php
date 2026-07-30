@@ -11,6 +11,35 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::create('holding_contract_version_evidence', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('allocation_history_id')->unique();
+            $table->unsignedBigInteger('contract_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->decimal('total_amount', 20, 2);
+            $table->unsignedBigInteger('contractor_id')->nullable();
+            $table->unsignedBigInteger('counterparty_organization_id')->nullable();
+            $table->dateTimeTz('recorded_at');
+            $table->char('source_hash', 64);
+            $table->index(
+                ['contract_id', 'allocation_history_id'],
+                'holding_contract_version_evidence_contract',
+            );
+        });
+        DB::statement(<<<'SQL'
+CREATE OR REPLACE FUNCTION holding_contract_version_evidence_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'holding contract version evidence is append-only';
+END;
+$$ LANGUAGE plpgsql
+SQL);
+        DB::statement(
+            'CREATE TRIGGER holding_contract_version_evidence_append_only '
+            .'BEFORE UPDATE OR DELETE ON holding_contract_version_evidence '
+            .'FOR EACH ROW EXECUTE FUNCTION holding_contract_version_evidence_append_only()',
+        );
+
         Schema::create('holding_allocation_fact_versions', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -73,6 +102,19 @@ return new class extends Migration
             .'CHECK ((linked_parent_allocation_id IS NULL AND linked_incoming_minor IS NULL AND linked_outgoing_minor IS NULL) '
             .'OR (linked_parent_allocation_id IS NOT NULL AND linked_incoming_minor IS NOT NULL AND linked_outgoing_minor IS NOT NULL))',
         );
+        DB::statement(<<<'SQL'
+CREATE OR REPLACE FUNCTION holding_allocation_fact_versions_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'holding allocation fact versions are append-only';
+END;
+$$ LANGUAGE plpgsql
+SQL);
+        DB::statement(
+            'CREATE TRIGGER holding_allocation_fact_versions_append_only '
+            .'BEFORE UPDATE OR DELETE ON holding_allocation_fact_versions '
+            .'FOR EACH ROW EXECUTE FUNCTION holding_allocation_fact_versions_append_only()',
+        );
 
         Schema::create('holding_allocation_projection_gaps', function (Blueprint $table): void {
             $table->bigIncrements('id');
@@ -101,6 +143,17 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('holding_allocation_projection_gaps');
+        DB::statement(
+            'DROP TRIGGER IF EXISTS holding_allocation_fact_versions_append_only '
+            .'ON holding_allocation_fact_versions',
+        );
+        DB::statement('DROP FUNCTION IF EXISTS holding_allocation_fact_versions_append_only()');
         Schema::dropIfExists('holding_allocation_fact_versions');
+        DB::statement(
+            'DROP TRIGGER IF EXISTS holding_contract_version_evidence_append_only '
+            .'ON holding_contract_version_evidence',
+        );
+        DB::statement('DROP FUNCTION IF EXISTS holding_contract_version_evidence_append_only()');
+        Schema::dropIfExists('holding_contract_version_evidence');
     }
 };

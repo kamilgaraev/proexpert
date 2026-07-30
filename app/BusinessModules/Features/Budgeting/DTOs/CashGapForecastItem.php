@@ -35,7 +35,7 @@ final readonly class CashGapForecastItem
         public string $direction,
         public string $bucket,
         string|int|float $amount,
-        string|int|float $probability = '1',
+        string|int $probability = '1',
         public ?int $organizationId = null,
         public ?int $projectId = null,
         public ?int $counterpartyId = null,
@@ -102,12 +102,8 @@ final readonly class CashGapForecastItem
         return $this->cashFlowKey;
     }
 
-    private static function probability(string|int|float $probability): string
+    private static function probability(string|int $probability): string
     {
-        if (is_float($probability)) {
-            $probability = rtrim(rtrim(sprintf('%.14F', $probability), '0'), '.');
-        }
-
         return PortfolioDecimal::ratio($probability);
     }
 }

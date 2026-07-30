@@ -11,7 +11,7 @@ final readonly class PaymentCalendarCashGapOptions
 {
     /**
      * @param list<array{cash_flow_key:string,date:string,reason?:string|null}> $reschedules
-     * @param list<array{cash_flow_key:string,probability:float,reason?:string|null}> $probabilityOverrides
+     * @param list<array{cash_flow_key:string,probability:string|int,reason?:string|null}> $probabilityOverrides
      * @param list<array{date:string,amount:float,currency?:string|null,description?:string|null,reason?:string|null}> $financingItems
      * @param list<string> $excludedCashFlowKeys
      */
@@ -19,8 +19,8 @@ final readonly class PaymentCalendarCashGapOptions
         public ?float $openingBalance = null,
         public string $scenario = CashGapForecastContext::SCENARIO_BASE,
         public int $stressInflowDelayDays = 7,
-        public float $stressInflowProbabilityFactor = 0.75,
-        public float $optimisticInflowProbabilityLift = 0.1,
+        public string $stressInflowProbabilityFactor = '0.75',
+        public string $optimisticInflowProbabilityLift = '0.1',
         public int $optimisticInflowAdvanceDays = 0,
         public array $reschedules = [],
         public array $probabilityOverrides = [],
@@ -91,7 +91,9 @@ final readonly class PaymentCalendarCashGapOptions
             $adjustments[] = new CashGapScenarioAdjustment(
                 action: CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY,
                 cashFlowKey: $this->nullableString($override['cash_flow_key'] ?? null),
-                probability: array_key_exists('probability', $override) ? (float) $override['probability'] : null,
+                probability: array_key_exists('probability', $override)
+                    ? $this->decimalInput($override['probability'])
+                    : null,
                 reason: $this->nullableString($override['reason'] ?? null),
             );
         }
@@ -144,5 +146,10 @@ final readonly class PaymentCalendarCashGapOptions
         }
 
         return trim($value);
+    }
+
+    private function decimalInput(mixed $value): string|int
+    {
+        return is_int($value) || is_string($value) ? $value : '0';
     }
 }

@@ -72,7 +72,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
                 amount: 1_000.0,
                 remainingAmount: 700.0,
                 currency: 'RUB',
-                probability: 1.0,
+                probability: '1',
                 status: 'scheduled',
                 sourceType: 'payment_document',
                 sourceId: 118,
@@ -98,7 +98,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
                 amount: 400.0,
                 remainingAmount: 400.0,
                 currency: 'RUB',
-                probability: 1.0,
+                probability: '1',
                 status: 'completed',
                 sourceType: 'payment_transaction',
                 sourceId: 301,
@@ -142,7 +142,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
                 amount: 800.0,
                 remainingAmount: 800.0,
                 currency: 'RUB',
-                probability: 1.0,
+                probability: '1',
                 status: 'approved',
                 sourceType: 'payment_document',
                 sourceId: 118,
@@ -158,7 +158,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
                 amount: 1_000.0,
                 remainingAmount: 1_000.0,
                 currency: 'RUB',
-                probability: 0.5,
+                probability: '0.5',
                 status: 'scheduled',
                 sourceType: 'payment_document',
                 sourceId: 119,
@@ -177,7 +177,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
         $this->assertSame('base', $contract['cash_gap']['scenario']);
         $this->assertSame('critical', $contract['cash_gap']['forecast']['risk_level']);
         $this->assertSame('2026-01-10', $contract['cash_gap']['forecast']['cash_gap']['first_gap_date']);
-        $this->assertSame(300.0, $contract['cash_gap']['forecast']['cash_gap']['max_gap_amount']);
+        $this->assertSame('300.00', $contract['cash_gap']['forecast']['cash_gap']['max_gap_amount']);
         $this->assertSame('payment-document:118', $contract['items'][0]['cash_flow_key']);
     }
 
@@ -193,7 +193,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
                 amount: 800.0,
                 remainingAmount: 800.0,
                 currency: 'RUB',
-                probability: 1.0,
+                probability: '1',
                 status: 'approved',
                 sourceType: 'payment_document',
                 sourceId: 118,
@@ -209,7 +209,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
                 amount: 200.0,
                 remainingAmount: 200.0,
                 currency: 'RUB',
-                probability: 1.0,
+                probability: '1',
                 status: 'approved',
                 sourceType: 'payment_document',
                 sourceId: 119,
@@ -235,8 +235,8 @@ final class PaymentCalendarContractServiceTest extends TestCase
         $this->assertSame('2026-01-11', $contract['items'][1]['date']);
         $this->assertTrue($contract['cash_gap']['available']);
         $this->assertTrue($contract['cash_gap']['scenario_has_assumptions']);
-        $this->assertSame(0.0, $contract['cash_gap']['forecast']['cash_gap']['max_gap_amount']);
-        $this->assertSame(500.0, $contract['cash_gap']['baseline_forecast']['cash_gap']['max_gap_amount']);
+        $this->assertSame('0.00', $contract['cash_gap']['forecast']['cash_gap']['max_gap_amount']);
+        $this->assertSame('500.00', $contract['cash_gap']['baseline_forecast']['cash_gap']['max_gap_amount']);
         $this->assertSame(-500.0, $contract['cash_gap']['comparison']['max_gap_amount_delta']);
         $this->assertSame(3, $contract['cash_gap']['scenario_assumptions_count']);
     }

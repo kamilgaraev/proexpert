@@ -78,12 +78,14 @@ final readonly class BudgetingPortfolioProjectionService
         array $watermarks,
         array $sourceRefs,
         ReportFreshnessStatus $freshness = ReportFreshnessStatus::FRESH,
+        array $qualityGaps = [],
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query, self::HEALTH_CODE);
         $this->assertSourceRefs($sourceRefs);
         $generatedAt = $query->asOf;
         $id = (string) Str::ulid();
-        $quality = $this->healthQuality($projection);
+        $quality = $this->healthQuality($projection, $qualityGaps);
+        $watermarks['quality_gaps'] = array_values($qualityGaps);
 
         DB::transaction(function () use ($context, $query, $projection, $sourceHash, $watermarks, $sourceRefs, $freshness, $generatedAt, $id, $quality): void {
             BudgetingPortfolioSnapshot::query()->create([
@@ -237,7 +239,10 @@ final readonly class BudgetingPortfolioProjectionService
             ->where('report_code', $code)
             ->first();
         if (! $record instanceof BudgetingPortfolioSnapshot
-            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
+            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->definition_hash, $snapshot->definitionHash->value)
+            || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
+            || ! hash_equals((string) $record->query_hash, (string) ($snapshot->watermarks['query_hash'] ?? ''))) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
 
@@ -348,16 +353,34 @@ final readonly class BudgetingPortfolioProjectionService
         );
     }
 
-    private function healthQuality(ProjectPortfolioProjectionResult $projection): ReportQuality
+    private function healthQuality(
+        ProjectPortfolioProjectionResult $projection,
+        array $qualityGaps = [],
+    ): ReportQuality
     {
+        $empty = $projection->rows === [];
+        $gapCount = count($qualityGaps);
+        $eligible = count($projection->rows) + $gapCount;
+        $matched = count($projection->rows);
+
         return new ReportQuality(
-            $projection->rows === [] ? ReportQualityStatus::PARTIAL : ReportQualityStatus::COMPLETE,
-            new ReportCoverage((string) count($projection->rows), (string) count($projection->rows), count($projection->rows) === 0 ? null : '1.00000000'),
-            $projection->rows === [] ? [new ReportWarning('SOURCE_EMPTY', ReportWarningSeverity::CRITICAL, null, 0)] : [],
-            0,
-            $projection->rows === [] ? ReportReconciliationStatus::NOT_APPLICABLE : ReportReconciliationStatus::MATCHED,
-            $projection->rows === [] ? ['source_coverage'] : [],
-            $projection->rows === [] ? ['owner_snapshot'] : [],
+            ! $empty && $gapCount === 0 ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
+            new ReportCoverage(
+                (string) $matched,
+                (string) $eligible,
+                $eligible === 0 ? null : number_format($matched / $eligible, 8, '.', ''),
+            ),
+            $empty
+                ? [new ReportWarning('SOURCE_EMPTY', ReportWarningSeverity::CRITICAL, null, 0)]
+                : ($gapCount === 0 ? [] : [
+                    new ReportWarning('SOURCE_COVERAGE_PARTIAL', ReportWarningSeverity::CRITICAL, null, $gapCount),
+                ]),
+            $gapCount,
+            $empty
+                ? ReportReconciliationStatus::NOT_APPLICABLE
+                : ($gapCount === 0 ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH),
+            $empty || $gapCount > 0 ? ['source_coverage'] : [],
+            $empty ? ['owner_snapshot'] : array_values($qualityGaps),
         );
     }
 
@@ -424,15 +447,31 @@ final readonly class BudgetingPortfolioProjectionService
 
         $count = (int) $record->row_count;
         $empty = $count === 0;
+        $watermarks = $record->getAttribute('watermarks');
+        $qualityGaps = is_array($watermarks)
+            && is_array($watermarks['quality_gaps'] ?? null)
+            ? array_values($watermarks['quality_gaps'])
+            : [];
+        $gapCount = count($qualityGaps);
 
         return new ReportQuality(
             ReportQualityStatus::from((string) $record->quality_status),
-            new ReportCoverage((string) $count, (string) $count, $count === 0 ? null : '1.00000000'),
-            $empty ? [new ReportWarning('SOURCE_EMPTY', ReportWarningSeverity::CRITICAL, null, 0)] : [],
-            0,
-            $empty ? ReportReconciliationStatus::NOT_APPLICABLE : ReportReconciliationStatus::MATCHED,
-            $empty ? ['source_coverage'] : [],
-            $empty ? ['owner_snapshot'] : [],
+            new ReportCoverage(
+                (string) $count,
+                (string) ($count + $gapCount),
+                $count + $gapCount === 0 ? null : number_format($count / ($count + $gapCount), 8, '.', ''),
+            ),
+            $empty
+                ? [new ReportWarning('SOURCE_EMPTY', ReportWarningSeverity::CRITICAL, null, 0)]
+                : ($gapCount === 0 ? [] : [
+                    new ReportWarning('SOURCE_COVERAGE_PARTIAL', ReportWarningSeverity::CRITICAL, null, $gapCount),
+                ]),
+            $gapCount,
+            $empty
+                ? ReportReconciliationStatus::NOT_APPLICABLE
+                : ($gapCount === 0 ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH),
+            $empty || $gapCount > 0 ? ['source_coverage'] : [],
+            $empty ? ['owner_snapshot'] : $qualityGaps,
         );
     }
 
@@ -518,7 +557,7 @@ final readonly class BudgetingPortfolioProjectionService
         );
         $progress->advance(60);
 
-        $this->assertCriticalSourcesFresh($margin, $wip);
+        $qualityGaps = $this->criticalSourceQualityGaps($margin, $wip, $planFact);
         $projection = $this->portfolioAggregator->buildResult(
             $filters,
             $projects,
@@ -551,6 +590,8 @@ final readonly class BudgetingPortfolioProjectionService
             $sourceHash,
             $this->watermarks($payloads),
             $sourceRefs,
+            ReportFreshnessStatus::FRESH,
+            $qualityGaps,
         );
         $progress->advance(100);
 
@@ -790,17 +831,24 @@ final readonly class BudgetingPortfolioProjectionService
         ], static fn (mixed $value): bool => $value !== null);
     }
 
-    private function assertCriticalSourcesFresh(array $margin, array $wip): void
+    private function criticalSourceQualityGaps(array $margin, array $wip, array $planFact): array
     {
         $statuses = [
-            $margin['summary']['quality_status'] ?? null,
-            $margin['freshness']['status'] ?? null,
-            $wip['summary']['quality_status'] ?? null,
-            $wip['freshness']['status'] ?? null,
+            'margin_quality' => $margin['summary']['quality_status'] ?? null,
+            'margin_freshness' => $margin['meta']['freshness']['status'] ?? null,
+            'wip_quality' => $wip['summary']['quality_status'] ?? null,
+            'wip_freshness' => $wip['freshness']['status'] ?? null,
         ];
-        foreach ($statuses as $status) {
-            if (is_string($status) && in_array($status, ['stale', 'unavailable', 'invalid'], true)) {
+        $gaps = [];
+        foreach ($statuses as $source => $status) {
+            if (! is_string($status) || trim($status) === '') {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            if (in_array($status, ['stale', 'unavailable', 'invalid'], true)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            if ($status !== 'actual' && $status !== 'fresh' && $status !== 'complete') {
+                $gaps[] = $source.'_'.$status;
             }
         }
         if (($margin['available'] ?? true) === false || ($wip['available'] ?? true) === false) {
@@ -821,6 +869,29 @@ final readonly class BudgetingPortfolioProjectionService
                 }
             }
         }
+
+        $planCoverage = $planFact['sources_coverage'] ?? null;
+        if (! is_array($planCoverage) || $planCoverage === []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+        }
+        foreach ($planCoverage as $source) {
+            if (! is_array($source) || ($source['available'] ?? false) !== true) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            $missing = (int) ($source['missing_budget_analytics_count'] ?? 0);
+            if ($missing > 0) {
+                $sourceType = preg_replace(
+                    '/[^a-z0-9_]/',
+                    '_',
+                    strtolower((string) ($source['source_type'] ?? 'unknown')),
+                );
+                $gaps[] = 'plan_fact_'.($sourceType === '' ? 'unknown' : $sourceType).'_missing';
+            }
+        }
+
+        sort($gaps, SORT_STRING);
+
+        return array_values(array_unique($gaps));
     }
 
     private function sourceRefs(array $payloads): array

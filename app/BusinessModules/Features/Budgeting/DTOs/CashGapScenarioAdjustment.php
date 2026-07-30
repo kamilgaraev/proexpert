@@ -24,16 +24,21 @@ final readonly class CashGapScenarioAdjustment
         public ?string $sourceType = null,
         public int|string|null $sourceId = null,
         public ?string $date = null,
-        public ?float $probability = null,
+        string|int|null $probability = null,
         string|int|float|null $amount = null,
         public ?string $currency = null,
         public ?string $description = null,
         public ?string $reason = null,
     ) {
+        $this->probability = $probability === null
+            ? null
+            : PortfolioDecimal::ratio($probability);
         $this->amount = $amount === null
             ? null
             : PortfolioDecimal::money(self::decimalInput($amount));
     }
+
+    public ?string $probability;
 
     public ?string $amount;
 
@@ -45,7 +50,9 @@ final readonly class CashGapScenarioAdjustment
             sourceType: self::nullableString($payload['source_type'] ?? null),
             sourceId: $payload['source_id'] ?? null,
             date: self::nullableString($payload['date'] ?? null),
-            probability: array_key_exists('probability', $payload) ? (float) $payload['probability'] : null,
+            probability: array_key_exists('probability', $payload)
+                ? self::decimalInput($payload['probability'])
+                : null,
             amount: array_key_exists('amount', $payload)
                 ? PortfolioDecimal::money(self::decimalInput($payload['amount']))
                 : null,

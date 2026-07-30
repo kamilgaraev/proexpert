@@ -88,7 +88,7 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
                     bucket: PaymentCalendarItem::BUCKET_BUDGET_PLAN,
                     status: 'planned',
                     projectId: 7,
-                    probability: 1.0,
+                    probability: '1',
                 ),
                 new PaymentCalendarItem(
                     sourceType: 'payment_document',
@@ -104,7 +104,7 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
                     bucket: PaymentCalendarItem::BUCKET_BUDGET_PLAN,
                     status: 'planned',
                     projectId: 7,
-                    probability: 1.0,
+                    probability: '1',
                 ),
             ],
             generatedAt: '2026-06-09T10:00:00+03:00',

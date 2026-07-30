@@ -132,7 +132,7 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
                 $sourceRef['type'],
                 'r'.$sourceRef['id'],
                 $this->routeName($sourceRef['type']),
-                ['id' => (int) $sourceRef['id']],
+                $this->routeParams($sourceRef),
                 'available',
             );
         }
@@ -240,7 +240,14 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
                 || (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
-            $refs[] = ['type' => $ref['type'], 'id' => (string) $ref['id']];
+            $normalized = ['type' => $ref['type'], 'id' => (string) $ref['id']];
+            if ($ref['type'] === 'contract_allocation') {
+                if (! isset($ref['contract_id']) || ! ctype_digit((string) $ref['contract_id'])) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+                }
+                $normalized['contract_id'] = (string) $ref['contract_id'];
+            }
+            $refs[] = $normalized;
         }
 
         return $refs;
@@ -254,5 +261,14 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
             'payment_document', 'payment_transaction' => 'admin.payments.show',
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN),
         };
+    }
+
+    private function routeParams(array $sourceRef): array
+    {
+        return [
+            'id' => (int) ($sourceRef['type'] === 'contract_allocation'
+                ? $sourceRef['contract_id']
+                : $sourceRef['id']),
+        ];
     }
 }

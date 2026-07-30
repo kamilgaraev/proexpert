@@ -36,7 +36,7 @@ final readonly class PaymentCalendarItem
         string|int|float $amount,
         string|int|float $remainingAmount,
         public string $currency,
-        string|int|float $probability,
+        string|int $probability,
         public string $status,
         public string $sourceType,
         public int|string|null $sourceId,
@@ -162,12 +162,8 @@ final readonly class PaymentCalendarItem
         return PortfolioDecimal::money($amount);
     }
 
-    private static function probability(string|int|float $probability): string
+    private static function probability(string|int $probability): string
     {
-        if (is_float($probability)) {
-            $probability = rtrim(rtrim(sprintf('%.14F', $probability), '0'), '.');
-        }
-
         return PortfolioDecimal::ratio($probability);
     }
 }

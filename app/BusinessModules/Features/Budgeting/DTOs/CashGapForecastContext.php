@@ -26,8 +26,8 @@ final readonly class CashGapForecastContext
         public string $scenario = self::SCENARIO_BASE,
         public ?CashGapForecastFilters $filters = null,
         public int $stressInflowDelayDays = 7,
-        string|int|float $stressInflowProbabilityFactor = '0.75',
-        string|int|float $optimisticInflowProbabilityLift = '0.1',
+        string|int $stressInflowProbabilityFactor = '0.75',
+        string|int $optimisticInflowProbabilityLift = '0.1',
         public int $optimisticInflowAdvanceDays = 0,
         public array $scenarioAdjustments = [],
     ) {
@@ -74,12 +74,8 @@ final readonly class CashGapForecastContext
         return PortfolioDecimal::money($amount);
     }
 
-    private static function probability(string|int|float $probability): string
+    private static function probability(string|int $probability): string
     {
-        if (is_float($probability)) {
-            $probability = rtrim(rtrim(sprintf('%.14F', $probability), '0'), '.');
-        }
-
         return PortfolioDecimal::ratio($probability);
     }
 }

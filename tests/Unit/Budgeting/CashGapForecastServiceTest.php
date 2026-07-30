@@ -250,7 +250,7 @@ final class CashGapForecastServiceTest extends TestCase
                     CashGapForecastItem::DIRECTION_INFLOW,
                     CashGapForecastItem::BUCKET_PLANNED_INFLOW,
                     1_000.0,
-                    probability: 0.8,
+                    probability: '0.8',
                 ),
             ]
         )->toArray();
@@ -280,7 +280,7 @@ final class CashGapForecastServiceTest extends TestCase
                 CashGapForecastItem::DIRECTION_INFLOW,
                 CashGapForecastItem::BUCKET_PLANNED_INFLOW,
                 500.0,
-                probability: 0.4,
+                probability: '0.4',
                 sourceId: 202,
                 cashFlowKey: 'payment-document:202',
             ),
@@ -320,7 +320,7 @@ final class CashGapForecastServiceTest extends TestCase
                     new CashGapScenarioAdjustment(
                         action: CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY,
                         cashFlowKey: 'payment-document:202',
-                        probability: 1.0,
+                        probability: '1',
                     ),
                     new CashGapScenarioAdjustment(
                         action: CashGapScenarioAdjustment::ACTION_EXCLUDE_PAYMENT,
@@ -458,7 +458,7 @@ final class CashGapForecastServiceTest extends TestCase
         string $direction,
         string $bucket,
         float $amount,
-        float $probability = 1.0,
+        string $probability = '1',
         ?int $organizationId = 42,
         ?int $projectId = null,
         ?int $counterpartyId = null,

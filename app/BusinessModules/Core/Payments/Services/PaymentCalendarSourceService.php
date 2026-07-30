@@ -180,7 +180,7 @@ final class PaymentCalendarSourceService
             amount: $amount,
             remainingAmount: $remainingAmount,
             currency: $this->currency($document->currency),
-            probability: 1.0,
+            probability: '1',
             status: (string) $schedule->status,
             sourceType: 'payment_schedule',
             sourceId: $sourceId,
@@ -230,7 +230,7 @@ final class PaymentCalendarSourceService
             amount: $amount,
             remainingAmount: $amount,
             currency: $this->currency($transaction->currency),
-            probability: 1.0,
+            probability: '1',
             status: PaymentTransactionStatus::COMPLETED->value,
             sourceType: 'payment_transaction',
             sourceId: $sourceId,
@@ -278,7 +278,7 @@ final class PaymentCalendarSourceService
             amount: $amount,
             remainingAmount: $amount,
             currency: $this->currency($reservation->currency),
-            probability: 1.0,
+            probability: '1',
             status: BudgetLimitReservation::STATUS_RESERVED,
             sourceType: 'budget_limit_reservation',
             sourceId: $sourceId,
@@ -334,7 +334,7 @@ final class PaymentCalendarSourceService
             amount: $calendarAmount,
             remainingAmount: $calendarAmount,
             currency: $currency,
-            probability: 0.6,
+            probability: '0.6',
             status: (string) $version->status,
             sourceType: 'budget_amount',
             sourceId: $sourceId,
@@ -557,16 +557,16 @@ final class PaymentCalendarSourceService
             : PaymentCalendarItem::BUCKET_APPROVED;
     }
 
-    private function documentProbability(string $direction, string $status): float
+    private function documentProbability(string $direction, string $status): string
     {
         if ($direction === PaymentCalendarItem::DIRECTION_OUTFLOW) {
-            return 1.0;
+            return '1';
         }
 
         return in_array($status, [
             PaymentDocumentStatus::SUBMITTED->value,
             PaymentDocumentStatus::PENDING_APPROVAL->value,
-        ], true) ? 0.7 : 0.9;
+        ], true) ? '0.7' : '0.9';
     }
 
     private function calendarPriority(PaymentCalendarItem $item): int

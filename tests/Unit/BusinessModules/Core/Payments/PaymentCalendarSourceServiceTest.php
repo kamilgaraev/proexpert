@@ -278,7 +278,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
             amount: 1_000.0,
             remainingAmount: 700.0,
             currency: 'RUB',
-            probability: 1.0,
+            probability: '1',
             status: 'scheduled',
             sourceType: 'payment_schedule',
             sourceId: 501,

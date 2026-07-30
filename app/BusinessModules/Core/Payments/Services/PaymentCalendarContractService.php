@@ -600,7 +600,7 @@ final class PaymentCalendarContractService
         return (string) $identifier;
     }
 
-    private function money(float|int $amount): float
+    private function money(string|float|int $amount): float
     {
         return round((float) $amount, 2);
     }

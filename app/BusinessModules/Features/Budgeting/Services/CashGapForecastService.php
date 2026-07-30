@@ -238,7 +238,7 @@ final class CashGapForecastService
                 && ! $adjusted->isActual()
             ) {
                 $adjusted = $this->copyItem($adjusted, [
-                    'probability' => (float) $adjustment->probability,
+                    'probability' => $adjustment->probability,
                     'drillDown' => $this->scenarioDrillDown($adjusted, $adjustment),
                 ]);
             }
@@ -273,7 +273,7 @@ final class CashGapForecastService
                 direction: CashGapForecastItem::DIRECTION_INFLOW,
                 bucket: CashGapForecastItem::BUCKET_MANUAL_ADJUSTMENT,
                 amount: (string) $adjustment->amount,
-                probability: $adjustment->probability ?? 1.0,
+                probability: $adjustment->probability ?? '1',
                 organizationId: $filters->organizationId,
                 projectId: $filters->projectId,
                 counterpartyId: $filters->counterpartyId,
@@ -852,11 +852,9 @@ final class CashGapForecastService
         return $sum;
     }
 
-    private function probability(float|string $probability): string
+    private function probability(string $probability): string
     {
-        $value = BigDecimal::of(is_float($probability)
-            ? rtrim(rtrim(sprintf('%.14F', $probability), '0'), '.')
-            : $probability);
+        $value = BigDecimal::of($probability);
         if ($value->isNegative()) {
             $value = BigDecimal::zero();
         } elseif ($value->isGreaterThan(BigDecimal::one())) {

@@ -96,7 +96,12 @@ final readonly class AcceptedWorkHoldingFactProducer
             : Contractor::query()->whereKey($contract->contractor_id)->value('source_organization_id');
         $sourceRefs = [
             ['type' => 'approved_act', 'id' => (int) $act->getKey(), 'version' => $sourceVersion],
-            ['type' => 'contract_allocation', 'id' => (int) $allocation->getKey(), 'version' => (int) $history->getKey()],
+            [
+                'type' => 'contract_allocation',
+                'id' => (int) $allocation->getKey(),
+                'contract_id' => (int) $contract->getKey(),
+                'version' => (int) $history->getKey(),
+            ],
         ];
         $source = [
             'organization_id' => $organizationId,

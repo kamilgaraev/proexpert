@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Enums\Contract\ContractAllocationTypeEnum;
 use Illuminate\Support\Facades\Auth;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingContractVersionEvidence;
 
 class ContractProjectAllocation extends Model
 {
@@ -242,9 +243,16 @@ class ContractProjectAllocation extends Model
     /**
      * Логирование изменений в историю
      */
-    protected function logHistory(string $action, ?array $oldValues, ?array $newValues): void
+    protected function logHistory(
+        string $action,
+        ?array $oldValues,
+        ?array $newValues,
+    ): ContractAllocationHistory
     {
-        ContractAllocationHistory::create([
+        $contract = $this->contract()
+            ->with('contractor')
+            ->first();
+        $history = ContractAllocationHistory::create([
             'allocation_id' => $this->id,
             'contract_id' => $this->contract_id,
             'project_id' => $this->project_id,
@@ -255,6 +263,16 @@ class ContractProjectAllocation extends Model
             'ip_address' => request()->ip(),
             'user_agent' => request()->userAgent(),
         ]);
+        if ($contract instanceof Contract) {
+            HoldingContractVersionEvidence::record($history, $contract);
+        }
+
+        return $history;
+    }
+
+    public function recordReportingContractVersion(): ContractAllocationHistory
+    {
+        return $this->logHistory('contract_updated', null, $this->toArray());
     }
 
     /**
@@ -281,4 +299,3 @@ class ContractProjectAllocation extends Model
         return $query->where('project_id', $projectId);
     }
 }
-

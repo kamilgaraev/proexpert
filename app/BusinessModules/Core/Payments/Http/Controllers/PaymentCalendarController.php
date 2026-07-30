@@ -227,11 +227,11 @@ class PaymentCalendarController extends Controller
                 ? (int) $validated['stress_inflow_delay_days']
                 : 7,
             stressInflowProbabilityFactor: isset($validated['stress_inflow_probability_factor'])
-                ? (float) $validated['stress_inflow_probability_factor']
-                : 0.75,
+                ? (string) $validated['stress_inflow_probability_factor']
+                : '0.75',
             optimisticInflowProbabilityLift: isset($validated['optimistic_inflow_probability_lift'])
-                ? (float) $validated['optimistic_inflow_probability_lift']
-                : 0.1,
+                ? (string) $validated['optimistic_inflow_probability_lift']
+                : '0.1',
             optimisticInflowAdvanceDays: isset($validated['optimistic_inflow_advance_days'])
                 ? (int) $validated['optimistic_inflow_advance_days']
                 : 0,
