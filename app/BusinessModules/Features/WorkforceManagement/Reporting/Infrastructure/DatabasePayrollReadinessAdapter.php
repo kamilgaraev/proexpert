@@ -503,41 +503,46 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             if ($version === null) {
                 throw new DomainException('PAYROLL_CALCULATION_VERSION_NOT_FOUND');
             }
-            $issue = $issueMatcher->forSourceRow(
+            $sourceIssues = $issueMatcher->forSourceRow(
                 $issuesByVersion->get((int) $version->id, collect()),
                 (int) $source->source_row_id,
             );
-            $row = [
-                'row_key' => hash('sha256', 'source|'.$version->id.'|'.$source->source_row_id),
-                'row_type' => 'source',
-                'payroll_period_id' => (int) $version->payroll_period_id,
-                'period_start' => (string) $version->period_start,
-                'period_end' => (string) $version->period_end,
-                'calculation_version_id' => (int) $version->id,
-                'calculation_version' => (int) $version->version,
-                'employee_id' => (int) $source->employee_id,
-                'employee_name' => $this->employeeName($source),
-                'project_id' => $source->project_id === null ? null : (int) $source->project_id,
-                'project_name' => $source->project_name,
-                'source_type' => (string) $source->source_type,
-                'source_row_id' => (int) $source->source_row_id,
-                'hours' => (string) $source->hours,
-                'rate' => $source->rate,
-                'rate_type' => $source->rate_type,
-                'amount' => $source->amount,
-                'currency' => $source->currency,
-                'issue_id' => $issue === null ? null : (int) $issue->id,
-                'issue_code' => $issue?->issue_code,
-                'severity' => $issue?->severity,
-                'status' => $issue?->severity === 'blocking'
-                    ? 'blocked'
-                    : ($issue === null ? 'ready' : 'warning'),
-                'source_refs' => $this->json($source->source_refs),
-                'audit_refs' => $issue === null ? [] : [$this->json($issue->audit_ref)],
-            ];
-            $this->assertMaterializedRowScope($scope, $row);
-            if ($this->matchesIssueFilters($row, $issueCodes, $severities, $statuses)) {
-                $rows[] = $row;
+            foreach ($sourceIssues === [] ? [null] : $sourceIssues as $issue) {
+                $row = [
+                    'row_key' => hash(
+                        'sha256',
+                        'source|'.$version->id.'|'.$source->source_row_id.'|'.($issue?->id ?? 'none'),
+                    ),
+                    'row_type' => 'source',
+                    'payroll_period_id' => (int) $version->payroll_period_id,
+                    'period_start' => (string) $version->period_start,
+                    'period_end' => (string) $version->period_end,
+                    'calculation_version_id' => (int) $version->id,
+                    'calculation_version' => (int) $version->version,
+                    'employee_id' => (int) $source->employee_id,
+                    'employee_name' => $this->employeeName($source),
+                    'project_id' => $source->project_id === null ? null : (int) $source->project_id,
+                    'project_name' => $source->project_name,
+                    'source_type' => (string) $source->source_type,
+                    'source_row_id' => (int) $source->source_row_id,
+                    'hours' => (string) $source->hours,
+                    'rate' => $source->rate,
+                    'rate_type' => $source->rate_type,
+                    'amount' => $source->amount,
+                    'currency' => $source->currency,
+                    'issue_id' => $issue === null ? null : (int) $issue->id,
+                    'issue_code' => $issue?->issue_code,
+                    'severity' => $issue?->severity,
+                    'status' => $issue?->severity === 'blocking'
+                        ? 'blocked'
+                        : ($issue === null ? 'ready' : 'warning'),
+                    'source_refs' => $this->json($source->source_refs),
+                    'audit_refs' => $issue === null ? [] : [$this->json($issue->audit_ref)],
+                ];
+                $this->assertMaterializedRowScope($scope, $row);
+                if ($this->matchesIssueFilters($row, $issueCodes, $severities, $statuses)) {
+                    $rows[] = $row;
+                }
             }
         }
         foreach ($issues as $issue) {
@@ -929,28 +934,48 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             $rows,
             static fn (array $row): bool => $row['row_type'] === 'issue',
         ));
+        $sourceGroups = [];
+        foreach ($sourceRows as $row) {
+            $identity = (int) $row['calculation_version_id'].':'.(int) $row['source_row_id'];
+            $sourceGroups[$identity][] = $row;
+        }
         $hours = BigDecimal::zero();
         $amounts = [];
         $unassignedHours = BigDecimal::zero();
         $unratedHours = BigDecimal::zero();
         $coveredCount = 0;
         $implicitMissingRateCount = 0;
-        foreach ($sourceRows as $row) {
+        foreach ($sourceGroups as $group) {
+            $row = $group[0];
             $rowHours = BigDecimal::of((string) $row['hours']);
             $hours = $hours->plus($rowHours);
             if ($row['amount'] !== null && $row['currency'] !== null) {
                 $currency = (string) $row['currency'];
                 $amounts[$currency] = ($amounts[$currency] ?? BigDecimal::zero())->plus((string) $row['amount']);
             }
-            $issueCode = strtolower((string) ($row['issue_code'] ?? ''));
-            if (str_contains($issueCode, 'assignment') || str_contains($issueCode, 'project')) {
+            $issueCodes = array_map(
+                static fn (array $issueRow): string => strtolower((string) ($issueRow['issue_code'] ?? '')),
+                $group,
+            );
+            if (array_filter(
+                $issueCodes,
+                static fn (string $code): bool => str_contains($code, 'assignment')
+                    || str_contains($code, 'project'),
+            ) !== []) {
                 $unassignedHours = $unassignedHours->plus($rowHours);
             }
             $rateMissing = $row['rate'] === null || $row['currency'] === null || $row['amount'] === null;
-            if ($rateMissing || str_contains($issueCode, 'rate') || str_contains($issueCode, 'tariff')) {
+            if ($rateMissing || array_filter(
+                $issueCodes,
+                static fn (string $code): bool => str_contains($code, 'rate')
+                    || str_contains($code, 'tariff'),
+            ) !== []) {
                 $unratedHours = $unratedHours->plus($rowHours);
             }
-            $hasBlockingIssue = $row['severity'] === 'blocking';
+            $hasBlockingIssue = array_filter(
+                $group,
+                static fn (array $issueRow): bool => $issueRow['severity'] === 'blocking',
+            ) !== [];
             if (! $hasBlockingIssue && ! $rateMissing) {
                 $coveredCount++;
             }
@@ -958,7 +983,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 $implicitMissingRateCount++;
             }
         }
-        $sourceCount = count($sourceRows);
+        $sourceCount = count($sourceGroups);
         $blockingIssues = [];
         $warningIssues = [];
         foreach ([...$sourceRows, ...$issueRows] as $row) {

@@ -29,6 +29,8 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactLease;
+use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactMaterializer;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\ProjectLaborCostDatabasePort;
 use App\BusinessModules\Features\TimeTracking\Reporting\DTO\EffectiveLaborRateFact;
 use App\BusinessModules\Features\TimeTracking\Reporting\DTO\EffectiveLaborRateResolution;
@@ -91,7 +93,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         if ($scope->organizationId !== $query->scope->organizationId) {
             throw new InvalidArgumentException('project_labor_cost_scope_invalid');
         }
-        $this->assertNoPostAsOfMutations($scope, $query, [
+        $ownerFacts = $this->materializeTemporalOwnerFacts($scope, $query, [
             'time_entries',
             'completed_works',
             'time_tracking_labor_rate_versions',
@@ -347,7 +349,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             $rows[] = $row;
         }
 
-        return $this->persist(
+        $snapshot = $this->persist(
             $scope,
             $query,
             $rows,
@@ -355,6 +357,9 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             array_values(array_unique($warnings)),
             $sourceCount,
         );
+        $ownerFacts->release();
+
+        return $snapshot;
     }
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
@@ -960,37 +965,17 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         return $requested;
     }
 
-    private function assertNoPostAsOfMutations(
+    private function materializeTemporalOwnerFacts(
         ReportScope $scope,
         ReportQuery $query,
         array $tables,
-    ): void {
-        $asOf = $query->asOf->format('Y-m-d H:i:sP');
-        $resourceProjectIds = array_map(
-            static fn (object $resource): int => $resource->id,
-            array_values(array_filter(
-                $scope->resources,
-                static fn (object $resource): bool => $resource->kind === 'project',
-            )),
+    ): TemporalOwnerFactLease {
+        return (new TemporalOwnerFactMaterializer($this->connection))->materializeExactState(
+            $scope,
+            $query->asOf,
+            $tables,
+            'TIME_TRACKING_HISTORICAL_SOURCE_UNAVAILABLE',
         );
-        $projectIds = array_values(array_unique([...$scope->projectIds, ...$resourceProjectIds]));
-        foreach ($tables as $table) {
-            if ($this->connection->table('workforce_report_owner_facts')
-                ->where('organization_id', $scope->organizationId)
-                ->where('source_table', $table)
-                ->where('recorded_at', '>', $asOf)
-                ->when(
-                    $projectIds !== [],
-                    static fn (Builder $builder): Builder => $builder->where(
-                        static fn (Builder $scopeBuilder): Builder => $scopeBuilder
-                            ->whereNull('project_id')
-                            ->orWhereIn('project_id', $projectIds),
-                    ),
-                )
-                ->exists()) {
-                throw new DomainException('TIME_TRACKING_HISTORICAL_SOURCE_UNAVAILABLE');
-            }
-        }
     }
 
     private function assertScopedResource(

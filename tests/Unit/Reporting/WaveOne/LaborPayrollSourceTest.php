@@ -286,6 +286,40 @@ final class LaborPayrollSourceTest extends TestCase
     }
 
     #[Test]
+    public function payroll_totals_count_a_source_once_while_preserving_all_of_its_issues(): void
+    {
+        $adapter = new DatabasePayrollReadinessAdapter(
+            $this->createMock(ConnectionInterface::class),
+            new PayrollReadinessFormula,
+            new PayrollSourceRateFormula,
+        );
+        $totals = new ReflectionMethod($adapter, 'totals');
+        $totals->setAccessible(true);
+        $base = [
+            'row_type' => 'source',
+            'row_key' => 'source-1',
+            'calculation_version_id' => 3,
+            'source_row_id' => 11,
+            'hours' => '8.0000',
+            'rate' => '100.0000',
+            'amount' => '800.0000',
+            'currency' => 'RUB',
+        ];
+
+        $result = $totals->invoke($adapter, [
+            [...$base, 'issue_id' => 41, 'issue_code' => 'hours_mismatch', 'severity' => 'blocking'],
+            [...$base, 'row_key' => 'source-2', 'issue_id' => 42, 'issue_code' => 'rate_warning', 'severity' => 'warning'],
+        ]);
+
+        self::assertSame(1, $result['source_rows']);
+        self::assertSame('8.00', $result['source_hours']);
+        self::assertSame(['RUB' => '800.00'], $result['source_amounts']);
+        self::assertSame(1, $result['blocking_issues']);
+        self::assertSame(1, $result['warnings']);
+        self::assertFalse($result['ready']);
+    }
+
+    #[Test]
     public function payroll_state_is_resolved_from_append_only_transitions_at_exact_as_of(): void
     {
         $resolver = new PayrollVersionTransitionResolver;
@@ -306,7 +340,7 @@ final class LaborPayrollSourceTest extends TestCase
     }
 
     #[Test]
-    public function payroll_issue_is_linked_only_to_its_exact_filtered_source_row(): void
+    public function payroll_preserves_every_issue_linked_to_the_exact_filtered_source_row(): void
     {
         $matcher = new PayrollIssueMatcher;
         $issues = [
@@ -317,16 +351,21 @@ final class LaborPayrollSourceTest extends TestCase
                 'severity' => 'blocking',
             ],
             (object) [
-                'source_row_id' => 12,
+                'source_row_id' => 11,
                 'employee_id' => 7,
                 'project_id' => 20,
                 'severity' => 'warning',
             ],
         ];
 
-        self::assertSame(11, $matcher->forSourceRow($issues, 11)?->source_row_id);
-        self::assertSame(12, $matcher->forSourceRow($issues, 12)?->source_row_id);
-        self::assertNull($matcher->forSourceRow($issues, 13));
+        self::assertSame(
+            ['blocking', 'warning'],
+            array_map(
+                static fn (object $issue): string => (string) $issue->severity,
+                $matcher->forSourceRow($issues, 11),
+            ),
+        );
+        self::assertSame([], $matcher->forSourceRow($issues, 13));
     }
 
     private function rateSource(array $rates): EffectiveLaborRateSource

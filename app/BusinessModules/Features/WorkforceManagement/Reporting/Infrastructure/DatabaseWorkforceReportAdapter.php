@@ -29,6 +29,8 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactLease;
+use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactMaterializer;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\WorkforceReportDatabasePort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\DTO\EffectiveAssignmentFact;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\AttendanceExecutionFormula;
@@ -103,7 +105,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
     public function materializeCapacity(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
         $this->assertScope($scope, $query);
-        $this->assertNoPostAsOfMutations($scope, $query, [
+        $ownerFacts = $this->materializeTemporalOwnerFacts($scope, $query, [
             'workforce_staff_units',
             'workforce_departments',
             'workforce_positions',
@@ -463,7 +465,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             }
         }
 
-        return $this->persist(
+        $snapshot = $this->persist(
             scope: $scope,
             query: $query,
             code: 'workforce_capacity',
@@ -474,12 +476,15 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             rowSchema: $this->capacitySchema(),
             warnings: array_values(array_unique($warnings)),
         );
+        $ownerFacts->release();
+
+        return $snapshot;
     }
 
     public function materializeAttendance(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
         $this->assertScope($scope, $query);
-        $this->assertNoPostAsOfMutations($scope, $query, [
+        $ownerFacts = $this->materializeTemporalOwnerFacts($scope, $query, [
             'workforce_employee_assignments',
             'workforce_employees',
             'workforce_work_schedules',
@@ -779,7 +784,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             }
         }
 
-        return $this->persist(
+        $snapshot = $this->persist(
             scope: $scope,
             query: $query,
             code: 'attendance_execution',
@@ -790,6 +795,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             rowSchema: $this->attendanceSchema(),
             warnings: array_values(array_unique($attendanceWarnings)),
         );
+        $ownerFacts->release();
+
+        return $snapshot;
     }
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
@@ -1643,37 +1651,17 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         return $grains;
     }
 
-    private function assertNoPostAsOfMutations(
+    private function materializeTemporalOwnerFacts(
         ReportScope $scope,
         ReportQuery $query,
         array $tables,
-    ): void {
-        $asOf = $query->asOf->format('Y-m-d H:i:sP');
-        $resourceProjectIds = array_map(
-            static fn (object $resource): int => $resource->id,
-            array_values(array_filter(
-                $scope->resources,
-                static fn (object $resource): bool => $resource->kind === 'project',
-            )),
+    ): TemporalOwnerFactLease {
+        return (new TemporalOwnerFactMaterializer($this->connection))->materializeExactState(
+            $scope,
+            $query->asOf,
+            $tables,
+            'WORKFORCE_HISTORICAL_SOURCE_UNAVAILABLE',
         );
-        $projectIds = array_values(array_unique([...$scope->projectIds, ...$resourceProjectIds]));
-        foreach ($tables as $table) {
-            if ($this->connection->table('workforce_report_owner_facts')
-                ->where('organization_id', $scope->organizationId)
-                ->where('source_table', $table)
-                ->where('recorded_at', '>', $asOf)
-                ->when(
-                    $projectIds !== [],
-                    static fn (Builder $builder): Builder => $builder->where(
-                        static fn (Builder $scopeBuilder): Builder => $scopeBuilder
-                            ->whereNull('project_id')
-                            ->orWhereIn('project_id', $projectIds),
-                    ),
-                )
-                ->exists()) {
-                throw new DomainException('WORKFORCE_HISTORICAL_SOURCE_UNAVAILABLE');
-            }
-        }
     }
 
     private function ids(ReportQuery $query, string $filter): array

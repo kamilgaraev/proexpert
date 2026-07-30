@@ -7,7 +7,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('workforce_payroll_calculation_versions', function (Blueprint $table): void {
@@ -221,9 +222,11 @@ CREATE FUNCTION workforce_payroll_guard_immutable() RETURNS trigger AS $$
 DECLARE parent_status text;
 BEGIN
     IF TG_TABLE_NAME IN (
-        'workforce_payroll_calculation_source_rows',
         'workforce_payroll_calculation_transitions',
         'payroll_readiness_snapshot_rows'
+    ) OR (
+        TG_TABLE_NAME = 'workforce_payroll_calculation_source_rows'
+        AND TG_OP <> 'INSERT'
     ) THEN
         RAISE EXCEPTION 'immutable payroll record';
     END IF;
@@ -231,10 +234,23 @@ BEGIN
     IF TG_TABLE_NAME = 'workforce_payroll_calculation_issues' THEN
         SELECT status INTO parent_status
           FROM workforce_payroll_calculation_versions
-         WHERE id = OLD.calculation_version_id
-           AND organization_id = OLD.organization_id;
+         WHERE id = CASE WHEN TG_OP = 'INSERT' THEN NEW.calculation_version_id ELSE OLD.calculation_version_id END
+           AND organization_id = CASE WHEN TG_OP = 'INSERT' THEN NEW.organization_id ELSE OLD.organization_id END
+         FOR UPDATE;
         IF parent_status IN ('validated', 'locked') THEN
             RAISE EXCEPTION 'immutable payroll validation';
+        END IF;
+    END IF;
+
+    IF TG_TABLE_NAME = 'workforce_payroll_calculation_source_rows'
+       AND TG_OP = 'INSERT' THEN
+        SELECT status INTO parent_status
+          FROM workforce_payroll_calculation_versions
+         WHERE id = NEW.calculation_version_id
+           AND organization_id = NEW.organization_id
+         FOR UPDATE;
+        IF parent_status IN ('validated', 'locked') THEN
+            RAISE EXCEPTION 'immutable payroll calculation source';
         END IF;
     END IF;
 
@@ -263,7 +279,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER workforce_payroll_source_rows_immutable
-BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_source_rows
+BEFORE INSERT OR UPDATE OR DELETE ON workforce_payroll_calculation_source_rows
 FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
 
 CREATE TRIGGER workforce_payroll_transitions_immutable
@@ -271,7 +287,7 @@ BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_transitions
 FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
 
 CREATE TRIGGER workforce_payroll_calculation_issues_immutable
-BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_issues
+BEFORE INSERT OR UPDATE OR DELETE ON workforce_payroll_calculation_issues
 FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
 
 CREATE TRIGGER workforce_payroll_calculation_versions_immutable
