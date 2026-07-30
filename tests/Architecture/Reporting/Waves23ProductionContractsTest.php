@@ -341,6 +341,10 @@ final class Waves23ProductionContractsTest extends TestCase
             'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
             .'LookaheadReadinessSnapshotMaterializer.php',
         );
+        $historyStream = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadConstraintHistoryStream.php',
+        );
         $drilldown = $this->source(
             'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/DrillDown/'
             .'LookaheadReadinessDrillDownProvider.php',
@@ -348,7 +352,7 @@ final class Waves23ProductionContractsTest extends TestCase
 
         self::assertStringContainsString('public array $transitionLineage', $state);
         foreach (["'id' => (int) \$event->id", "'version' => (int) \$event->event_version", "'source_hash' => (string) \$event->source_hash"] as $identity) {
-            self::assertStringContainsString($identity, $materializer);
+            self::assertStringContainsString($identity, $historyStream);
         }
         self::assertStringContainsString("'transition_lineage' => \$constraint->transitionLineage", $materializer);
         self::assertStringContainsString("'transition_lineage' => \$row['transition_lineage']", $drilldown);
@@ -423,13 +427,12 @@ final class Waves23ProductionContractsTest extends TestCase
             .'LookaheadReadinessProbe.php',
         );
 
-        self::assertStringContainsString('$wipOnlyGaps[] = [', $assembler);
+        self::assertGreaterThanOrEqual(2, substr_count($assembler, '$sourceGaps[] ='));
+        self::assertStringContainsString('project_control_baseline_without_wip_line', $assembler);
+        self::assertStringContainsString('project_control_wip_line_without_baseline', $assembler);
         self::assertStringContainsString('ProjectControlSourceGapException', $assembler);
         self::assertStringContainsString('count($exception->gaps)', $readiness);
-        self::assertLessThan(
-            strpos($lookahead, '$missingTaskIds ='),
-            strpos($lookahead, '$selectedStates = $allStates'),
-        );
+        self::assertStringContainsString('->whereNotExists(', $lookahead);
         self::assertStringContainsString('$this->hasTaskFilters($query)', $lookahead);
     }
 
@@ -455,6 +458,42 @@ final class Waves23ProductionContractsTest extends TestCase
         self::assertStringContainsString('$projectionRows->items()', $materializer);
         self::assertStringContainsString("->lazyById(500, 'task_id', 'task_id')", $historical);
         self::assertStringContainsString('->chunkById(500, function ($constraintPage)', $resourceCandidates);
+    }
+
+    #[Test]
+    public function r05_r08_capture_one_stable_source_view_before_reuse_or_multiple_passes(): void
+    {
+        $projectControl = $this->source(
+            'app/BusinessModules/Features/Budgeting/Reporting/ProjectControl/Services/'
+            .'ProjectControlCoreSnapshotFactory.php',
+        );
+        $assembler = $this->source(
+            'app/BusinessModules/Features/Budgeting/Reporting/ProjectControl/Services/'
+            .'ProjectControlSourceAssembler.php',
+        );
+        $lookahead = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadReadinessSnapshotMaterializer.php',
+        );
+        $accepted = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        );
+
+        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $projectControl);
+        self::assertStringContainsString('pg_advisory_xact_lock', $projectControl);
+        foreach ([
+            "->where('source_hash', \$sourceHash->value)",
+            "->where('wip_version', \$identity->wipVersion)",
+            "->where('progress_watermark', \$identity->progressWatermark)",
+            "->where('actual_cost_watermark', \$identity->actualCostWatermark)",
+        ] as $exactReusePredicate) {
+            self::assertStringContainsString($exactReusePredicate, $projectControl);
+        }
+        self::assertStringContainsString('project_control_baseline_without_wip_line', $assembler);
+        self::assertStringContainsString('project_control_wip_line_without_baseline', $assembler);
+        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $lookahead);
+        self::assertStringContainsString('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', $accepted);
     }
 
     private function source(string $path): string

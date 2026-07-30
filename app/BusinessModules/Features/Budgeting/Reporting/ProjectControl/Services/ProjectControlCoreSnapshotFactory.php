@@ -28,8 +28,7 @@ final readonly class ProjectControlCoreSnapshotFactory
     public function __construct(
         private ProjectControlFormula $formula,
         private ProjectControlSourceAssembler $sources,
-    ) {
-    }
+    ) {}
 
     public function capture(
         ProjectControlSourceIdentity $identity,
@@ -40,7 +39,7 @@ final readonly class ProjectControlCoreSnapshotFactory
     ): ReportSnapshotRef {
         if ($approvedBy < 1
             || $identity->organizationId !== $query->scope->organizationId
-            || !in_array($identity->projectId, $query->scope->projectIds, true)
+            || ! in_array($identity->projectId, $query->scope->projectIds, true)
             || $query->asOf->format('Y-m-d') !== $identity->statusDate->format('Y-m-d')
             || $query->definition->snapshotClassification !== ReportSnapshotClassification::OPERATIONAL
         ) {
@@ -49,7 +48,7 @@ final readonly class ProjectControlCoreSnapshotFactory
 
         $rows = [];
         foreach ($sourceRows as $row) {
-            if (!$row instanceof ProjectControlSourceRow
+            if (! $row instanceof ProjectControlSourceRow
                 || $row->projectId !== $identity->projectId
             ) {
                 throw new InvalidArgumentException('project_control_capture_row_invalid');
@@ -69,11 +68,7 @@ final readonly class ProjectControlCoreSnapshotFactory
             static fn (ProjectControlSourceRow $row): array => $row->canonicalIdentity(),
             $rows,
         );
-        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
-            'identity' => $identity->canonicalIdentity(),
-            'rows' => $canonicalRows,
-            'source_contract' => self::FORMULA_VERSION,
-        ])));
+        $sourceHash = $this->sourceHash($identity, $canonicalRows);
 
         try {
             return DB::transaction(function () use (
@@ -102,7 +97,7 @@ final readonly class ProjectControlCoreSnapshotFactory
                         ],
                     ],
                 );
-                if (!hash_equals((string) $baseline->source_hash, $identity->sourceHash)) {
+                if (! hash_equals((string) $baseline->source_hash, $identity->sourceHash)) {
                     throw new InvalidArgumentException('project_control_baseline_immutable');
                 }
 
@@ -220,26 +215,62 @@ final readonly class ProjectControlCoreSnapshotFactory
         if ($scope->canonicalIdentity() !== $query->scope->canonicalIdentity()) {
             throw new InvalidArgumentException('project_control_scope_mismatch');
         }
+        if (count($scope->projectIds) !== 1) {
+            throw new InvalidArgumentException('project_control_single_project_scope_required');
+        }
 
-        $snapshot = ProjectControlSnapshot::query()
-            ->where('organization_id', $scope->organizationId)
-            ->where('query_hash', $query->queryHash->value)
-            ->where('definition_hash', $query->definition->definitionHash->value)
-            ->orderByDesc('generated_at')
-            ->first();
-        if ($snapshot === null) {
+        return DB::transaction(function () use ($scope, $query): ReportSnapshotRef {
+            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            DB::select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ['project-control-materialize:'.$scope->organizationId.':'.$scope->projectIds[0]],
+            );
             $source = $this->sources->assemble($scope, $query);
+            $canonicalRows = array_map(
+                static fn (ProjectControlSourceRow $row): array => $row->canonicalIdentity(),
+                $source['rows'],
+            );
+            usort(
+                $canonicalRows,
+                static fn (array $left, array $right): int => strcmp(
+                    (string) $left['row_key'],
+                    (string) $right['row_key'],
+                ),
+            );
+            $sourceHash = $this->sourceHash($source['identity'], $canonicalRows);
+            $identity = $source['identity'];
+            $snapshot = ProjectControlSnapshot::query()
+                ->where('organization_id', $scope->organizationId)
+                ->where('query_hash', $query->queryHash->value)
+                ->where('definition_hash', $query->definition->definitionHash->value)
+                ->where('source_hash', $sourceHash->value)
+                ->where('wip_version', $identity->wipVersion)
+                ->where('progress_watermark', $identity->progressWatermark)
+                ->where('actual_cost_watermark', $identity->actualCostWatermark)
+                ->first();
+            if ($snapshot !== null) {
+                return $this->reference($scope, $query, $snapshot);
+            }
 
             return $this->capture(
-                $source['identity'],
+                $identity,
                 $query,
                 $source['rows'],
                 $source['approved_by'],
                 $source['approved_at'],
             );
-        }
+        }, 5);
+    }
 
-        return $this->reference($scope, $query, $snapshot);
+    private function sourceHash(
+        ProjectControlSourceIdentity $identity,
+        array $canonicalRows,
+    ): Sha256Hash {
+        return new Sha256Hash(hash('sha256', CanonicalJson::encode([
+            'identity' => $identity->canonicalIdentity(),
+            'rows' => $canonicalRows,
+            'source_contract' => self::FORMULA_VERSION,
+        ])));
     }
 
     private function reference(

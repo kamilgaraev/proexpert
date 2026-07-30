@@ -8,16 +8,9 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Support\Reporting\DeterministicObjectSpool;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
-use Tests\Support\Reporting\Waves23ModuleBootstrap;
 
 final class DeterministicObjectSpoolTest extends TestCase
 {
-    public static function setUpBeforeClass(): void
-    {
-        require_once dirname(__DIR__, 3).'/Support/Reporting/Waves23ModuleBootstrap.php';
-        Waves23ModuleBootstrap::boot();
-    }
-
     #[Test]
     public function large_cardinality_is_repeatable_and_hashes_the_exact_canonical_array(): void
     {

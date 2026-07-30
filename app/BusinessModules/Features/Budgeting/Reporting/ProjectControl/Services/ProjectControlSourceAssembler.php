@@ -99,6 +99,7 @@ final readonly class ProjectControlSourceAssembler
 
         $rows = [];
         $baselineTaskIds = [];
+        $sourceGaps = [];
         foreach ($baselineRows as $baselineRow) {
             if (! is_array($baselineRow)) {
                 throw new InvalidArgumentException('project_control_baseline_row_invalid');
@@ -116,7 +117,17 @@ final readonly class ProjectControlSourceAssembler
             }
             $line = $linesByTask[$taskId] ?? null;
             if (! $line instanceof WipForecastLine) {
-                throw new InvalidArgumentException('project_control_progress_source_incomplete');
+                $gapIdentity = [
+                    'baseline_version_id' => (int) $baseline->id,
+                    'currency' => $currency,
+                    'kind' => 'project_control_baseline_row',
+                    'project_id' => $projectId,
+                    'reason' => 'project_control_baseline_without_wip_line',
+                    'task_id' => $taskId,
+                ];
+                $sourceGaps[] = $this->gap($gapIdentity);
+
+                continue;
             }
             if ($currency === '' || $currency !== (string) $line->currency) {
                 throw new InvalidArgumentException('project_control_currency_mismatch');
@@ -177,7 +188,6 @@ final readonly class ProjectControlSourceAssembler
                 sourceRefs: $sourceRefs,
             );
         }
-        $wipOnlyGaps = [];
         foreach ($linesByTask as $taskId => $line) {
             if (isset($baselineTaskIds[$taskId])
                 || ($scopedTaskIds !== null && ! in_array($taskId, $scopedTaskIds, true))
@@ -188,12 +198,18 @@ final readonly class ProjectControlSourceAssembler
                 continue;
             }
             $dimensions = (array) $line->dimensions;
+            $groups = (array) $line->group_values;
             if (! $this->matches(
                 $query->filters->values['contractor_ids'] ?? [],
                 $this->nullablePositiveInt($dimensions['contractor_id'] ?? null),
             ) || ! $this->matches(
                 $query->filters->values['cost_center_ids'] ?? [],
                 $this->nullablePositiveInt($dimensions['cost_center_id'] ?? null),
+            ) || ! $this->matches(
+                $query->filters->values['wbs_ids'] ?? [],
+                isset($dimensions['wbs_code'])
+                    ? (string) $dimensions['wbs_code']
+                    : (isset($groups['wbs_code']) ? (string) $groups['wbs_code'] : null),
             )) {
                 continue;
             }
@@ -206,17 +222,18 @@ final readonly class ProjectControlSourceAssembler
                 'wip_line_id' => (int) $line->id,
                 'wip_version_id' => (int) $version->id,
             ];
-            $wipOnlyGaps[] = [
-                ...$gapIdentity,
-                'source_hash' => hash(
-                    'sha256',
-                    \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($gapIdentity),
-                ),
-            ];
+            $sourceGaps[] = $this->gap($gapIdentity);
         }
-        if ($wipOnlyGaps !== []) {
+        if ($sourceGaps !== []) {
+            usort($sourceGaps, static fn (array $left, array $right): int => [
+                $left['task_id'],
+                $left['kind'],
+            ] <=> [
+                $right['task_id'],
+                $right['kind'],
+            ]);
             throw new ProjectControlSourceGapException(
-                $wipOnlyGaps,
+                $sourceGaps,
                 'project-control:wip:'.(string) $version->source_snapshot_hash,
             );
         }
@@ -359,6 +376,17 @@ final readonly class ProjectControlSourceAssembler
         }
 
         return array_values(array_filter($refs, 'is_array'));
+    }
+
+    private function gap(array $identity): array
+    {
+        return [
+            ...$identity,
+            'source_hash' => hash(
+                'sha256',
+                \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($identity),
+            ),
+        ];
     }
 
     private function assertStatusDateFilter(ReportQuery $query): void

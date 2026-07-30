@@ -11,10 +11,10 @@ final class Waves23ModuleBootstrap
     public static function boot(): void
     {
         $root = dirname(__DIR__, 3);
-        $loader = require $root.'/vendor/autoload.php';
-        if ($loader instanceof ClassLoader) {
-            $loader->setClassMapAuthoritative(false);
-            $loader->addPsr4('App\\', $root.'/app', true);
-        }
+        require $root.'/vendor/autoload.php';
+        $moduleLoader = new ClassLoader;
+        $moduleLoader->addPsr4('App\\', $root.'/app');
+        $moduleLoader->addPsr4('Tests\\', $root.'/tests');
+        $moduleLoader->register(true);
     }
 }

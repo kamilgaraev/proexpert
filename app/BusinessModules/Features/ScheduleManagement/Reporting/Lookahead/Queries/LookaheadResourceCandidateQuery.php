@@ -21,7 +21,7 @@ final readonly class LookaheadResourceCandidateQuery
     public function taskIds(
         ReportScope $scope,
         array $projectIds,
-        array $scheduleIds,
+        ?array $scheduleIds,
         DateTimeImmutable $asOf,
     ): ?array {
         if (! $this->resourceScope->requiresConstraintMatch($scope)) {
@@ -35,7 +35,10 @@ final readonly class LookaheadResourceCandidateQuery
         $constraints = WorkConstraint::withTrashed()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
-            ->whereIn('schedule_id', $scheduleIds)
+            ->when(
+                $scheduleIds !== null,
+                static fn ($builder) => $builder->whereIn('schedule_id', $scheduleIds),
+            )
             ->where('created_at', '<=', $asOf)
             ->when(
                 $scopedConstraintIds !== null,
@@ -48,8 +51,12 @@ final readonly class LookaheadResourceCandidateQuery
             $asOf,
             &$taskIds,
         ): void {
-            $constraintIds = $constraintPage->pluck('id')->map('intval')->all();
-            $events = WorkConstraintTransitionEvent::query()
+            $constraintIds = [];
+            foreach ($constraintPage as $constraint) {
+                $constraintIds[] = (int) $constraint->id;
+            }
+            $events = [];
+            foreach (WorkConstraintTransitionEvent::query()
                 ->where('organization_id', $scope->organizationId)
                 ->whereIn('constraint_id', $constraintIds)
                 ->where('occurred_at', '<=', $asOf)
@@ -63,10 +70,11 @@ final readonly class LookaheadResourceCandidateQuery
                     )',
                     [$asOf->format(DATE_ATOM)],
                 )
-                ->get()
-                ->keyBy('constraint_id');
+                ->lazyById(500) as $event) {
+                $events[(int) $event->constraint_id] = $event;
+            }
             foreach ($constraintPage as $constraint) {
-                $latest = $events->get((int) $constraint->id);
+                $latest = $events[(int) $constraint->id] ?? null;
                 $linked = $latest instanceof WorkConstraintTransitionEvent
                     ? $this->linkedFromEvidence((array) $latest->evidence_refs)
                     : $this->linkedFromConstraint($constraint);

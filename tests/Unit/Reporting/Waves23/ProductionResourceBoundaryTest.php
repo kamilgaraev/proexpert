@@ -156,12 +156,12 @@ final class ProductionResourceBoundaryTest extends TestCase
         );
 
         self::assertLessThan(
-            strpos($readiness, '$effectiveProjectIds = $selectedStates'),
-            strpos($readiness, '$filteredConstraints = $this->filterConstraints'),
+            strpos($readiness, '$effectiveProjectIds = array_keys'),
+            strpos($readiness, '$filtered = $this->filterConstraints'),
         );
         self::assertLessThan(
             strpos($readiness, '$this->policies->activeForProjects'),
-            strpos($readiness, '$effectiveProjectIds = $selectedStates'),
+            strpos($readiness, '$effectiveProjectIds = array_keys'),
         );
         self::assertLessThan(
             strpos($materializer, '$effectiveProjectIds = array_keys'),
@@ -171,6 +171,32 @@ final class ProductionResourceBoundaryTest extends TestCase
             '$policySet = $effectiveProjectIds === []',
             $materializer,
         );
+    }
+
+    #[Test]
+    public function lookahead_materializer_reduces_history_in_bounded_pages_before_spooling(): void
+    {
+        $materializer = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadReadinessSnapshotMaterializer.php',
+        );
+        $history = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadConstraintHistoryStream.php',
+        );
+        $beforeSpool = substr(
+            $materializer,
+            0,
+            (int) strpos($materializer, '$inputSpool = new DeterministicObjectSpool'),
+        );
+
+        self::assertStringNotContainsString('->get(', $beforeSpool);
+        self::assertStringNotContainsString('->pluck(', $beforeSpool);
+        self::assertStringNotContainsString('->groupBy(', $beforeSpool);
+        self::assertStringContainsString('$states->chunk(100)', $materializer);
+        self::assertStringContainsString('->whereNotExists(', $materializer);
+        self::assertStringContainsString('->cursor()', $history);
+        self::assertStringContainsString('transitionLineage: $lineage', $history);
     }
 
     #[Test]

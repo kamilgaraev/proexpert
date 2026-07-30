@@ -16,12 +16,28 @@ use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcc
 use App\Support\Reporting\DeterministicObjectSpool;
 use App\Support\Reporting\ReportScopedResourceFilter;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final readonly class AcceptedProductionEventUniverse
 {
     public function stream(ReportScope $scope, ReportQuery $query): AcceptedProductionUniverseStream
     {
+        if (DB::transactionLevel() > 0) {
+            return $this->captureStream($scope, $query);
+        }
+
+        return DB::transaction(function () use ($scope, $query): AcceptedProductionUniverseStream {
+            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+
+            return $this->captureStream($scope, $query);
+        }, 3);
+    }
+
+    private function captureStream(
+        ReportScope $scope,
+        ReportQuery $query,
+    ): AcceptedProductionUniverseStream {
         [$projectIds, $workIds, $actIds, $actLineIds] = $this->filters($scope, $query);
         $entries = new DeterministicObjectSpool;
         $gaps = new DeterministicObjectSpool;

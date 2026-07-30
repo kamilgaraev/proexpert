@@ -37,6 +37,48 @@ final readonly class HistoricalScheduleTaskStateQuery
             ->map(self::hydrate(...));
     }
 
+    public function latestForLookaheadCursor(
+        int $organizationId,
+        array $projectIds,
+        DateTimeImmutable $asOf,
+        ?array $scheduleIds,
+        ?array $taskIds,
+    ): LazyCollection {
+        if ($organizationId < 1 || $projectIds === [] || ! array_is_list($projectIds)) {
+            throw new InvalidArgumentException('historical_schedule_task_scope_invalid');
+        }
+        $ranked = DB::table('schedule_task_state_versions as states')
+            ->select('states.*')
+            ->selectRaw(
+                'row_number() over (partition by states.organization_id, states.task_id order by states.effective_at desc, states.version desc) as state_rank',
+            )
+            ->join('project_schedules as schedules', function ($join): void {
+                $join
+                    ->on('schedules.id', '=', 'states.schedule_id')
+                    ->on('schedules.organization_id', '=', 'states.organization_id');
+            })
+            ->where('states.organization_id', $organizationId)
+            ->whereIn('states.project_id', $projectIds)
+            ->where('states.effective_at', '<=', $asOf)
+            ->where('schedules.created_at', '<=', $asOf)
+            ->where('schedules.is_template', false)
+            ->when(
+                $scheduleIds !== null,
+                static fn ($builder) => $builder->whereIn('states.schedule_id', $scheduleIds),
+            )
+            ->when(
+                $taskIds !== null,
+                static fn ($builder) => $builder->whereIn('states.task_id', $taskIds),
+            );
+
+        return DB::query()
+            ->fromSub($ranked, 'ranked_schedule_task_states')
+            ->where('state_rank', 1)
+            ->orderBy('task_id')
+            ->lazyById(500, 'task_id', 'task_id')
+            ->map(self::hydrate(...));
+    }
+
     private function latestQuery(
         int $organizationId,
         array $projectIds,

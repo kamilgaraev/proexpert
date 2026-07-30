@@ -14,13 +14,13 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalSchedule
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadConstraintState;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\LookaheadResourceCandidateQuery;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadConstraintHistoryStream;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessPolicyService;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadResourceScope;
-use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Support\Reporting\DeterministicReadinessAccumulator;
 use App\Support\Reporting\ReportScopedResourceFilter;
-use DateTimeImmutable;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final readonly class LookaheadReadinessProbe implements ReportSourceReadinessProbe
@@ -31,6 +31,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         private ReportScopedResourceFilter $resourceFilter,
         private LookaheadResourceScope $resourceScope,
         private LookaheadResourceCandidateQuery $resourceCandidates,
+        private LookaheadConstraintHistoryStream $constraintHistory,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -45,6 +46,21 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
     }
 
     public function inspect(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+    ): ReportSourceReadiness {
+        if (DB::transactionLevel() > 0) {
+            return $this->inspectWithinSnapshot($context, $query);
+        }
+
+        return DB::transaction(function () use ($context, $query): ReportSourceReadiness {
+            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+
+            return $this->inspectWithinSnapshot($context, $query);
+        }, 3);
+    }
+
+    private function inspectWithinSnapshot(
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
@@ -72,172 +88,162 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             ['constraint', 'work_constraint'],
             $projectIds,
         );
-        $scheduleIds = ProjectSchedule::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $projectIds)
-            ->where('created_at', '<=', $query->asOf)
-            ->where('is_template', false)
-            ->when(
-                $scopedScheduleIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $scopedScheduleIds),
-            )
-            ->pluck('id')
-            ->map('intval')
-            ->all();
         $constraintTaskIds = $this->resourceCandidates->taskIds(
             $context->scope,
             $projectIds,
-            $scheduleIds,
+            $scopedScheduleIds,
             $query->asOf,
         );
         $resourceTaskIds = $this->intersectNullableIds($scopedTaskIds, $constraintTaskIds);
         $allStates = $projectIds === []
             ? collect()
             : $this->historicalTasks
-                ->latestForProjectsCursor($context->scope->organizationId, $projectIds, $query->asOf)
-                ->whereIn('scheduleId', $scheduleIds)
-                ->when(
-                    $resourceTaskIds !== null,
-                    static fn ($items) => $items->whereIn('taskId', $resourceTaskIds),
+                ->latestForLookaheadCursor(
+                    $context->scope->organizationId,
+                    $projectIds,
+                    $query->asOf,
+                    $scopedScheduleIds,
+                    $resourceTaskIds,
                 );
-        $allTasks = ScheduleTask::withTrashed()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('created_at', '<=', $query->asOf)
-            ->whereIn('schedule_id', $scheduleIds)
-            ->when(
-                $resourceTaskIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $resourceTaskIds),
-            )
-            ->orderBy('id')
-            ->get(['id']);
-        $allStatesByTask = $allStates->keyBy('taskId');
         $selectedStates = $allStates
             ->filter(fn ($state): bool => $state->active && $this->matchesTaskFilters($query, $state));
-        $selectedTaskIds = $selectedStates->pluck('taskId')->map('intval')->all();
-        $missingTaskIds = $this->hasTaskFilters($query)
-            ? []
-            : $allTasks
-                ->reject(fn (ScheduleTask $task): bool => $allStatesByTask->has((int) $task->id))
-                ->pluck('id')
-                ->map('intval')
-                ->all();
+        if (! $this->hasTaskFilters($query)) {
+            $missingTasks = ScheduleTask::withTrashed()
+                ->where('organization_id', $context->scope->organizationId)
+                ->where('created_at', '<=', $query->asOf)
+                ->whereHas('schedule', static fn ($builder) => $builder
+                    ->whereIn('project_id', $projectIds)
+                    ->where('created_at', '<=', $query->asOf)
+                    ->where('is_template', false)
+                    ->when(
+                        $scopedScheduleIds !== null,
+                        static fn ($queryBuilder) => $queryBuilder->whereIn('id', $scopedScheduleIds),
+                    ))
+                ->when(
+                    $resourceTaskIds !== null,
+                    static fn ($builder) => $builder->whereIn('id', $resourceTaskIds),
+                )
+                ->whereNotExists(static function ($builder) use ($context, $query): void {
+                    $builder
+                        ->selectRaw('1')
+                        ->from('schedule_task_state_versions as state_coverage')
+                        ->whereColumn('state_coverage.task_id', 'schedule_tasks.id')
+                        ->where('state_coverage.organization_id', $context->scope->organizationId)
+                        ->where('state_coverage.effective_at', '<=', $query->asOf);
+                });
+            foreach ($missingTasks->lazyById(500) as $missingTask) {
+                $measurement->eligible([
+                    'kind' => 'schedule_task_state',
+                    'source_id' => (int) $missingTask->id,
+                ]);
+                $gapCount++;
+            }
+        }
 
-        $constraints = WorkConstraint::withTrashed()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('schedule_task_id', $selectedTaskIds)
-            ->when(
-                $scopedConstraintIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $scopedConstraintIds),
-            )
-            ->where('created_at', '<=', $query->asOf)
-            ->orderBy('id')
-            ->get();
-        $allowedConstraintsByTask = [];
-        $missingConstraintsByTask = [];
-        $projectedConstraints = [];
-        $constraintEvents = WorkConstraintTransitionEvent::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('constraint_id', $constraints->pluck('id')->all())
-            ->where('occurred_at', '<=', $query->asOf)
-            ->orderBy('constraint_id')
-            ->orderBy('event_version')
-            ->get()
-            ->groupBy('constraint_id');
-        foreach ($constraints as $constraint) {
-            $events = $constraintEvents->get((int) $constraint->id, collect());
-            $latest = $events->last();
-            if ($latest === null) {
-                $linkedResource = $this->linkedResourceFromConstraint($constraint);
+        $effectiveProjectIdMap = [];
+        $maxConstraintId = 0;
+        $maxTaskId = 0;
+        foreach ($selectedStates->chunk(100) as $statePage) {
+            $taskIds = [];
+            foreach ($statePage as $state) {
+                $taskIds[] = (int) $state->taskId;
+                $maxTaskId = max($maxTaskId, (int) $state->taskId);
+            }
+            $constraintsByTask = [];
+            $historyIds = [];
+            foreach ($this->constraintHistory->states(
+                $context->scope,
+                $taskIds,
+                $scopedConstraintIds,
+                $query->asOf,
+            ) as $entry) {
+                $constraintState = $entry['state'];
+                $constraintsByTask[(int) $entry['task_id']][] = $constraintState;
+                $historyIds[$constraintState->constraintId] = true;
+            }
+            $constraintRecords = [];
+            $missingByTask = [];
+            $records = WorkConstraint::withTrashed()
+                ->where('organization_id', $context->scope->organizationId)
+                ->whereIn('schedule_task_id', $taskIds)
+                ->when(
+                    $scopedConstraintIds !== null,
+                    static fn ($builder) => $builder->whereIn('id', $scopedConstraintIds),
+                )
+                ->where('created_at', '<=', $query->asOf)
+                ->orderBy('id')
+                ->cursor();
+            foreach ($records as $constraint) {
+                $constraintId = (int) $constraint->id;
+                $maxConstraintId = max($maxConstraintId, $constraintId);
+                $constraintRecords[$constraintId] = $constraint;
+                if (isset($historyIds[$constraintId])) {
+                    continue;
+                }
+                $linked = $this->linkedResourceFromConstraint($constraint);
                 if ($this->resourceScope->allowsConstraintIdentity(
                     $context->scope,
                     (int) $constraint->project_id,
                     (int) $constraint->schedule_id,
                     (int) $constraint->schedule_task_id,
-                    (int) $constraint->id,
-                    $linkedResource['type'] ?? null,
-                    $linkedResource['id'] ?? null,
+                    $constraintId,
+                    $linked['type'] ?? null,
+                    $linked['id'] ?? null,
                 )) {
-                    $missingConstraintsByTask[(int) $constraint->schedule_task_id][] = (int) $constraint->id;
+                    $missingByTask[(int) $constraint->schedule_task_id][] = $constraintId;
                 }
-
-                continue;
             }
-            if (! $this->matchesConstraintFilters($query, $latest)) {
-                continue;
+            foreach ($statePage as $state) {
+                $filtered = $this->resourceScope->filterConstraints(
+                    $context->scope,
+                    (int) $state->projectId,
+                    (int) $state->scheduleId,
+                    (int) $state->taskId,
+                    $constraintsByTask[(int) $state->taskId] ?? [],
+                );
+                if ($filtered !== null) {
+                    $filtered = $this->filterConstraints($query, $filtered);
+                }
+                $missingIds = $missingByTask[(int) $state->taskId] ?? [];
+                if ($filtered === null && $missingIds === []) {
+                    continue;
+                }
+                $effectiveProjectIdMap[(int) $state->projectId] = true;
+                $measurement->eligible([
+                    'kind' => 'schedule_task_state',
+                    'source_id' => (int) $state->taskId,
+                ]);
+                $measurement->projected([
+                    'kind' => 'schedule_task_state',
+                    'source_hash' => $state->sourceHash,
+                    'source_id' => (int) $state->taskId,
+                ]);
+                foreach ($filtered ?? [] as $constraintState) {
+                    $record = $constraintRecords[$constraintState->constraintId] ?? null;
+                    $measurement->eligible([
+                        'created_at' => $record?->created_at?->format(DATE_ATOM),
+                        'kind' => 'constraint',
+                        'source_id' => $constraintState->constraintId,
+                    ]);
+                    $measurement->projected([
+                        'transition_lineage' => $constraintState->transitionLineage,
+                        'kind' => 'constraint',
+                        'source_id' => $constraintState->constraintId,
+                    ]);
+                }
+                foreach ($missingIds as $constraintId) {
+                    $record = $constraintRecords[$constraintId] ?? null;
+                    $measurement->eligible([
+                        'created_at' => $record?->created_at?->format(DATE_ATOM),
+                        'kind' => 'constraint',
+                        'source_id' => $constraintId,
+                    ]);
+                    $gapCount++;
+                }
             }
-            $linkedResource = $this->linkedResource((array) $latest->evidence_refs);
-            $state = new LookaheadConstraintState(
-                constraintId: (int) $latest->constraint_id,
-                type: (string) $latest->constraint_type,
-                severity: (string) $latest->severity,
-                status: (string) $latest->to_status,
-                waiverUntil: $latest->waiver_until === null
-                    ? null
-                    : new DateTimeImmutable($latest->waiver_until->format(DATE_ATOM)),
-                waiverEvidenceRef: $latest->waiver_evidence_ref,
-                openedAt: new DateTimeImmutable($events->first()->occurred_at->format(DATE_ATOM)),
-                linkedResourceType: $linkedResource['type'] ?? null,
-                linkedResourceId: $linkedResource['id'] ?? null,
-                transitionLineage: $events
-                    ->map(static fn (WorkConstraintTransitionEvent $event): array => [
-                        'id' => (int) $event->id,
-                        'version' => (int) $event->event_version,
-                        'source_hash' => (string) $event->source_hash,
-                    ])
-                    ->values()
-                    ->all(),
-            );
-            if (! $this->resourceScope->allowsConstraintIdentity(
-                $context->scope,
-                (int) $latest->project_id,
-                (int) $latest->schedule_id,
-                (int) $latest->task_id,
-                (int) $latest->constraint_id,
-                $state->linkedResourceType,
-                $state->linkedResourceId,
-            )) {
-                continue;
-            }
-            $allowedConstraintsByTask[(int) $latest->task_id][] = $state;
-            $projectedConstraints[(int) $constraint->id] = [
-                'transition_lineage' => $state->transitionLineage,
-                'kind' => 'constraint',
-                'source_id' => (int) $constraint->id,
-            ];
         }
-
-        $resourceScopedStates = collect();
-        $selectedConstraintIds = [];
-        foreach ($selectedStates as $state) {
-            $filteredConstraints = $this->resourceScope->filterConstraints(
-                $context->scope,
-                (int) $state->projectId,
-                (int) $state->scheduleId,
-                (int) $state->taskId,
-                $allowedConstraintsByTask[(int) $state->taskId] ?? [],
-            );
-            if ($filteredConstraints !== null) {
-                $filteredConstraints = $this->filterConstraints($query, $filteredConstraints);
-            }
-            if ($filteredConstraints === null
-                && ($missingConstraintsByTask[(int) $state->taskId] ?? []) === []
-            ) {
-                continue;
-            }
-            foreach ($filteredConstraints ?? [] as $constraint) {
-                $selectedConstraintIds[$constraint->constraintId] = true;
-            }
-            $resourceScopedStates->push($state);
-        }
-        $selectedStates = $resourceScopedStates;
-        $selectedTaskIds = $selectedStates->pluck('taskId')->map('intval')->all();
-        $effectiveProjectIds = $selectedStates
-            ->pluck('projectId')
-            ->map('intval')
-            ->unique()
-            ->sort()
-            ->values()
-            ->all();
+        $effectiveProjectIds = array_keys($effectiveProjectIdMap);
+        sort($effectiveProjectIds, SORT_NUMERIC);
         if ($effectiveProjectIds !== []) {
             try {
                 $policySet = $this->policies->activeForProjects(
@@ -262,60 +268,14 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             }
         }
 
-        foreach ($constraints as $constraint) {
-            $taskId = (int) $constraint->schedule_task_id;
-            if (! in_array($taskId, $selectedTaskIds, true)) {
-                continue;
-            }
-            if (isset($projectedConstraints[(int) $constraint->id])
-                && isset($selectedConstraintIds[(int) $constraint->id])
-            ) {
-                $measurement->eligible([
-                    'created_at' => $constraint->created_at?->format(DATE_ATOM),
-                    'kind' => 'constraint',
-                    'source_id' => (int) $constraint->id,
-                ]);
-                $measurement->projected($projectedConstraints[(int) $constraint->id]);
-
-                continue;
-            }
-            if (in_array(
-                (int) $constraint->id,
-                $missingConstraintsByTask[$taskId] ?? [],
-                true,
-            )) {
-                $measurement->eligible([
-                    'created_at' => $constraint->created_at?->format(DATE_ATOM),
-                    'kind' => 'constraint',
-                    'source_id' => (int) $constraint->id,
-                ]);
-                $gapCount++;
-            }
-        }
-
-        foreach (array_values(array_unique([...$selectedTaskIds, ...$missingTaskIds])) as $taskId) {
-            $measurement->eligible(['kind' => 'schedule_task_state', 'source_id' => $taskId]);
-            $state = $allStatesByTask->get($taskId);
-            if ($state === null) {
-                $gapCount++;
-
-                continue;
-            }
-            $measurement->projected([
-                'kind' => 'schedule_task_state',
-                'source_hash' => $state->sourceHash,
-                'source_id' => $taskId,
-            ]);
-        }
-
         $watermark = implode('.', [
-            'lookahead:'.(int) ($constraints->max('id') ?? 0),
+            'lookahead:'.$maxConstraintId,
             (int) (WorkConstraintTransitionEvent::query()
                 ->where('organization_id', $context->scope->organizationId)
                 ->whereIn('project_id', $projectIds)
                 ->where('occurred_at', '<=', $query->asOf)
                 ->max('id') ?? 0),
-            (int) ($allStates->max('taskId') ?? 0),
+            $maxTaskId,
         ]);
 
         return $measurement->finish($gapCount, 0, $watermark);
@@ -399,27 +359,6 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         return ($values['constraint_types'] ?? $values['types'] ?? []) !== []
             || ($values['severities'] ?? []) !== []
             || ($values['statuses'] ?? []) !== [];
-    }
-
-    private function linkedResource(array $evidenceRefs): ?array
-    {
-        foreach ($evidenceRefs as $reference) {
-            if (! is_array($reference)
-                || ($reference['type'] ?? null) === 'waiver_evidence'
-                || ! is_string($reference['type'] ?? null)
-                || ! is_numeric($reference['id'] ?? null)
-                || (int) $reference['id'] < 1
-            ) {
-                continue;
-            }
-
-            return [
-                'type' => $reference['type'],
-                'id' => (int) $reference['id'],
-            ];
-        }
-
-        return null;
     }
 
     private function linkedResourceFromConstraint(WorkConstraint $constraint): ?array

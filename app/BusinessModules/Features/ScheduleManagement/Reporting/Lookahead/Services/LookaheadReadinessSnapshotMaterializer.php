@@ -12,11 +12,8 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadConstraintState;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadEligibilityInput;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\LookaheadResourceCandidateQuery;
 use App\Models\ScheduleTask;
 use App\Support\Reporting\DeterministicObjectSpool;
 use App\Support\Reporting\ReportScopedResourceFilter;
@@ -35,11 +32,26 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         private LookaheadReadinessFormula $formula,
         private HistoricalScheduleTaskStateQuery $historicalTasks,
         private LookaheadResourceScope $resourceScope,
-        private LookaheadResourceCandidateQuery $resourceCandidates,
+        private LookaheadConstraintHistoryStream $constraintHistory,
     ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
+        if (DB::transactionLevel() > 0) {
+            return $this->materializeWithinSnapshot($scope, $query);
+        }
+
+        return DB::transaction(function () use ($scope, $query): ReportSnapshotRef {
+            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+
+            return $this->materializeWithinSnapshot($scope, $query);
+        }, 3);
+    }
+
+    private function materializeWithinSnapshot(
+        ReportScope $scope,
+        ReportQuery $query,
+    ): ReportSnapshotRef {
         if ($scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
             || $query->definition->snapshotClassification !== ReportSnapshotClassification::OPERATIONAL
         ) {
@@ -68,113 +80,92 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ['constraint', 'work_constraint'],
             $projectIds,
         );
-        $scheduleIds = \App\Models\ProjectSchedule::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('project_id', $projectIds)
-            ->where('created_at', '<=', $query->asOf)
-            ->where('is_template', false)
-            ->when(
-                $scopedScheduleIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $scopedScheduleIds),
-            )
-            ->pluck('id')
-            ->map('intval')
-            ->all();
-        $constraintTaskIds = $this->resourceCandidates->taskIds(
-            $scope,
-            $projectIds,
-            $scheduleIds,
-            $query->asOf,
-        );
-        $resourceTaskIds = $this->intersectNullableIds($scopedTaskIds, $constraintTaskIds);
+        $resourceTaskIds = $scopedTaskIds;
         $states = $this->historicalTasks
-            ->latestForProjectsCursor($scope->organizationId, $projectIds, $query->asOf)
-            ->whereIn('scheduleId', $scheduleIds)
-            ->when(
-                $resourceTaskIds !== null,
-                static fn ($items) => $items->whereIn('taskId', $resourceTaskIds),
+            ->latestForLookaheadCursor(
+                $scope->organizationId,
+                $projectIds,
+                $query->asOf,
+                $scopedScheduleIds,
+                $resourceTaskIds,
             )
             ->values();
-        $eligibleTaskIds = ScheduleTask::withTrashed()
-            ->where('organization_id', $scope->organizationId)
-            ->where('created_at', '<=', $query->asOf)
-            ->whereIn('schedule_id', $scheduleIds)
-            ->when(
-                $resourceTaskIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $resourceTaskIds),
-            )
-            ->pluck('id')
-            ->map('intval')
-            ->all();
-        $versionedTaskIds = $states
-            ->pluck('taskId')
-            ->map('intval')
-            ->all();
-        if (! $this->hasTaskFilters($query)
-            && array_diff($eligibleTaskIds, $versionedTaskIds) !== []
-        ) {
+        $missingStateExists = ! $this->hasTaskFilters($query)
+            && ScheduleTask::withTrashed()
+                ->where('organization_id', $scope->organizationId)
+                ->where('created_at', '<=', $query->asOf)
+                ->whereHas('schedule', static function ($builder) use (
+                    $projectIds,
+                    $query,
+                    $scopedScheduleIds,
+                ): void {
+                    $builder
+                        ->whereIn('project_id', $projectIds)
+                        ->where('created_at', '<=', $query->asOf)
+                        ->where('is_template', false)
+                        ->when(
+                            $scopedScheduleIds !== null,
+                            static fn ($scheduleBuilder) => $scheduleBuilder
+                                ->whereIn('id', $scopedScheduleIds),
+                        );
+                })
+                ->when(
+                    $resourceTaskIds !== null,
+                    static fn ($builder) => $builder->whereIn('id', $resourceTaskIds),
+                )
+                ->whereNotExists(static function ($builder) use ($scope, $query): void {
+                    $builder
+                        ->selectRaw('1')
+                        ->from('schedule_task_state_versions as task_state_coverage')
+                        ->whereColumn('task_state_coverage.task_id', 'schedule_tasks.id')
+                        ->where('task_state_coverage.organization_id', $scope->organizationId)
+                        ->where('task_state_coverage.effective_at', '<=', $query->asOf);
+                })
+                ->exists();
+        if ($missingStateExists) {
             throw new InvalidArgumentException('historical_schedule_task_state_incomplete');
         }
 
         $states = $states
             ->filter(fn ($state): bool => $state->active && $this->matchesTaskFilters($query, $state))
             ->values();
-        $taskIds = $states->pluck('taskId')->all();
-        $events = WorkConstraintTransitionEvent::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('task_id', $taskIds)
-            ->when(
-                $scopedConstraintIds !== null,
-                static fn ($builder) => $builder->whereIn('constraint_id', $scopedConstraintIds),
-            )
-            ->where('occurred_at', '<=', $query->asOf)
-            ->orderBy('constraint_id')
-            ->orderBy('event_version')
-            ->get()
-            ->groupBy('task_id')
-            ->map(static function ($taskEvents): array {
-                return $taskEvents
-                    ->groupBy('constraint_id')
-                    ->map(static function ($constraintEvents) {
-                        $latest = $constraintEvents->last();
-                        $latest->setAttribute('opened_at_source', $constraintEvents->first()->occurred_at);
-                        $latest->setAttribute('transition_lineage', $constraintEvents
-                            ->map(static fn (WorkConstraintTransitionEvent $event): array => [
-                                'id' => (int) $event->id,
-                                'version' => (int) $event->event_version,
-                                'source_hash' => (string) $event->source_hash,
-                            ])
-                            ->values()
-                            ->all());
-
-                        return $latest;
-                    })
-                    ->values()
-                    ->all();
-            });
-        $capturedConstraintIds = $events
-            ->flatten(1)
-            ->pluck('constraint_id')
-            ->map(static fn ($id): int => (int) $id)
-            ->all();
-        $uncapturedConstraints = WorkConstraint::withTrashed()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('schedule_task_id', $taskIds)
-            ->when(
-                $scopedConstraintIds !== null,
-                static fn ($builder) => $builder->whereIn('id', $scopedConstraintIds),
-            )
-            ->where('created_at', '<=', $query->asOf)
-            ->when(
-                $capturedConstraintIds !== [],
-                static fn ($builder) => $builder->whereNotIn('id', $capturedConstraintIds),
-            )
-            ->get();
-        $uncapturedConstraintExists = $uncapturedConstraints->contains(
-            function (WorkConstraint $constraint) use ($scope): bool {
+        $inputSpool = new DeterministicObjectSpool;
+        $effectiveProjectIdMap = [];
+        foreach ($states->chunk(100) as $statePage) {
+            $taskIds = [];
+            foreach ($statePage as $state) {
+                $taskIds[] = (int) $state->taskId;
+            }
+            $constraintsByTask = [];
+            foreach ($this->constraintHistory->states(
+                $scope,
+                $taskIds,
+                $scopedConstraintIds,
+                $query->asOf,
+            ) as $entry) {
+                $constraintsByTask[(int) $entry['task_id']][] = $entry['state'];
+            }
+            $uncapturedConstraints = WorkConstraint::withTrashed()
+                ->where('organization_id', $scope->organizationId)
+                ->whereIn('schedule_task_id', $taskIds)
+                ->when(
+                    $scopedConstraintIds !== null,
+                    static fn ($builder) => $builder->whereIn('id', $scopedConstraintIds),
+                )
+                ->where('created_at', '<=', $query->asOf)
+                ->whereNotExists(static function ($builder) use ($scope, $query): void {
+                    $builder
+                        ->selectRaw('1')
+                        ->from('work_constraint_transition_events as captured_event')
+                        ->whereColumn('captured_event.constraint_id', 'work_constraints.id')
+                        ->where('captured_event.organization_id', $scope->organizationId)
+                        ->where('captured_event.occurred_at', '<=', $query->asOf);
+                })
+                ->orderBy('id')
+                ->cursor();
+            foreach ($uncapturedConstraints as $constraint) {
                 $linkedResource = $this->linkedResourceFromConstraint($constraint);
-
-                return $this->resourceScope->allowsConstraintIdentity(
+                if ($this->resourceScope->allowsConstraintIdentity(
                     $scope,
                     (int) $constraint->project_id,
                     (int) $constraint->schedule_id,
@@ -182,67 +173,47 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     (int) $constraint->id,
                     $linkedResource['type'] ?? null,
                     $linkedResource['id'] ?? null,
+                )) {
+                    throw new InvalidArgumentException('lookahead_constraint_history_incomplete');
+                }
+            }
+            foreach ($statePage as $state) {
+                $constraints = $constraintsByTask[(int) $state->taskId] ?? [];
+                $constraints = $this->resourceScope->filterConstraints(
+                    $scope,
+                    (int) $state->projectId,
+                    (int) $state->scheduleId,
+                    (int) $state->taskId,
+                    $constraints,
                 );
-            },
-        );
-        if ($uncapturedConstraintExists) {
-            throw new InvalidArgumentException('lookahead_constraint_history_incomplete');
-        }
-        $inputSpool = new DeterministicObjectSpool;
-        $effectiveProjectIdMap = [];
-        foreach ($states as $state) {
-            $constraints = [];
-            foreach ($events->get($state->taskId, []) as $event) {
-                $linkedResource = $this->linkedResource((array) $event->evidence_refs);
-                $constraints[] = new LookaheadConstraintState(
-                    constraintId: (int) $event->constraint_id,
-                    type: (string) $event->constraint_type,
-                    severity: (string) $event->severity,
-                    status: (string) $event->to_status,
-                    waiverUntil: $event->waiver_until === null
-                        ? null
-                        : new DateTimeImmutable($event->waiver_until->format(DATE_ATOM)),
-                    waiverEvidenceRef: $event->waiver_evidence_ref,
-                    openedAt: new DateTimeImmutable($event->opened_at_source->format(DATE_ATOM)),
-                    linkedResourceType: $linkedResource['type'] ?? null,
-                    linkedResourceId: $linkedResource['id'] ?? null,
-                    transitionLineage: (array) $event->transition_lineage,
+                if ($constraints === null) {
+                    continue;
+                }
+                $constraints = $this->filterConstraints($query, $constraints);
+                if ($constraints === null) {
+                    continue;
+                }
+                $input = new LookaheadEligibilityInput(
+                    taskId: $state->taskId,
+                    container: $state->taskType === 'container',
+                    status: $state->status,
+                    plannedStart: $state->plannedStart,
+                    asOf: $query->asOf,
+                    constraints: $constraints,
+                    projectId: $state->projectId,
+                    scheduleId: $state->scheduleId,
+                    wbsCode: $state->wbsCode,
+                    ownerId: $state->ownerId,
+                    contractorId: $state->contractorId,
+                    zoneId: $state->zoneId,
+                    taskType: $state->taskType,
+                    taskStateVersion: $state->version,
+                    taskStateSourceHash: $state->sourceHash,
+                    taskStateEffectiveAt: $state->effectiveAt,
                 );
+                $inputSpool->append($input, $input->canonicalIdentity());
+                $effectiveProjectIdMap[(int) $input->projectId] = true;
             }
-            $constraints = $this->resourceScope->filterConstraints(
-                $scope,
-                (int) $state->projectId,
-                (int) $state->scheduleId,
-                (int) $state->taskId,
-                $constraints,
-            );
-            if ($constraints === null) {
-                continue;
-            }
-            $constraints = $this->filterConstraints($query, $constraints);
-            if ($constraints === null) {
-                continue;
-            }
-            $input = new LookaheadEligibilityInput(
-                taskId: $state->taskId,
-                container: $state->taskType === 'container',
-                status: $state->status,
-                plannedStart: $state->plannedStart,
-                asOf: $query->asOf,
-                constraints: $constraints,
-                projectId: $state->projectId,
-                scheduleId: $state->scheduleId,
-                wbsCode: $state->wbsCode,
-                ownerId: $state->ownerId,
-                contractorId: $state->contractorId,
-                zoneId: $state->zoneId,
-                taskType: $state->taskType,
-                taskStateVersion: $state->version,
-                taskStateSourceHash: $state->sourceHash,
-                taskStateEffectiveAt: $state->effectiveAt,
-            );
-            $inputSpool->append($input, $input->canonicalIdentity());
-            $effectiveProjectIdMap[(int) $input->projectId] = true;
         }
         $effectiveProjectIds = array_keys($effectiveProjectIdMap);
         sort($effectiveProjectIds, SORT_NUMERIC);

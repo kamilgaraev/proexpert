@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="tests/Support/Reporting/waves23-bootstrap.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache/waves23">
+    <testsuites>
+        <testsuite name="Waves23">
+            <directory>tests/Unit/Reporting/Waves23</directory>
+            <file>tests/Architecture/Reporting/Waves23ProductionContractsTest.php</file>
+        </testsuite>
+    </testsuites>
+</phpunit>
