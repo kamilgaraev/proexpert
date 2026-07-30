@@ -33,3 +33,7 @@
 - Cursor unit-тесты — OK (2 tests, 6 assertions).
 - PHPStan по изменённым Task 8 слоям — OK, 0 ошибок.
 - `php -l`, Pint и `git diff --check` — OK.
+
+## Исправление null cursor filter
+
+- В signed cursor `report_code: null` теперь корректно распознаётся как присутствующее значение для списка без фильтра; добавлен round-trip регрессионный тест.

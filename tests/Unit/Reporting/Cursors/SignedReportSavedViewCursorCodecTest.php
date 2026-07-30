@@ -26,4 +26,12 @@ final class SignedReportSavedViewCursorCodecTest extends TestCase
         $this->expectExceptionObject(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::fromCode(\App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_CURSOR_INVALID));
         $codec->encode(1, 10, new DateTimeImmutable('2026-07-25T00:00:00+00:00'), 'not-a-ulid', 'projects');
     }
+
+    public function test_it_round_trips_unfiltered_cursor(): void
+    {
+        $codec = new SignedReportSavedViewCursorCodec('test-key', new DateTimeImmutable('2026-07-26T00:00:00+00:00'));
+        $token = $codec->encode(1, 10, new DateTimeImmutable('2026-07-25T00:00:00+00:00'), '01J00000000000000000000000', null);
+
+        self::assertSame('2026-07-25T00:00:00.000000+00:00|01J00000000000000000000000', $codec->decode($token, 1, 10, null));
+    }
 }

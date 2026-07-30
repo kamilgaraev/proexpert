@@ -39,7 +39,8 @@ final readonly class SignedReportSavedViewCursorCodec
             }$json = base64_decode(strtr($body, '-_', '+/').str_repeat('=', (4 - strlen($body) % 4) % 4), true);
             $p = is_string($json) ? json_decode($json, true, 16, JSON_THROW_ON_ERROR) : null;
             if (! is_array($p)
-                || ! isset($p['organization_id'], $p['owner_id'], $p['report_code'], $p['created_at'], $p['id'], $p['expires_at'])
+                || ! isset($p['organization_id'], $p['owner_id'], $p['created_at'], $p['id'], $p['expires_at'])
+                || ! array_key_exists('report_code', $p)
                 || ! is_int($p['organization_id'])
                 || ! is_int($p['owner_id'])
                 || ! is_string($p['report_code']) && $p['report_code'] !== null
