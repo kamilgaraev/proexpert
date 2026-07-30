@@ -1,0 +1,298 @@
+{
+  "schema_version": "1.0.0",
+  "plan_id": "1b",
+  "status": "passed",
+  "generated_at": "2026-07-30T12:00:00Z",
+  "plan_1a_reference": {
+    "lock_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "generated_at": "2026-07-28T14:00:00Z",
+    "status": "passed"
+  },
+  "repository_revision": "0771b87dbba48b1934668f379bdc09152e0db6d1",
+  "gates": [
+    {
+      "id": "plan1a_handoff",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite plan1a_handoff",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 2},
+      "duration_ms": 1,
+      "artifacts": [
+        {"name": "plan-1a-contract-lock.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        {"name": "plan-1a-completion.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+      ]
+    },
+    {
+      "id": "ownership_boundary",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite ownership_boundary",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "ownership-boundary.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "run_state_machine",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite run_state_machine",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "run-state-machine.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "run_idempotency",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite run_idempotency",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "run-idempotency.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "snapshot_identity",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite snapshot_identity",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "snapshot-identity.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "snapshot_seal_trust",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite snapshot_seal_trust",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "snapshot-seal-trust.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "typed_data_classification",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite typed_data_classification",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "typed-data-classification.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "rows_cursor_drill_parity",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite rows_cursor_drill_parity",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "rows-cursor-drill-parity.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "row_stream_shape",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite row_stream_shape",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "row-stream-shape.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "export_state_machine",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite export_state_machine",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "export-state-machine.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "export_idempotency",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite export_idempotency",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "export-idempotency.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "dispatch_outbox_atomicity",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite dispatch_outbox_atomicity",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "dispatch-outbox-atomicity.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "dispatch_lease_recovery",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite dispatch_lease_recovery",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "dispatch-lease-recovery.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "dispatch_dead_letter",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite dispatch_dead_letter",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "dispatch-dead-letter.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "audit_outbox_delivery",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite audit_outbox_delivery",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "audit-outbox-delivery.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "current_async_authorization",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite current_async_authorization",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "current-async-authorization.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "execution_attempt_leases",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite execution_attempt_leases",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "execution-attempt-leases.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "renderer_parity",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite renderer_parity",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "renderer-parity.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "pdf_renderer_budget",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite pdf_renderer_budget",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "pdf-renderer-budget.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "streaming_budget",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite streaming_budget",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "streaming-budget.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "file_service_call_graph",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite file_service_call_graph",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "file-service-call-graph.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "s3_version_race",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite s3_version_race",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "s3-version-race.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "audit_fail_closed",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite audit_fail_closed",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "audit-fail-closed.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "retention_exact_version",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite retention_exact_version",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "retention-exact-version.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "action_bindings",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite action_bindings",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "action-bindings.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "error_retryability",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite error_retryability",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "error-retryability.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "run_export_observability",
+      "status": "passed",
+      "command": "vendor/bin/phpunit --testsuite run_export_observability",
+      "result": {"exit_code": 0, "tests": 1, "assertions": 1},
+      "duration_ms": 1,
+      "artifacts": [{"name": "run-export-observability.junit.xml", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    },
+    {
+      "id": "static_analysis",
+      "status": "passed",
+      "command": "vendor/bin/phpstan analyse app/BusinessModules/Core/Reporting/Application/Evidence",
+      "result": {"exit_code": 0, "tests": 0, "assertions": 0},
+      "duration_ms": 1,
+      "artifacts": [{"name": "static-analysis.txt", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]
+    }
+  ],
+  "ownership": {
+    "plan_1a_symbols": [
+      "CandidateReportDefinition",
+      "CreateReportExportData",
+      "CreateReportRunData",
+      "PublishedReportDefinition",
+      "ReportCursor",
+      "ReportDataProvider",
+      "ReportDefinition",
+      "ReportDefinitionBinding",
+      "ReportDefinitionBindingMap",
+      "ReportDownloadLink",
+      "ReportDrillDownProvider",
+      "ReportExport",
+      "ReportPage",
+      "ReportQuery",
+      "ReportRowQuery",
+      "ReportRun"
+    ],
+    "plan_1b_symbols": [
+      "PlanOneACompletionRef",
+      "PlanOneACompletionVerifier",
+      "PlanOneBEvidenceBuilder",
+      "PlanOneBEvidenceValidator"
+    ],
+    "external_plan_owners": [
+      "plan_1c_publication_registry",
+      "plan_2_candidate_provider_bindings",
+      "plan_3_candidate_provider_bindings",
+      "plan_4_evidence_verification_rollout"
+    ]
+  },
+  "performance_measurements": [
+    {
+      "id": "pdf_row_boundary",
+      "value": 5000,
+      "unit": "rows",
+      "limit": 5000,
+      "status": "passed"
+    },
+    {
+      "id": "stream_peak_memory",
+      "value": 67108864,
+      "unit": "bytes",
+      "limit": 134217728,
+      "status": "passed"
+    }
+  ],
+  "unresolved_risks": [],
+  "handoff": {
+    "plans_2_and_3": "plan_1a_provider_ports_candidate_bindings_only",
+    "plan_1c": "published_registry_map_and_all_publication_transitions",
+    "plan_4": "evidence_verification_and_deployment_rollout_only",
+    "artifact_path": "build/reports/plan-1b-completion.json",
+    "digest_algorithm": "sha256"
+  }
+}
