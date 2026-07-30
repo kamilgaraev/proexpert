@@ -106,6 +106,7 @@ final class ReportingArtifactTransferService
             $adminTransfer?->sourceCommitSha,
             $generatedAt,
             hash('sha256', $artifact),
+            hash('sha256', $artifact),
             hash('sha256', $schema),
             hash('sha256', $transferSchema),
         );
@@ -132,23 +133,27 @@ final class ReportingArtifactTransferService
                 throw new RuntimeException('reporting_artifact_transfer_final_mismatch');
             }
         }
-        $descriptor = CanonicalJson::encode([
+        $descriptor = [
             'artifact_id' => $transfer->artifactId,
+            'schema_version' => $transfer->schemaVersion,
             'kind' => $transfer->kind,
             'status' => $transfer->status,
             'source_path' => $transfer->sourcePath,
             'destination_path' => $transfer->destinationPath,
             'schema_path' => $transfer->schemaPath,
-            'transfer_schema_path' => self::TRANSFER_SCHEMA,
-            'artifact_sha256' => $transfer->artifactSha256,
+            'source_sha256' => $transfer->sourceSha256,
+            'destination_sha256' => $transfer->destinationSha256,
             'schema_sha256' => $transfer->schemaSha256,
             'transfer_schema_sha256' => $transfer->transferSchemaSha256,
             'release_sha' => $transfer->releaseSha,
             'source_commit_sha' => $transfer->sourceCommitSha,
             'activation_commit_sha' => $transfer->activationCommitSha,
-            'admin_evidence_commit_sha' => $transfer->adminEvidenceCommitSha,
             'generated_at' => $transfer->generatedAt->format('Y-m-d\\TH:i:s\\Z'),
-        ])."\n";
+        ];
+        if ($transfer->adminEvidenceCommitSha !== null) {
+            $descriptor['admin_evidence_commit_sha'] = $transfer->adminEvidenceCommitSha;
+        }
+        $descriptor = CanonicalJson::encode($descriptor)."\n";
         $this->atomicWrite($root, $definition['descriptor'], $descriptor);
         if ($this->read($root, $definition['descriptor']) !== $descriptor) {
             throw new RuntimeException('reporting_artifact_transfer_final_mismatch');
