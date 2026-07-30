@@ -1,0 +1,50 @@
+{
+    "assertion_count": 15,
+    "code": "quality_report",
+    "commit_sha": "1111111111111111111111111111111111111111",
+    "component_class_hashes": [
+        {
+            "class": "App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDefinition",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    ],
+    "contract_version": "1",
+    "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "digest": "b23b6ae1033e1eb1bee25b337a1eaaa33b993e7fefa5b5d40a44aefca61d8edf",
+    "fixture_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "formula": {
+        "assertion_codes": [
+            "formula.totals.passed",
+            "formula.version.passed"
+        ],
+        "formula_version": "1",
+        "passed": true,
+        "totals_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "generated_at": "2026-07-26T12:00:00.000000Z",
+    "source": {
+        "assertion_codes": [
+            "source.availability.passed",
+            "source.binding_identity.passed",
+            "source.canonical_values.passed",
+            "source.page_cursor_semantics.passed",
+            "source.query_identity.passed",
+            "source.resource_links.passed",
+            "source.result_semantics.passed",
+            "source.row_count.passed",
+            "source.scope.passed",
+            "source.sensitive_redaction.passed",
+            "source.snapshot_identity.passed",
+            "source.source_hash.passed",
+            "source.unique_row_keys.passed"
+        ],
+        "passed": true,
+        "row_count": 2,
+        "rows_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "snapshot_id": "fixture-1",
+        "snapshot_kind": "fixture",
+        "source_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "source_schema_version": "v1",
+    "status": "passed"
+}
