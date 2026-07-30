@@ -14,7 +14,8 @@ final class PlanOneCPlatformEvidenceSourceHashesTest extends TestCase
         $root = dirname(__DIR__, 4);
         $builder = new PlanOneCPlatformEvidenceBuilder($root);
         $method = new \ReflectionMethod($builder, 'sourceHashes');
-        $hashes = $method->invoke($builder);
+        $commit = trim((string) shell_exec('git -C '.escapeshellarg($root).' rev-parse HEAD'));
+        $hashes = $method->invoke($builder, $commit);
         $expectedPaths = [
             'manifest' => 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml',
             'official_manifest' => 'app/BusinessModules/Core/Reporting/resources/official-document-catalog.v1.yaml',
@@ -33,7 +34,9 @@ final class PlanOneCPlatformEvidenceSourceHashesTest extends TestCase
         self::assertSame(array_keys($expectedPaths), array_keys($hashes));
         foreach ($expectedPaths as $key => $path) {
             self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $hashes[$key]);
-            self::assertSame(hash_file('sha256', $root.'/'.$path), $hashes[$key]);
+            $bytes = shell_exec('git -C '.escapeshellarg($root).' show '.$commit.':'.$path);
+            self::assertIsString($bytes);
+            self::assertSame(hash('sha256', $bytes), $hashes[$key]);
         }
     }
 }
