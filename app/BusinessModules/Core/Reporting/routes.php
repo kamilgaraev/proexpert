@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportContro
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRowsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSubscriptionController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportWorkspacePreferencesController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors;
 use App\Support\Routing\AdminRouteStack;
@@ -44,6 +45,27 @@ Route::prefix('api/v1/admin/reports')
             ->middleware(['authorize:reports.view', 'authorize:reports.manage'])->name('saved-views.destroy');
         Route::post('/saved-views/{savedViewId}/set-default', [ReportSavedViewController::class, 'setDefault'])
             ->middleware(['authorize:reports.view', 'authorize:reports.manage'])->name('saved-views.set-default');
+        Route::get('/subscriptions', [ReportSubscriptionController::class, 'index'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('subscriptions.index');
+        Route::post('/subscriptions', [ReportSubscriptionController::class, 'store'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('subscriptions.store');
+        Route::patch('/subscriptions/{subscriptionId}', [ReportSubscriptionController::class, 'update'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('subscriptions.update');
+        Route::delete('/subscriptions/{subscriptionId}', [ReportSubscriptionController::class, 'destroy'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('subscriptions.destroy');
+        Route::post('/subscriptions/{subscriptionId}/pause', [ReportSubscriptionController::class, 'pause'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('subscriptions.pause');
+        Route::post('/subscriptions/{subscriptionId}/resume', [ReportSubscriptionController::class, 'resume'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('subscriptions.resume');
+        Route::post('/subscriptions/{subscriptionId}/run-now', [ReportSubscriptionController::class, 'runNow'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.manage'])
+            ->name('subscriptions.run-now');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware(['authorize:reports.view', 'authorize:reports.run'])
             ->name('runs.store');

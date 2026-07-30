@@ -35,6 +35,26 @@ abstract class ReportFormRequest extends FormRequest
         ];
     }
 
+    final protected function subscriptionForbiddenClientFieldsRules(): array
+    {
+        return [
+            ...$this->forbiddenClientFieldsRules(),
+            'owner_id' => ['prohibited'],
+            'actor_id' => ['prohibited'],
+            'report_code' => ['prohibited'],
+            'channel' => ['prohibited'],
+            'recipients' => ['prohibited'],
+            'status' => ['prohibited'],
+            'next_run_at' => ['prohibited'],
+            'execution_input' => ['prohibited'],
+            'contract_version' => ['prohibited'],
+            'consecutive_failures' => ['prohibited'],
+            'run_id' => ['prohibited'],
+            'export_id' => ['prohibited'],
+            'notification_receipt_id' => ['prohibited'],
+        ];
+    }
+
     final protected function canonicalUlidRules(): array
     {
         return ['ulid', 'regex:/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/'];

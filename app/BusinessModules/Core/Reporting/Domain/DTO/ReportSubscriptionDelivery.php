@@ -34,6 +34,8 @@ final readonly class ReportSubscriptionDelivery
         public ?DateTimeImmutable $retryAt,
         public DateTimeImmutable $executionExpiresAt,
         public DateTimeImmutable $retentionDeleteAfter,
+        public ?DateTimeImmutable $createdAt = null,
+        public ?DateTimeImmutable $updatedAt = null,
     ) {
         if (
             ! hash_equals($executionInputHash->value, hash('sha256', $executionInputBytes))

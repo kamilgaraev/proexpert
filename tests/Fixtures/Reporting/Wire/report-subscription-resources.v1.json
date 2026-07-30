@@ -1,0 +1,71 @@
+{
+  "subscription": {
+    "success": true,
+    "message": null,
+    "data": {
+      "id": "01J00000000000000000000001",
+      "saved_view_id": "01J00000000000000000000002",
+      "report_code": "budget_plan_fact",
+      "frequency": "daily",
+      "weekday": null,
+      "day_of_month": null,
+      "local_time": "10:00",
+      "timezone": "UTC",
+      "period_policy": {"mode": "previous_day"},
+      "format": "xlsx",
+      "channel": "in_app",
+      "status": "active",
+      "disabled_reason": null,
+      "consecutive_failures": 0,
+      "next_run_at": "2026-07-27T10:00:00+00:00",
+      "created_at": "2026-07-26T09:00:00+00:00",
+      "updated_at": "2026-07-26T09:01:00+00:00"
+    }
+  },
+  "delivery": {
+    "success": true,
+    "message": null,
+    "data": {
+      "id": "01J00000000000000000000003",
+      "subscription_id": "01J00000000000000000000001",
+      "trigger": "manual",
+      "scheduled_for": "2026-07-26T10:00:00+00:00",
+      "run_id": "01J00000000000000000000004",
+      "export_id": "01J00000000000000000000005",
+      "attempt": 1,
+      "status": "ready",
+      "safe_error_code": null,
+      "created_at": "2026-07-26T10:00:00+00:00",
+      "updated_at": "2026-07-26T10:01:00+00:00",
+      "expires_at": "2026-07-27T10:00:00+00:00"
+    }
+  },
+  "page": {
+    "success": true,
+    "message": null,
+    "data": {
+      "items": [
+        {
+          "id": "01J00000000000000000000001",
+          "saved_view_id": "01J00000000000000000000002",
+          "report_code": "budget_plan_fact",
+          "frequency": "daily",
+          "weekday": null,
+          "day_of_month": null,
+          "local_time": "10:00",
+          "timezone": "UTC",
+          "period_policy": {"mode": "previous_day"},
+          "format": "xlsx",
+          "channel": "in_app",
+          "status": "active",
+          "disabled_reason": null,
+          "consecutive_failures": 0,
+          "next_run_at": "2026-07-27T10:00:00+00:00",
+          "created_at": "2026-07-26T09:00:00+00:00",
+          "updated_at": "2026-07-26T09:01:00+00:00"
+        }
+      ],
+      "meta": {"limit": 50, "next_cursor": null, "has_more": false}
+    }
+  }
+}

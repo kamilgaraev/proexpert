@@ -254,6 +254,8 @@ final class EloquentReportSubscriptionDeliveryStore implements ReportSubscriptio
             $record->retry_at === null ? null : $carbon($record->retry_at),
             $carbon($record->execution_expires_at),
             $carbon($record->retention_delete_after),
+            $carbon($record->created_at),
+            $carbon($record->updated_at),
         );
     }
 }

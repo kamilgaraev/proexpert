@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Catalog\GetReportCatalogHandler;
 use App\BusinessModules\Core\Reporting\Application\Catalog\ImmutableReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
+use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionCoordinator;
+use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionScheduleCalculator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\InAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
@@ -16,6 +20,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidat
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionCursorCodec;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionEventRecorder;
@@ -30,6 +35,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\PublishedReportDef
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSavedViewCursorCodec;
+use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSubscriptionCursorCodec;
 use App\BusinessModules\Core\Reporting\Infrastructure\Notifications\PersistedInAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionDeliveryStore;
@@ -73,6 +79,28 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
         $this->app->singleton(ReportSubscriptionStore::class, EloquentReportSubscriptionStore::class);
         $this->app->singleton(ReportSubscriptionDeliveryStore::class, EloquentReportSubscriptionDeliveryStore::class);
         $this->app->singleton(ReportSubscriptionDeliveryDispatcher::class, LaravelReportSubscriptionDeliveryDispatcher::class);
+        $this->app->singleton(
+            ReportSubscriptionCursorCodec::class,
+            fn (Application $app): SignedReportSubscriptionCursorCodec => new SignedReportSubscriptionCursorCodec(
+                (string) config('app.key'),
+                $app->make(ReportExecutionClock::class),
+            ),
+        );
+        $this->app->singleton(
+            ReportSubscriptionCoordinator::class,
+            fn (Application $app): ReportSubscriptionCoordinator => new ReportSubscriptionCoordinator(
+                $app->make(ReportSubscriptionStore::class),
+                $app->make(ReportSubscriptionDeliveryStore::class),
+                $app->make(ReportSubscriptionDeliveryDispatcher::class),
+                null,
+                $app->make(ReportDefinitionRegistry::class),
+                $app->make(ReportSchedulingCapabilityRegistry::class),
+                $app->make(ReportSavedViewStore::class),
+                $app->make(ReportAccessService::class),
+                $app->make(ReportSubscriptionScheduleCalculator::class),
+                $app->make(ReportExecutionClock::class),
+            ),
+        );
         $this->app->singleton(InAppReportSubscriptionNotifier::class, PersistedInAppReportSubscriptionNotifier::class);
         $this->app->singleton(ReportSubscriptionEventRecorder::class, LogReportSubscriptionEventRecorder::class);
         $this->app->singleton(SignedReportSavedViewCursorCodec::class, fn (): SignedReportSavedViewCursorCodec => new SignedReportSavedViewCursorCodec((string) config('app.key')));
