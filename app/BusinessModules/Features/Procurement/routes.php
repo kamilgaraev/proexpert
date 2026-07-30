@@ -135,6 +135,9 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/receive-materials', [PurchaseOrderController::class, 'receiveMaterials'])
                 ->middleware('authorize:procurement.purchase_orders.receive')
                 ->name('receive_materials');
+            Route::post('/{id}/receipt-lines/{line}/reverse', [PurchaseOrderController::class, 'reverseReceiptLine'])
+                ->middleware('authorize:procurement.purchase_orders.receive')
+                ->name('receipt_lines.reverse');
             Route::post('/{id}/create-contract', [PurchaseOrderController::class, 'createContract'])
                 ->middleware('authorize:procurement.contracts.create')
                 ->name('create_contract');

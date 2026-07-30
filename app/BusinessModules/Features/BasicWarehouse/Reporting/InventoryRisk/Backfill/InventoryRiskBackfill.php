@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Backfill;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\WarehouseInventoryEventRecorder;
-use App\Models\Material;
 use App\Support\Reporting\OwnerBackfillBatch;
 use Brick\Math\BigDecimal;
 use DomainException;
@@ -46,12 +46,6 @@ final readonly class InventoryRiskBackfill
             ->orderBy('id')
             ->limit($limit)
             ->get();
-        $materials = Material::query()
-            ->with('measurementUnit')
-            ->where('organization_id', $organizationId)
-            ->whereIn('id', $movements->pluck('material_id')->unique()->all())
-            ->get()
-            ->keyBy('id');
         $input = [];
         $projected = [];
         $gaps = 0;
@@ -61,9 +55,9 @@ final readonly class InventoryRiskBackfill
             $pairKey = in_array($eventType, ['transfer_in', 'transfer_out'], true)
                 ? ($metadata['transfer_pair_key'] ?? null)
                 : null;
-            $material = $materials->get($movement->material_id);
-            $unit = $material?->measurementUnit;
-            $openingBasis = $metadata['reporting_opening_basis'] ?? $this->verifiedOpeningBasis($movement);
+            $evidence = HistoricalInventoryMovementEvidence::fromMetadata($metadata);
+            $openingBasis = $evidence?->openingBasis
+                ?? ($evidence === null ? null : $this->verifiedOpeningBasis($movement, $evidence->projectId));
             $input[] = [
                 'movement_id' => (int) $movement->id,
                 'movement_type' => $movement->movement_type,
@@ -72,25 +66,19 @@ final readonly class InventoryRiskBackfill
             ];
             if ($eventType === null
                 || $movement->movement_date === null
-                || $unit === null
+                || $evidence === null
                 || (in_array($eventType, ['transfer_in', 'transfer_out'], true)
                     && (! is_string($pairKey) || trim($pairKey) === ''))
                 || ($movement->price !== null
-                    && (! is_string($metadata['currency'] ?? null)
-                        || ! is_string($metadata['currency_source'] ?? null)))) {
+                    && ($evidence->currency === null || $evidence->currencySource === null))) {
                 $gaps++;
 
                 continue;
             }
             try {
-                $unitIdentity = 'measurement-unit:'.$unit->getKey();
-                $basis = array_merge([
-                    'reporting_source_version' => 1,
-                    'unit_dimension' => $unitIdentity,
-                    'unit_code' => (string) $unit->short_name,
-                    'unit_conversion_version' => $unitIdentity.':identity-v1',
+                $basis = array_merge($metadata, $evidence->recorderBasis(), [
                     'reporting_opening_basis' => $openingBasis,
-                ], $metadata);
+                ]);
                 $record = $this->events->record($movement, $eventType, $pairKey, $basis);
                 $projected[] = (int) $record->id;
             } catch (Throwable) {
@@ -157,12 +145,19 @@ final readonly class InventoryRiskBackfill
         };
     }
 
-    private function verifiedOpeningBasis(WarehouseMovement $movement): ?string
+    private function verifiedOpeningBasis(WarehouseMovement $movement, ?int $projectId): ?string
     {
+        $warehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $movement->organization_id)
+            ->find($movement->warehouse_id);
+        $warehouseProjectId = $warehouse?->project_id === null ? null : (int) $warehouse->project_id;
+        if (! $warehouse instanceof OrganizationWarehouse
+            || $warehouseProjectId !== $projectId) {
+            return null;
+        }
         $history = WarehouseMovement::query()
             ->where('organization_id', $movement->organization_id)
             ->where('warehouse_id', $movement->warehouse_id)
-            ->where('project_id', $movement->project_id)
             ->where('material_id', $movement->material_id)
             ->orderBy('movement_date')
             ->orderBy('id')
@@ -190,7 +185,6 @@ final readonly class InventoryRiskBackfill
         $current = WarehouseBalance::query()
             ->where('organization_id', $movement->organization_id)
             ->where('warehouse_id', $movement->warehouse_id)
-            ->where('project_id', $movement->project_id)
             ->where('material_id', $movement->material_id)
             ->get()
             ->reduce(

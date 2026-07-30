@@ -35,6 +35,7 @@ final readonly class WarehouseInventoryEventRecorder
         $unitDimension = $this->requiredString($metadata, 'unit_dimension');
         $unitCode = $this->requiredString($metadata, 'unit_code');
         $conversionVersion = $this->requiredString($metadata, 'unit_conversion_version');
+        $projectId = $this->requiredNullablePositiveInt($metadata, 'reporting_inventory_project_id');
         [$onHandDelta, $reservedDelta] = $this->deltas($movement, $eventType, $metadata);
         [$unitPriceMinor, $currency, $currencySource] = $this->valuation($movement, $metadata);
         $occurredAt = $movement->movement_date;
@@ -45,7 +46,7 @@ final readonly class WarehouseInventoryEventRecorder
         $attributes = [
             'organization_id' => (int) $movement->organization_id,
             'warehouse_id' => (int) $movement->warehouse_id,
-            'project_id' => $movement->project_id,
+            'project_id' => $projectId,
             'material_id' => (int) $movement->material_id,
             'source_movement_id' => (int) $movement->id,
             'source_version' => $sourceVersion,
@@ -188,6 +189,19 @@ final readonly class WarehouseInventoryEventRecorder
         $value = $metadata[$key] ?? null;
         if (! is_int($value) || $value < 1) {
             throw new DomainException("Warehouse inventory {$key} is required.");
+        }
+
+        return $value;
+    }
+
+    private function requiredNullablePositiveInt(array $metadata, string $key): ?int
+    {
+        if (! array_key_exists($key, $metadata)) {
+            throw new DomainException("Warehouse inventory {$key} is required.");
+        }
+        $value = $metadata[$key];
+        if ($value !== null && (! is_int($value) || $value < 1)) {
+            throw new DomainException("Warehouse inventory {$key} is invalid.");
         }
 
         return $value;

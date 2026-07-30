@@ -16,6 +16,10 @@ class PurchaseReceiptLine extends Model
         'price',
         'total_amount',
         'metadata',
+        'reversed_at',
+        'reversed_by_user_id',
+        'reversal_reason_code',
+        'reversal_warehouse_movement_id',
     ];
 
     protected $casts = [
@@ -23,6 +27,7 @@ class PurchaseReceiptLine extends Model
         'price' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'metadata' => 'array',
+        'reversed_at' => 'immutable_datetime',
     ];
 
     public function purchaseReceipt(): BelongsTo

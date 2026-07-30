@@ -284,7 +284,14 @@ class ProcurementLifecycleService
 
         return $hasAnyReceipt
             ? PurchaseOrderStatusEnum::PARTIALLY_DELIVERED
-            : $order->status;
+            : (
+                in_array($order->status, [
+                    PurchaseOrderStatusEnum::DELIVERED,
+                    PurchaseOrderStatusEnum::PARTIALLY_DELIVERED,
+                ], true)
+                    ? PurchaseOrderStatusEnum::IN_DELIVERY
+                    : $order->status
+            );
     }
 
     private function supplierRequestRespondedSummary(SupplierRequest $supplierRequest): ProcurementLifecycleSummary
@@ -502,6 +509,7 @@ class ProcurementLifecycleService
             ->where('purchase_receipts.purchase_order_id', $order->id)
             ->where('purchase_receipts.status', 'posted')
             ->whereNull('purchase_receipts.deleted_at')
+            ->whereNull('purchase_receipt_lines.reversed_at')
             ->groupBy('purchase_receipt_lines.purchase_order_item_id')
             ->selectRaw('purchase_receipt_lines.purchase_order_item_id, SUM(purchase_receipt_lines.quantity_received) as received_quantity')
             ->pluck('received_quantity', 'purchase_receipt_lines.purchase_order_item_id')

@@ -11,6 +11,16 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('purchase_receipt_lines', function (Blueprint $table): void {
+            $table->timestampTz('reversed_at')->nullable();
+            $table->unsignedBigInteger('reversed_by_user_id')->nullable();
+            $table->string('reversal_reason_code', 64)->nullable();
+            $table->unsignedBigInteger('reversal_warehouse_movement_id')->nullable();
+            $table->index(['purchase_order_item_id', 'reversed_at'], 'receipt_line_reversal_idx');
+            $table->foreign('reversed_by_user_id')->references('id')->on('users')->nullOnDelete();
+            $table->foreign('reversal_warehouse_movement_id')->references('id')->on('warehouse_movements')->nullOnDelete();
+        });
+
         Schema::create('purchase_order_promise_versions', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -190,6 +200,17 @@ return new class extends Migration
         Schema::dropIfExists('supply_reliability_policy_versions');
         Schema::dropIfExists('supply_lifecycle_events');
         Schema::dropIfExists('purchase_order_promise_versions');
+        Schema::table('purchase_receipt_lines', function (Blueprint $table): void {
+            $table->dropForeign(['reversed_by_user_id']);
+            $table->dropForeign(['reversal_warehouse_movement_id']);
+            $table->dropIndex('receipt_line_reversal_idx');
+            $table->dropColumn([
+                'reversed_at',
+                'reversed_by_user_id',
+                'reversal_reason_code',
+                'reversal_warehouse_movement_id',
+            ]);
+        });
     }
 
     private function installConstraints(): void

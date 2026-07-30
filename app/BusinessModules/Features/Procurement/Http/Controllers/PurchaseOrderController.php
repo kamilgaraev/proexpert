@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
+use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\ProcurementAuditLogResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseContractResource;
@@ -14,12 +15,12 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptDocumentPdfService;
-use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -364,6 +365,41 @@ class PurchaseOrderController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('procurement.purchase_orders.receive_error'), 500);
+        }
+    }
+
+    public function reverseReceiptLine(
+        ReversePurchaseReceiptLineRequest $request,
+        int $id,
+        int $line,
+    ): JsonResponse {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $order = $this->service->reverseReceiptLine(
+                $organizationId,
+                $id,
+                $line,
+                (string) $request->validated('reason_code'),
+                (int) $request->user()->getAuthIdentifier(),
+            );
+
+            return AdminResponse::success(
+                new PurchaseOrderResource($order),
+                trans_message('procurement.purchase_orders.receipt_line_reversed'),
+            );
+        } catch (\DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('procurement.purchase_orders.reverse_receipt_line.error', [
+                'purchase_order_id' => $id,
+                'purchase_receipt_line_id' => $line,
+                'user_id' => $request->user()?->getAuthIdentifier(),
+            ]);
+
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.receipt_line_reverse_error'),
+                500,
+            );
         }
     }
 

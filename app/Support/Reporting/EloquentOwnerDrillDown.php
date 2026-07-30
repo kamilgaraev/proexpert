@@ -13,7 +13,10 @@ use Illuminate\Database\Eloquent\Model;
 
 final readonly class EloquentOwnerDrillDown
 {
-    public function __construct(private OwnerReportTokenPayload $tokens) {}
+    public function __construct(
+        private OwnerReportTokenPayload $tokens,
+        private ReportSourceAccessPolicy $sourceAccess,
+    ) {}
 
     public function resolve(
         ReportExecutionContext $context,
@@ -27,6 +30,7 @@ final readonly class EloquentOwnerDrillDown
         array $additionalRelationColumns = [],
         ?string $sourceResourceKind = null,
         ?string $sourceResourceIdColumn = null,
+        ?string $rowProjectIdColumn = 'project_id',
         bool $requiresAudit = false,
         bool $requiresSensitive = false,
     ): ReportDrillDownResult {
@@ -53,8 +57,18 @@ final readonly class EloquentOwnerDrillDown
         if ($sourceResourceKind !== null) {
             $resourceColumn = $sourceResourceIdColumn ?? $rowRelationColumn;
             $resourceId = $row->getAttribute($resourceColumn);
+            $rowProjectId = $rowProjectIdColumn === null
+                ? null
+                : $row->getAttribute($rowProjectIdColumn);
             if ((! is_int($resourceId) && ! ctype_digit((string) $resourceId))
-                || ! $this->sourceResourceAllowed($context, $sourceResourceKind, (int) $resourceId)) {
+                || ($rowProjectId !== null && ! is_int($rowProjectId) && ! ctype_digit((string) $rowProjectId))
+                || ! $this->sourceAccess->allows(
+                    $context->scope->resources,
+                    $sourceResourceKind,
+                    (int) $resourceId,
+                    $rowProjectId === null ? null : (int) $rowProjectId,
+                    $context->scope->projectIds,
+                )) {
                 throw new DomainException('Report drill-down source is outside the authorized resource scope.');
             }
         }
@@ -95,26 +109,5 @@ final readonly class EloquentOwnerDrillDown
             $hasMore && $last instanceof Model ? (string) $last->getKey() : null,
             [],
         );
-    }
-
-    private function sourceResourceAllowed(
-        ReportExecutionContext $context,
-        string $kind,
-        int $resourceId,
-    ): bool {
-        $constrained = false;
-        foreach ($context->scope->resources as $resource) {
-            if ($resource->kind !== $kind) {
-                continue;
-            }
-            $constrained = true;
-            if ($resource->id === $resourceId
-                && ($resource->projectId === null
-                    || in_array($resource->projectId, $context->scope->projectIds, true))) {
-                return true;
-            }
-        }
-
-        return ! $constrained;
     }
 }

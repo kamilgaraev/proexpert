@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -14,7 +15,6 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
-use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Models\Supplier;
 use App\Models\User;
@@ -36,6 +36,7 @@ class PurchaseOrderService
         private readonly PurchaseOrderPaymentGateService $paymentGateService,
         private readonly ProjectMaterialDeliveryService $deliveryService,
         private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
+        private readonly WarehouseService $warehouseService,
     ) {}
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
@@ -365,11 +366,68 @@ class PurchaseOrderService
     }
 
     public function reverseReceiptLine(
-        PurchaseReceiptLine $line,
+        int $organizationId,
+        int $purchaseOrderId,
+        int $lineId,
         string $reasonCode,
-    ): SupplyLifecycleEvent {
-        return DB::transaction(function () use ($line, $reasonCode): SupplyLifecycleEvent {
+        int $actorId,
+    ): PurchaseOrder {
+        return DB::transaction(function () use (
+            $organizationId,
+            $purchaseOrderId,
+            $lineId,
+            $reasonCode,
+            $actorId,
+        ): PurchaseOrder {
+            $line = PurchaseReceiptLine::query()
+                ->with([
+                    'purchaseReceipt.purchaseOrder.purchaseRequest.siteRequest',
+                    'purchaseOrderItem',
+                ])
+                ->whereKey($lineId)
+                ->whereHas('purchaseReceipt', static function ($query) use (
+                    $organizationId,
+                    $purchaseOrderId,
+                ): void {
+                    $query
+                        ->where('organization_id', $organizationId)
+                        ->where('purchase_order_id', $purchaseOrderId);
+                })
+                ->lockForUpdate()
+                ->first();
+            if (! $line instanceof PurchaseReceiptLine) {
+                throw new \DomainException(
+                    trans_message('procurement.purchase_orders.receipt_line_not_found')
+                );
+            }
+            if ($line->reversed_at !== null) {
+                throw new \DomainException(
+                    trans_message('procurement.purchase_orders.receipt_line_already_reversed')
+                );
+            }
+            $receipt = $line->purchaseReceipt;
+            $order = $receipt->purchaseOrder;
+            $item = $line->purchaseOrderItem;
+            if ($item->material_id === null) {
+                throw new \DomainException(
+                    trans_message('procurement.purchase_orders.receipt_reversal_material_required')
+                );
+            }
             $occurredAt = CarbonImmutable::now('UTC');
+            $movementResult = $this->warehouseService->writeOffAsset(
+                (int) $order->organization_id,
+                (int) $receipt->warehouse_id,
+                (int) $item->material_id,
+                (float) $line->quantity_received,
+                [
+                    'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
+                    'user_id' => $actorId,
+                    'document_number' => $receipt->receipt_number,
+                    'reason' => $reasonCode,
+                    'operation_category' => 'procurement_receipt_reversal',
+                ],
+            );
+            $movement = $movementResult['movement'];
             $event = $this->reportingLifecycle->receiptReversed($line->fresh(), $reasonCode, $occurredAt);
             $metadata = is_array($line->metadata) ? $line->metadata : [];
             $corrections = is_array($metadata['reporting_return_events'] ?? null)
@@ -386,9 +444,35 @@ class PurchaseOrderService
             ];
             $line->forceFill([
                 'metadata' => array_merge($metadata, ['reporting_return_events' => $corrections]),
+                'reversed_at' => $occurredAt,
+                'reversed_by_user_id' => $actorId,
+                'reversal_reason_code' => $reasonCode,
+                'reversal_warehouse_movement_id' => $movement->id,
             ])->save();
 
-            return $event;
+            $order->update([
+                'status' => $this->lifecycleService->resolveOrderReceiptStatus($order->fresh()),
+            ]);
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::MATERIALS_RECEIPT_REVERSED->value,
+                $order,
+                (int) $order->organization_id,
+                $actorId,
+                $order->supplier_party_id,
+                [
+                    'purchase_receipt_id' => (int) $receipt->id,
+                    'purchase_receipt_line_id' => (int) $line->id,
+                    'warehouse_movement_id' => (int) $movement->id,
+                    'reason_code' => $reasonCode,
+                    'supply_lifecycle_event_id' => (int) $event->id,
+                ],
+            );
+
+            return $order->fresh([
+                'items.receiptLines',
+                'receipts.lines',
+                'receipts.warehouse',
+            ]);
         }, 3);
     }
 

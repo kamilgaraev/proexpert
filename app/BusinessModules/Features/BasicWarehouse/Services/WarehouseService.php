@@ -461,9 +461,12 @@ class WarehouseService implements WarehouseReportDataProvider
                 'price' => $transferPrice,
                 'to_warehouse_id' => $toWarehouseId,
                 'project_id' => $metadata['project_id'] ?? null,
+                'project_material_delivery_id' => $metadata['project_material_delivery_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
+                'related_user_id' => $metadata['related_user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
+                'operation_category' => $metadata['operation_category'] ?? null,
                 'metadata' => array_merge($sourceMetadata, ['source_batches' => $sourceBatchDetails]),
                 'movement_date' => now(),
             ]);
@@ -509,11 +512,13 @@ class WarehouseService implements WarehouseReportDataProvider
             ->findOrFail($materialId);
         $unit = $material->measurementUnit;
         $unitIdentity = $unit === null ? 'unknown' : 'measurement-unit:'.$unit->getKey();
-        $projectId = $metadata['project_id'] ?? null;
+        $warehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->findOrFail($warehouseId);
+        $inventoryProjectId = $warehouse->project_id === null ? null : (int) $warehouse->project_id;
         $hasMovement = WarehouseMovement::query()
             ->where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
-            ->where('project_id', $projectId)
             ->where('material_id', $materialId)
             ->exists();
         $currentOnHand = WarehouseBalance::query()
@@ -530,6 +535,7 @@ class WarehouseService implements WarehouseReportDataProvider
             'unit_dimension' => $unitIdentity,
             'unit_code' => $unit?->short_name ?? 'unknown',
             'unit_conversion_version' => $unit === null ? 'unproven' : $unitIdentity.':identity-v1',
+            'reporting_inventory_project_id' => $inventoryProjectId,
             'currency' => 'RUB',
             'currency_source' => 'warehouse_movement.price',
             'reporting_opening_basis' => $openingBasis,

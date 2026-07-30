@@ -124,6 +124,60 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('$this->supplyEvents->reversal(', $lifecycle);
     }
 
+    public function test_receipt_reversal_api_is_authorized_and_controller_stays_thin(): void
+    {
+        $routes = $this->source('app/BusinessModules/Features/Procurement/routes.php');
+        $controller = $this->source(
+            'app/BusinessModules/Features/Procurement/Http/Controllers/PurchaseOrderController.php',
+        );
+        $method = substr($controller, strpos($controller, 'public function reverseReceiptLine('));
+        $method = substr($method, 0, strpos($method, 'public function receiptDocumentPdf('));
+
+        self::assertStringContainsString(
+            "Route::post('/{id}/receipt-lines/{line}/reverse'",
+            $routes,
+        );
+        self::assertStringContainsString(
+            "middleware('authorize:procurement.purchase_orders.receive')",
+            $routes,
+        );
+        self::assertStringContainsString('$this->service->reverseReceiptLine(', $method);
+        self::assertStringNotContainsString('::query()', $method);
+        self::assertStringContainsString('AdminResponse::success(', $method);
+    }
+
+    public function test_receipt_reversal_service_owns_inventory_lifecycle_and_audit(): void
+    {
+        $service = $this->source(
+            'app/BusinessModules/Features/Procurement/Services/PurchaseOrderService.php',
+        );
+        $method = substr($service, strpos($service, 'public function reverseReceiptLine('));
+        $method = substr($method, 0, strpos($method, 'public function createContractFromOrder('));
+
+        self::assertStringContainsString("->where('organization_id', \$organizationId)", $method);
+        self::assertStringContainsString("->where('purchase_order_id', \$purchaseOrderId)", $method);
+        self::assertStringContainsString('->lockForUpdate()', $method);
+        self::assertStringContainsString('$this->warehouseService->writeOffAsset(', $method);
+        self::assertStringContainsString('$this->reportingLifecycle->receiptReversed(', $method);
+        self::assertStringContainsString('$this->auditService->record(', $method);
+        self::assertStringContainsString("'reversed_at' => \$occurredAt", $method);
+    }
+
+    public function test_supply_exports_delegate_to_project_scoped_keyset_cursor(): void
+    {
+        foreach ([
+            'Procurement/Reporting/Supply/Queries/SupplyReliabilityRowQuery.php',
+            'BasicWarehouse/Reporting/InventoryRisk/Queries/InventoryRiskRowQuery.php',
+        ] as $suffix) {
+            $query = $this->source('app/BusinessModules/Features/'.$suffix);
+            $cursor = substr($query, strpos($query, 'public function cursor('));
+
+            self::assertStringContainsString('$this->rows->cursor(', $cursor, $suffix);
+            self::assertStringContainsString("'project_id'", $cursor, $suffix);
+            self::assertStringNotContainsString('offset(', $cursor, $suffix);
+        }
+    }
+
     public function test_readiness_is_bound_to_requested_project_scope(): void
     {
         foreach ([
@@ -144,9 +198,25 @@ final class SupplyReportingHardeningTest extends TestCase
             'app/BusinessModules/Features/BasicWarehouse/Reporting/InventoryRisk/Backfill/'
             .'InventoryRiskBackfill.php',
         );
-        $balanceQuery = substr($source, strpos($source, '$current = WarehouseBalance::query()'));
 
-        self::assertStringContainsString("->where('project_id', \$movement->project_id)", $balanceQuery);
+        self::assertStringContainsString('OrganizationWarehouse::query()', $source);
+        self::assertStringContainsString('$warehouseProjectId !== $projectId', $source);
+        self::assertStringNotContainsString(
+            "WarehouseBalance::query()\n            ->where('project_id'",
+            $source,
+        );
+    }
+
+    public function test_project_delivery_uses_two_atomic_transfer_legs(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/Services/ProjectWarehouseService.php',
+        );
+
+        self::assertSame(2, substr_count($source, '$this->warehouseService->transferAsset('));
+        self::assertStringContainsString("'purpose' => 'project_delivery_transit'", $source);
+        self::assertStringContainsString("'movement' => \$movement->refresh()", $source);
+        self::assertStringContainsString("return \$result['movement_in'];", $source);
     }
 
     public function test_proposal_versions_have_application_and_database_immutability_fences(): void

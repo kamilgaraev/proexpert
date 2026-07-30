@@ -14,6 +14,7 @@ use App\Support\Reporting\OwnerSnapshotSourceHash;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DateTimeImmutable;
+use DateTimeZone;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -31,10 +32,14 @@ final readonly class WarehouseDailyBalanceMaterializer
     ): WarehouseDailyBalanceSnapshot {
         $this->assertScope($context, $query);
         [$fromDate, $toDate] = $this->period($query);
+        $periodEnd = (new DateTimeImmutable(
+            $toDate.' 23:59:59.999999',
+            $query->scope->timezone,
+        ))->setTimezone(new DateTimeZone('UTC'));
+        $eventCutoff = $query->asOf < $periodEnd ? $query->asOf : $periodEnd;
         $events = WarehouseInventoryEvent::query()
             ->where('organization_id', $context->scope->organizationId)
-            ->where('occurred_at', '<=', $query->asOf)
-            ->whereDate('occurred_at', '<=', $toDate)
+            ->where('occurred_at', '<=', $eventCutoff)
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(
@@ -66,6 +71,7 @@ final readonly class WarehouseDailyBalanceMaterializer
             $events,
             $fromDate,
             $progress,
+            $query,
             $sourceHash,
             $toDate,
         ): WarehouseDailyBalanceSnapshot {
@@ -77,7 +83,10 @@ final readonly class WarehouseDailyBalanceMaterializer
                     continue;
                 }
                 $eventsByDate = $grainEvents->groupBy(
-                    static fn (WarehouseInventoryEvent $event): string => $event->occurred_at->format('Y-m-d'),
+                    static fn (WarehouseInventoryEvent $event): string => ReportingBalanceDay::resolve(
+                        $event->occurred_at,
+                        $query->scope->timezone,
+                    ),
                 );
                 $openingOnHand = BigDecimal::zero();
                 $reserved = BigDecimal::zero();
