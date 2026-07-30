@@ -26,6 +26,12 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifest
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSavedViewCursorCodec;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportWorkspacePreferencesStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionDeliveryStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 
@@ -60,6 +66,9 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             EloquentReportWorkspacePreferencesStore::class,
         );
         $this->app->singleton(ReportSavedViewStore::class, EloquentReportSavedViewStore::class);
+        $this->app->singleton(ReportSubscriptionStore::class, EloquentReportSubscriptionStore::class);
+        $this->app->singleton(ReportSubscriptionDeliveryStore::class, EloquentReportSubscriptionDeliveryStore::class);
+        $this->app->singleton(ReportSubscriptionDeliveryDispatcher::class, LaravelReportSubscriptionDeliveryDispatcher::class);
         $this->app->singleton(SignedReportSavedViewCursorCodec::class, fn (): SignedReportSavedViewCursorCodec => new SignedReportSavedViewCursorCodec((string) config('app.key')));
         $this->app->singleton(
             CandidateReportDefinitionRegistry::class,

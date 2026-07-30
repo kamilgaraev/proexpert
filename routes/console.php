@@ -6,6 +6,13 @@ use App\Jobs\LegalArchive\RecoverLegalDocumentOutboxMessages;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ScheduleDueReportSubscriptionsJob;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ExpireReportSubscriptionExecutionsJob;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\PruneReportSubscriptionDeliveriesJob;
+
+Schedule::job(new ScheduleDueReportSubscriptionsJob)->everyMinute()->withoutOverlapping(5)->onOneServer();
+Schedule::job(new ExpireReportSubscriptionExecutionsJob)->everyFiveMinutes()->withoutOverlapping(10)->onOneServer();
+Schedule::job(new PruneReportSubscriptionDeliveriesJob)->daily()->withoutOverlapping(30)->onOneServer();
 
 Schedule::command('reports:audit-intents:deliver')
     ->everyMinute()
