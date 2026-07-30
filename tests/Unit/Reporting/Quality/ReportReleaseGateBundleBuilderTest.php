@@ -23,7 +23,7 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
             $this->gates(),
             $this->qg14Evidence(),
             str_repeat('a', 40),
-            [],
+            $this->sources(),
             new DateTimeImmutable('2026-07-26T00:00:00Z'),
         );
 
@@ -39,7 +39,7 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE));
 
-        (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), [], new DateTimeImmutable('2026-07-26T00:00:00Z'));
+        (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), $this->sources(), new DateTimeImmutable('2026-07-26T00:00:00Z'));
     }
 
     public function test_rejects_an_arbitrary_command_or_schema_hash_for_a_catalog_gate(): void
@@ -49,7 +49,17 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
 
         $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::PHASE_INCOMPLETE));
 
-        (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), [], new DateTimeImmutable('2026-07-26T00:00:00Z'));
+        (new ReportReleaseGateBundleBuilder())->build($gates, $this->qg14Evidence(), str_repeat('a', 40), $this->sources(), new DateTimeImmutable('2026-07-26T00:00:00Z'));
+    }
+
+    public function test_rejects_a_bundle_without_exactly_thirteen_distinct_source_artifacts(): void
+    {
+        $sources = $this->sources();
+        array_pop($sources);
+
+        $this->expectExceptionObject(new \App\BusinessModules\Core\Reporting\Application\Quality\ReportQualityGateException(ReportQualityGateFailureCode::CATALOG_COUNT_MISMATCH));
+
+        (new ReportReleaseGateBundleBuilder())->build($this->gates(), $this->qg14Evidence(), str_repeat('a', 40), $sources, new DateTimeImmutable('2026-07-26T00:00:00Z'));
     }
 
     /** @return list<ReportQualityGateEvidence> */
@@ -71,5 +81,32 @@ final class ReportReleaseGateBundleBuilderTest extends TestCase
     private function qg14Evidence(): JointQG14Evidence
     {
         return new JointQG14Evidence(0, 0, 0, new Sha256Hash(str_repeat('1', 64)), new Sha256Hash(str_repeat('2', 64)), new Sha256Hash(str_repeat('3', 64)), ['node', 'scripts/verify-reporting-cutover.mjs', '--admin-root=C:/admin', '--backend-root=C:/backend'], 'qg14_forbidden_symbols');
+    }
+
+    /** @return list<array{artifact_id: string, kind: string, path: string, bytes_sha256: string}> */
+    private function sources(): array
+    {
+        $sources = [
+            ['plan-1a-completion', 'ancestor_evidence', 'build/reports/plan-1a-completion.json'],
+            ['plan-1b-completion', 'ancestor_evidence', 'build/reports/plan-1b-completion.json'],
+            ['plan-1c-platform-completion', 'ancestor_evidence', 'build/reports/plan-1c-platform-completion.json'],
+            ['plan-2-wave-1-candidate-conformance', 'release_evidence', 'build/reports/plan-2-wave-1-evidence.json'],
+            ['plan3_waves23_candidate_contribution', 'release_evidence', 'build/reports/waves-2-3-candidate-contribution.json'],
+            ['plan3_waves23_evidence', 'release_evidence', 'build/reports/plan-3-waves-2-3-evidence.json'],
+            ['report_catalog_activation_inputs', 'release_evidence', 'build/reports/report-catalog-activation-inputs.json'],
+            ['report_catalog_activation', 'release_evidence', 'build/reports/report-catalog-activation.json'],
+            ['plan4_admin_qg10_qg14_evidence', 'release_evidence', 'build/reports/intake/plan-4-admin-evidence.json'],
+            ['plan4_admin_evidence_schema', 'tracked_file', 'build/reports/intake/contracts/report-admin-evidence.schema.json'],
+            ['plan4_admin_evidence_transfer', 'transfer', 'build/reports/intake/plan-4-admin-evidence.transfer.json'],
+            ['report_management_catalog_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'],
+            ['report_publication_ledger_active', 'tracked_file', 'app/BusinessModules/Core/Reporting/resources/report-publication-ledger.v1.json'],
+        ];
+
+        return array_map(static fn (array $source): array => [
+            'artifact_id' => $source[0],
+            'kind' => $source[1],
+            'path' => $source[2],
+            'bytes_sha256' => str_repeat('a', 64),
+        ], $sources);
     }
 }
