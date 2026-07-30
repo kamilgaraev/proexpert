@@ -44,12 +44,85 @@ final class ReportPlatformGateCatalogTest extends TestCase
     public function test_passed_gates_require_their_exact_non_empty_source_path_catalog(): void
     {
         $document = json_decode((string) file_get_contents($this->path()), true, 512, JSON_THROW_ON_ERROR);
-        $document['gates'][0]['source_paths'] = [];
-        $this->assertInvalid($document);
+        foreach ($this->passedSourcePaths() as $gateId => $sourcePaths) {
+            $gate = array_search($gateId, array_column($document['gates'], 'id'), true);
+            self::assertIsInt($gate);
+            self::assertSame($sourcePaths, $document['gates'][$gate]['source_paths']);
+        }
+    }
 
-        $document = json_decode((string) file_get_contents($this->path()), true, 512, JSON_THROW_ON_ERROR);
-        $document['gates'][3]['source_paths'][0] = 'tests/Fixtures/Reporting/Manifest/official.valid.yaml';
-        $this->assertInvalid($document);
+    public function test_passed_gates_reject_incomplete_or_alternative_source_path_sets(): void
+    {
+        foreach ($this->passedSourcePaths() as $gateId => $sourcePaths) {
+            $document = json_decode((string) file_get_contents($this->path()), true, 512, JSON_THROW_ON_ERROR);
+            $gate = array_search($gateId, array_column($document['gates'], 'id'), true);
+            self::assertIsInt($gate);
+
+            array_pop($document['gates'][$gate]['source_paths']);
+            $this->assertInvalid($document);
+
+            $document = json_decode((string) file_get_contents($this->path()), true, 512, JSON_THROW_ON_ERROR);
+            $document['gates'][$gate]['source_paths'][array_key_last($sourcePaths)] = 'tests/Fixtures/Reporting/Quality/invented-source.json';
+            $this->assertInvalid($document);
+        }
+    }
+
+    private function passedSourcePaths(): array
+    {
+        return [
+            'QG-01' => [
+                'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml',
+                'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json',
+                'app/BusinessModules/Core/Reporting/resources/official-document-catalog.v1.yaml',
+                'app/BusinessModules/Core/Reporting/resources/official-document-catalog.v1.schema.json',
+                'tests/Architecture/Reporting/ReportManifestIdentityContractTest.php',
+                'tests/Architecture/Reporting/ReportingCatalogBindingsTest.php',
+            ],
+            'QG-04' => [
+                'tests/Fixtures/Reporting/Manifest/management.valid.yaml',
+                'tests/Fixtures/Reporting/Manifest/official.valid.yaml',
+                'tests/Fixtures/Reporting/Conformance/report-conformance-evidence.valid.json',
+                'docs/reports/contracts/report-conformance-evidence.schema.json',
+                'tests/Architecture/Reporting/ReportConformanceEvidenceSchemaTest.php',
+                'tests/Unit/Reporting/Conformance/ReportSourceConformanceHarnessTest.php',
+            ],
+            'QG-05' => [
+                'app/BusinessModules/Core/Reporting/routes.php',
+                'app/BusinessModules/Core/Reporting/Application/SavedViews/ReportSavedViewService.php',
+                'docs/reports/contracts/reporting-admin-resources.v1.schema.json',
+                'docs/reports/contracts/report-subscription-resources.v1.schema.json',
+                'tests/Architecture/Reporting/ReportWorkspaceRouteContractTest.php',
+                'tests/Architecture/Reporting/ReportSubscriptionRouteContractTest.php',
+                'tests/Architecture/Reporting/ReportSubscriptionPageIsolationTest.php',
+                'tests/Unit/Reporting/Workspace/ReportWorkspacePreferencesServiceTest.php',
+                'tests/Unit/Reporting/Cursors/SignedReportSavedViewCursorCodecTest.php',
+                'tests/Unit/Reporting/Subscriptions/ReportSubscriptionCoordinatorTest.php',
+            ],
+            'QG-06' => [
+                'app/BusinessModules/Core/Reporting/routes.php',
+                'app/BusinessModules/Core/Reporting/Http/Admin/Middleware/RenderReportErrors.php',
+                'app/BusinessModules/Core/Reporting/Application/Errors/ReportErrorCatalog.php',
+                'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+                'docs/reports/contracts/reporting-admin-resources.v1.schema.json',
+                'tests/Architecture/Reporting/ReportingRouteSnapshotTest.php',
+                'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+                'tests/Unit/Reporting/Http/ReportResourceSchemaTest.php',
+                'tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php',
+                'tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php',
+                'tests/Fixtures/Reporting/Evidence/plan-1a-ci-malformed.valid.json',
+            ],
+            'QG-09' => [
+                'scripts/reporting/run-plan-1a-gates.php',
+                'scripts/reporting/run-plan-1b-gate.php',
+                'tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json',
+                'tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json',
+                'tests/Fixtures/Reporting/plan-1b-completion.valid.json',
+                'docs/reports/contracts/plan-1b-evidence.schema.json',
+                'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
+                'tests/Unit/Reporting/Evidence/PlanOneBGateArtifactRecorderTest.php',
+                'tests/Architecture/Reporting/PlanOneBCrossFileSymbolTest.php',
+            ],
+        ];
     }
 
     private function catalog(): ReportPlatformGateCatalog
