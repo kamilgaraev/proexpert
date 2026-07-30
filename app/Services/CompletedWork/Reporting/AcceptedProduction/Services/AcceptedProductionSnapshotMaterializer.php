@@ -14,7 +14,6 @@ use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAccept
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionRow;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
-use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
@@ -28,11 +27,15 @@ final readonly class AcceptedProductionSnapshotMaterializer
 
     private AcceptedProductionLifecycleCompleteness $completeness;
 
+    private AcceptedProductionEventUniverse $universe;
+
     public function __construct(
         private AcceptedProductionFormula $formula,
         private ProductionAcceptanceRecognitionGrain $grain,
+        ?AcceptedProductionEventUniverse $universe = null,
         ?AcceptedProductionLifecycleCompleteness $completeness = null,
     ) {
+        $this->universe = $universe ?? new AcceptedProductionEventUniverse;
         $this->completeness = $completeness ?? new AcceptedProductionLifecycleCompleteness;
     }
 
@@ -44,49 +47,10 @@ final readonly class AcceptedProductionSnapshotMaterializer
             throw new InvalidArgumentException('accepted_production_materialization_identity_invalid');
         }
 
-        $resources = new ReportScopedResourceFilter;
-        $workIds = $resources->ids($scope, ['work', 'completed_work'], $scope->projectIds);
-        $actIds = $resources->ids(
-            $scope,
-            ['act', 'performance_act', 'contract_performance_act'],
-            $scope->projectIds,
-        );
-        $actLineIds = $resources->ids($scope, ['act_line', 'performance_act_line'], $scope->projectIds);
-
-        $completeEvents = ProductionAcceptanceEvent::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('project_id', $scope->projectIds)
-            ->where('recognized_at', '<=', $query->asOf)
-            ->orderBy('performance_act_id')
-            ->orderBy('source_line_type')
-            ->orderBy('source_line_id')
-            ->orderBy('transition_version')
-            ->get();
-        $this->completeness->assertComplete($scope, $query->asOf, $completeEvents);
-        $allEvents = $completeEvents
-            ->filter(static function (ProductionAcceptanceEvent $event) use (
-                $workIds,
-                $actIds,
-                $actLineIds,
-            ): bool {
-                if ($workIds !== null
-                    && ($event->work_id === null || ! in_array((int) $event->work_id, $workIds, true))
-                ) {
-                    return false;
-                }
-                if ($actIds !== null && ! in_array((int) $event->performance_act_id, $actIds, true)) {
-                    return false;
-                }
-
-                return $actLineIds === null
-                    || ((string) $event->source_line_type === 'performance_act_line'
-                        && in_array((int) $event->source_line_id, $actLineIds, true));
-            })
-            ->values();
-        $events = $allEvents
-            ->filter(fn (ProductionAcceptanceEvent $event): bool => $this->matchesFilters($query, $event))
-            ->values();
-        $watermark = (int) ($allEvents->max('id') ?? 0);
+        $universe = $this->universe->resolve($scope, $query);
+        $events = $universe['events'];
+        $this->completeness->assertComplete($scope, $query->asOf, $events, $universe);
+        $watermark = (int) ($events->max('id') ?? 0);
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'event_watermark' => $watermark,
             'events' => $events->map(static fn (ProductionAcceptanceEvent $event): array => [
@@ -339,56 +303,6 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 [],
             ),
         ];
-    }
-
-    private function matchesFilters(ReportQuery $query, ProductionAcceptanceEvent $event): bool
-    {
-        $values = $query->filters->values;
-        $period = $values['period'] ?? [];
-        $from = $values['period_from'] ?? (is_array($period) ? ($period['from'] ?? null) : null);
-        $to = $values['period_to'] ?? (is_array($period) ? ($period['to'] ?? null) : null);
-        foreach ([$from, $to] as $date) {
-            if ($date !== null
-                && (! is_string($date) || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date) !== 1)
-            ) {
-                throw new InvalidArgumentException('accepted_production_period_filter_invalid');
-            }
-        }
-        if ($from !== null && $to !== null && $from > $to) {
-            throw new InvalidArgumentException('accepted_production_period_filter_invalid');
-        }
-        $recognizedOn = $event->recognized_at->format('Y-m-d');
-
-        return $this->matches($values['project_ids'] ?? [], (int) $event->project_id)
-            && $this->matches(
-                $values['work_ids'] ?? [],
-                $event->work_id === null ? null : (int) $event->work_id,
-            )
-            && $this->matches(
-                $values['act_ids'] ?? $values['performance_act_ids'] ?? [],
-                (int) $event->performance_act_id,
-            )
-            && $this->matches(
-                $values['contractor_ids'] ?? [],
-                $event->contractor_id === null ? null : (int) $event->contractor_id,
-            )
-            && $this->matches($values['unit_codes'] ?? [], (string) $event->unit_code)
-            && $this->matches($values['zones'] ?? [], $event->zone)
-            && $this->matches($values['statuses'] ?? [], (string) $event->event_type)
-            && ($from === null || $recognizedOn >= (string) $from)
-            && ($to === null || $recognizedOn <= (string) $to);
-    }
-
-    private function matches(mixed $filter, int|string|null $value): bool
-    {
-        if ($filter === []) {
-            return true;
-        }
-        if (! is_array($filter) || ! array_is_list($filter) || $value === null) {
-            return false;
-        }
-
-        return in_array((string) $value, array_map('strval', $filter), true);
     }
 
     private function scaled(string $value): int

@@ -74,28 +74,6 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             ['constraint', 'work_constraint'],
             $projectIds,
         );
-        try {
-            $policySet = $this->policies->activeForProjects(
-                $context->scope->organizationId,
-                $projectIds,
-                $query->asOf,
-            );
-            foreach ($projectIds as $projectId) {
-                $policy = $policySet->forProject($projectId);
-                $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
-                $projected[] = [
-                    'kind' => 'policy',
-                    'project_id' => $projectId,
-                    'source_hash' => $policy->sourceHash,
-                ];
-            }
-        } catch (InvalidArgumentException) {
-            foreach ($projectIds as $projectId) {
-                $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
-                $gapCount++;
-            }
-        }
-
         $scheduleIds = ProjectSchedule::query()
             ->where('organization_id', $context->scope->organizationId)
             ->whereIn('project_id', $projectIds)
@@ -221,6 +199,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         }
 
         $resourceScopedStates = collect();
+        $selectedConstraintIds = [];
         foreach ($selectedStates as $state) {
             $filteredConstraints = $this->resourceScope->filterConstraints(
                 $context->scope,
@@ -229,22 +208,60 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
                 (int) $state->taskId,
                 $allowedConstraintsByTask[(int) $state->taskId] ?? [],
             );
+            if ($filteredConstraints !== null) {
+                $filteredConstraints = $this->filterConstraints($query, $filteredConstraints);
+            }
             if ($filteredConstraints === null
                 && ($missingConstraintsByTask[(int) $state->taskId] ?? []) === []
             ) {
                 continue;
             }
+            foreach ($filteredConstraints ?? [] as $constraint) {
+                $selectedConstraintIds[$constraint->constraintId] = true;
+            }
             $resourceScopedStates->push($state);
         }
         $selectedStates = $resourceScopedStates;
         $selectedTaskIds = $selectedStates->pluck('taskId')->map('intval')->all();
+        $effectiveProjectIds = $selectedStates
+            ->pluck('projectId')
+            ->map('intval')
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+        if ($effectiveProjectIds !== []) {
+            try {
+                $policySet = $this->policies->activeForProjects(
+                    $context->scope->organizationId,
+                    $effectiveProjectIds,
+                    $query->asOf,
+                );
+                foreach ($effectiveProjectIds as $projectId) {
+                    $policy = $policySet->forProject($projectId);
+                    $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
+                    $projected[] = [
+                        'kind' => 'policy',
+                        'project_id' => $projectId,
+                        'source_hash' => $policy->sourceHash,
+                    ];
+                }
+            } catch (InvalidArgumentException) {
+                foreach ($effectiveProjectIds as $projectId) {
+                    $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
+                    $gapCount++;
+                }
+            }
+        }
 
         foreach ($constraints as $constraint) {
             $taskId = (int) $constraint->schedule_task_id;
             if (! in_array($taskId, $selectedTaskIds, true)) {
                 continue;
             }
-            if (isset($projectedConstraints[(int) $constraint->id])) {
+            if (isset($projectedConstraints[(int) $constraint->id])
+                && isset($selectedConstraintIds[(int) $constraint->id])
+            ) {
                 $eligible[] = [
                     'created_at' => $constraint->created_at?->format(DATE_ATOM),
                     'kind' => 'constraint',
@@ -339,6 +356,29 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         )
             && $this->matches($values['severities'] ?? [], $event->severity)
             && $this->matches($values['statuses'] ?? [], $event->to_status);
+    }
+
+    private function filterConstraints(ReportQuery $query, array $constraints): ?array
+    {
+        $filtered = array_values(array_filter(
+            $constraints,
+            fn (LookaheadConstraintState $constraint): bool => $this->matchesConstraintFilters($query, (object) [
+                'constraint_type' => $constraint->type,
+                'severity' => $constraint->severity,
+                'to_status' => $constraint->status,
+            ]),
+        ));
+
+        return $filtered === [] && $this->hasConstraintFilters($query) ? null : $filtered;
+    }
+
+    private function hasConstraintFilters(ReportQuery $query): bool
+    {
+        $values = $query->filters->values;
+
+        return ($values['constraint_types'] ?? $values['types'] ?? []) !== []
+            || ($values['severities'] ?? []) !== []
+            || ($values['statuses'] ?? []) !== [];
     }
 
     private function linkedResource(array $evidenceRefs): ?array

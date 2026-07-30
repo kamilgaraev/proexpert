@@ -77,11 +77,16 @@ final class Waves23ProductionContractsTest extends TestCase
             'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
             .'AcceptedProductionSnapshotMaterializer.php',
         );
+        $universe = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        );
 
         self::assertStringNotContainsString('$laterKeys', $readiness);
         self::assertStringNotContainsString('$laterEventKeys', $materializer);
-        self::assertStringContainsString("where('recognized_at', '<=', \$query->asOf)", $readiness);
-        self::assertStringContainsString("where('recognized_at', '<=', \$query->asOf)", $materializer);
+        self::assertStringContainsString("where('recognized_at', '<=', \$query->asOf)", $universe);
+        self::assertStringContainsString('$this->universe->resolve($context->scope, $query)', $readiness);
+        self::assertStringContainsString('$this->universe->resolve($scope, $query)', $materializer);
     }
 
     #[Test]

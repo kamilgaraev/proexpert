@@ -68,7 +68,6 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ['constraint', 'work_constraint'],
             $projectIds,
         );
-        $policySet = $this->policies->activeForProjects($scope->organizationId, $projectIds, $query->asOf);
         $scheduleIds = \App\Models\ProjectSchedule::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
@@ -231,13 +230,25 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 taskStateEffectiveAt: $state->effectiveAt,
             );
         }
+        $effectiveProjectIds = array_values(array_unique(array_map(
+            static fn (LookaheadEligibilityInput $input): int => (int) $input->projectId,
+            $inputs,
+        )));
+        sort($effectiveProjectIds, SORT_NUMERIC);
+        $policySet = $effectiveProjectIds === []
+            ? null
+            : $this->policies->activeForProjects(
+                $scope->organizationId,
+                $effectiveProjectIds,
+                $query->asOf,
+            );
         $canonicalInputs = array_map(
             static fn (LookaheadEligibilityInput $input): array => $input->canonicalIdentity(),
             $inputs,
         );
         $policyHashes = array_map(
             static fn ($policy): string => $policy->sourceHash,
-            $policySet->all(),
+            $policySet?->all() ?? [],
         );
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'inputs' => $canonicalInputs,
@@ -265,7 +276,11 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 $metrics = array_map(
                     fn (LookaheadEligibilityInput $input): array => [
                         $input,
-                        $this->formula->evaluate($input, $policySet->forProject((int) $input->projectId)),
+                        $this->formula->evaluate(
+                            $input,
+                            $policySet?->forProject((int) $input->projectId)
+                                ?? throw new InvalidArgumentException('lookahead_project_policy_unavailable'),
+                        ),
                     ],
                     $inputs,
                 );
@@ -299,7 +314,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'organization_id' => $scope->organizationId,
                     'policy_version_ids' => array_map(
                         static fn ($policy): int => $policy->policyId ?? $policy->version,
-                        $policySet->all(),
+                        $policySet?->all() ?? [],
                     ),
                     'as_of' => $query->asOf,
                     'formula_version' => self::FORMULA_VERSION,

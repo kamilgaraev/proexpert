@@ -17,7 +17,7 @@ final class ProductionResourceBoundaryTest extends TestCase
             .'AcceptedProductionSnapshotMaterializer.php',
         );
 
-        $filterPosition = strpos($source, '$allEvents = $completeEvents');
+        $filterPosition = strpos($source, '$universe = $this->universe->resolve($scope, $query)');
         $hashPosition = strpos($source, '$sourceHash = new Sha256Hash');
         $factsPosition = strpos($source, '$facts = $events');
 
@@ -26,9 +26,68 @@ final class ProductionResourceBoundaryTest extends TestCase
         self::assertIsInt($factsPosition);
         self::assertLessThan($hashPosition, $filterPosition);
         self::assertLessThan($factsPosition, $filterPosition);
-        self::assertStringContainsString("['work', 'completed_work']", $source);
+        $universe = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        );
+        self::assertStringContainsString("['work', 'completed_work']", $universe);
         self::assertStringContainsString("'type' => 'performance_act'", $source);
         self::assertStringContainsString("'type' => 'completed_work'", $source);
+    }
+
+    #[Test]
+    public function accepted_production_readiness_and_materialization_share_the_same_filtered_universe(): void
+    {
+        $readiness = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Readiness/'
+            .'AcceptedProductionReadinessProbe.php',
+        );
+        $materializer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionSnapshotMaterializer.php',
+        );
+        $universe = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        );
+
+        self::assertStringContainsString('$this->universe->resolve($context->scope, $query)', $readiness);
+        self::assertStringContainsString('$this->universe->resolve($scope, $query)', $materializer);
+        self::assertStringContainsString("'act_line_ids' => \$actLineIds", $universe);
+        self::assertStringContainsString("'work_ids' => \$workIds", $universe);
+        self::assertStringContainsString('$this->completeness->inspect(', $readiness);
+        self::assertStringContainsString('$this->completeness->assertComplete(', $materializer);
+        self::assertStringNotContainsString('$completeEvents = ProductionAcceptanceEvent::query()', $materializer);
+    }
+
+    #[Test]
+    public function lookahead_filters_constraints_before_selecting_policy_projects(): void
+    {
+        $readiness = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Readiness/'
+            .'LookaheadReadinessProbe.php',
+        );
+        $materializer = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadReadinessSnapshotMaterializer.php',
+        );
+
+        self::assertLessThan(
+            strpos($readiness, '$effectiveProjectIds = $selectedStates'),
+            strpos($readiness, '$filteredConstraints = $this->filterConstraints'),
+        );
+        self::assertLessThan(
+            strpos($readiness, '$this->policies->activeForProjects'),
+            strpos($readiness, '$effectiveProjectIds = $selectedStates'),
+        );
+        self::assertLessThan(
+            strpos($materializer, '$effectiveProjectIds = array_values'),
+            strpos($materializer, '$constraints = $this->filterConstraints'),
+        );
+        self::assertStringContainsString(
+            '$policySet = $effectiveProjectIds === []',
+            $materializer,
+        );
     }
 
     #[Test]

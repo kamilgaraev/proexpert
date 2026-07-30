@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventUniverse;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLifecycleCompleteness;
 use App\Support\Reporting\ReportSourceReadinessFactory;
 
@@ -19,6 +20,7 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
 
     public function __construct(
         private ReportSourceReadinessFactory $readiness,
+        private AcceptedProductionEventUniverse $universe,
         ?AcceptedProductionLifecycleCompleteness $completeness = null,
     ) {
         $this->completeness = $completeness ?? new AcceptedProductionLifecycleCompleteness;
@@ -39,15 +41,8 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        $events = ProductionAcceptanceEvent::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $context->scope->projectIds)
-            ->where('recognized_at', '<=', $query->asOf)
-            ->orderBy('performance_act_id')
-            ->orderBy('source_line_type')
-            ->orderBy('source_line_id')
-            ->orderBy('transition_version')
-            ->get();
+        $universe = $this->universe->resolve($context->scope, $query);
+        $events = $universe['events'];
         $eligible = $events->map(static fn (ProductionAcceptanceEvent $event): array => [
             'event_id' => (int) $event->id,
             'source_hash' => (string) $event->source_hash,
@@ -64,7 +59,12 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             ->all();
         $gapCount = count($eligible) - count($projected);
 
-        foreach ($this->completeness->inspect($context->scope, $query->asOf, $events) as $gap) {
+        foreach ($this->completeness->inspect(
+            $context->scope,
+            $query->asOf,
+            $events,
+            $universe,
+        ) as $gap) {
             $eligible[] = $gap;
             $gapCount++;
         }
