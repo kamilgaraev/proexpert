@@ -1,0 +1,31 @@
+catalog: management-catalog.v1
+contract_version: 1.0.0
+definitions:
+  - &row {code: project_portfolio_health, title_key: reports.catalog.project_portfolio_health, catalog_group: operations, category: portfolio, grain: project_currency_as_of, wave: 1, filters: [], columns: [], sorts: [], formats: [], versions: {contract: 1.0.0, formula: 0.0.0, source_schema: 0.0.0, renderer: 1.0.0}, permissions: {view: [budgeting.portfolio_dashboard.view], export: [budgeting.portfolio_dashboard.export], sensitive: [], audit: []}, readiness: {source: partial, formula: ready, delivery: not_implemented, publication: draft}, capabilities: {supports_subscriptions: false, reproducible_scheduled_snapshot: false}}
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row

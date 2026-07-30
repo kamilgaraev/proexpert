@@ -1,0 +1,31 @@
+catalog: management-catalog.v1
+contract_version: 1.0.0
+definitions:
+  - &row {code: project_portfolio_health, title_key: reports.catalog.project_portfolio_health, catalog_group: portfolio, category: portfolio, grain: project_currency_as_of, wave: 1, filters: [{id: project_id}], columns: [{id: project_name}], sorts: [{id: project_name}], formats: [xlsx], versions: {contract: 1.0.0, formula: 1.0.0, source_schema: 1.0.0, renderer: 1.0.0}, permissions: {view: [budgeting.portfolio_dashboard.view], export: [budgeting.portfolio_dashboard.export], sensitive: [], audit: []}, readiness: {source: partial, formula: ready, delivery: verified, publication: published}, capabilities: {supports_subscriptions: false, reproducible_scheduled_snapshot: false}}
+  - {<<: *row, code: holding_performance, title_key: reports.catalog.holding_performance, wave: 2}
+  - {<<: *row, code: intercompany_contract_flows, title_key: reports.catalog.intercompany_contract_flows, catalog_group: finance, wave: 2}
+  - {<<: *row, code: portfolio_liquidity, title_key: reports.catalog.portfolio_liquidity, catalog_group: finance}
+  - {<<: *row, code: project_evm_control, title_key: reports.catalog.project_evm_control, catalog_group: projects, wave: 2}
+  - {<<: *row, code: baseline_schedule_variance, title_key: reports.catalog.baseline_schedule_variance, catalog_group: projects}
+  - {<<: *row, code: lookahead_readiness, title_key: reports.catalog.lookahead_readiness, catalog_group: projects, wave: 2}
+  - {<<: *row, code: accepted_production_progress, title_key: reports.catalog.accepted_production_progress, catalog_group: projects, wave: 3}
+  - {<<: *row, code: project_margin, title_key: reports.catalog.project_margin, catalog_group: finance}
+  - {<<: *row, code: budget_plan_fact, title_key: reports.catalog.budget_plan_fact, catalog_group: finance}
+  - {<<: *row, code: wip_completion_forecast, title_key: reports.catalog.wip_completion_forecast, catalog_group: finance}
+  - {<<: *row, code: contract_settlement_exposure, title_key: reports.catalog.contract_settlement_exposure, catalog_group: finance}
+  - {<<: *row, code: management_pnl, title_key: reports.catalog.management_pnl, catalog_group: finance}
+  - {<<: *row, code: change_claim_contingency, title_key: reports.catalog.change_claim_contingency, catalog_group: projects, wave: 3}
+  - {<<: *row, code: procurement_cycle, title_key: reports.catalog.procurement_cycle, catalog_group: procurement_warehouse, wave: 2}
+  - {<<: *row, code: supplier_award_competitiveness, title_key: reports.catalog.supplier_award_competitiveness, catalog_group: procurement_warehouse, wave: 2}
+  - {<<: *row, code: supply_reliability, title_key: reports.catalog.supply_reliability, catalog_group: procurement_warehouse, wave: 3}
+  - {<<: *row, code: inventory_risk, title_key: reports.catalog.inventory_risk, catalog_group: procurement_warehouse, wave: 3}
+  - {<<: *row, code: workforce_capacity, title_key: reports.catalog.workforce_capacity, catalog_group: team}
+  - {<<: *row, code: attendance_execution, title_key: reports.catalog.attendance_execution, catalog_group: team}
+  - {<<: *row, code: project_labor_cost, title_key: reports.catalog.project_labor_cost, catalog_group: team}
+  - {<<: *row, code: payroll_readiness, title_key: reports.catalog.payroll_readiness, catalog_group: team}
+  - {<<: *row, code: quality_defect_flow, title_key: reports.catalog.quality_defect_flow, catalog_group: quality_safety, wave: 2}
+  - {<<: *row, code: safety_incident_actions, title_key: reports.catalog.safety_incident_actions, catalog_group: quality_safety, wave: 2}
+  - {<<: *row, code: workforce_admission, title_key: reports.catalog.workforce_admission, catalog_group: quality_safety, wave: 2}
+  - {<<: *row, code: handover_readiness, title_key: reports.catalog.handover_readiness, catalog_group: projects, wave: 3}
+  - {<<: *row, code: contractor_scorecard, title_key: reports.catalog.contractor_scorecard, catalog_group: partners_customers, wave: 2}
+  - {<<: *row, code: customer_sla, title_key: reports.catalog.customer_sla, catalog_group: partners_customers, wave: 3}
