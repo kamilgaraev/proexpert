@@ -28,21 +28,19 @@ final readonly class ReportSavedViewService
     {
         $cursor = $window->cursor === null ? null : $this->cursors->decode($window->cursor, $context->scope->organizationId, $context->actor->id, $window->reportCode);
         $page = $this->store->list($context->scope->organizationId, $context->actor->id, new ReportSavedViewWindow($cursor, $window->limit, $window->reportCode));
-        foreach ($page->items as $v) {
-            $this->view($context, $v->reportCode);
-        }if (! $page->hasMore) {
-            return $page;
-        }$last = $page->items[array_key_last($page->items)];
+        $items = array_map(fn (ReportSavedView $view): ReportSavedView => $this->current($context, $view), $page->items);
+        if (! $page->hasMore) {
+            return new ReportSavedViewPage($items, null, $page->limit, false);
+        }$last = $items[array_key_last($items)];
 
-        return new ReportSavedViewPage($page->items, $this->cursors->encode($context->scope->organizationId, $context->actor->id, $last->createdAt, $last->id, $window->reportCode), $page->limit, true);
+        return new ReportSavedViewPage($items, $this->cursors->encode($context->scope->organizationId, $context->actor->id, $last->createdAt, $last->id, $window->reportCode), $page->limit, true);
     }
 
     public function get(ReportExecutionContext $c, string $id): ReportSavedView
     {
         $v = $this->store->getVisible($c->scope->organizationId, $c->actor->id, $id);
-        $this->view($c, $v->reportCode);
 
-        return $v;
+        return $this->current($c, $v);
     }
 
     public function create(ReportExecutionContext $c, array $input): ReportSavedView
@@ -80,8 +78,11 @@ final readonly class ReportSavedViewService
         }if ($changes === []) {
             throw new InvalidArgumentException('report_saved_view_changes_invalid');
         }
+        if (isset($changes['name']) && $changes['name'] === '') {
+            throw new InvalidArgumentException('report_saved_view_name_invalid');
+        }
 
-return $this->store->updateLocked($c->scope->organizationId, $c->actor->id, $id, new UpdateReportSavedViewData($changes));
+        return $this->store->updateLocked($c->scope->organizationId, $c->actor->id, $id, new UpdateReportSavedViewData($changes));
     }
 
     public function delete(ReportExecutionContext $c, string $id): void
@@ -114,14 +115,26 @@ return $this->store->updateLocked($c->scope->organizationId, $c->actor->id, $id,
         $this->access->assertOperation($c, $this->definition($code), ReportOperation::MANAGE, null);
     }
 
+    private function current(ReportExecutionContext $context, ReportSavedView $view): ReportSavedView
+    {
+        $definition = $this->definition($view->reportCode);
+        $this->access->assertOperation($context, $definition, ReportOperation::VIEW, null);
+
+        if ($view->contractVersion === $definition->contractVersion || $view->status === 'needs_migration') {
+            return $view;
+        }
+
+        return $this->store->markNeedsMigrationLocked($context->scope->organizationId, $view->id);
+    }
+
     private function sort(\App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $d, array $p): ReportWindowSort
     {
         $field = (string) ($p['field'] ?? '');
         $direction = ReportSortDirection::tryFrom((string) ($p['direction'] ?? ''));
-        if ($direction === null || ! in_array($field,array_column($d->sorts,'id'),true)) {
+        if ($direction === null || ! in_array($field, array_column($d->sorts, 'id'), true)) {
             throw new InvalidArgumentException('report_saved_view_sort_invalid');
         }
 
-return new ReportWindowSort($field,$direction);
+        return new ReportWindowSort($field, $direction);
     }
 }

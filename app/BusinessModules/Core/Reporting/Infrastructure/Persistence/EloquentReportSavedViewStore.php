@@ -47,7 +47,12 @@ final class EloquentReportSavedViewStore implements ReportSavedViewStore
     {
         return DB::transaction(function () use ($organizationId, $ownerId, $data, $contractVersion) {
             if ($data->isDefault) {
-                ReportSavedViewRecord::query()->where(compact('organizationId', 'ownerId'))->where('organization_id', $organizationId)->where('owner_id', $ownerId)->where('report_code', $data->reportCode)->lockForUpdate()->update(['is_default' => false]);
+                ReportSavedViewRecord::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('owner_id', $ownerId)
+                    ->where('report_code', $data->reportCode)
+                    ->lockForUpdate()
+                    ->update(['is_default' => false]);
             } $r = ReportSavedViewRecord::query()->create(['id' => (string) Str::ulid(), 'organization_id' => $organizationId, 'owner_id' => $ownerId, 'report_code' => $data->reportCode, 'contract_version' => $contractVersion, 'name' => $data->name, 'visibility' => $data->visibility, 'filters_json' => $data->filters->values, 'comparison_json' => $data->comparison, 'sort_json' => ['field' => $data->sort->field, 'direction' => $data->sort->direction->value], 'columns_json' => $data->columns, 'status' => 'active', 'is_default' => $data->isDefault]);
 
             return $this->dto($r);
@@ -57,7 +62,7 @@ final class EloquentReportSavedViewStore implements ReportSavedViewStore
     public function updateLocked(int $organizationId, int $ownerId, string $id, UpdateReportSavedViewData $data): ReportSavedView
     {
         return DB::transaction(function () use ($organizationId, $ownerId, $id, $data) {
-            $r = $this->visible($organizationId, $ownerId, $id, true);
+            $r = $this->owned($organizationId, $ownerId, $id, true);
             $changes = $data->changes;
             if (isset($changes['filters']) && $changes['filters'] instanceof ReportFilterSet) {
                 $changes['filters_json'] = $changes['filters']->values;
@@ -78,7 +83,7 @@ final class EloquentReportSavedViewStore implements ReportSavedViewStore
     public function setDefaultLocked(int $organizationId, int $ownerId, string $id): ReportSavedView
     {
         return DB::transaction(function () use ($organizationId, $ownerId, $id) {
-            $r = $this->visible($organizationId, $ownerId, $id, true);
+            $r = $this->owned($organizationId, $ownerId, $id, true);
             ReportSavedViewRecord::query()->where('organization_id', $organizationId)->where('owner_id', $ownerId)->where('report_code', $r->report_code)->lockForUpdate()->update(['is_default' => false]);
             $r->is_default = true;
             $r->save();
@@ -90,7 +95,27 @@ final class EloquentReportSavedViewStore implements ReportSavedViewStore
     public function softDeleteLocked(int $organizationId, int $ownerId, string $id): void
     {
         DB::transaction(function () use ($organizationId, $ownerId, $id) {
-            $this->visible($organizationId, $ownerId, $id, true)->delete();
+            $this->owned($organizationId, $ownerId, $id, true)->delete();
+        });
+    }
+
+    public function markNeedsMigrationLocked(int $organizationId, string $id): ReportSavedView
+    {
+        return DB::transaction(function () use ($organizationId, $id): ReportSavedView {
+            $record = ReportSavedViewRecord::query()
+                ->where('organization_id', $organizationId)
+                ->where('id', $id)
+                ->lockForUpdate()
+                ->first();
+            if (! $record instanceof ReportSavedViewRecord) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+            }
+            if ($record->status !== 'needs_migration') {
+                $record->status = 'needs_migration';
+                $record->save();
+            }
+
+            return $this->dto($record);
         });
     }
 
@@ -104,7 +129,24 @@ final class EloquentReportSavedViewStore implements ReportSavedViewStore
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
 
-return $r;
+        return $r;
+    }
+
+    private function owned(int $organizationId, int $ownerId, string $id, bool $locked = false): ReportSavedViewRecord
+    {
+        $query = ReportSavedViewRecord::query()
+            ->where('organization_id', $organizationId)
+            ->where('owner_id', $ownerId)
+            ->where('id', $id);
+        if ($locked) {
+            $query->lockForUpdate();
+        }
+        $record = $query->first();
+        if (! $record instanceof ReportSavedViewRecord) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        }
+
+        return $record;
     }
 
     private function dto(ReportSavedViewRecord $r): ReportSavedView
@@ -115,6 +157,6 @@ return $r;
             throw new LogicException('report_saved_view_timestamp_invalid');
         }$sort = is_array($r->sort_json) ? $r->sort_json : [];
 
-        return new ReportSavedView($r->id, $r->report_code, $r->contract_version, $r->name, $r->visibility, new ReportFilterSet(is_array($r->filters_json) ? $r->filters_json : []), is_array($r->comparison_json) ? $r->comparison_json : [], new ReportWindowSort((string) ($sort['field'] ?? ''),ReportSortDirection::from((string) ($sort['direction'] ?? ''))), is_array($r->columns_json) ? $r->columns_json : [], $r->status, (bool) $r->is_default, DateTimeImmutable::createFromInterface($created), DateTimeImmutable::createFromInterface($updated));
+        return new ReportSavedView($r->id, $r->report_code, $r->contract_version, $r->name, $r->visibility, new ReportFilterSet(is_array($r->filters_json) ? $r->filters_json : []), is_array($r->comparison_json) ? $r->comparison_json : [], new ReportWindowSort((string) ($sort['field'] ?? ''), ReportSortDirection::from((string) ($sort['direction'] ?? ''))), is_array($r->columns_json) ? $r->columns_json : [], $r->status, (bool) $r->is_default, DateTimeImmutable::createFromInterface($created), DateTimeImmutable::createFromInterface($updated));
     }
 }

@@ -19,3 +19,17 @@
 
 - Локальный общий bootstrap PHPUnit для DB-тестов запускает миграции SQLite и несовместимо падает на существующей PostgreSQL-функции `BTRIM`; DB-интеграционные проверки не повторялись и должны выполняться в PostgreSQL CI.
 - Миграция локально не запускалась согласно ограничениям задачи.
+
+## Исправления после ревью
+
+- Исправлен сброс default-представления при создании: запрос использует только `organization_id` и `owner_id`.
+- При расхождении `contract_version` с текущим published definition представление переводится в `needs_migration` под блокировкой.
+- Мутации теперь используют owner-only lookup; organization-shared представления доступны для чтения, но не для изменения, удаления и выбора default другим пользователем.
+- Cursor проверяет canonical ULID и canonical timestamp до формирования keyset SQL.
+- Пустое имя после trim в PATCH отклоняется так же, как при создании; удалён дублирующий `saved_view_id` из safe fields.
+
+### Проверки исправления
+
+- Cursor unit-тесты — OK (2 tests, 6 assertions).
+- PHPStan по изменённым Task 8 слоям — OK, 0 ошибок.
+- `php -l`, Pint и `git diff --check` — OK.

@@ -15,6 +15,12 @@ final readonly class SignedReportSavedViewCursorCodec
 
     public function encode(int $organizationId, int $ownerId, DateTimeImmutable $createdAt, string $id, ?string $reportCode): string
     {
+        if ($organizationId < 1
+            || $ownerId < 1
+            || ! $this->isCanonicalUlid($id)
+            || ($reportCode !== null && preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $reportCode) !== 1)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID, ['fields' => ['cursor']]);
+        }
         $now = $this->now ?? new DateTimeImmutable;
         $p = ['organization_id' => $organizationId, 'owner_id' => $ownerId, 'created_at' => $createdAt->format('Y-m-d\\TH:i:s.uP'), 'id' => $id, 'report_code' => $reportCode, 'expires_at' => $now->modify('+1 hour')->format(DATE_ATOM)];
         $json = json_encode($p, JSON_THROW_ON_ERROR);
@@ -32,13 +38,42 @@ final readonly class SignedReportSavedViewCursorCodec
                 throw new InvalidArgumentException;
             }$json = base64_decode(strtr($body, '-_', '+/').str_repeat('=', (4 - strlen($body) % 4) % 4), true);
             $p = is_string($json) ? json_decode($json, true, 16, JSON_THROW_ON_ERROR) : null;
-            if (! is_array($p) || $p['organization_id'] !== $organizationId || $p['owner_id'] !== $ownerId || $p['report_code'] !== $reportCode || ! is_string($p['created_at'] ?? null) || ! is_string($p['id'] ?? null) || new DateTimeImmutable($p['expires_at']) <= ($this->now ?? new DateTimeImmutable)) {
+            if (! is_array($p)
+                || ! isset($p['organization_id'], $p['owner_id'], $p['report_code'], $p['created_at'], $p['id'], $p['expires_at'])
+                || ! is_int($p['organization_id'])
+                || ! is_int($p['owner_id'])
+                || ! is_string($p['report_code']) && $p['report_code'] !== null
+                || ! is_string($p['created_at'])
+                || ! is_string($p['id'])
+                || ! is_string($p['expires_at'])
+                || ! $this->isCanonicalUlid($p['id'])
+                || ! $this->isCanonicalTimestamp($p['created_at'], 'Y-m-d\\TH:i:s.uP')
+                || ! $this->isCanonicalTimestamp($p['expires_at'], DATE_ATOM)
+                || $p['organization_id'] !== $organizationId
+                || $p['owner_id'] !== $ownerId
+                || $p['report_code'] !== $reportCode
+                || new DateTimeImmutable($p['expires_at']) <= ($this->now ?? new DateTimeImmutable)) {
                 throw new InvalidArgumentException;
             }
 
-return $p['created_at'].'|'.$p['id'];
+            return $p['created_at'].'|'.$p['id'];
         } catch (\Throwable) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID,['fields' => ['cursor']]);
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID, ['fields' => ['cursor']]);
         }
+    }
+
+    private function isCanonicalUlid(string $id): bool
+    {
+        return preg_match('/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/D', $id) === 1;
+    }
+
+    private function isCanonicalTimestamp(string $value, string $format): bool
+    {
+        $timestamp = DateTimeImmutable::createFromFormat($format, $value);
+        $errors = DateTimeImmutable::getLastErrors();
+
+        return $timestamp instanceof DateTimeImmutable
+            && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))
+            && $timestamp->format($format) === $value;
     }
 }

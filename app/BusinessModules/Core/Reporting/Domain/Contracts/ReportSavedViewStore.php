@@ -16,6 +16,8 @@ interface ReportSavedViewStore
 
     public function getVisible(int $organizationId, int $ownerId, string $id): ReportSavedView;
 
+    public function markNeedsMigrationLocked(int $organizationId, string $id): ReportSavedView;
+
     public function create(int $organizationId, int $ownerId, CreateReportSavedViewData $data, string $contractVersion): ReportSavedView;
 
     public function updateLocked(int $organizationId, int $ownerId, string $id, UpdateReportSavedViewData $data): ReportSavedView;
