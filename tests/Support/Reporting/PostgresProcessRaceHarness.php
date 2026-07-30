@@ -167,6 +167,15 @@ final class PostgresProcessRaceHarness
         rmdir($this->directory);
     }
 
+    public function cleanupStep(callable $cleanup, ?Throwable &$failure): void
+    {
+        try {
+            $cleanup();
+        } catch (Throwable $exception) {
+            $failure ??= $exception;
+        }
+    }
+
     private function waitForFile(string $path, float $timeoutSeconds): void
     {
         $this->waitUntil(static fn (): bool => is_file($path), $timeoutSeconds, "Timed out waiting for {$path}.");

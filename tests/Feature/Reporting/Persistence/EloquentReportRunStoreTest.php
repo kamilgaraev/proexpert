@@ -48,6 +48,7 @@ use Tests\Support\Reporting\FakeReportExecutionClock;
 use Tests\Support\Reporting\FakeReportTransitionAudit;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
+use Tests\Support\Reporting\PostgresProcessRaceHarness;
 use Tests\TestCase;
 
 #[Group('postgresql')]
@@ -1146,13 +1147,13 @@ final class EloquentReportRunStoreTest extends TestCase
         $connectionName = "report_barrier_{$suffix}";
         $function = "report_barrier_fn_{$suffix}";
         $trigger = "report_barrier_trg_{$suffix}";
+        $harness = new PostgresProcessRaceHarness($directory);
         $children = [];
         $barrierLocked = false;
         $connection = null;
 
-        self::assertTrue(mkdir($directory));
         try {
-            $connection = $this->independentConnection($connectionName);
+            $connection = $harness->independentConnection($connectionName);
             $connection->statement("SET lock_timeout = '10s'");
             $connection->statement("SET statement_timeout = '12s'");
             $connection->statement('SELECT pg_advisory_lock(?)', [$lockKey]);
@@ -1166,20 +1167,40 @@ final class EloquentReportRunStoreTest extends TestCase
                 "CREATE TRIGGER {$trigger} AFTER INSERT ON report_runs FOR EACH ROW EXECUTE FUNCTION {$function}()",
             );
 
-            $children[] = $this->spawnCreateWorker($directory, 0, $organizationId, $key);
-            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-0', 'go');
-            $pidOne = $this->waitForWorkerBackendPid($directory, 0);
-            $this->waitForPostgresWait($connection, $pidOne, 'advisory', 10.0);
+            $children[] = $harness->spawn(0, function () use ($organizationId, $key): array {
+                $context = $this->context($organizationId, $organizationId + 1);
+                $run = $this->store(new FakeReportTransitionAudit)->createOrReuse(
+                    $context,
+                    $this->query($context),
+                    null,
+                    new IdempotencyKey($key),
+                );
 
-            $children[] = $this->spawnCreateWorker($directory, 1, $organizationId, $key);
-            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-1', 'go');
-            $pidTwo = $this->waitForWorkerBackendPid($directory, 1);
-            $this->waitForPostgresWait($connection, $pidTwo, 'transactionid', 10.0);
+                return ['id' => $run->id, 'disposition' => $run->httpDisposition];
+            });
+            $harness->release(0);
+            $pidOne = $harness->waitForWorkerBackendPid(0);
+            $harness->waitForPostgresWait($connection, $pidOne, 'advisory', 10.0);
+
+            $children[] = $harness->spawn(1, function () use ($organizationId, $key): array {
+                $context = $this->context($organizationId, $organizationId + 2);
+                $run = $this->store(new FakeReportTransitionAudit)->createOrReuse(
+                    $context,
+                    $this->query($context),
+                    null,
+                    new IdempotencyKey($key),
+                );
+
+                return ['id' => $run->id, 'disposition' => $run->httpDisposition];
+            });
+            $harness->release(1);
+            $pidTwo = $harness->waitForWorkerBackendPid(1);
+            $harness->waitForPostgresWait($connection, $pidTwo, 'transactionid', 10.0);
 
             $connection->statement('SELECT pg_advisory_unlock(?)', [$lockKey]);
             $barrierLocked = false;
-            $this->waitForChildren($children, 15.0);
-            $created = [$this->workerResult($directory, 0), $this->workerResult($directory, 1)];
+            $harness->waitForChildren($children, 15.0);
+            $created = [$harness->result(0), $harness->result(1)];
 
             self::assertSame($created[0]['id'], $created[1]['id']);
             $dispositions = [$created[0]['disposition'], $created[1]['disposition']];
@@ -1188,28 +1209,28 @@ final class EloquentReportRunStoreTest extends TestCase
         } finally {
             $cleanupFailure = null;
             if ($barrierLocked && $connection !== null) {
-                $this->cleanupStep(
+                $harness->cleanupStep(
                     static fn () => $connection->statement('SELECT pg_advisory_unlock(?)', [$lockKey]),
                     $cleanupFailure,
                 );
             }
-            $this->terminateAndReap($children);
+            $harness->terminateAndReap($children);
             if ($connection !== null) {
-                $this->cleanupStep(
+                $harness->cleanupStep(
                     static fn () => $connection->unprepared("DROP TRIGGER IF EXISTS {$trigger} ON report_runs"),
                     $cleanupFailure,
                 );
-                $this->cleanupStep(
+                $harness->cleanupStep(
                     static fn () => $connection->unprepared("DROP FUNCTION IF EXISTS {$function}()"),
                     $cleanupFailure,
                 );
-                $this->cleanupStep(
+                $harness->cleanupStep(
                     static fn () => $connection->table('report_runs')->where('organization_id', $organizationId)->delete(),
                     $cleanupFailure,
                 );
             }
             DB::purge($connectionName);
-            $this->removeWorkerDirectory($directory);
+            $harness->cleanup();
             if ($cleanupFailure !== null) {
                 throw $cleanupFailure;
             }
@@ -1224,18 +1245,28 @@ final class EloquentReportRunStoreTest extends TestCase
         $organizationId = 1200000000 + hexdec(substr($suffix, 0, 6));
         $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR."report-cas-{$suffix}";
         $connectionName = "report_cas_{$suffix}";
+        $harness = new PostgresProcessRaceHarness($directory);
         $children = [];
         $connection = null;
-        self::assertTrue(mkdir($directory));
 
         try {
-            $connection = $this->independentConnection($connectionName);
+            $connection = $harness->independentConnection($connectionName);
             $connection->statement("SET lock_timeout = '10s'");
             $connection->statement("SET statement_timeout = '12s'");
-            $children[] = $this->spawnCreateWorker($directory, 0, $organizationId, "cas-{$suffix}");
-            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-0', 'go');
-            $this->waitForChildren($children, 15.0);
-            $created = $this->workerResult($directory, 0);
+            $children[] = $harness->spawn(0, function () use ($organizationId, $suffix): array {
+                $context = $this->context($organizationId, $organizationId + 1);
+                $run = $this->store(new FakeReportTransitionAudit)->createOrReuse(
+                    $context,
+                    $this->query($context),
+                    null,
+                    new IdempotencyKey("cas-{$suffix}"),
+                );
+
+                return ['id' => $run->id, 'disposition' => $run->httpDisposition];
+            });
+            $harness->release(0);
+            $harness->waitForChildren($children, 15.0);
+            $created = $harness->result(0);
             $stale = ReportRunRecord::query()
                 ->where('organization_id', $organizationId)
                 ->whereKey($created['id'])
@@ -1281,15 +1312,15 @@ final class EloquentReportRunStoreTest extends TestCase
             );
         } finally {
             $cleanupFailure = null;
-            $this->terminateAndReap($children);
+            $harness->terminateAndReap($children);
             if ($connection !== null) {
-                $this->cleanupStep(
+                $harness->cleanupStep(
                     static fn () => $connection->table('report_runs')->where('organization_id', $organizationId)->delete(),
                     $cleanupFailure,
                 );
             }
             DB::purge($connectionName);
-            $this->removeWorkerDirectory($directory);
+            $harness->cleanup();
             if ($cleanupFailure !== null) {
                 throw $cleanupFailure;
             }
@@ -1304,33 +1335,46 @@ final class EloquentReportRunStoreTest extends TestCase
         $organizationId = 1300000000 + hexdec(substr($suffix, 0, 6));
         $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR."report-renewal-{$suffix}";
         $connectionName = "report_renewal_{$suffix}";
+        $harness = new PostgresProcessRaceHarness($directory);
         $children = [];
         $connection = null;
         $transactionOpen = false;
-        self::assertTrue(mkdir($directory));
 
         try {
-            $connection = $this->independentConnection($connectionName);
+            $connection = $harness->independentConnection($connectionName);
             $connection->statement("SET lock_timeout = '10s'");
             $connection->statement("SET statement_timeout = '12s'");
-            $children[] = $this->spawnCreateWorker($directory, 0, $organizationId, "renewal-{$suffix}");
-            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-0', 'go');
-            $this->waitForChildren($children, 15.0);
-            $children = [];
-            $created = $this->workerResult($directory, 0);
+            $children[] = $harness->spawn(0, function () use ($organizationId, $suffix): array {
+                $context = $this->context($organizationId, $organizationId + 1);
+                $run = $this->store(new FakeReportTransitionAudit)->createOrReuse(
+                    $context,
+                    $this->query($context),
+                    null,
+                    new IdempotencyKey("renewal-{$suffix}"),
+                );
 
-            $children[] = $this->spawnClaimWorker(
-                $directory,
-                1,
-                $organizationId,
-                $created['id'],
-                new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
-                new DateTimeImmutable('2026-07-26T09:55:00.000000Z'),
-            );
-            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-1', 'go');
-            $this->waitForChildren($children, 15.0);
+                return ['id' => $run->id, 'disposition' => $run->httpDisposition];
+            });
+            $harness->release(0);
+            $harness->waitForChildren($children, 15.0);
             $children = [];
-            self::assertSame('materializing', $this->workerResult($directory, 1)['status']);
+            $created = $harness->result(0);
+
+            $children[] = $harness->spawn(1, function () use ($organizationId, $created): array {
+                $run = $this->store(new FakeReportTransitionAudit)->claimMaterialization(
+                    $this->context($organizationId, $organizationId + 2),
+                    $created['id'],
+                    self::LEASE_TOKEN,
+                    new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+                    new DateTimeImmutable('2026-07-26T09:55:00.000000Z'),
+                );
+
+                return ['status' => $run->status->value];
+            });
+            $harness->release(1);
+            $harness->waitForChildren($children, 15.0);
+            $children = [];
+            self::assertSame('materializing', $harness->result(1)['status']);
 
             $connection->beginTransaction();
             $transactionOpen = true;
@@ -1342,23 +1386,26 @@ final class EloquentReportRunStoreTest extends TestCase
                     ->first(),
             );
 
-            $children[] = $this->spawnClaimWorker(
-                $directory,
-                2,
-                $organizationId,
-                $created['id'],
-                new DateTimeImmutable('2026-07-26T10:15:00.333333Z'),
-                new DateTimeImmutable('2026-07-26T09:59:59.222222Z'),
-            );
-            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-2', 'go');
-            $renewalPid = $this->waitForWorkerBackendPid($directory, 2);
-            $this->waitForPostgresWait($connection, $renewalPid, 'transactionid', 10.0);
+            $children[] = $harness->spawn(2, function () use ($organizationId, $created): array {
+                $run = $this->store(new FakeReportTransitionAudit)->claimMaterialization(
+                    $this->context($organizationId, $organizationId + 3),
+                    $created['id'],
+                    self::LEASE_TOKEN,
+                    new DateTimeImmutable('2026-07-26T10:15:00.333333Z'),
+                    new DateTimeImmutable('2026-07-26T09:59:59.222222Z'),
+                );
+
+                return ['status' => $run->status->value];
+            });
+            $harness->release(2);
+            $renewalPid = $harness->waitForWorkerBackendPid(2);
+            $harness->waitForPostgresWait($connection, $renewalPid, 'transactionid', 10.0);
 
             $connection->commit();
             $transactionOpen = false;
-            $this->waitForChildren($children, 15.0);
+            $harness->waitForChildren($children, 15.0);
             $children = [];
-            self::assertSame('materializing', $this->workerResult($directory, 2)['status']);
+            self::assertSame('materializing', $harness->result(2)['status']);
             self::assertSame(
                 '2026-07-26 10:15:00.333333+00',
                 $connection->table('report_runs')
@@ -1369,216 +1416,20 @@ final class EloquentReportRunStoreTest extends TestCase
         } finally {
             $cleanupFailure = null;
             if ($transactionOpen && $connection !== null) {
-                $this->cleanupStep(static fn () => $connection->rollBack(), $cleanupFailure);
+                $harness->cleanupStep(static fn () => $connection->rollBack(), $cleanupFailure);
             }
-            $this->terminateAndReap($children);
+            $harness->terminateAndReap($children);
             if ($connection !== null) {
-                $this->cleanupStep(
+                $harness->cleanupStep(
                     static fn () => $connection->table('report_runs')->where('organization_id', $organizationId)->delete(),
                     $cleanupFailure,
                 );
             }
             DB::purge($connectionName);
-            $this->removeWorkerDirectory($directory);
+            $harness->cleanup();
             if ($cleanupFailure !== null) {
                 throw $cleanupFailure;
             }
-        }
-    }
-
-    private function spawnCreateWorker(string $directory, int $index, int $organizationId, string $key): int
-    {
-        $pid = (int) call_user_func('pcntl_fork');
-        self::assertGreaterThanOrEqual(0, $pid);
-        if ($pid !== 0) {
-            return $pid;
-        }
-
-        try {
-            $this->waitForFile($directory.DIRECTORY_SEPARATOR."go-{$index}", 10.0);
-            DB::purge();
-            DB::statement("SET lock_timeout = '30s'");
-            DB::statement("SET statement_timeout = '30s'");
-            $backend = DB::selectOne('SELECT pg_backend_pid() AS pid');
-            file_put_contents($directory.DIRECTORY_SEPARATOR."pid-{$index}", (string) $backend->pid);
-            $context = $this->context($organizationId, $organizationId + $index + 1);
-            $run = $this->store(new FakeReportTransitionAudit)->createOrReuse(
-                $context,
-                $this->query($context),
-                null,
-                new IdempotencyKey($key),
-            );
-            $result = ['ok' => true, 'value' => ['id' => $run->id, 'disposition' => $run->httpDisposition]];
-        } catch (\Throwable $exception) {
-            $result = ['ok' => false, 'error' => $exception::class, 'message' => $exception->getMessage()];
-        }
-        file_put_contents(
-            $directory.DIRECTORY_SEPARATOR."result-{$index}.json",
-            json_encode($result, JSON_THROW_ON_ERROR),
-        );
-        exit($result['ok'] ? 0 : 1);
-    }
-
-    private function spawnClaimWorker(
-        string $directory,
-        int $index,
-        int $organizationId,
-        string $runId,
-        DateTimeImmutable $leaseExpiresAt,
-        DateTimeImmutable $occurredAt,
-    ): int {
-        $pid = (int) call_user_func('pcntl_fork');
-        self::assertGreaterThanOrEqual(0, $pid);
-        if ($pid !== 0) {
-            return $pid;
-        }
-
-        try {
-            $this->waitForFile($directory.DIRECTORY_SEPARATOR."go-{$index}", 10.0);
-            DB::purge();
-            DB::statement("SET lock_timeout = '30s'");
-            DB::statement("SET statement_timeout = '30s'");
-            $backend = DB::selectOne('SELECT pg_backend_pid() AS pid');
-            file_put_contents($directory.DIRECTORY_SEPARATOR."pid-{$index}", (string) $backend->pid);
-            $run = $this->store(new FakeReportTransitionAudit)->claimMaterialization(
-                $this->context($organizationId, $organizationId + $index + 1),
-                $runId,
-                self::LEASE_TOKEN,
-                $leaseExpiresAt,
-                $occurredAt,
-            );
-            $result = ['ok' => true, 'value' => ['status' => $run->status->value]];
-        } catch (\Throwable $exception) {
-            $result = ['ok' => false, 'error' => $exception::class, 'message' => $exception->getMessage()];
-        }
-        file_put_contents(
-            $directory.DIRECTORY_SEPARATOR."result-{$index}.json",
-            json_encode($result, JSON_THROW_ON_ERROR),
-        );
-        exit($result['ok'] ? 0 : 1);
-    }
-
-    private function waitForWorkerBackendPid(string $directory, int $index): int
-    {
-        $path = $directory.DIRECTORY_SEPARATOR."pid-{$index}";
-        $this->waitForFile($path, 10.0);
-
-        return (int) file_get_contents($path);
-    }
-
-    private function waitForPostgresWait($connection, int $backendPid, string $waitEvent, float $timeoutSeconds): void
-    {
-        $this->waitUntil(function () use ($connection, $backendPid, $waitEvent): bool {
-            $activity = $connection->selectOne(
-                'SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = ?',
-                [$backendPid],
-            );
-
-            return $activity !== null
-                && $activity->wait_event_type === 'Lock'
-                && $activity->wait_event === $waitEvent;
-        }, $timeoutSeconds, "Backend {$backendPid} did not enter {$waitEvent} lock wait.");
-    }
-
-    private function waitForFile(string $path, float $timeoutSeconds): void
-    {
-        $this->waitUntil(static fn (): bool => is_file($path), $timeoutSeconds, "Timed out waiting for {$path}.");
-    }
-
-    private function waitUntil(callable $condition, float $timeoutSeconds, string $failure): void
-    {
-        $deadline = microtime(true) + $timeoutSeconds;
-        while (! $condition()) {
-            if (microtime(true) >= $deadline) {
-                self::fail($failure);
-            }
-            usleep(10000);
-        }
-    }
-
-    private function waitForChildren(array $children, float $timeoutSeconds): void
-    {
-        $remaining = array_fill_keys($children, true);
-        $deadline = microtime(true) + $timeoutSeconds;
-        while ($remaining !== []) {
-            foreach (array_keys($remaining) as $pid) {
-                $status = 0;
-                $result = (int) call_user_func_array('pcntl_waitpid', [$pid, &$status, 1]);
-                if ($result === $pid) {
-                    self::assertSame(0, $status, "Concurrent worker {$pid} failed.");
-                    unset($remaining[$pid]);
-                }
-            }
-            if ($remaining !== [] && microtime(true) >= $deadline) {
-                self::fail('Timed out waiting for concurrent workers.');
-            }
-            if ($remaining !== []) {
-                usleep(10000);
-            }
-        }
-    }
-
-    private function terminateAndReap(array $children): void
-    {
-        foreach ($children as $pid) {
-            $status = 0;
-            $result = (int) call_user_func_array('pcntl_waitpid', [$pid, &$status, 1]);
-            if ($result === 0) {
-                call_user_func('posix_kill', $pid, 15);
-                $deadline = microtime(true) + 2.0;
-                while ($result === 0 && microtime(true) < $deadline) {
-                    usleep(10000);
-                    $result = (int) call_user_func_array('pcntl_waitpid', [$pid, &$status, 1]);
-                }
-                if ($result === 0) {
-                    call_user_func('posix_kill', $pid, 9);
-                    $deadline = microtime(true) + 2.0;
-                    while ($result === 0 && microtime(true) < $deadline) {
-                        usleep(10000);
-                        $result = (int) call_user_func_array('pcntl_waitpid', [$pid, &$status, 1]);
-                    }
-                }
-            }
-        }
-    }
-
-    private function workerResult(string $directory, int $index): array
-    {
-        $path = $directory.DIRECTORY_SEPARATOR."result-{$index}.json";
-        $this->waitForFile($path, 2.0);
-        $decoded = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
-        self::assertTrue($decoded['ok'], (string) ($decoded['message'] ?? 'worker_failed'));
-
-        return $decoded['value'];
-    }
-
-    private function independentConnection(string $name)
-    {
-        $default = (string) config('database.default');
-        config(["database.connections.{$name}" => config("database.connections.{$default}")]);
-
-        return DB::connection($name);
-    }
-
-    private function removeWorkerDirectory(string $directory): void
-    {
-        if (! is_dir($directory)) {
-            return;
-        }
-        foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $path) {
-            if (is_file($path)) {
-                unlink($path);
-            }
-        }
-        rmdir($directory);
-    }
-
-    private function cleanupStep(callable $cleanup, ?\Throwable &$failure): void
-    {
-        try {
-            $cleanup();
-        } catch (\Throwable $exception) {
-            $failure ??= $exception;
         }
     }
 
