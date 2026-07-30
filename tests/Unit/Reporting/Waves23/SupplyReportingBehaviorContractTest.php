@@ -80,6 +80,29 @@ final class SupplyReportingBehaviorContractTest extends TestCase
         self::assertFalse($policy->allows([], 'warehouse', 2, null, [10]));
     }
 
+    public function test_resource_filter_ids_are_unconstrained_only_for_empty_scope_and_fail_closed_for_other_kinds(): void
+    {
+        $policy = new ReportSourceAccessPolicy;
+
+        self::assertNull($policy->allowedIds([], 'warehouse'));
+        self::assertSame(
+            [2, 5],
+            $policy->allowedIds([
+                new ReportScopedResource('warehouse', 5, 10),
+                new ReportScopedResource('purchase_order_item', 9, 10),
+                new ReportScopedResource('warehouse', 2, 10),
+                new ReportScopedResource('warehouse', 5, 10),
+            ], 'warehouse'),
+        );
+        self::assertSame(
+            [],
+            $policy->allowedIds(
+                [new ReportScopedResource('project', 10, 10)],
+                'warehouse',
+            ),
+        );
+    }
+
     public function test_daily_balance_uses_report_timezone_at_midnight_boundary(): void
     {
         $occurredAt = new DateTimeImmutable('2026-07-30T21:30:00+00:00');

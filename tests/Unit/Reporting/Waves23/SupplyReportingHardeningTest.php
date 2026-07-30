@@ -147,6 +147,94 @@ final class SupplyReportingHardeningTest extends TestCase
         }
     }
 
+    public function test_rows_and_materializers_apply_the_exact_resource_scope(): void
+    {
+        foreach ([
+            [
+                'Procurement/Reporting/Cycle/Queries/ProcurementCycleRowQuery.php',
+                'Procurement/Reporting/Cycle/Services/ProcurementCycleSnapshotMaterializer.php',
+                "'purchase_request_line'",
+                "'purchase_request_line_id'",
+            ],
+            [
+                'Procurement/Reporting/Award/Queries/SupplierAwardRowQuery.php',
+                'Procurement/Reporting/Award/Services/SupplierAwardSnapshotMaterializer.php',
+                "'supplier_award_decision'",
+                "'decision_id'",
+            ],
+            [
+                'Procurement/Reporting/Supply/Queries/SupplyReliabilityRowQuery.php',
+                'Procurement/Reporting/Supply/Services/SupplyReliabilitySnapshotMaterializer.php',
+                "'purchase_order_item'",
+                "'purchase_order_item_id'",
+            ],
+            [
+                'BasicWarehouse/Reporting/InventoryRisk/Queries/InventoryRiskRowQuery.php',
+                'BasicWarehouse/Reporting/InventoryRisk/Services/InventoryRiskSnapshotMaterializer.php',
+                "'warehouse'",
+                "'warehouse_id'",
+            ],
+        ] as [$queryPath, $materializerPath, $resourceKind, $resourceColumn]) {
+            $query = $this->source('app/BusinessModules/Features/'.$queryPath);
+            $materializer = $this->source('app/BusinessModules/Features/'.$materializerPath);
+
+            self::assertStringContainsString($resourceKind, $query, $queryPath);
+            self::assertStringContainsString($resourceColumn, $query, $queryPath);
+            self::assertStringContainsString('allowedIds(', $materializer, $materializerPath);
+            self::assertStringContainsString($resourceKind, $materializer, $materializerPath);
+            self::assertStringContainsString('whereIn(', $materializer, $materializerPath);
+        }
+    }
+
+    public function test_supply_readiness_compares_only_eligible_items(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/'
+            .'SupplyReliabilityReadinessProbe.php',
+        );
+
+        self::assertStringContainsString('$eligibleItemIds', $source);
+        self::assertSame(3, substr_count(
+            $source,
+            "->whereIn('purchase_order_item_id', \$eligibleItemIds)",
+        ));
+    }
+
+    public function test_database_fences_bind_inventory_events_and_receipt_lots_to_sources(): void
+    {
+        $inventory = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/migrations/'
+            .'2026_07_26_130000_create_inventory_risk_reporting_tables.php',
+        );
+        $supply = $this->source(
+            'app/BusinessModules/Features/Procurement/migrations/'
+            .'2026_07_26_120000_create_supply_reliability_reporting_tables.php',
+        );
+
+        self::assertStringContainsString(
+            'warehouse_inventory_event_source_identity',
+            $inventory,
+        );
+        foreach ([
+            'source.organization_id <> NEW.organization_id',
+            'source.warehouse_id <> NEW.warehouse_id',
+            'source.material_id <> NEW.material_id',
+            "source.metadata->>'reporting_source_version'",
+            'expected_on_hand IS DISTINCT FROM NEW.on_hand_delta',
+        ] as $identityFence) {
+            self::assertStringContainsString($identityFence, $inventory, $identityFence);
+        }
+        foreach ([
+            'purchase_receipt_inventory_lot_source_identity',
+            "source_movement.metadata->>'purchase_order_item_id'",
+            "source_movement.metadata->>'batch_number'",
+            'source_balance.batch_number IS DISTINCT FROM',
+            'NEW.original_quantity <> source_line.quantity_received',
+        ] as $identityFence) {
+            self::assertStringContainsString($identityFence, $supply, $identityFence);
+        }
+    }
+
     public function test_inventory_opening_reconciliation_is_project_bound(): void
     {
         $source = $this->source(

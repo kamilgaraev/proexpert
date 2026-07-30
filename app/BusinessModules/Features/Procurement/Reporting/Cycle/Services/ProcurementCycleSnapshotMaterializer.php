@@ -22,6 +22,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrd
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DateTimeImmutable;
@@ -56,6 +57,7 @@ final readonly class ProcurementCycleSnapshotMaterializer
         private ProcurementCycleFormula $formula,
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
+        private ReportSourceAccessPolicy $sourceAccess,
     ) {}
 
     public function materialize(
@@ -65,6 +67,10 @@ final readonly class ProcurementCycleSnapshotMaterializer
     ): ReportSnapshotRef {
         $this->assertScope($context, $query);
         $organizationId = $context->scope->organizationId;
+        $allowedLineIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'purchase_request_line',
+        );
         $policy = ProcurementCyclePolicyVersion::query()
             ->where('organization_id', $organizationId)
             ->where('effective_from', '<=', $query->asOf)
@@ -79,6 +85,13 @@ final readonly class ProcurementCycleSnapshotMaterializer
         $events = ProcurementProcessEvent::query()
             ->where('organization_id', $organizationId)
             ->where('occurred_at', '<=', $query->asOf)
+            ->when(
+                $allowedLineIds !== null,
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'purchase_request_line_id',
+                    $allowedLineIds,
+                ),
+            )
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(

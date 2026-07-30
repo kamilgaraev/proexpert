@@ -10,12 +10,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 
 final readonly class InventoryRiskReadinessProbe implements ReportDefinitionReadinessProbe
 {
+    public function __construct(private ReportSourceAccessPolicy $sourceAccess) {}
+
     public function supports(ReportDefinition $definition): bool
     {
         return $definition->code === 'inventory_risk'
@@ -30,13 +33,25 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
         $projects = $context->scope->projectIds;
+        $allowedWarehouseIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'warehouse',
+        );
         $eligible = WarehouseMovement::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when(
+                $allowedWarehouseIds !== null,
+                static fn ($builder) => $builder->whereIn('warehouse_id', $allowedWarehouseIds),
+            )
             ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects))
             ->where('movement_date', '<=', $query->asOf)
             ->count();
         $events = WarehouseInventoryEvent::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when(
+                $allowedWarehouseIds !== null,
+                static fn ($builder) => $builder->whereIn('warehouse_id', $allowedWarehouseIds),
+            )
             ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects))
             ->where('occurred_at', '<=', $query->asOf);
         $projected = (clone $events)->distinct()->count('source_movement_id');
@@ -81,6 +96,13 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             ->fromSub(
                 WarehouseInventoryEvent::query()
                     ->where('organization_id', $context->scope->organizationId)
+                    ->when(
+                        $allowedWarehouseIds !== null,
+                        static fn ($builder) => $builder->whereIn(
+                            'warehouse_id',
+                            $allowedWarehouseIds,
+                        ),
+                    )
                     ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects))
                     ->where('occurred_at', '<=', $query->asOf)
                     ->whereNotNull('transfer_pair_key')

@@ -11,11 +11,14 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardDecisionVersion;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
 
 final readonly class SupplierAwardReadinessProbe implements ReportDefinitionReadinessProbe
 {
+    public function __construct(private ReportSourceAccessPolicy $sourceAccess) {}
+
     public function supports(ReportDefinition $definition): bool
     {
         return $definition->code === 'supplier_award_competitiveness'
@@ -30,6 +33,10 @@ final readonly class SupplierAwardReadinessProbe implements ReportDefinitionRead
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
         $projects = $context->scope->projectIds;
+        $allowedDecisionIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'supplier_award_decision',
+        );
         $purchaseRequestIds = $projects === []
             ? null
             : PurchaseRequest::query()
@@ -38,6 +45,10 @@ final readonly class SupplierAwardReadinessProbe implements ReportDefinitionRead
                 ->pluck('id');
         $eligible = SupplierProposalDecision::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when(
+                $allowedDecisionIds !== null,
+                static fn ($builder) => $builder->whereIn('id', $allowedDecisionIds),
+            )
             ->when(
                 $purchaseRequestIds !== null,
                 static fn ($builder) => $builder->whereHas(
@@ -50,6 +61,10 @@ final readonly class SupplierAwardReadinessProbe implements ReportDefinitionRead
             ->count();
         $versions = SupplierAwardDecisionVersion::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when(
+                $allowedDecisionIds !== null,
+                static fn ($builder) => $builder->whereIn('decision_id', $allowedDecisionIds),
+            )
             ->when(
                 $purchaseRequestIds !== null,
                 static fn ($builder) => $builder->whereIn('purchase_request_id', $purchaseRequestIds),

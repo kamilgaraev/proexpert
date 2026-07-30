@@ -47,6 +47,8 @@ final readonly class ProcurementCycleRowQuery implements ReportDrillDownProvider
             $cursor,
             $limit,
             'project_id',
+            'purchase_request_line',
+            'purchase_request_line_id',
         );
     }
 
@@ -61,6 +63,8 @@ final readonly class ProcurementCycleRowQuery implements ReportDrillDownProvider
             $sort,
             $chunkSize,
             'project_id',
+            'purchase_request_line',
+            'purchase_request_line_id',
         );
     }
 

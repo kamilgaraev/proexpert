@@ -19,8 +19,10 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwar
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardSnapshot;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use DateTimeImmutable;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Throwable;
@@ -51,6 +53,7 @@ final readonly class SupplierAwardSnapshotMaterializer
         private ComparableProposalVersionFactory $proposalFactory,
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
+        private ReportSourceAccessPolicy $sourceAccess,
     ) {}
 
     public function materialize(
@@ -60,9 +63,20 @@ final readonly class SupplierAwardSnapshotMaterializer
     ): ReportSnapshotRef {
         $this->assertScope($context, $query);
         $organizationId = $context->scope->organizationId;
+        $allowedDecisionIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'supplier_award_decision',
+        );
         $decisionQuery = SupplierAwardDecisionVersion::query()
             ->where('organization_id', $organizationId)
-            ->where('selected_at', '<=', $query->asOf);
+            ->where('selected_at', '<=', $query->asOf)
+            ->when(
+                $allowedDecisionIds !== null,
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'decision_id',
+                    $allowedDecisionIds,
+                ),
+            );
         if ($context->scope->projectIds !== []) {
             $purchaseRequestIds = PurchaseRequest::query()
                 ->where('organization_id', $organizationId)

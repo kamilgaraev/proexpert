@@ -8,6 +8,29 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 
 final readonly class ReportSourceAccessPolicy
 {
+    /**
+     * @param  array<int, mixed>  $resources
+     * @return array<int, int>|null
+     */
+    public function allowedIds(array $resources, string $requiredKind): ?array
+    {
+        if ($resources === []) {
+            return null;
+        }
+
+        $ids = [];
+        foreach ($resources as $resource) {
+            if ($resource instanceof ReportScopedResource && $resource->kind === $requiredKind) {
+                $ids[$resource->id] = true;
+            }
+        }
+
+        $result = array_keys($ids);
+        sort($result, SORT_NUMERIC);
+
+        return $result;
+    }
+
     public function allows(
         array $resources,
         string $requiredKind,

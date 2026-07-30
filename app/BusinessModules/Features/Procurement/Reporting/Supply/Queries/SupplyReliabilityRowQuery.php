@@ -39,6 +39,8 @@ final readonly class SupplyReliabilityRowQuery implements ReportRowQuery
             $cursor,
             $limit,
             'project_id',
+            'purchase_order_item',
+            'purchase_order_item_id',
         );
     }
 
@@ -53,6 +55,8 @@ final readonly class SupplyReliabilityRowQuery implements ReportRowQuery
             $sort,
             $chunkSize,
             'project_id',
+            'purchase_order_item',
+            'purchase_order_item_id',
         );
     }
 }

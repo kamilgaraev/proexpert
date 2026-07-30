@@ -22,6 +22,7 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\W
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use DateTimeImmutable;
 use DomainException;
@@ -62,6 +63,7 @@ final readonly class InventoryRiskSnapshotMaterializer
         private InventoryRiskFormula $formula,
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
+        private ReportSourceAccessPolicy $sourceAccess,
     ) {}
 
     public function materialize(
@@ -70,10 +72,21 @@ final readonly class InventoryRiskSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertScope($context, $query);
+        $allowedWarehouseIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'warehouse',
+        );
         $balanceSnapshot = $this->balances->materialize($context, $query, $progress);
         $balanceRows = WarehouseDailyBalanceRow::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('balance_snapshot_id', $balanceSnapshot->getKey())
+            ->when(
+                $allowedWarehouseIds !== null,
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'warehouse_id',
+                    $allowedWarehouseIds,
+                ),
+            )
             ->orderBy('balance_date')
             ->orderBy('warehouse_id')
             ->orderBy('project_id')

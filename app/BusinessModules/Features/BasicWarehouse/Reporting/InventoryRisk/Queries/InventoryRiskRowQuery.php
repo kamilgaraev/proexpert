@@ -39,6 +39,8 @@ final readonly class InventoryRiskRowQuery implements ReportRowQuery
             $cursor,
             $limit,
             'project_id',
+            'warehouse',
+            'warehouse_id',
         );
     }
 
@@ -53,6 +55,8 @@ final readonly class InventoryRiskRowQuery implements ReportRowQuery
             $sort,
             $chunkSize,
             'project_id',
+            'warehouse',
+            'warehouse_id',
         );
     }
 }

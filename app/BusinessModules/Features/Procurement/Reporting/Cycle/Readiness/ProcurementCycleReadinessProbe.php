@@ -10,11 +10,14 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
 
 final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionReadinessProbe
 {
+    public function __construct(private ReportSourceAccessPolicy $sourceAccess) {}
+
     public function supports(ReportDefinition $definition): bool
     {
         return $definition->code === 'procurement_cycle'
@@ -29,15 +32,27 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
         $projects = $context->scope->projectIds;
+        $allowedLineIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'purchase_request_line',
+        );
         $eligible = PurchaseRequestLine::query()
             ->join('purchase_requests', 'purchase_requests.id', '=', 'purchase_request_lines.purchase_request_id')
             ->join('site_requests', 'site_requests.id', '=', 'purchase_requests.site_request_id')
             ->where('purchase_requests.organization_id', $context->scope->organizationId)
+            ->when(
+                $allowedLineIds !== null,
+                static fn ($builder) => $builder->whereIn('purchase_request_lines.id', $allowedLineIds),
+            )
             ->where('purchase_requests.created_at', '<=', $query->asOf)
             ->when($projects !== [], static fn ($builder) => $builder->whereIn('site_requests.project_id', $projects))
             ->count('purchase_request_lines.id');
         $events = ProcurementProcessEvent::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when(
+                $allowedLineIds !== null,
+                static fn ($builder) => $builder->whereIn('purchase_request_line_id', $allowedLineIds),
+            )
             ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects))
             ->where('occurred_at', '<=', $query->asOf);
         $projected = (clone $events)
@@ -50,6 +65,10 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
                 ->join('purchase_requests', 'purchase_requests.id', '=', 'purchase_request_lines.purchase_request_id')
                 ->join('site_requests', 'site_requests.id', '=', 'purchase_requests.site_request_id')
                 ->where('purchase_requests.organization_id', $context->scope->organizationId)
+                ->when(
+                    $allowedLineIds !== null,
+                    static fn ($builder) => $builder->whereIn('purchase_request_lines.id', $allowedLineIds),
+                )
                 ->where('purchase_requests.status', 'approved')
                 ->when($projects !== [], static fn ($builder) => $builder->whereIn('site_requests.project_id', $projects))
                 ->count('purchase_request_lines.id'),
@@ -57,6 +76,10 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
                 ->join('purchase_requests', 'purchase_requests.id', '=', 'purchase_request_lines.purchase_request_id')
                 ->join('site_requests', 'site_requests.id', '=', 'purchase_requests.site_request_id')
                 ->where('purchase_requests.organization_id', $context->scope->organizationId)
+                ->when(
+                    $allowedLineIds !== null,
+                    static fn ($builder) => $builder->whereIn('purchase_request_lines.id', $allowedLineIds),
+                )
                 ->whereIn('purchase_requests.status', ['rejected', 'cancelled'])
                 ->when($projects !== [], static fn ($builder) => $builder->whereIn('site_requests.project_id', $projects))
                 ->count('purchase_request_lines.id'),
@@ -66,6 +89,10 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
                 ->join('supplier_request_lines', 'supplier_request_lines.purchase_request_line_id', '=', 'purchase_request_lines.id')
                 ->join('supplier_requests', 'supplier_requests.id', '=', 'supplier_request_lines.supplier_request_id')
                 ->where('supplier_requests.organization_id', $context->scope->organizationId)
+                ->when(
+                    $allowedLineIds !== null,
+                    static fn ($builder) => $builder->whereIn('purchase_request_lines.id', $allowedLineIds),
+                )
                 ->whereNotNull('supplier_requests.sent_at')
                 ->when($projects !== [], static fn ($builder) => $builder->whereIn('site_requests.project_id', $projects))
                 ->distinct()
@@ -77,6 +104,10 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
                 ->join('supplier_proposal_lines', 'supplier_proposal_lines.supplier_request_line_id', '=', 'supplier_request_lines.id')
                 ->join('supplier_proposals', 'supplier_proposals.id', '=', 'supplier_proposal_lines.supplier_proposal_id')
                 ->where('supplier_proposals.organization_id', $context->scope->organizationId)
+                ->when(
+                    $allowedLineIds !== null,
+                    static fn ($builder) => $builder->whereIn('purchase_request_lines.id', $allowedLineIds),
+                )
                 ->when($projects !== [], static fn ($builder) => $builder->whereIn('site_requests.project_id', $projects))
                 ->distinct()
                 ->count('purchase_request_lines.id'),

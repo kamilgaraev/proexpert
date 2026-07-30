@@ -24,7 +24,10 @@ use Illuminate\Database\Eloquent\Model;
 
 final readonly class EloquentOwnerReportRows
 {
-    public function __construct(private OwnerReportTokenPayload $tokens) {}
+    public function __construct(
+        private OwnerReportTokenPayload $tokens,
+        private ReportSourceAccessPolicy $sourceAccess,
+    ) {}
 
     public function page(
         ReportExecutionContext $context,
@@ -36,11 +39,20 @@ final readonly class EloquentOwnerReportRows
         ?ReportCursor $cursor,
         int $limit,
         ?string $projectColumn = null,
+        ?string $resourceKind = null,
+        ?string $resourceColumn = null,
     ): ReportPage {
         $snapshotRecord = $this->snapshotRecord($context, $snapshot, $snapshotModel);
         $this->assertSort($sort, $allowedSortFields);
 
-        $query = $this->rowQuery($context, $snapshot, $rowModel, $projectColumn);
+        $query = $this->rowQuery(
+            $context,
+            $snapshot,
+            $rowModel,
+            $projectColumn,
+            $resourceKind,
+            $resourceColumn,
+        );
         $this->applyCursor($query, $sort, $cursor, $snapshot);
         $this->applyOrder($query, $sort);
 
@@ -72,6 +84,8 @@ final readonly class EloquentOwnerReportRows
         ReportWindowSort $sort,
         int $chunkSize,
         ?string $projectColumn = null,
+        ?string $resourceKind = null,
+        ?string $resourceColumn = null,
     ): iterable {
         $this->snapshotRecord($context, $snapshot, $snapshotModel);
         $this->assertSort($sort, $allowedSortFields);
@@ -80,7 +94,14 @@ final readonly class EloquentOwnerReportRows
         $hasPosition = false;
 
         do {
-            $query = $this->rowQuery($context, $snapshot, $rowModel, $projectColumn);
+            $query = $this->rowQuery(
+                $context,
+                $snapshot,
+                $rowModel,
+                $projectColumn,
+                $resourceKind,
+                $resourceColumn,
+            );
             if ($hasPosition) {
                 $this->applyPosition($query, $sort, $lastSortValue, (string) $lastRowKey);
             }
@@ -128,11 +149,13 @@ final readonly class EloquentOwnerReportRows
         ReportSnapshotRef $snapshot,
         string $rowModel,
         ?string $projectColumn,
+        ?string $resourceKind,
+        ?string $resourceColumn,
     ): Builder {
         /** @var Model $model */
         $model = new $rowModel;
 
-        return $model->newQuery()
+        $query = $model->newQuery()
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
             ->when(
@@ -142,6 +165,21 @@ final readonly class EloquentOwnerReportRows
                     $context->scope->projectIds,
                 ),
             );
+
+        if (($resourceKind === null) !== ($resourceColumn === null)) {
+            throw new DomainException('Report resource filter mapping is incomplete.');
+        }
+        if ($resourceKind !== null) {
+            $allowedIds = $this->sourceAccess->allowedIds(
+                $context->scope->resources,
+                $resourceKind,
+            );
+            if ($allowedIds !== null) {
+                $query->whereIn($resourceColumn, $allowedIds);
+            }
+        }
+
+        return $query;
     }
 
     private function applyCursor(

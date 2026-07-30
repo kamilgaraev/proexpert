@@ -81,6 +81,13 @@ final class SupplyReportingPostgresInvariantTest extends TestCase
             'movement_type' => 'transfer_out',
             'quantity' => '10.000',
             'to_warehouse_id' => $warehouseIds[1],
+            'metadata' => json_encode([
+                'reporting_source_version' => 1,
+                'reporting_inventory_project_id' => null,
+                'unit_dimension' => 'mass',
+                'unit_code' => 'kg',
+                'unit_conversion_version' => 'kg:v1',
+            ], JSON_THROW_ON_ERROR),
             'movement_date' => $now,
             'created_at' => $now,
             'updated_at' => $now,
@@ -92,18 +99,25 @@ final class SupplyReportingPostgresInvariantTest extends TestCase
             'movement_type' => 'transfer_in',
             'quantity' => '10.000',
             'from_warehouse_id' => $warehouseIds[0],
+            'metadata' => json_encode([
+                'reporting_source_version' => 1,
+                'reporting_inventory_project_id' => null,
+                'unit_dimension' => 'mass',
+                'unit_code' => 'kg',
+                'unit_conversion_version' => 'kg:v1',
+            ], JSON_THROW_ON_ERROR),
             'movement_date' => $now,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
         foreach ([
-            [$warehouseIds[0], $out, 'transfer_out', '-10.000000'],
-            [$warehouseIds[1], $in, 'transfer_in', '10.000000'],
-        ] as [$warehouseId, $movementId, $type, $delta]) {
+            [$warehouseIds[0], $materialIds[0], $out, 'transfer_out', '-10.000000'],
+            [$warehouseIds[1], $materialIds[1], $in, 'transfer_in', '10.000000'],
+        ] as [$warehouseId, $materialId, $movementId, $type, $delta]) {
             DB::table('warehouse_inventory_events')->insert([
                 'organization_id' => $organization->id,
                 'warehouse_id' => $warehouseId,
-                'material_id' => $materialIds[0],
+                'material_id' => $materialId,
                 'source_movement_id' => $movementId,
                 'source_version' => 1,
                 'event_type' => $type,
@@ -121,6 +135,64 @@ final class SupplyReportingPostgresInvariantTest extends TestCase
 
         $this->expectException(\Illuminate\Database\QueryException::class);
         DB::statement('SET CONSTRAINTS warehouse_inventory_transfer_pair IMMEDIATE');
+    }
+
+    public function test_non_transfer_event_rejects_source_quantity_mismatch(): void
+    {
+        $organization = Organization::factory()->create();
+        $now = now('UTC');
+        $warehouseId = DB::table('organization_warehouses')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Receipt source',
+            'code' => 'SOURCE-'.$organization->id,
+            'warehouse_type' => 'central',
+            'is_main' => true,
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $materialId = DB::table('materials')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Receipt source material',
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $movementId = DB::table('warehouse_movements')->insertGetId([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => 'receipt',
+            'quantity' => '10.000000',
+            'metadata' => json_encode([
+                'reporting_source_version' => 1,
+                'reporting_inventory_project_id' => null,
+                'unit_dimension' => 'mass',
+                'unit_code' => 'kg',
+                'unit_conversion_version' => 'kg:v1',
+            ], JSON_THROW_ON_ERROR),
+            'movement_date' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('warehouse_inventory_events')->insert([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'source_movement_id' => $movementId,
+            'source_version' => 1,
+            'event_type' => 'receipt',
+            'on_hand_delta' => '9.000000',
+            'reserved_delta' => '0',
+            'unit_dimension' => 'mass',
+            'unit_code' => 'kg',
+            'conversion_version' => 'kg:v1',
+            'occurred_at' => $now,
+            'source_hash' => str_repeat('b', 64),
+            'source_refs' => '[]',
+        ]);
     }
 
     public function test_receipt_reversal_identity_and_lot_linkage_are_persisted(): void
@@ -430,11 +502,38 @@ SQL);
                 'reporting_inventory_project_id' => null,
                 'currency' => 'RUB',
                 'currency_source' => 'warehouse_movement.price',
+                'purchase_order_item_id' => $itemId,
+                'batch_number' => 'purchase-receipt-line:'.$lineId,
             ], JSON_THROW_ON_ERROR),
             'movement_date' => $now,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+        DB::beginTransaction();
+        try {
+            DB::table('purchase_receipt_inventory_lots')->insert([
+                'organization_id' => $organization->id,
+                'purchase_receipt_line_id' => $lineId,
+                'warehouse_balance_id' => $balanceId,
+                'receipt_warehouse_movement_id' => $movementId,
+                'original_quantity' => '9.000000',
+                'reversed_quantity' => '0.000000',
+                'unit_dimension' => 'mass',
+                'unit_code' => 'kg',
+                'conversion_version' => 'kg:v1',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            self::fail('Receipt lot source quantity mismatch must be rejected.');
+        } catch (\Illuminate\Database\QueryException) {
+            DB::rollBack();
+            self::assertFalse(
+                DB::table('purchase_receipt_inventory_lots')
+                    ->where('purchase_receipt_line_id', $lineId)
+                    ->exists(),
+            );
+        }
+
         DB::table('purchase_receipt_inventory_lots')->insert([
             'organization_id' => $organization->id,
             'purchase_receipt_line_id' => $lineId,

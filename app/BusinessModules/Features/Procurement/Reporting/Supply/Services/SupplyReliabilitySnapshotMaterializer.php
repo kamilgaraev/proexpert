@@ -20,6 +20,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyRelia
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilitySnapshot;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use DateTimeImmutable;
 use DomainException;
@@ -61,6 +62,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         private SupplyReliabilityFormula $formula,
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
+        private ReportSourceAccessPolicy $sourceAccess,
     ) {}
 
     public function materialize(
@@ -70,6 +72,10 @@ final readonly class SupplyReliabilitySnapshotMaterializer
     ): ReportSnapshotRef {
         $this->assertScope($context, $query);
         $organizationId = $context->scope->organizationId;
+        $allowedItemIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'purchase_order_item',
+        );
         $policy = SupplyReliabilityPolicyVersion::query()
             ->where('organization_id', $organizationId)
             ->where('effective_from', '<=', $query->asOf)
@@ -84,6 +90,13 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             ->where('organization_id', $organizationId)
             ->where('promise_version', 1)
             ->where('effective_from', '<=', $query->asOf)
+            ->when(
+                $allowedItemIds !== null,
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'purchase_order_item_id',
+                    $allowedItemIds,
+                ),
+            )
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(

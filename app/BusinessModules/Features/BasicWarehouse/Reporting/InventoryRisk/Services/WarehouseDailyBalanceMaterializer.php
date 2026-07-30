@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\W
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseDailyBalanceSnapshot;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DateTimeImmutable;
@@ -23,7 +24,10 @@ use Illuminate\Support\Str;
 
 final readonly class WarehouseDailyBalanceMaterializer
 {
-    public function __construct(private OwnerSnapshotSourceHash $sourceHashes) {}
+    public function __construct(
+        private OwnerSnapshotSourceHash $sourceHashes,
+        private ReportSourceAccessPolicy $sourceAccess,
+    ) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -31,6 +35,10 @@ final readonly class WarehouseDailyBalanceMaterializer
         ReportProgress $progress,
     ): WarehouseDailyBalanceSnapshot {
         $this->assertScope($context, $query);
+        $allowedWarehouseIds = $this->sourceAccess->allowedIds(
+            $context->scope->resources,
+            'warehouse',
+        );
         [$fromDate, $toDate] = $this->period($query);
         $periodEnd = (new DateTimeImmutable(
             $toDate.' 23:59:59.999999',
@@ -40,6 +48,13 @@ final readonly class WarehouseDailyBalanceMaterializer
         $events = WarehouseInventoryEvent::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('occurred_at', '<=', $eventCutoff)
+            ->when(
+                $allowedWarehouseIds !== null,
+                static fn (Builder $builder): Builder => $builder->whereIn(
+                    'warehouse_id',
+                    $allowedWarehouseIds,
+                ),
+            )
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->whereIn(

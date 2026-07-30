@@ -48,6 +48,8 @@ final readonly class SupplierAwardRowQuery implements ReportDrillDownProvider, R
             $cursor,
             $limit,
             'project_id',
+            'supplier_award_decision',
+            'decision_id',
         );
     }
 
@@ -62,6 +64,8 @@ final readonly class SupplierAwardRowQuery implements ReportDrillDownProvider, R
             $sort,
             $chunkSize,
             'project_id',
+            'supplier_award_decision',
+            'decision_id',
         );
     }
 

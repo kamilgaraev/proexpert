@@ -220,6 +220,10 @@ return new class extends Migration
     public function down(): void
     {
         if (DB::getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS purchase_receipt_inventory_lot_source_identity ON purchase_receipt_inventory_lots');
+            DB::statement('DROP FUNCTION IF EXISTS most_receipt_inventory_lot_source_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS purchase_receipt_inventory_lot_identity ON purchase_receipt_inventory_lots');
+            DB::statement('DROP FUNCTION IF EXISTS most_receipt_inventory_lot_identity_v1()');
             DB::statement('DROP TRIGGER IF EXISTS purchase_receipt_line_reversal_identity ON purchase_receipt_lines');
             DB::statement('DROP FUNCTION IF EXISTS most_purchase_receipt_line_reversal_v1()');
         }
@@ -265,6 +269,63 @@ return new class extends Migration
         DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_value_basis_check CHECK ((value_otif_numerator_minor IS NULL AND value_currency IS NULL AND value_basis IS NULL) OR (value_otif_numerator_minor IS NOT NULL AND value_currency IS NOT NULL AND value_basis IS NOT NULL))');
         DB::statement('ALTER TABLE purchase_receipt_inventory_lots ADD CONSTRAINT receipt_inventory_lot_quantity_check CHECK (original_quantity > 0 AND reversed_quantity >= 0 AND reversed_quantity <= original_quantity)');
         DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION most_receipt_inventory_lot_source_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE source_line purchase_receipt_lines%ROWTYPE;
+DECLARE source_receipt purchase_receipts%ROWTYPE;
+DECLARE source_item purchase_order_items%ROWTYPE;
+DECLARE source_movement warehouse_movements%ROWTYPE;
+DECLARE source_balance warehouse_balances%ROWTYPE;
+BEGIN
+    SELECT * INTO source_line
+      FROM purchase_receipt_lines
+     WHERE id = NEW.purchase_receipt_line_id;
+    SELECT * INTO source_receipt
+      FROM purchase_receipts
+     WHERE id = source_line.purchase_receipt_id;
+    SELECT * INTO source_item
+      FROM purchase_order_items
+     WHERE id = source_line.purchase_order_item_id;
+    SELECT * INTO source_movement
+      FROM warehouse_movements
+     WHERE id = NEW.receipt_warehouse_movement_id;
+    SELECT * INTO source_balance
+      FROM warehouse_balances
+     WHERE id = NEW.warehouse_balance_id;
+
+    IF source_line.id IS NULL
+       OR source_receipt.id IS NULL
+       OR source_item.id IS NULL
+       OR source_item.material_id IS NULL
+       OR source_movement.id IS NULL
+       OR source_balance.id IS NULL
+       OR NEW.organization_id <> source_receipt.organization_id
+       OR NEW.original_quantity <> source_line.quantity_received
+       OR NEW.original_quantity <> source_movement.quantity
+       OR source_movement.organization_id <> source_receipt.organization_id
+       OR source_movement.warehouse_id <> source_receipt.warehouse_id
+       OR source_movement.material_id <> source_item.material_id
+       OR source_movement.movement_type <> 'receipt'
+       OR (source_movement.metadata->>'purchase_order_item_id') IS DISTINCT FROM source_item.id::text
+       OR (source_movement.metadata->>'batch_number') IS DISTINCT FROM
+          ('purchase-receipt-line:' || source_line.id::text)
+       OR source_balance.organization_id <> source_receipt.organization_id
+       OR source_balance.warehouse_id <> source_receipt.warehouse_id
+       OR source_balance.material_id <> source_item.material_id
+       OR source_balance.batch_number IS DISTINCT FROM
+          ('purchase-receipt-line:' || source_line.id::text) THEN
+        RAISE EXCEPTION 'receipt inventory lot does not match its source receipt'
+            USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER purchase_receipt_inventory_lot_source_identity
+BEFORE INSERT ON purchase_receipt_inventory_lots
+FOR EACH ROW EXECUTE FUNCTION most_receipt_inventory_lot_source_identity_v1();
+
 CREATE OR REPLACE FUNCTION most_purchase_receipt_line_reversal_v1() RETURNS trigger
 LANGUAGE plpgsql
 AS $$

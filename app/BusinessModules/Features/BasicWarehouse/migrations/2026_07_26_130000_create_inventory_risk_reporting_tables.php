@@ -38,6 +38,10 @@ return new class extends Migration
                 ['organization_id', 'source_movement_id', 'source_version', 'event_type'],
                 'inventory_event_source_unique',
             );
+            $table->foreign('source_movement_id')
+                ->references('id')
+                ->on('warehouse_movements')
+                ->restrictOnDelete();
             $table->index(
                 ['organization_id', 'warehouse_id', 'material_id', 'occurred_at', 'id'],
                 'inventory_event_timeline_idx',
@@ -238,6 +242,8 @@ return new class extends Migration
     public function down(): void
     {
         if (DB::getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS warehouse_inventory_event_source_identity ON warehouse_inventory_events');
+            DB::statement('DROP FUNCTION IF EXISTS most_warehouse_inventory_event_source_identity_v1()');
             DB::statement('DROP TRIGGER IF EXISTS warehouse_reporting_movement_identity ON warehouse_movements');
             DB::statement('DROP FUNCTION IF EXISTS most_warehouse_reporting_movement_identity_v1()');
         }
@@ -272,6 +278,7 @@ SQL);
         DB::statement('ALTER TABLE warehouse_inventory_events ADD CONSTRAINT inventory_event_valuation_check CHECK ((unit_price_minor IS NULL AND currency IS NULL AND currency_source IS NULL) OR (unit_price_minor IS NOT NULL AND currency IS NOT NULL AND currency_source IS NOT NULL))');
         DB::statement('ALTER TABLE warehouse_inventory_events ADD CONSTRAINT inventory_event_price_check CHECK (unit_price_minor IS NULL OR unit_price_minor >= 0)');
         DB::statement("ALTER TABLE warehouse_inventory_events ADD CONSTRAINT inventory_event_opening_basis_check CHECK (opening_basis IS NULL OR opening_basis IN ('verified_zero','opening_inventory','prior_verified_closing'))");
+        $this->installEventSourceIdentityConstraint();
         DB::statement('ALTER TABLE warehouse_daily_balance_rows ADD CONSTRAINT daily_balance_nonnegative_check CHECK (opening_on_hand >= 0 AND closing_on_hand >= 0 AND reserved_quantity >= 0 AND available_quantity >= 0)');
         DB::statement('ALTER TABLE warehouse_daily_balance_rows ADD CONSTRAINT daily_balance_available_check CHECK (available_quantity = closing_on_hand - reserved_quantity)');
         DB::statement('ALTER TABLE warehouse_daily_balance_rows ADD CONSTRAINT daily_balance_equation_check CHECK (closing_on_hand = opening_on_hand + receipts + inbound_transfers + returns + positive_adjustments - issues - outbound_transfers - negative_adjustments)');
@@ -354,6 +361,94 @@ DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 WHEN (NEW.transfer_pair_key IS NOT NULL)
 EXECUTE FUNCTION most_inventory_transfer_pair_v1()
+SQL);
+    }
+
+    private function installEventSourceIdentityConstraint(): void
+    {
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION most_warehouse_inventory_event_source_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE source warehouse_movements%ROWTYPE;
+DECLARE expected_event_type text;
+DECLARE expected_on_hand numeric;
+DECLARE expected_reserved numeric;
+BEGIN
+    SELECT * INTO source
+      FROM warehouse_movements
+     WHERE id = NEW.source_movement_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'warehouse inventory source movement is missing' USING ERRCODE = '23503';
+    END IF;
+
+    expected_event_type := CASE
+        WHEN source.movement_type = 'receipt'
+             AND source.operation_category = 'responsible_return' THEN 'return'
+        WHEN source.movement_type = 'receipt' THEN 'receipt'
+        WHEN source.movement_type = 'write_off' THEN 'issue'
+        WHEN source.movement_type IN (
+            'transfer_in',
+            'transfer_out',
+            'reservation',
+            'unreservation',
+            'reserved_issue',
+            'adjustment'
+        ) THEN source.movement_type
+        ELSE NULL
+    END;
+    expected_on_hand := CASE expected_event_type
+        WHEN 'receipt' THEN source.quantity
+        WHEN 'return' THEN source.quantity
+        WHEN 'transfer_in' THEN source.quantity
+        WHEN 'issue' THEN -source.quantity
+        WHEN 'transfer_out' THEN -source.quantity
+        WHEN 'reserved_issue' THEN -source.quantity
+        WHEN 'reservation' THEN 0
+        WHEN 'unreservation' THEN 0
+        WHEN 'adjustment' THEN (source.metadata->>'on_hand_delta')::numeric
+        ELSE NULL
+    END;
+    expected_reserved := CASE expected_event_type
+        WHEN 'reservation' THEN source.quantity
+        WHEN 'unreservation' THEN -source.quantity
+        WHEN 'reserved_issue' THEN -source.quantity
+        WHEN 'adjustment' THEN COALESCE((source.metadata->>'reserved_delta')::numeric, 0)
+        ELSE 0
+    END;
+
+    IF source.organization_id <> NEW.organization_id
+       OR source.warehouse_id <> NEW.warehouse_id
+       OR source.material_id <> NEW.material_id
+       OR (source.metadata->>'reporting_source_version') IS DISTINCT FROM NEW.source_version::text
+       OR (source.metadata->>'reporting_inventory_project_id') IS DISTINCT FROM NEW.project_id::text
+       OR (source.metadata->>'unit_dimension') IS DISTINCT FROM NEW.unit_dimension
+       OR (source.metadata->>'unit_code') IS DISTINCT FROM NEW.unit_code
+       OR (source.metadata->>'unit_conversion_version') IS DISTINCT FROM NEW.conversion_version
+       OR (source.metadata->>'reporting_opening_basis') IS DISTINCT FROM NEW.opening_basis
+       OR expected_event_type IS NULL
+       OR expected_event_type <> NEW.event_type
+       OR expected_on_hand IS DISTINCT FROM NEW.on_hand_delta
+       OR expected_reserved IS DISTINCT FROM NEW.reserved_delta
+       OR source.movement_date IS DISTINCT FROM NEW.occurred_at
+       OR (
+           NEW.event_type = 'transfer_in'
+           AND (source.from_warehouse_id IS NULL OR source.from_warehouse_id = NEW.warehouse_id)
+       )
+       OR (
+           NEW.event_type = 'transfer_out'
+           AND (source.to_warehouse_id IS NULL OR source.to_warehouse_id = NEW.warehouse_id)
+       ) THEN
+        RAISE EXCEPTION 'warehouse inventory event does not match its source movement'
+            USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER warehouse_inventory_event_source_identity
+BEFORE INSERT ON warehouse_inventory_events
+FOR EACH ROW EXECUTE FUNCTION most_warehouse_inventory_event_source_identity_v1()
 SQL);
     }
 
