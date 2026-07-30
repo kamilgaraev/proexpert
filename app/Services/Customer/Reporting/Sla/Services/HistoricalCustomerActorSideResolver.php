@@ -20,7 +20,7 @@ final readonly class HistoricalCustomerActorSideResolver
             return null;
         }
 
-        $customers = DB::table('project_organization')
+        $currentCustomers = DB::table('project_organization')
             ->where('project_id', $projectId)
             ->whereNotNull('accepted_at')
             ->where('accepted_at', '<=', $occurredAt)
@@ -33,6 +33,19 @@ final readonly class HistoricalCustomerActorSideResolver
             ->map(static fn (mixed $id): int => (int) $id)
             ->unique()
             ->values();
+        $historicalCustomers = DB::table('customer_membership_history')
+            ->where('membership_kind', 'project_organization')
+            ->where('project_id', $projectId)
+            ->where('role', 'customer')
+            ->where('is_active', true)
+            ->where('valid_from', '<=', $occurredAt)
+            ->where('valid_to', '>', $occurredAt)
+            ->pluck('organization_id')
+            ->map(static fn (mixed $id): int => (int) $id);
+        $customers = $currentCustomers
+            ->merge($historicalCustomers)
+            ->unique()
+            ->values();
 
         return $customers->count() === 1 ? $customers->first() : null;
     }
@@ -43,7 +56,7 @@ final readonly class HistoricalCustomerActorSideResolver
         int $actorId,
         CarbonImmutable $occurredAt,
     ): CustomerActorSide {
-        $organizationIds = DB::table('organization_user')
+        $currentOrganizationIds = DB::table('organization_user')
             ->where('user_id', $actorId)
             ->where('created_at', '<=', $occurredAt)
             ->get()
@@ -57,6 +70,19 @@ final readonly class HistoricalCustomerActorSideResolver
             ->unique()
             ->values()
             ->all();
+        $historicalOrganizationIds = DB::table('customer_membership_history')
+            ->where('membership_kind', 'organization_user')
+            ->where('user_id', $actorId)
+            ->where('is_active', true)
+            ->where('valid_from', '<=', $occurredAt)
+            ->where('valid_to', '>', $occurredAt)
+            ->pluck('organization_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        $organizationIds = array_values(array_unique([
+            ...$currentOrganizationIds,
+            ...$historicalOrganizationIds,
+        ]));
 
         return $this->actorSides->resolve(
             $ownerOrganizationId,

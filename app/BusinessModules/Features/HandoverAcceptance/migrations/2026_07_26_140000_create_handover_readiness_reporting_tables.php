@@ -171,16 +171,19 @@ return new class extends Migration
                    OR cause.acceptance_scope_id <> NEW.acceptance_scope_id
                    OR cause.source_type <> NEW.source_type
                    OR cause.source_id <> NEW.source_id
+                   OR cause.source_version >= NEW.source_version
                    OR cause.occurred_at > NEW.occurred_at
                    OR (
                        NEW.event_type = 'inspection_resulted'
                        AND cause.event_type <> 'inspection_attempted'
                    )
                    OR (
-                       NEW.event_type IN ('finding_resolved', 'blocker_resolved')
-                       AND cause.event_type NOT IN (
-                           'finding_opened', 'finding_reopened', 'blocker_opened', 'blocker_reopened'
-                       )
+                       NEW.event_type = 'finding_resolved'
+                       AND cause.event_type NOT IN ('finding_opened', 'finding_reopened')
+                   )
+                   OR (
+                       NEW.event_type = 'blocker_resolved'
+                       AND cause.event_type NOT IN ('blocker_opened', 'blocker_reopened')
                    )
                 THEN
                     RAISE EXCEPTION 'handover_evidence_causation_invalid';

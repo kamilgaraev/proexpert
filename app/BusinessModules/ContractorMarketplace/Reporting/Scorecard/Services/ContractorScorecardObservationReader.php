@@ -14,38 +14,62 @@ final readonly class ContractorScorecardObservationReader
     public function load(ContractorScorecardSourceTuple $tuple): ContractorObjectiveObservationIndex
     {
         $organizationId = $tuple->baselineScheduleVariance->scope->organizationId;
+        $contractors = DB::table('contractors')
+            ->where('organization_id', $organizationId)
+            ->whereNotNull('source_organization_id')
+            ->get(['id', 'source_organization_id']);
+        $suppliers = DB::table('suppliers')
+            ->where('organization_id', $organizationId)
+            ->get(['id', 'additional_info']);
+        $supplierMetadata = $suppliers->mapWithKeys(static function (object $supplier): array {
+            $metadata = is_string($supplier->additional_info)
+                ? json_decode($supplier->additional_info, true)
+                : $supplier->additional_info;
+
+            return [(int) $supplier->id => is_array($metadata) ? $metadata : []];
+        });
+        $profileIds = $supplierMetadata
+            ->pluck('contractor_profile_id')
+            ->filter(static fn (mixed $id): bool => is_numeric($id) && (int) $id > 0)
+            ->map(static fn (mixed $id): int => (int) $id);
+        $profileOrganizationIds = $contractors
+            ->pluck('source_organization_id')
+            ->merge($supplierMetadata->pluck('contractor_organization_id'))
+            ->filter(static fn (mixed $id): bool => is_numeric($id) && (int) $id > 0)
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values();
+        $profiles = DB::table('marketplace_contractor_profiles')
+            ->where(static function ($query) use ($profileIds, $profileOrganizationIds): void {
+                $query->whereIn('id', $profileIds->all())
+                    ->orWhereIn('organization_id', $profileOrganizationIds->all());
+            })
+            ->get(['id', 'organization_id']);
         $profileByOrganization = DB::table('marketplace_contractor_profiles')
-            ->whereIn('id', DB::table('marketplace_hiring_offer_reviews')
-                ->where('reviewer_organization_id', $organizationId)
-                ->pluck('contractor_profile_id')
-                ->all())
+            ->whereIn('id', $profiles->pluck('id')->all())
             ->pluck('id', 'organization_id')
             ->mapWithKeys(static fn (mixed $id, mixed $organization): array => [(int) $organization => (int) $id])
             ->all();
-        $profileByContractor = DB::table('contractors')
-            ->where('organization_id', $organizationId)
-            ->whereNotNull('source_organization_id')
-            ->get(['id', 'source_organization_id'])
+        $profileById = $profiles
+            ->pluck('id', 'id')
+            ->mapWithKeys(static fn (mixed $id): array => [(int) $id => (int) $id])
+            ->all();
+        $profileByContractor = $contractors
             ->mapWithKeys(static fn (object $contractor): array => [
                 (int) $contractor->id => $profileByOrganization[(int) $contractor->source_organization_id] ?? null,
             ])
             ->filter()
             ->all();
-        $profileBySupplier = DB::table('suppliers')
-            ->where('organization_id', $organizationId)
-            ->get(['id', 'additional_info'])
-            ->mapWithKeys(static function (object $supplier) use ($profileByOrganization): array {
-                $metadata = is_string($supplier->additional_info)
-                    ? json_decode($supplier->additional_info, true)
-                    : $supplier->additional_info;
-                if (! is_array($metadata)) {
-                    return [(int) $supplier->id => null];
-                }
+        $profileBySupplier = $supplierMetadata
+            ->mapWithKeys(static function (array $metadata, int $supplierId) use (
+                $profileById,
+                $profileByOrganization,
+            ): array {
                 $profileId = isset($metadata['contractor_profile_id'])
-                    ? (int) $metadata['contractor_profile_id']
+                    ? ($profileById[(int) $metadata['contractor_profile_id']] ?? null)
                     : ($profileByOrganization[(int) ($metadata['contractor_organization_id'] ?? 0)] ?? null);
 
-                return [(int) $supplier->id => $profileId];
+                return [$supplierId => $profileId];
             })
             ->filter()
             ->all();

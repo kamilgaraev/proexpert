@@ -86,7 +86,7 @@ final readonly class HandoverEvidenceEventRecorder
                 throw new InvalidArgumentException('handover_evidence_event_sequence_invalid');
             }
             $sourceVersion = $last === null ? 1 : ((int) $last->source_version) + 1;
-            $causation = $this->causation($scope, $eventType, $sourceType, $sourceId);
+            $causation = $this->causation($scope, $eventType, $sourceType, $sourceId, $sourceVersion);
             if ($causation !== null && $occurredAt < $causation->occurred_at) {
                 throw new InvalidArgumentException('handover_evidence_event_sequence_invalid');
             }
@@ -249,11 +249,14 @@ final readonly class HandoverEvidenceEventRecorder
         string $eventType,
         string $sourceType,
         int $sourceId,
+        int $sourceVersion,
     ): ?HandoverEvidenceEvent {
         $requiredEvent = match ($eventType) {
-            'finding_resolved', 'blocker_resolved' => [
+            'finding_resolved' => [
                 'finding_opened',
                 'finding_reopened',
+            ],
+            'blocker_resolved' => [
                 'blocker_opened',
                 'blocker_reopened',
             ],
@@ -269,7 +272,9 @@ final readonly class HandoverEvidenceEventRecorder
             ->where('acceptance_scope_id', (int) $scope->id)
             ->where('source_type', $sourceType)
             ->where('source_id', $sourceId)
+            ->where('source_version', '<', $sourceVersion)
             ->whereIn('event_type', $requiredEvent)
+            ->orderByDesc('source_version')
             ->orderByDesc('occurred_at')
             ->orderByDesc('id')
             ->first()

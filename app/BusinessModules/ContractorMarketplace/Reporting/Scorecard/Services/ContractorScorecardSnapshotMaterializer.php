@@ -74,9 +74,21 @@ final readonly class ContractorScorecardSnapshotMaterializer
                 fn ($builder) => $builder->whereIn('project_id', $query->scope->projectIds),
             )
             ->orderBy('id')
-            ->get();
-        $groups = $this->groups($reviews, $objectiveObservations, $policy, $query->asOf);
+            ->get()
+            ->filter(fn (MarketplaceHiringOfferReview $review): bool => $this->matchesRequestedCohort(
+                CarbonImmutable::instance($review->created_at),
+                $policy,
+                $query->filters->values['cohort'] ?? null,
+            ));
+        $groups = $this->groups(
+            $reviews,
+            $objectiveObservations,
+            $policy,
+            $query->asOf,
+            $query->filters->values['cohort'] ?? null,
+        );
         $sourceHash = hash('sha256', CanonicalJson::encode([
+            'filters' => $query->filters->values,
             'policy_id' => (int) $policy->id,
             'policy_source_hash' => (string) $policy->source_hash,
             'policy_version' => (string) $policy->version,
@@ -134,6 +146,8 @@ final readonly class ContractorScorecardSnapshotMaterializer
                 'stale_at' => $staleAt,
                 'watermarks' => [
                     'as_of' => $query->asOf->format(DATE_ATOM),
+                    'cohort_key' => $query->filters->values['cohort'] ?? null,
+                    'filters_hash' => hash('sha256', CanonicalJson::encode($query->filters->values)),
                     'source_schema_version' => 'contractor-scorecard.v1',
                     'source_tuple_hash' => $tuple->hash(),
                 ],
@@ -325,6 +339,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
         ContractorObjectiveObservationIndex $objectiveObservations,
         ContractorScorecardPolicyVersion $policy,
         \DateTimeInterface $asOf,
+        mixed $requestedCohort,
     ): Collection {
         $period = $policy->cohort_rules['period'] ?? null;
         if (! in_array($period, ['month', 'quarter', 'year'], true)) {
@@ -356,7 +371,10 @@ final readonly class ContractorScorecardSnapshotMaterializer
             ->orderBy('category_id')
             ->get(['profile_id', 'category_id'])
             ->groupBy('profile_id');
-        $objectiveCohort = $this->cohortKey(CarbonImmutable::instance($asOf), $period);
+        if ($requestedCohort !== null && ! is_string($requestedCohort)) {
+            throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
+        }
+        $objectiveCohort = $requestedCohort ?? $this->cohortKey(CarbonImmutable::instance($asOf), $period);
         foreach ($objectiveObservations->profileProjects() as $profileId => $projects) {
             foreach (array_keys($projects) as $projectId) {
                 foreach ($categories->get($profileId, collect()) as $category) {
@@ -373,6 +391,22 @@ final readonly class ContractorScorecardSnapshotMaterializer
         }
 
         return collect(array_values($groups));
+    }
+
+    private function matchesRequestedCohort(
+        CarbonImmutable $occurredAt,
+        ContractorScorecardPolicyVersion $policy,
+        mixed $requestedCohort,
+    ): bool {
+        if ($requestedCohort === null) {
+            return true;
+        }
+        $period = $policy->cohort_rules['period'] ?? null;
+        if (! is_string($requestedCohort) || ! in_array($period, ['month', 'quarter', 'year'], true)) {
+            throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
+        }
+
+        return hash_equals($this->cohortKey($occurredAt, $period), $requestedCohort);
     }
 
     private function cohortKey(CarbonImmutable $date, string $period): string

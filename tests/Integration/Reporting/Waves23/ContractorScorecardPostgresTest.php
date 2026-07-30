@@ -4,21 +4,70 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\Waves23;
 
-use PHPUnit\Framework\TestCase;
+use Illuminate\Support\Facades\DB;
+use Tests\Support\Reporting\PostgresProcessRaceHarness;
+use Tests\TestCase;
+use Throwable;
 
 final class ContractorScorecardPostgresTest extends TestCase
 {
-    public function test_schema_is_append_only_and_materialization_locks_the_tenant_aggregate(): void
+    public function test_concurrent_policy_first_writers_are_serialized_by_the_unique_version_identity(): void
     {
-        $root = dirname(__DIR__, 4);
-        $migration = file_get_contents($root.'/database/migrations/2026_07_26_090000_create_contractor_scorecard_reporting_tables.php');
-        $materializer = file_get_contents($root.'/app/BusinessModules/ContractorMarketplace/Reporting/Scorecard/Services/ContractorScorecardSnapshotMaterializer.php');
+        $this->requirePostgresProcessHarness();
+        $organizationId = random_int(700_000_000, 799_999_999);
+        $version = 'contractor-scorecard.race.'.bin2hex(random_bytes(6));
+        $harness = new PostgresProcessRaceHarness(
+            sys_get_temp_dir().DIRECTORY_SEPARATOR.'contractor-policy-race-'.bin2hex(random_bytes(6)),
+        );
+        $children = [];
 
-        self::assertIsString($migration);
-        self::assertIsString($materializer);
-        self::assertStringContainsString('contractor_scorecard_snapshots', $migration);
-        self::assertStringContainsString('_append_only BEFORE UPDATE OR DELETE', $migration);
-        self::assertStringContainsString("DB::table('organizations')", $materializer);
-        self::assertStringContainsString('lockForUpdate()', $materializer);
+        try {
+            foreach ([1, 2] as $worker) {
+                $children[] = $harness->spawn($worker, static function () use ($organizationId, $version): array {
+                    try {
+                        DB::table('contractor_scorecard_policy_versions')->insert([
+                            'organization_id' => $organizationId,
+                            'version' => $version,
+                            'components' => '[]',
+                            'cohort_rules' => '{"period":"quarter"}',
+                            'minimum_coverage' => '1',
+                            'minimum_sample_size' => 1,
+                            'source_hash' => str_repeat('a', 64),
+                            'effective_from' => now(),
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+
+                        return ['inserted' => true];
+                    } catch (Throwable $exception) {
+                        return ['inserted' => false, 'sql_state' => (string) $exception->getCode()];
+                    }
+                });
+                $harness->release($worker);
+            }
+            $harness->waitForChildren($children);
+            $children = [];
+            $results = [$harness->result(1), $harness->result(2)];
+
+            self::assertSame(1, count(array_filter($results, static fn (array $row): bool => $row['inserted'])));
+            self::assertSame(1, DB::table('contractor_scorecard_policy_versions')
+                ->where('organization_id', $organizationId)
+                ->where('version', $version)
+                ->count());
+        } finally {
+            $harness->terminateAndReap($children);
+            $harness->cleanup();
+        }
+    }
+
+    private function requirePostgresProcessHarness(): void
+    {
+        if (
+            DB::connection()->getDriverName() !== 'pgsql'
+            || ! function_exists('pcntl_fork')
+            || ! function_exists('posix_kill')
+        ) {
+            self::markTestSkipped('Requires PostgreSQL with pcntl/posix.');
+        }
     }
 }

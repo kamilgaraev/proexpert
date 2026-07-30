@@ -79,7 +79,8 @@ final readonly class ContractorScorecardSourceResolver
             $projects = array_map('intval', $candidate->scope_project_ids ?? []);
 
             return $projects === $query->scope->projectIds
-                && $candidate->scope_holding_organization_ids === $query->scope->holdingOrganizationIds;
+                && $candidate->scope_holding_organization_ids === $query->scope->holdingOrganizationIds
+                && ($candidate->filters ?? []) === $query->filters->values;
         });
         if (
             ! $record instanceof ReportRunRecord
@@ -102,7 +103,7 @@ final readonly class ContractorScorecardSourceResolver
             array_merge($record->snapshot_watermarks ?? [], [
                 'source_schema_version' => (string) $record->source_schema_version,
                 'as_of' => $record->as_of->format(DATE_ATOM),
-                'cohort_key' => $query->filters->values['cohort'] ?? null,
+                'cohort_key' => ($record->filters ?? [])['cohort'] ?? null,
                 'project_ids' => $query->scope->projectIds,
             ]),
             ReportSnapshotClassification::OPERATIONAL,
@@ -122,7 +123,11 @@ final readonly class ContractorScorecardSourceResolver
                 fn ($builder) => $builder->whereIn('project_id', $query->scope->projectIds),
             )
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->filter(fn (MarketplaceHiringOfferReview $review): bool => $this->reviewMatchesCohort(
+                CarbonImmutable::instance($review->created_at),
+                $query->filters->values['cohort'] ?? null,
+            ));
         $projection = $reviews->map(static fn (MarketplaceHiringOfferReview $review): array => [
             'id' => (int) $review->id,
             'offer_id' => (int) $review->offer_id,
@@ -165,6 +170,29 @@ final readonly class ContractorScorecardSourceResolver
             ReportSnapshotClassification::OPERATIONAL,
             null,
         );
+    }
+
+    private function reviewMatchesCohort(CarbonImmutable $createdAt, mixed $cohort): bool
+    {
+        if ($cohort === null) {
+            return true;
+        }
+        if (! is_string($cohort)) {
+            return false;
+        }
+
+        if (preg_match('/^(\d{4})-(\d{2})$/D', $cohort, $matches) === 1) {
+            return $createdAt->format('Y-m') === $cohort;
+        }
+        if (preg_match('/^(\d{4})-Q([1-4])$/D', $cohort, $matches) === 1) {
+            return (int) $createdAt->format('Y') === (int) $matches[1]
+                && $createdAt->quarter === (int) $matches[2];
+        }
+        if (preg_match('/^\d{4}$/D', $cohort) === 1) {
+            return $createdAt->format('Y') === $cohort;
+        }
+
+        return false;
     }
 
     private function assertOwnerSnapshotReady(
