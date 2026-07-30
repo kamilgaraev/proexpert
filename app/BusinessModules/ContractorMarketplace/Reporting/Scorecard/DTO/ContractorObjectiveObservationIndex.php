@@ -67,6 +67,28 @@ final readonly class ContractorObjectiveObservationIndex
         return $dimensions;
     }
 
+    public function profileProjectCohorts(string $cohortPeriod): array
+    {
+        $dimensions = [];
+        foreach ($this->rows as $sources) {
+            foreach ($sources as $profileId => $projects) {
+                foreach ($projects as $projectId => $rows) {
+                    foreach ($rows as $row) {
+                        if (! is_array($row)) {
+                            throw new InvalidArgumentException('contractor_objective_observation_invalid');
+                        }
+                        $dimensions[(int) $profileId][(int) $projectId][$this->cohortKey(
+                            $row,
+                            $cohortPeriod,
+                        )] = true;
+                    }
+                }
+            }
+        }
+
+        return $dimensions;
+    }
+
     private function cohortKey(array $row, string $period): string
     {
         if (is_string($row['_cohort_key'] ?? null) && $row['_cohort_key'] !== '') {

@@ -9,14 +9,13 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
-use Illuminate\Database\Query\Builder;
-use Illuminate\Support\Facades\DB;
 
 final readonly class ReportSourceObjectAuthorizer
 {
     public function __construct(
         private AuthorizationService $authorization,
         private UserProjectAccessService $projectAccess,
+        private ReportSourceObjectReader $sources,
     ) {}
 
     private const PERMISSIONS = [
@@ -76,7 +75,7 @@ final readonly class ReportSourceObjectAuthorizer
             return 'forbidden';
         }
 
-        return $this->exists($sourceType, $sourceId, $organizationId, $projectId)
+        return $this->sources->exists($sourceType, $sourceId, $organizationId, $projectId)
             ? 'available'
             : 'missing';
     }
@@ -89,12 +88,12 @@ final readonly class ReportSourceObjectAuthorizer
         int $organizationId,
         ?int $projectId,
     ): bool {
-        $actor = User::query()->find($context->actor->id);
+        $actor = $this->sources->actor($context->actor->id);
         if (! $actor instanceof User) {
             return false;
         }
         if ($projectId !== null) {
-            $project = Project::query()->find($projectId);
+            $project = $this->sources->project($projectId);
             if (
                 ! $project instanceof Project
                 || ! $this->projectAccess->canAccessProject($actor, $project, $organizationId)
@@ -118,71 +117,5 @@ final readonly class ReportSourceObjectAuthorizer
         }
 
         return false;
-    }
-
-    private function exists(
-        string $sourceType,
-        int|string $sourceId,
-        int $organizationId,
-        ?int $projectId,
-    ): bool {
-        $query = match ($sourceType) {
-            'acceptance_scope', 'inspection' => DB::table('acceptance_scopes')->where('id', $sourceId),
-            'acceptance_checklist_item' => DB::table('acceptance_checklist_items as item')
-                ->join('acceptance_checklists as checklist', 'checklist.id', '=', 'item.acceptance_checklist_id')
-                ->where('item.id', $sourceId)
-                ->select('checklist.organization_id', 'checklist.project_id'),
-            'acceptance_finding' => DB::table('acceptance_findings')->where('id', $sourceId),
-            'baseline_schedule_variance' => DB::table('baseline_schedule_variance_rows')
-                ->join(
-                    'project_schedules as schedule',
-                    'schedule.id',
-                    '=',
-                    'baseline_schedule_variance_rows.schedule_id',
-                )
-                ->where('baseline_schedule_variance_rows.id', $sourceId),
-            'change', 'change_request' => DB::table('change_management_change_requests')->where('id', $sourceId),
-            'constraint' => DB::table('work_constraints')->where('id', $sourceId),
-            'customer_issue' => DB::table('customer_issues')->where('id', $sourceId),
-            'customer_request' => DB::table('customer_requests')->where('id', $sourceId),
-            'handover_document', 'document' => DB::table('handover_package_documents as document')
-                ->join('handover_packages as package', 'package.id', '=', 'document.handover_package_id')
-                ->where('document.id', $sourceId)
-                ->select('package.organization_id', 'package.project_id'),
-            'marketplace_review' => DB::table('marketplace_hiring_offer_reviews')
-                ->where('id', $sourceId)
-                ->selectRaw('reviewer_organization_id AS organization_id, project_id'),
-            'quality_defect' => DB::table('quality_defects')->where('id', $sourceId),
-            'quality_defect_flow' => DB::table('quality_defect_flow_rows')->where('id', $sourceId),
-            'rfi' => DB::table('change_management_rfis')->where('id', $sourceId),
-            'safety_incident_actions' => DB::table('safety_incident_rows')->where('id', $sourceId),
-            'supply_reliability' => DB::table('supply_reliability_rows')->where('id', $sourceId),
-            default => null,
-        };
-        if (! $query instanceof Builder) {
-            return false;
-        }
-
-        [$organizationColumn, $projectColumn] = $this->scopeColumns($sourceType);
-        $query->where($organizationColumn, $organizationId);
-        if ($projectId !== null && $projectColumn !== null) {
-            $query->where($projectColumn, $projectId);
-        }
-
-        return $query->exists();
-    }
-
-    private function scopeColumns(string $sourceType): array
-    {
-        return match ($sourceType) {
-            'acceptance_checklist_item' => ['checklist.organization_id', 'checklist.project_id'],
-            'handover_document', 'document' => ['package.organization_id', 'package.project_id'],
-            'marketplace_review' => ['reviewer_organization_id', 'project_id'],
-            'baseline_schedule_variance' => [
-                'baseline_schedule_variance_rows.organization_id',
-                'schedule.project_id',
-            ],
-            default => ['organization_id', 'project_id'],
-        };
     }
 }

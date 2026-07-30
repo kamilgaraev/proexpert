@@ -379,7 +379,12 @@ final readonly class ContractorScorecardSnapshotMaterializer
             throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
         }
         $objectiveCohort = $requestedCohort ?? $this->cohortKey(CarbonImmutable::instance($asOf), $period);
-        $objectiveDimensions = $objectiveObservations->profileProjects($objectiveCohort, $period);
+        $objectiveDimensions = $requestedCohort === null
+            ? $objectiveObservations->profileProjectCohorts($period)
+            : $this->singleCohortDimensions(
+                $objectiveObservations->profileProjects($objectiveCohort, $period),
+                $objectiveCohort,
+            );
         $profileIds = array_map('intval', array_keys($objectiveDimensions));
         $categories = DB::table('marketplace_contractor_categories')
             ->whereIn('profile_id', $profileIds)
@@ -388,21 +393,35 @@ final readonly class ContractorScorecardSnapshotMaterializer
             ->get(['profile_id', 'category_id'])
             ->groupBy('profile_id');
         foreach ($objectiveDimensions as $profileId => $projects) {
-            foreach (array_keys($projects) as $projectId) {
-                foreach ($categories->get($profileId, collect()) as $category) {
-                    $key = implode(':', [$profileId, (int) $category->category_id, $projectId, $objectiveCohort]);
-                    $groups[$key] ??= [
-                        'profile_id' => (int) $profileId,
-                        'category_id' => (int) $category->category_id,
-                        'project_id' => (int) $projectId,
-                        'cohort_key' => $objectiveCohort,
-                        'reviews' => collect(),
-                    ];
+            foreach ($projects as $projectId => $cohorts) {
+                foreach (array_keys($cohorts) as $cohortKey) {
+                    foreach ($categories->get($profileId, collect()) as $category) {
+                        $key = implode(':', [$profileId, (int) $category->category_id, $projectId, $cohortKey]);
+                        $groups[$key] ??= [
+                            'profile_id' => (int) $profileId,
+                            'category_id' => (int) $category->category_id,
+                            'project_id' => (int) $projectId,
+                            'cohort_key' => $cohortKey,
+                            'reviews' => collect(),
+                        ];
+                    }
                 }
             }
         }
 
         return collect(array_values($groups));
+    }
+
+    private function singleCohortDimensions(array $profileProjects, string $cohortKey): array
+    {
+        $dimensions = [];
+        foreach ($profileProjects as $profileId => $projects) {
+            foreach (array_keys($projects) as $projectId) {
+                $dimensions[(int) $profileId][(int) $projectId][$cohortKey] = true;
+            }
+        }
+
+        return $dimensions;
     }
 
     private function matchesRequestedCohort(

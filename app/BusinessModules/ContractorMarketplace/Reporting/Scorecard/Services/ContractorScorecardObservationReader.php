@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
 
 final readonly class ContractorScorecardObservationReader
 {
+    public function __construct(private ContractorObjectiveObservationPeriodResolver $periods) {}
+
     public function load(ContractorScorecardSourceTuple $tuple): ContractorObjectiveObservationIndex
     {
         $organizationId = $tuple->baselineScheduleVariance->scope->organizationId;
@@ -79,6 +81,7 @@ final readonly class ContractorScorecardObservationReader
                 $organizationId,
                 $tuple->baselineScheduleVariance,
                 $profileByContractor,
+                'baseline_schedule_variance',
             ),
             'supply_reliability' => $this->contractorRows(
                 DB::table('supply_reliability_rows')
@@ -87,7 +90,7 @@ final readonly class ContractorScorecardObservationReader
                     ->get(),
                 $profileBySupplier,
                 'supplier_id',
-                $tuple->supplyReliability,
+                'supply_reliability',
             ),
             'quality_defect_flow' => $this->contractorRows(
                 DB::table('quality_defect_flow_rows')
@@ -96,7 +99,7 @@ final readonly class ContractorScorecardObservationReader
                     ->get(),
                 $profileByContractor,
                 'contractor_id',
-                $tuple->qualityDefectFlow,
+                'quality_defect_flow',
             ),
             'safety_incident_actions' => $this->contractorRows(
                 DB::table('safety_incident_rows')
@@ -105,7 +108,7 @@ final readonly class ContractorScorecardObservationReader
                     ->get(),
                 $profileByContractor,
                 'contractor_id',
-                $tuple->safetyIncidentActions,
+                'safety_incident_actions',
             ),
         ]);
     }
@@ -114,6 +117,7 @@ final readonly class ContractorScorecardObservationReader
         int $organizationId,
         \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef $snapshot,
         array $profileByContractor,
+        string $sourceReportCode,
     ): array {
         $indexed = [];
         foreach (
@@ -131,7 +135,7 @@ final readonly class ContractorScorecardObservationReader
                     ...$payload,
                     ...(array) $row,
                     'project_id' => $projectId,
-                    ...$this->periodIdentity((array) $row + $payload, $snapshot),
+                    ...$this->periodIdentity((array) $row + $payload, $sourceReportCode),
                 ];
             }
         }
@@ -143,7 +147,7 @@ final readonly class ContractorScorecardObservationReader
         Collection $rows,
         array $profileByOwnerId,
         string $ownerColumn,
-        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef $snapshot,
+        string $sourceReportCode,
     ): array {
         $indexed = [];
         foreach ($rows as $row) {
@@ -153,7 +157,7 @@ final readonly class ContractorScorecardObservationReader
             if ($profileId !== null && $projectId > 0) {
                 $indexed[$profileId][$projectId][] = [
                     ...(array) $row,
-                    ...$this->periodIdentity((array) $row, $snapshot),
+                    ...$this->periodIdentity((array) $row, $sourceReportCode),
                 ];
             }
         }
@@ -163,33 +167,8 @@ final readonly class ContractorScorecardObservationReader
 
     private function periodIdentity(
         array $row,
-        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef $snapshot,
+        string $sourceReportCode,
     ): array {
-        $explicitCohort = $snapshot->watermarks['cohort_key'] ?? null;
-        if (is_string($explicitCohort) && $explicitCohort !== '') {
-            return ['_cohort_key' => $explicitCohort];
-        }
-        foreach ([
-            'occurred_at',
-            'delivery_date',
-            'delivered_at',
-            'accepted_at',
-            'closed_at',
-            'opened_at',
-            'work_date',
-            'period_end',
-            'due_date',
-        ] as $field) {
-            if (is_string($row[$field] ?? null) && $row[$field] !== '') {
-                return ['_observed_at' => $row[$field]];
-            }
-        }
-
-        $asOf = $snapshot->watermarks['as_of'] ?? null;
-        if (! is_string($asOf) || $asOf === '') {
-            throw new \InvalidArgumentException('contractor_objective_observation_period_missing');
-        }
-
-        return ['_observed_at' => $asOf];
+        return ['_observed_at' => $this->periods->resolve($row, $sourceReportCode)];
     }
 }
