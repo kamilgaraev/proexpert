@@ -1,0 +1,15 @@
+catalog: wave-1-candidates.v1
+contract_version: 1.0.0
+candidates:
+  - {ordinal: 1, group_id: G01, code: project_portfolio_health, family: wave1.project_portfolio_health, source_status: implemented, publication: candidate}
+  - {ordinal: 2, group_id: G04, code: portfolio_liquidity, family: wave1.portfolio_liquidity, source_status: implemented, publication: candidate}
+  - {ordinal: 3, group_id: G06, code: baseline_schedule_variance, family: wave1.baseline_schedule_variance, source_status: source contract required, publication: candidate}
+  - {ordinal: 4, group_id: G09, code: project_margin, family: wave1.project_margin, source_status: implemented, publication: candidate}
+  - {ordinal: 5, group_id: G10, code: budget_plan_fact, family: wave1.budget_plan_fact, source_status: implemented, publication: candidate}
+  - {ordinal: 6, group_id: G11, code: wip_completion_forecast, family: wave1.wip_completion_forecast, source_status: source contract required, publication: candidate}
+  - {ordinal: 7, group_id: G12, code: contract_settlement_exposure, family: wave1.contract_settlement_exposure, source_status: source/formula contract required, publication: candidate}
+  - {ordinal: 8, group_id: G13, code: management_pnl, family: wave1.management_pnl, source_status: source/formula contract required, publication: candidate}
+  - {ordinal: 9, group_id: G21, code: workforce_capacity, family: wave1.workforce_capacity, source_status: source contract required, publication: candidate}
+  - {ordinal: 10, group_id: G22, code: attendance_execution, family: wave1.attendance_execution, source_status: source contract required, publication: candidate}
+  - {ordinal: 11, group_id: G23, code: project_labor_cost, family: wave1.project_labor_cost, source_status: source contract required, publication: candidate}
+  - {ordinal: 12, group_id: G24, code: payroll_readiness, family: wave1.payroll_readiness, source_status: source contract required, publication: candidate}
