@@ -24,3 +24,4 @@ Migrations and database-backed tests were intentionally not run under the reposi
 - Header JSONB attributes now pass native arrays into Eloquent casts, preventing double JSON serialization during persistence.
 - The ready-immutability trigger branches by `TG_OP`; delete paths read and return `OLD`, while insert/update paths read and return `NEW`.
 - Added a PostgreSQL-gated integration test for `persistReady`, header/page/drill reads and database rejection of a ready-row mutation. It is intentionally not executed locally.
+- The PostgreSQL test now skips before `RefreshDatabase` when the configured connection is not PostgreSQL, so the standard SQLite Feature suite remains safe.

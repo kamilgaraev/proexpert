@@ -29,6 +29,10 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
 
     protected function beforeRefreshingDatabase(): void
     {
+        if (config('database.default') !== 'pgsql') {
+            $this->markTestSkipped('Requires an explicitly configured isolated PostgreSQL database.');
+        }
+
         self::assertSame('pgsql', DB::connection()->getDriverName());
     }
 
