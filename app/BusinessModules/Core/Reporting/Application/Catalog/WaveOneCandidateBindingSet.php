@@ -23,7 +23,7 @@ final readonly class WaveOneCandidateBindingSet
             }
 
             if (($binding->status === WaveOneCandidateBindingStatus::IMPLEMENTED && $binding->provider === null)
-                || ($binding->status === WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_CONTRACT && $binding->provider !== null)) {
+                || ($binding->status !== WaveOneCandidateBindingStatus::IMPLEMENTED && $binding->provider !== null)) {
                 throw new InvalidArgumentException('wave_one_candidate_binding_set_invalid');
             }
 
@@ -43,9 +43,10 @@ final readonly class WaveOneCandidateBindingSet
         }
 
         foreach ($manifest->ordered() as $index => $candidate) {
-            $expectedStatus = $candidate->sourceStatus === 'implemented'
-                ? WaveOneCandidateBindingStatus::IMPLEMENTED
-                : WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_CONTRACT;
+            $expectedStatus = match ($candidate->sourceStatus) {
+                'source readiness required' => WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_READINESS,
+                'source contract required', 'source/formula contract required' => WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_CONTRACT,
+            };
             if ($resolved[$index]->status !== $expectedStatus) {
                 throw new InvalidArgumentException('wave_one_candidate_binding_set_invalid');
             }

@@ -24,11 +24,11 @@ final class WaveOneCandidateManifestTest extends TestCase
 
         self::assertSame(
             [
-                [1, 'G01', 'project_portfolio_health', 'wave1.project_portfolio_health', 'implemented', 'candidate'],
-                [2, 'G04', 'portfolio_liquidity', 'wave1.portfolio_liquidity', 'implemented', 'candidate'],
+                [1, 'G01', 'project_portfolio_health', 'wave1.project_portfolio_health', 'source readiness required', 'candidate'],
+                [2, 'G04', 'portfolio_liquidity', 'wave1.portfolio_liquidity', 'source readiness required', 'candidate'],
                 [3, 'G06', 'baseline_schedule_variance', 'wave1.baseline_schedule_variance', 'source contract required', 'candidate'],
-                [4, 'G09', 'project_margin', 'wave1.project_margin', 'implemented', 'candidate'],
-                [5, 'G10', 'budget_plan_fact', 'wave1.budget_plan_fact', 'implemented', 'candidate'],
+                [4, 'G09', 'project_margin', 'wave1.project_margin', 'source readiness required', 'candidate'],
+                [5, 'G10', 'budget_plan_fact', 'wave1.budget_plan_fact', 'source readiness required', 'candidate'],
                 [6, 'G11', 'wip_completion_forecast', 'wave1.wip_completion_forecast', 'source contract required', 'candidate'],
                 [7, 'G12', 'contract_settlement_exposure', 'wave1.contract_settlement_exposure', 'source/formula contract required', 'candidate'],
                 [8, 'G13', 'management_pnl', 'wave1.management_pnl', 'source/formula contract required', 'candidate'],

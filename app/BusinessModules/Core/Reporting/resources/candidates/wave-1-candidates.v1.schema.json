@@ -26,15 +26,15 @@
       "required": ["ordinal", "group_id", "code", "family", "source_status", "publication"],
       "properties": {
         "ordinal": {"type": "integer"}, "group_id": {"type": "string"}, "code": {"type": "string"},
-        "family": {"type": "string"}, "source_status": {"enum": ["implemented", "source contract required", "source/formula contract required"]},
+        "family": {"type": "string"}, "source_status": {"enum": ["source readiness required", "source contract required", "source/formula contract required"]},
         "publication": {"const": "candidate"}
       }
     },
-    "G01": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 1}, "group_id": {"const": "G01"}, "code": {"const": "project_portfolio_health"}, "family": {"const": "wave1.project_portfolio_health"}, "source_status": {"const": "implemented"}}}]},
-    "G04": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 2}, "group_id": {"const": "G04"}, "code": {"const": "portfolio_liquidity"}, "family": {"const": "wave1.portfolio_liquidity"}, "source_status": {"const": "implemented"}}}]},
+    "G01": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 1}, "group_id": {"const": "G01"}, "code": {"const": "project_portfolio_health"}, "family": {"const": "wave1.project_portfolio_health"}, "source_status": {"const": "source readiness required"}}}]},
+    "G04": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 2}, "group_id": {"const": "G04"}, "code": {"const": "portfolio_liquidity"}, "family": {"const": "wave1.portfolio_liquidity"}, "source_status": {"const": "source readiness required"}}}]},
     "G06": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 3}, "group_id": {"const": "G06"}, "code": {"const": "baseline_schedule_variance"}, "family": {"const": "wave1.baseline_schedule_variance"}, "source_status": {"const": "source contract required"}}}]},
-    "G09": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 4}, "group_id": {"const": "G09"}, "code": {"const": "project_margin"}, "family": {"const": "wave1.project_margin"}, "source_status": {"const": "implemented"}}}]},
-    "G10": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 5}, "group_id": {"const": "G10"}, "code": {"const": "budget_plan_fact"}, "family": {"const": "wave1.budget_plan_fact"}, "source_status": {"const": "implemented"}}}]},
+    "G09": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 4}, "group_id": {"const": "G09"}, "code": {"const": "project_margin"}, "family": {"const": "wave1.project_margin"}, "source_status": {"const": "source readiness required"}}}]},
+    "G10": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 5}, "group_id": {"const": "G10"}, "code": {"const": "budget_plan_fact"}, "family": {"const": "wave1.budget_plan_fact"}, "source_status": {"const": "source readiness required"}}}]},
     "G11": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 6}, "group_id": {"const": "G11"}, "code": {"const": "wip_completion_forecast"}, "family": {"const": "wave1.wip_completion_forecast"}, "source_status": {"const": "source contract required"}}}]},
     "G12": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 7}, "group_id": {"const": "G12"}, "code": {"const": "contract_settlement_exposure"}, "family": {"const": "wave1.contract_settlement_exposure"}, "source_status": {"const": "source/formula contract required"}}}]},
     "G13": {"allOf": [{"$ref": "#/$defs/candidate"}, {"properties": {"ordinal": {"const": 8}, "group_id": {"const": "G13"}, "code": {"const": "management_pnl"}, "family": {"const": "wave1.management_pnl"}, "source_status": {"const": "source/formula contract required"}}}]},

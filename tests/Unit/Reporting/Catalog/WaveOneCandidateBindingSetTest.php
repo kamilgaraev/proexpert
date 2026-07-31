@@ -6,11 +6,6 @@ namespace Tests\Unit\Reporting\Catalog;
 
 use App\BusinessModules\Core\Reporting\Application\Catalog\WaveOneCandidateBindingSet;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\WaveOneCandidateBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\WaveOneCandidateManifest;
 use App\BusinessModules\Core\Reporting\Domain\Enums\WaveOneCandidateBindingStatus;
@@ -18,46 +13,39 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlWaveOneCandida
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\ReportSchemaValidationException;
 use InvalidArgumentException;
-use LogicException;
 use Opis\JsonSchema\CompliantValidator;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class WaveOneCandidateBindingSetTest extends TestCase
 {
-    public function test_preserves_manifest_order_and_excludes_blocked_candidates_from_implemented_bindings(): void
+    public function test_preserves_literal_manifest_order_with_only_blocked_candidates_and_null_providers(): void
     {
         $manifest = $this->manifest();
         $set = new WaveOneCandidateBindingSet($manifest, $this->bindings($manifest));
 
-        self::assertSame(
-            [
-                'project_portfolio_health',
-                'portfolio_liquidity',
-                'baseline_schedule_variance',
-                'project_margin',
-                'budget_plan_fact',
-                'wip_completion_forecast',
-                'contract_settlement_exposure',
-                'management_pnl',
-                'workforce_capacity',
-                'attendance_execution',
-                'project_labor_cost',
-                'payroll_readiness',
+        self::assertSame([
+            ['project_portfolio_health', 'blocked_by_source_readiness', true],
+            ['portfolio_liquidity', 'blocked_by_source_readiness', true],
+            ['baseline_schedule_variance', 'blocked_by_source_contract', true],
+            ['project_margin', 'blocked_by_source_readiness', true],
+            ['budget_plan_fact', 'blocked_by_source_readiness', true],
+            ['wip_completion_forecast', 'blocked_by_source_contract', true],
+            ['contract_settlement_exposure', 'blocked_by_source_contract', true],
+            ['management_pnl', 'blocked_by_source_contract', true],
+            ['workforce_capacity', 'blocked_by_source_contract', true],
+            ['attendance_execution', 'blocked_by_source_contract', true],
+            ['project_labor_cost', 'blocked_by_source_contract', true],
+            ['payroll_readiness', 'blocked_by_source_contract', true],
+        ], array_map(
+            static fn (WaveOneCandidateBinding $binding): array => [
+                $binding->code,
+                $binding->status->value,
+                $binding->provider === null,
             ],
-            array_map(static fn (WaveOneCandidateBinding $binding): string => $binding->code, $set->ordered()),
-        );
-        self::assertSame(
-            [
-                'project_portfolio_health',
-                'portfolio_liquidity',
-                'project_margin',
-                'budget_plan_fact',
-            ],
-            array_map(static fn (WaveOneCandidateBinding $binding): string => $binding->code, $set->implemented()),
-        );
-        self::assertSame('blocked_by_source_contract', $set->ordered()[6]->status->value);
-        self::assertNull($set->ordered()[6]->provider);
+            $set->ordered(),
+        ));
+        self::assertSame([], $set->implemented());
     }
 
     #[DataProvider('invalidBindingMutations')]
@@ -103,24 +91,60 @@ final class WaveOneCandidateBindingSetTest extends TestCase
 
                 return $bindings;
             }],
-            'G06 promoted from blocked source contract' => [static function (array $bindings): array {
-                $bindings[2] = new WaveOneCandidateBinding(
-                    $bindings[2]->code,
-                    WaveOneCandidateBindingStatus::IMPLEMENTED,
-                    self::provider(),
-                );
+        ];
+    }
 
-                return $bindings;
-            }],
-            'G12 promoted from blocked formula contract' => [static function (array $bindings): array {
-                $bindings[6] = new WaveOneCandidateBinding(
-                    $bindings[6]->code,
-                    WaveOneCandidateBindingStatus::IMPLEMENTED,
-                    self::provider(),
-                );
+    #[DataProvider('candidateCodes')]
+    public function test_rejects_promotion_of_every_candidate_to_implemented_with_a_provider(string $code): void
+    {
+        $manifest = $this->manifest();
+        $bindings = $this->bindings($manifest);
+        $index = array_search($code, array_column($bindings, 'code'), true);
 
-                return $bindings;
-            }],
+        self::assertIsInt($index);
+        $bindings[$index] = new WaveOneCandidateBinding(
+            $code,
+            WaveOneCandidateBindingStatus::IMPLEMENTED,
+            $this->createMock(ReportDataProvider::class),
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('wave_one_candidate_binding_set_invalid');
+
+        new WaveOneCandidateBindingSet($manifest, $bindings);
+    }
+
+    public function test_rejects_a_provider_for_a_candidate_blocked_by_source_readiness(): void
+    {
+        $manifest = $this->manifest();
+        $bindings = $this->bindings($manifest);
+        $bindings[0] = new WaveOneCandidateBinding(
+            $bindings[0]->code,
+            WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_READINESS,
+            $this->createMock(ReportDataProvider::class),
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('wave_one_candidate_binding_set_invalid');
+
+        new WaveOneCandidateBindingSet($manifest, $bindings);
+    }
+
+    public static function candidateCodes(): array
+    {
+        return [
+            'G01' => ['project_portfolio_health'],
+            'G04' => ['portfolio_liquidity'],
+            'G06' => ['baseline_schedule_variance'],
+            'G09' => ['project_margin'],
+            'G10' => ['budget_plan_fact'],
+            'G11' => ['wip_completion_forecast'],
+            'G12' => ['contract_settlement_exposure'],
+            'G13' => ['management_pnl'],
+            'G21' => ['workforce_capacity'],
+            'G22' => ['attendance_execution'],
+            'G23' => ['project_labor_cost'],
+            'G24' => ['payroll_readiness'],
         ];
     }
 
@@ -139,29 +163,14 @@ final class WaveOneCandidateBindingSetTest extends TestCase
         return array_map(
             static fn ($candidate): WaveOneCandidateBinding => new WaveOneCandidateBinding(
                 $candidate->code,
-                $candidate->sourceStatus === 'implemented'
-                    ? WaveOneCandidateBindingStatus::IMPLEMENTED
-                    : WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_CONTRACT,
-                $candidate->sourceStatus === 'implemented' ? self::provider() : null,
+                match ($candidate->sourceStatus) {
+                    'source readiness required' => WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_READINESS,
+                    'source contract required', 'source/formula contract required' => WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_CONTRACT,
+                },
+                null,
             ),
             $manifest->ordered(),
         );
-    }
-
-    private static function provider(): ReportDataProvider
-    {
-        return new class implements ReportDataProvider
-        {
-            public function materialize(ReportExecutionContext $context, ReportQuery $query, ReportProgress $progress): ReportSnapshotRef
-            {
-                throw new LogicException('not_called');
-            }
-
-            public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
-            {
-                throw new LogicException('not_called');
-            }
-        };
     }
 
     private function resource(string $file): string

@@ -2,7 +2,20 @@
 
 ## Status
 
-G06, G11, G12, G13 and G21-G24 are candidates blocked by an explicit source contract. They are not executable reports, have no report data provider, and cannot be converted into a published runtime binding by this contract.
+G01, G04, G09 and G10 have identified business sources, but are blocked by source readiness: an immutable source snapshot and replay contract has not been evidenced. Their binding status is `blocked_by_source_readiness`, their provider is `null`, and they are not executable reports.
+
+G06, G11, G12, G13 and G21-G24 remain blocked by an explicit source contract. Their binding status is `blocked_by_source_contract`, their provider is `null`, and they are not executable reports.
+
+No Wave 1 candidate is implemented or registered in runtime.
+
+## Source-readiness contracts
+
+| Candidate | Identified business source | Missing readiness evidence | Admission evidence |
+| --- | --- | --- | --- |
+| G01 project_portfolio_health | Portfolio aggregation | Immutable as-of snapshot, replay cursor, and source-version retention | A persisted source snapshot can be replayed by `(organization_id, as_of, source_version)` with identical scoped and redacted rows. |
+| G04 portfolio_liquidity | Liquidity forecast aggregation | Immutable forecast snapshot, scenario version, and replay cursor | A persisted snapshot can be replayed by `(organization_id, as_of, scenario_id, source_version)` without reading mutable current state. |
+| G09 project_margin | Project-margin calculation | Immutable period-close inputs, formula/source version, and replay cursor | An approved close snapshot reproduces rows from `(organization_id, reporting_period, close_version)` after later source changes. |
+| G10 budget_plan_fact | Budget plan/fact calculation | Immutable plan/fact snapshot, scenario version, and replay cursor | A persisted `(organization_id, reporting_period, scenario_id, source_version)` snapshot reproduces plan, fact, and variance values. |
 
 ## Source contracts
 
@@ -24,4 +37,4 @@ G06, G11, G12, G13 and G21-G24 are candidates blocked by an explicit source cont
 
 ## Admission rule
 
-A blocked candidate can receive a provider only after its owner supplies the stated fields at the stated grain and scope, the freshness and close rules are enforced, and the corresponding acceptance test passes. Until then its binding status remains `blocked_by_source_contract` and its provider remains `null`.
+A source-contract-blocked candidate can receive a provider only after its owner supplies the stated fields at the stated grain and scope, the freshness and close rules are enforced, and the corresponding acceptance test passes. A source-readiness-blocked candidate additionally requires an immutable source snapshot and replay contract with the stated admission evidence. Until admission is complete, every Wave 1 candidate keeps a `null` provider and remains outside runtime publication and registration.
