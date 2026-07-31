@@ -30,3 +30,10 @@ DB-free unit test с in-memory `ReportSourceSnapshotStore` покрывает о
 ## Оставшиеся ограничения admission
 
 Срез не является admission. До подключения provider нужны CI PostgreSQL evidence для хранения/ограничений и acceptance-проверка воспроизведения после изменения upstream данных. До этого G09/G10 не должны регистрироваться в runtime или продвигаться в manifest.
+
+## Fix round 1/5
+
+- `cursor()` теперь сначала подтверждает header, поэтому не обходит проверку scope, source hash, generated/stale timestamps и snapshot identity.
+- Материализация требует совпадения `sourceSchemaVersion` definition с версией адаптера и `formulaVersion` definition с версией approved close из watermarks.
+- DB-free test покрывает оба кандидата для cursor source-hash drift, несовместимой schema version и несовместимой formula version.
+- Повторные проверки: PHPUnit — PASS, 10 tests / 54 assertions; PHPStan изменённого production-файла с `memory_limit=1G` — PASS; `php -l` — PASS.

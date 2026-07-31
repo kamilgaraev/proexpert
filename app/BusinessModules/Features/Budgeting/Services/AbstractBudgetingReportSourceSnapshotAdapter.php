@@ -138,6 +138,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
         int $chunkSize,
     ): iterable {
         $this->assertSort($sort);
+        $this->header($context, $snapshot);
         $request = $this->readRequest($context, $snapshot);
         $cursor = null;
 
@@ -203,6 +204,10 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
             || $context->scope->canonicalIdentity() !== $query->scope->canonicalIdentity()) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
         }
+
+        if (! hash_equals($query->definition->sourceSchemaVersion, $this->schemaVersion())) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
+        }
     }
 
     private function assertHeader(ReportSourceSnapshotHeader $header, ReportExecutionContext $context, ReportQuery $query): void
@@ -213,6 +218,10 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
             || $header->scopeIdentity() !== $context->scope->canonicalIdentity()
             || $header->scopeIdentity() !== $query->scope->canonicalIdentity()) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
+        if (! hash_equals($query->definition->formulaVersion, $this->closeFormulaVersion($header))) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
     }
 
@@ -228,6 +237,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
             || ! hash_equals($header->sourceHash->value, $snapshot->sourceHash->value)
             || $header->generatedAt != $snapshot->generatedAt
             || $header->staleAt != $snapshot->staleAt
+            || ! hash_equals($this->closeFormulaVersion($header), $snapshot->formulaVersion)
             || $header->scopeIdentity() !== $snapshot->scope->canonicalIdentity()) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
         }
@@ -329,6 +339,16 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
     private function sourceRefSchemaVersion(): string
     {
         return 'v'.str_replace('.', '_', $this->schemaVersion());
+    }
+
+    private function closeFormulaVersion(ReportSourceSnapshotHeader $header): string
+    {
+        $formulaVersion = $header->watermarks['formula_version'] ?? null;
+        if (! is_string($formulaVersion) || trim($formulaVersion) === '') {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
+        return $formulaVersion;
     }
 
     private function reportQueryHash(ReportSnapshotRef $snapshot): Sha256Hash

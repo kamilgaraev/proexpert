@@ -136,6 +136,72 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         $adapter->result($context, $drifted);
     }
 
+    #[DataProvider('adapters')]
+    public function test_cursor_rejects_snapshot_source_hash_drift(
+        string $code,
+        string $sourceKind,
+        string $drillColumn,
+        object $adapter,
+        object $source,
+        InMemoryReportSourceSnapshotStore $store,
+    ): void {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $query = $this->query($code, $context->scope);
+        $snapshot = $adapter->materialize($context, $query, new ReportProgress(0));
+        $drifted = new ReportSnapshotRef(
+            $snapshot->kind,
+            $snapshot->id,
+            $snapshot->scope,
+            $snapshot->definitionHash,
+            $snapshot->formulaVersion,
+            new Sha256Hash(str_repeat('b', 64)),
+            $snapshot->generatedAt,
+            $snapshot->staleAt,
+            $snapshot->watermarks,
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+        );
+
+        $this->expectException(ReportContractException::class);
+        $this->expectExceptionMessage('REPORT_INTERNAL_ERROR');
+
+        iterator_to_array($adapter->cursor($context, $drifted, new ReportWindowSort('row_key', ReportSortDirection::ASC), 1));
+    }
+
+    #[DataProvider('adapters')]
+    public function test_rejects_source_schema_version_mismatch(
+        string $code,
+        string $sourceKind,
+        string $drillColumn,
+        object $adapter,
+        object $source,
+        InMemoryReportSourceSnapshotStore $store,
+    ): void {
+        $context = (new ReportExecutionContextBuilder)->build();
+
+        $this->expectException(ReportContractException::class);
+        $this->expectExceptionMessage('REPORT_REQUEST_INVALID');
+
+        $adapter->materialize($context, $this->query($code, $context->scope, sourceSchemaVersion: '2.0.0'), new ReportProgress(0));
+    }
+
+    #[DataProvider('adapters')]
+    public function test_rejects_formula_version_mismatch_with_approved_close(
+        string $code,
+        string $sourceKind,
+        string $drillColumn,
+        object $adapter,
+        object $source,
+        InMemoryReportSourceSnapshotStore $store,
+    ): void {
+        $context = (new ReportExecutionContextBuilder)->build();
+
+        $this->expectException(ReportContractException::class);
+        $this->expectExceptionMessage('REPORT_REQUEST_INVALID');
+
+        $adapter->materialize($context, $this->query($code, $context->scope, formulaVersion: 'margin-v2'), new ReportProgress(0));
+    }
+
     public static function adapters(): array
     {
         return [
@@ -172,13 +238,18 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         ];
     }
 
-    private function query(string $code, ReportScope $scope): ReportQuery
+    private function query(
+        string $code,
+        ReportScope $scope,
+        string $formulaVersion = 'margin-v1',
+        string $sourceSchemaVersion = '1.0.0',
+    ): ReportQuery
     {
         return new ReportQuery(
             (new ReportDefinitionBuilder)
                 ->code($code)
-                ->formulaVersion('margin-v1')
-                ->sourceSchemaVersion('1.0.0')
+                ->formulaVersion($formulaVersion)
+                ->sourceSchemaVersion($sourceSchemaVersion)
                 ->columns([['id' => 'row_key']])
                 ->sorts([['id' => 'row_key']])
                 ->payload(),
