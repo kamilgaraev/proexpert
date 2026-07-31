@@ -35,6 +35,25 @@ No Wave 1 candidate is implemented or registered in runtime.
 
 G09 therefore remains `blocked_by_source_readiness` with a `null` provider. Admission still requires owner-approved close/version retention, a source freshness watermark, retention policy and a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation.
 
+### G10 `budget_plan_fact` source snapshot contract (schema `1.0.0`)
+
+`PlanFactSourceSnapshotWriter` is a pre-admission infrastructure writer. It uses `PlanFactReportService` through its internal scoped snapshot contract and persists only through `ReportSourceSnapshotStore`; it is not a `ReportDataProvider`, `ReportRowQuery`, `ReportDrillDownProvider`, runtime binding, route or catalog registration.
+
+| Contract element | G10 rule |
+| --- | --- |
+| Grain | One canonical plan/fact aggregate per selected `group_by` tuple. `currency` is always present. Drill entries retain the plan/fact source-document grain for payment transactions, reservations and active payment documents. |
+| Allowed filters | `organization_id`, `period_start`, `period_end`, `budget_version_uuid`, `scenario_uuid`, `project_id`, `responsibility_center_id`, `budget_article_id`, `counterparty_id`, `currency`, `group_by`. |
+| Period, version and as-of | The report period is inclusive. The chosen budget version must overlap it and fixes the plan/forecast inputs; its scenario fixes the scenario. `as_of` is the writer timestamp for the captured live result, not an approved financial close or a source-version timestamp. |
+| Scope handling | `organization_id` must equal `ReportScope.organizationId`. The writer passes `ReportScope.projectIds` only to `reportForProjectScope()` and `drillDownForProjectScope()`. A non-empty set adds `whereIn` to every plan, actual, reservation, document, coverage and drill source query. An empty set adds `where 1 = 0`; it never means all projects. A requested `project_id` must be in the allowed set. Legacy `report()` and `drillDown()` retain their organization-wide behavior and are not used by the writer. |
+| Canonical row and cursor identity | `row_key = plan_fact:sha256(canonical group)`. Rows are ordered lexically by that key and persisted with a contiguous ordinal; snapshot cursors address that ordinal only. |
+| Source fields | Canonical rows retain group identifiers, currency, plan, forecast, actual, commitment, variance, variance percent and risk level. Drill entries retain only type, opaque source reference, date, amount, currency, status and variance contribution. |
+| Drill reference | Every row exposes `{column_id: sources, key: sha256(drill_down_key)}`. The writer pages the real scoped drill method until `meta.total` is materialized; stored drill ordinal is the replay order. |
+| Watermarks and hashes | `query_hash` binds the canonical scope and allowed filters. `source_hash` binds canonical redacted rows, redacted drill entries and watermarks. Watermarks record the selected budget/scenario UUIDs, period, source aggregate-row counts and canonical row count. `snapshot_hash` is sealed by the snapshot store. |
+| Redaction | Rows exclude article, responsibility-center, project, counterparty and scenario display payloads. Drill entries exclude raw IDs, numbers, titles, route hints and source URLs; `sha256(source_type|source_id)` is the only retained source reference. |
+| Freshness and close limitation | `PlanFactReportService` currently reads mutable budget, payment transaction, reservation, payment document and schedule tables. It has no approved immutable close version or source update watermark. A writer may set `as_of`/`stale_at`, but this is only a captured live result and does not establish a close policy or admission. |
+
+G10 therefore remains `blocked_by_source_readiness` with a `null` provider. Admission still requires owner-approved plan/fact close and source-version retention, source freshness watermarks, retention policy, and a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation.
+
 ## Source contracts
 
 | Candidate | Upstream owner | Required source fields | Grain | Scope key | Freshness rule | Acceptance test |
