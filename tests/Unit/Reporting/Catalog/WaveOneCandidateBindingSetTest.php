@@ -47,7 +47,15 @@ final class WaveOneCandidateBindingSetTest extends TestCase
             ],
             array_map(static fn (WaveOneCandidateBinding $binding): string => $binding->code, $set->ordered()),
         );
-        self::assertCount(4, $set->implemented());
+        self::assertSame(
+            [
+                'project_portfolio_health',
+                'portfolio_liquidity',
+                'project_margin',
+                'budget_plan_fact',
+            ],
+            array_map(static fn (WaveOneCandidateBinding $binding): string => $binding->code, $set->implemented()),
+        );
         self::assertSame('blocked_by_source_contract', $set->ordered()[6]->status->value);
         self::assertNull($set->ordered()[6]->provider);
     }
@@ -95,10 +103,19 @@ final class WaveOneCandidateBindingSetTest extends TestCase
 
                 return $bindings;
             }],
-            'blocked with provider' => [static function (array $bindings): array {
+            'G06 promoted from blocked source contract' => [static function (array $bindings): array {
                 $bindings[2] = new WaveOneCandidateBinding(
                     $bindings[2]->code,
-                    WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_CONTRACT,
+                    WaveOneCandidateBindingStatus::IMPLEMENTED,
+                    self::provider(),
+                );
+
+                return $bindings;
+            }],
+            'G12 promoted from blocked formula contract' => [static function (array $bindings): array {
+                $bindings[6] = new WaveOneCandidateBinding(
+                    $bindings[6]->code,
+                    WaveOneCandidateBindingStatus::IMPLEMENTED,
                     self::provider(),
                 );
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Application\Catalog;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\WaveOneCandidateBinding;
+use App\BusinessModules\Core\Reporting\Domain\DTO\WaveOneCandidate;
 use App\BusinessModules\Core\Reporting\Domain\DTO\WaveOneCandidateManifest;
 use App\BusinessModules\Core\Reporting\Domain\Enums\WaveOneCandidateBindingStatus;
 use InvalidArgumentException;
@@ -30,7 +31,7 @@ final readonly class WaveOneCandidateBindingSet
         }
 
         $manifestCodes = array_map(
-            static fn ($candidate): string => $candidate->code,
+            static fn (WaveOneCandidate $candidate): string => $candidate->code,
             $manifest->ordered(),
         );
         $bindingCodes = array_map(
@@ -39,6 +40,15 @@ final readonly class WaveOneCandidateBindingSet
         );
         if ($bindingCodes !== $manifestCodes) {
             throw new InvalidArgumentException('wave_one_candidate_binding_set_invalid');
+        }
+
+        foreach ($manifest->ordered() as $index => $candidate) {
+            $expectedStatus = $candidate->sourceStatus === 'implemented'
+                ? WaveOneCandidateBindingStatus::IMPLEMENTED
+                : WaveOneCandidateBindingStatus::BLOCKED_BY_SOURCE_CONTRACT;
+            if ($resolved[$index]->status !== $expectedStatus) {
+                throw new InvalidArgumentException('wave_one_candidate_binding_set_invalid');
+            }
         }
 
         $this->bindings = $resolved;
