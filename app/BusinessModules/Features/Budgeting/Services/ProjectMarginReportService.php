@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDimensions;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDrillDownKey;
@@ -32,7 +33,7 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use function trans_message;
 
-final class ProjectMarginReportService
+final class ProjectMarginReportService implements ProjectMarginSourceSnapshotReport
 {
     private const QUALITY_PARTIAL = 'partial';
 

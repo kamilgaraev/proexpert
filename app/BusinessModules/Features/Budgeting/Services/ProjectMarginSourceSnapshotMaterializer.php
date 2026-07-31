@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -31,6 +32,7 @@ final class ProjectMarginSourceSnapshotMaterializer
         array $drillsByKey,
         DateTimeImmutable $asOf,
         ?DateTimeImmutable $staleAt,
+        BudgetingReportSourceClose $close,
     ): ReportSourceSnapshotWrite {
         $queryHash = $this->hash([
             'filters' => $this->canonicalFilters($filters),
@@ -38,7 +40,7 @@ final class ProjectMarginSourceSnapshotMaterializer
         ]);
         $rows = $this->rows($snapshotId, $report['rows'] ?? []);
         $drillRows = $this->drillRows($snapshotId, $rows, $drillsByKey);
-        $watermarks = $this->watermarks($report, $rows);
+        $watermarks = $this->watermarks($report, $rows, $close);
         $sourceHash = $this->hash([
             'drill_rows' => array_map(static fn (ReportSourceSnapshotDrillRow $row): array => $row->payload, $drillRows),
             'rows' => array_map(static fn (ReportSourceSnapshotRow $row): array => $row->payload, $rows),
@@ -213,7 +215,7 @@ final class ProjectMarginSourceSnapshotMaterializer
         return $canonical;
     }
 
-    private function watermarks(array $report, array $rows): array
+    private function watermarks(array $report, array $rows, BudgetingReportSourceClose $close): array
     {
         $sourceTypes = [];
         $sourceRowsCount = 0;
@@ -236,7 +238,7 @@ final class ProjectMarginSourceSnapshotMaterializer
         ];
         sort($watermarks['source_types'], SORT_STRING);
 
-        return $watermarks;
+        return [...$watermarks, ...$close->snapshotWatermarks()];
     }
 
     private function moneyBlock(mixed $value): array

@@ -28,6 +28,24 @@ final readonly class BudgetingReportSourceClose
     public function isAvailableAt(DateTimeImmutable $at): bool
     {
         return $this->status->isAvailableForReporting()
+            && $this->approvedAt <= $at
             && $this->retainedUntil > $at;
+    }
+
+    public function snapshotWatermarks(): array
+    {
+        $watermarks = array_map(static fn (BudgetingReportSourceWatermark $watermark): array => $watermark->toArray(), $this->sourceWatermarks);
+        usort($watermarks, static fn (array $left, array $right): int => $left['source'] <=> $right['source']);
+
+        return [
+            'close_id' => $this->closeId,
+            'approved_at' => $this->approvedAt->format(DATE_ATOM),
+            'retained_until' => $this->retainedUntil->format(DATE_ATOM),
+            'identity' => $this->identity->toArray(),
+            'formula_version' => $this->formulaVersion,
+            'content_hash' => $this->contentHash,
+            'source_manifest' => $this->sourceManifest,
+            'source_watermarks' => $watermarks,
+        ];
     }
 }

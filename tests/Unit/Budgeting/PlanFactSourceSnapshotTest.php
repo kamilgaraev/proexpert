@@ -12,8 +12,14 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
+use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceCloseIdentity;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceWatermark;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactSourceSnapshotRequest;
+use App\BusinessModules\Features\Budgeting\Enums\BudgetingReportSourceCloseStatus;
+use App\BusinessModules\Features\Budgeting\Services\BudgetingReportSourceCloseService;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactReportService;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotMaterializer;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotWriter;
@@ -37,6 +43,9 @@ final class PlanFactSourceSnapshotTest extends TestCase
         self::assertSame($forward->header->sourceHash->value, $backward->header->sourceHash->value);
         self::assertSame($forward->header->snapshotHash->value, $backward->header->snapshotHash->value);
         self::assertSame(2, $forward->header->drillRowCount);
+        self::assertSame($this->close()->closeId, $forward->header->watermarks['close_id']);
+        self::assertSame('margin-v1', $forward->header->watermarks['formula_version']);
+        self::assertSame('actuals-v1', $forward->header->watermarks['source_watermarks'][0]['source_schema_version']);
         self::assertSame('sources', $forward->rows[0]->payload['drill']['column_id']);
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $forward->rows[0]->payload['drill']['key']);
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $forward->drillRows[0]->payload['source_ref']);
@@ -118,7 +127,7 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 throw new \LogicException();
             }
         };
-        $writer = new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer(), $store);
+        $writer = new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer(), $store, $this->closeService());
 
         $header = $writer->persist($this->request([10, 20]));
 
@@ -127,6 +136,29 @@ final class PlanFactSourceSnapshotTest extends TestCase
         self::assertSame([[10, 20], [10, 20]], array_map(static fn (array $call): array => $call[1], $report->drillCalls));
         self::assertTrue($report->reportCalls[0][0]['_skip_data_mart_meta']);
         self::assertSame(2, $store->write?->header->rowCount);
+    }
+
+    public function test_source_hash_changes_when_the_validated_close_identity_changes(): void
+    {
+        $first = $this->materialize($this->report());
+        $other = new BudgetingReportSourceClose(
+            closeId: '01K00000000000000000000000',
+            identity: $this->identity(),
+            sourceWatermarks: $this->close()->sourceWatermarks,
+            formulaVersion: 'margin-v1',
+            sourceManifest: $this->close()->sourceManifest,
+            contentHash: str_repeat('b', 64),
+            approvedBy: 1,
+            approvedAt: new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
+            retainedUntil: new DateTimeImmutable('2033-01-31T00:00:00+00:00'),
+            status: BudgetingReportSourceCloseStatus::APPROVED,
+            restatesCloseId: null,
+        );
+
+        $second = $this->materialize($this->report(), $other);
+
+        self::assertNotSame($first->header->sourceHash->value, $second->header->sourceHash->value);
+        self::assertNotSame($first->header->snapshotHash->value, $second->header->snapshotHash->value);
     }
 
     public function test_empty_project_scope_is_forwarded_as_empty_set_not_legacy_scope(): void
@@ -172,7 +204,7 @@ final class PlanFactSourceSnapshotTest extends TestCase
             }
         };
 
-        (new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer(), $store))->persist($this->request([]));
+        (new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer(), $store, $this->closeService()))->persist($this->request([]));
 
         self::assertSame([], $report->projectIds);
         self::assertSame(0, $store->write?->header->rowCount);
@@ -189,13 +221,15 @@ final class PlanFactSourceSnapshotTest extends TestCase
         new PlanFactSourceSnapshotRequest(
             $this->scope([10]),
             ['organization_id' => 1, 'project_id' => 20],
+            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            $this->identity(),
             new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
             null,
             '01ARZ3NDEKTSV4RRFFQ69G5FAV',
         );
     }
 
-    private function materialize(array $report): ReportSourceSnapshotWrite
+    private function materialize(array $report, ?BudgetingReportSourceClose $close = null): ReportSourceSnapshotWrite
     {
         return (new PlanFactSourceSnapshotMaterializer())->materialize(
             '01ARZ3NDEKTSV4RRFFQ69G5FAV',
@@ -208,6 +242,7 @@ final class PlanFactSourceSnapshotTest extends TestCase
             ],
             new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
             new DateTimeImmutable('2026-07-31T10:05:00+00:00'),
+            $close ?? $this->close(),
         );
     }
 
@@ -216,6 +251,8 @@ final class PlanFactSourceSnapshotTest extends TestCase
         return new PlanFactSourceSnapshotRequest(
             $this->scope($projectIds),
             $this->filters(),
+            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            $this->identity(),
             new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
             new DateTimeImmutable('2026-07-31T10:05:00+00:00'),
             '01ARZ3NDEKTSV4RRFFQ69G5FAV',
@@ -237,6 +274,50 @@ final class PlanFactSourceSnapshotTest extends TestCase
             'scenario_uuid' => 'scenario-1',
             'group_by' => ['month', 'project', 'currency'],
         ];
+    }
+
+    private function identity(): BudgetingReportSourceCloseIdentity
+    {
+        return new BudgetingReportSourceCloseIdentity(1, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1');
+    }
+
+    private function close(): BudgetingReportSourceClose
+    {
+        return new BudgetingReportSourceClose(
+            closeId: '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            identity: $this->identity(),
+            sourceWatermarks: [
+                new BudgetingReportSourceWatermark('actuals', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'actuals:1', 'actuals-v1'),
+                new BudgetingReportSourceWatermark('budget', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'budget:1', 'budget-v1'),
+            ],
+            formulaVersion: 'margin-v1',
+            sourceManifest: ['actuals' => ['version' => 'actuals:1'], 'budget' => ['version' => 'budget:1']],
+            contentHash: str_repeat('a', 64),
+            approvedBy: 1,
+            approvedAt: new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
+            retainedUntil: new DateTimeImmutable('2033-01-31T00:00:00+00:00'),
+            status: BudgetingReportSourceCloseStatus::APPROVED,
+            restatesCloseId: null,
+        );
+    }
+
+    private function closeService(): BudgetingReportSourceCloseService
+    {
+        return new BudgetingReportSourceCloseService(new class($this->close()) implements BudgetingReportSourceCloseStore {
+            public function __construct(private readonly BudgetingReportSourceClose $close)
+            {
+            }
+
+            public function createApproved(\App\BusinessModules\Features\Budgeting\DTOs\CreateBudgetingReportSourceClose $request): BudgetingReportSourceClose
+            {
+                throw new \LogicException();
+            }
+
+            public function find(string $closeId): ?BudgetingReportSourceClose
+            {
+                return $closeId === $this->close->closeId ? $this->close : null;
+            }
+        });
     }
 
     private function report(): array

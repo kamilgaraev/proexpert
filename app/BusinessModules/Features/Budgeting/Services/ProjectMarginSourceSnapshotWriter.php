@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginSourceSnapshotRequest;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -13,14 +14,16 @@ use InvalidArgumentException;
 final class ProjectMarginSourceSnapshotWriter
 {
     public function __construct(
-        private readonly ProjectMarginReportService $projectMarginReport,
+        private readonly ProjectMarginSourceSnapshotReport $projectMarginReport,
         private readonly ProjectMarginSourceSnapshotMaterializer $materializer,
         private readonly ReportSourceSnapshotStore $store,
+        private readonly BudgetingReportSourceCloseService $closeService,
     ) {
     }
 
     public function persist(ProjectMarginSourceSnapshotRequest $request): ReportSourceSnapshotHeader
     {
+        $close = $this->closeService->validatedCloseForReporting($request->closeId, $request->closeIdentity, $request->asOf);
         $filters = $this->normalizeFilters($request);
         $report = $this->projectMarginReport->reportForProjectScope($filters, $request->scope->projectIds);
         $drillsByKey = $this->drills($filters, $request->scope->projectIds, $report);
@@ -32,6 +35,7 @@ final class ProjectMarginSourceSnapshotWriter
             $drillsByKey,
             $request->asOf,
             $request->staleAt,
+            $close,
         );
 
         return $this->store->persistReady($snapshot);

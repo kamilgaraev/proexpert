@@ -17,11 +17,13 @@ final class PlanFactSourceSnapshotWriter
         private readonly PlanFactSourceSnapshotReport $planFactReport,
         private readonly PlanFactSourceSnapshotMaterializer $materializer,
         private readonly ReportSourceSnapshotStore $store,
+        private readonly BudgetingReportSourceCloseService $closeService,
     ) {
     }
 
     public function persist(PlanFactSourceSnapshotRequest $request): ReportSourceSnapshotHeader
     {
+        $close = $this->closeService->validatedCloseForReporting($request->closeId, $request->closeIdentity, $request->asOf);
         $filters = $this->normalizeFilters($request);
         $report = $this->planFactReport->reportForProjectScope($filters, $request->scope->projectIds);
         $drillsByKey = $this->drills($filters, $request->scope->projectIds, $report);
@@ -33,6 +35,7 @@ final class PlanFactSourceSnapshotWriter
             $drillsByKey,
             $request->asOf,
             $request->staleAt,
+            $close,
         );
 
         return $this->store->persistReady($snapshot);

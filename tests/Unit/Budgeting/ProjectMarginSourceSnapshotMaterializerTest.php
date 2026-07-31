@@ -8,6 +8,10 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceCloseIdentity;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceWatermark;
+use App\BusinessModules\Features\Budgeting\Enums\BudgetingReportSourceCloseStatus;
 use App\BusinessModules\Features\Budgeting\Services\ProjectMarginSourceSnapshotMaterializer;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -27,6 +31,9 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
         self::assertArrayNotHasKey('project', $write->rows[0]->payload);
         self::assertStringNotContainsString('Sensitive project', json_encode($write->rows, JSON_THROW_ON_ERROR));
         self::assertSame(2, $write->header->drillRowCount);
+        self::assertSame('01JZZZZZZZZZZZZZZZZZZZZZZZ', $write->header->watermarks['close_id']);
+        self::assertSame('margin-v1', $write->header->watermarks['formula_version']);
+        self::assertSame('actuals:1', $write->header->watermarks['source_watermarks'][0]['watermark']);
         self::assertArrayNotHasKey('source_document_number', $write->drillRows[0]->payload);
         self::assertArrayNotHasKey('source_id', $write->drillRows[0]->payload);
         self::assertArrayNotHasKey('drill_down', $write->drillRows[0]->payload);
@@ -47,6 +54,31 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
         );
     }
 
+    public function test_source_hash_changes_when_the_validated_close_identity_changes(): void
+    {
+        $first = $this->materialize($this->report());
+        $second = (new ProjectMarginSourceSnapshotMaterializer())->materialize(
+            '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            new ReportScope(1, [1], [10, 20], [], new DateTimeZone('UTC')),
+            [
+                'organization_id' => 1,
+                'period_start' => '2026-01-01',
+                'period_end' => '2026-01-31',
+                'budget_version_uuid' => 'budget-1',
+                'scenario_uuid' => 'scenario-1',
+                'group_by' => ['month', 'project', 'currency'],
+            ],
+            $this->report(),
+            ['first-key' => [$this->drill('line-1')], 'second-key' => [$this->drill('line-2')]],
+            new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
+            new DateTimeImmutable('2026-07-31T10:05:00+00:00'),
+            $this->close('01K00000000000000000000000'),
+        );
+
+        self::assertNotSame($first->header->sourceHash->value, $second->header->sourceHash->value);
+        self::assertNotSame($first->header->snapshotHash->value, $second->header->snapshotHash->value);
+    }
+
     public function test_materializer_is_not_a_runtime_provider_contract(): void
     {
         self::assertFalse(is_a(ProjectMarginSourceSnapshotMaterializer::class, ReportDataProvider::class, true));
@@ -63,6 +95,8 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
                 'organization_id' => 1,
                 'period_start' => '2026-01-01',
                 'period_end' => '2026-01-31',
+                'budget_version_uuid' => 'budget-1',
+                'scenario_uuid' => 'scenario-1',
                 'group_by' => ['month', 'project', 'currency'],
             ],
             $report,
@@ -72,6 +106,27 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
             ],
             new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
             new DateTimeImmutable('2026-07-31T10:05:00+00:00'),
+            $this->close(),
+        );
+    }
+
+    private function close(string $closeId = '01JZZZZZZZZZZZZZZZZZZZZZZZ'): BudgetingReportSourceClose
+    {
+        return new BudgetingReportSourceClose(
+            closeId: $closeId,
+            identity: new BudgetingReportSourceCloseIdentity(1, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1'),
+            sourceWatermarks: [
+                new BudgetingReportSourceWatermark('actuals', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'actuals:1', 'actuals-v1'),
+                new BudgetingReportSourceWatermark('budget', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'budget:1', 'budget-v1'),
+            ],
+            formulaVersion: 'margin-v1',
+            sourceManifest: ['actuals' => ['version' => 'actuals:1'], 'budget' => ['version' => 'budget:1']],
+            contentHash: str_repeat('a', 64),
+            approvedBy: 1,
+            approvedAt: new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
+            retainedUntil: new DateTimeImmutable('2033-01-31T00:00:00+00:00'),
+            status: BudgetingReportSourceCloseStatus::APPROVED,
+            restatesCloseId: null,
         );
     }
 

@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -31,6 +32,7 @@ final class PlanFactSourceSnapshotMaterializer
         array $drillsByKey,
         DateTimeImmutable $asOf,
         ?DateTimeImmutable $staleAt,
+        BudgetingReportSourceClose $close,
     ): ReportSourceSnapshotWrite {
         $queryHash = $this->hash([
             'filters' => $this->canonicalFilters($filters),
@@ -38,7 +40,7 @@ final class PlanFactSourceSnapshotMaterializer
         ]);
         $rows = $this->rows($snapshotId, $report['rows'] ?? []);
         $drillRows = $this->drillRows($snapshotId, $rows, $drillsByKey);
-        $watermarks = $this->watermarks($report, $rows);
+        $watermarks = $this->watermarks($report, $rows, $close);
         $sourceHash = $this->hash([
             'drill_rows' => array_map(static fn (ReportSourceSnapshotDrillRow $row): array => $row->payload, $drillRows),
             'rows' => array_map(static fn (ReportSourceSnapshotRow $row): array => $row->payload, $rows),
@@ -211,7 +213,7 @@ final class PlanFactSourceSnapshotMaterializer
         return $canonical;
     }
 
-    private function watermarks(array $report, array $rows): array
+    private function watermarks(array $report, array $rows, BudgetingReportSourceClose $close): array
     {
         $filters = is_array($report['filters'] ?? null) ? $report['filters'] : [];
         $period = is_array($report['period'] ?? null) ? $report['period'] : [];
@@ -224,14 +226,14 @@ final class PlanFactSourceSnapshotMaterializer
         }
         ksort($sources, SORT_STRING);
 
-        return [
+        return [...[
             'budget_version_uuid' => $filters['budget_version_uuid'] ?? null,
             'period_end' => $period['to'] ?? null,
             'period_start' => $period['from'] ?? null,
             'row_count' => count($rows),
             'scenario_uuid' => $filters['scenario_uuid'] ?? null,
             'source_aggregate_rows' => $sources,
-        ];
+        ], ...$close->snapshotWatermarks()];
     }
 
     private function scalarMap(array $value): array
