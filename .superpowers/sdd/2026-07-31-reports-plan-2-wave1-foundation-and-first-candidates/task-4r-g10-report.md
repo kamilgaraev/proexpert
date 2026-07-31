@@ -21,6 +21,7 @@ G10 remains `blocked_by_source_readiness` with `provider: null`. No runtime prov
 ## Validation
 
 - `php vendor/bin/phpunit tests/Unit/Budgeting/PlanFactSourceSnapshotTest.php tests/Unit/Budgeting/PlanFactCalculatorTest.php` — passed (6 tests, 49 assertions).
+- `PlanFactReportProjectScopePostgresTest` exercises the real scoped and legacy service paths against two project source sets, but runs only with `RUN_PLAN_FACT_POSTGRES_SCOPE_TESTS=1` on a disposable PostgreSQL database named `*_test` or `*_testing`; otherwise it skips before database bootstrap.
 - `php vendor/bin/phpstan analyse --memory-limit=1G` for the six changed production PHP files — passed.
 - `php -l` for changed PHP files — passed.
 - `git diff --check` — passed.
