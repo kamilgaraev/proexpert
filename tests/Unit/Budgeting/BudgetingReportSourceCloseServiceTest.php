@@ -73,6 +73,7 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
 
         self::assertSame($original->closeId, $restated->restatesCloseId);
         self::assertSame(BudgetingReportSourceCloseStatus::APPROVED, $restated->status);
+        self::assertSame(BudgetingReportSourceCloseStatus::RESTATED, $store->find($original->closeId)?->status);
         self::assertTrue(BudgetingReportSourceCloseStatus::APPROVED->canTransitionTo(BudgetingReportSourceCloseStatus::RESTATED));
         self::assertFalse(BudgetingReportSourceCloseStatus::RESTATED->canTransitionTo(BudgetingReportSourceCloseStatus::APPROVED));
     }
@@ -97,6 +98,24 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
         );
     }
 
+    public function test_validated_close_rejects_an_expired_retention_deadline(): void
+    {
+        $store = new InMemoryBudgetingReportSourceCloseStore();
+        $service = new BudgetingReportSourceCloseService($store);
+        $close = $service->createApproved($this->request(
+            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            retainedUntil: new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
+        ));
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('budgeting_report_source_close_not_available');
+        $service->validatedCloseForReporting(
+            $close->closeId,
+            $this->identity(),
+            new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
+        );
+    }
+
     private function identity(): BudgetingReportSourceCloseIdentity
     {
         return new BudgetingReportSourceCloseIdentity(7, '2026-01-01', '2026-01-31', 'base', 'budget-v2');
@@ -111,7 +130,11 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
         ];
     }
 
-    private function request(string $closeId, ?string $restatesCloseId = null): CreateBudgetingReportSourceClose
+    private function request(
+        string $closeId,
+        ?string $restatesCloseId = null,
+        ?DateTimeImmutable $retainedUntil = null,
+    ): CreateBudgetingReportSourceClose
     {
         $identity = $this->identity();
         $watermarks = $this->watermarks();
@@ -126,7 +149,7 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
             contentHash: CreateBudgetingReportSourceClose::contentHashFor($identity, $watermarks, 'margin-v1', $manifest),
             approvedBy: 11,
             approvedAt: new DateTimeImmutable('2026-01-31T18:00:00+00:00'),
-            retainedUntil: new DateTimeImmutable('2033-01-31T00:00:00+00:00'),
+            retainedUntil: $retainedUntil ?? new DateTimeImmutable('2033-01-31T00:00:00+00:00'),
             restatesCloseId: $restatesCloseId,
         );
     }
@@ -151,6 +174,23 @@ final class InMemoryBudgetingReportSourceCloseStore implements BudgetingReportSo
 
         if ($request->restatesCloseId !== null && $activeCloseId !== $request->restatesCloseId) {
             throw new DomainException('budgeting_report_source_close_restatement_target_invalid');
+        }
+
+        if ($request->restatesCloseId !== null) {
+            $prior = $this->byId[$request->restatesCloseId];
+            $this->byId[$prior->closeId] = new BudgetingReportSourceClose(
+                closeId: $prior->closeId,
+                identity: $prior->identity,
+                sourceWatermarks: $prior->sourceWatermarks,
+                formulaVersion: $prior->formulaVersion,
+                sourceManifest: $prior->sourceManifest,
+                contentHash: $prior->contentHash,
+                approvedBy: $prior->approvedBy,
+                approvedAt: $prior->approvedAt,
+                retainedUntil: $prior->retainedUntil,
+                status: BudgetingReportSourceCloseStatus::RESTATED,
+                restatesCloseId: $prior->restatesCloseId,
+            );
         }
 
         $close = new BudgetingReportSourceClose(

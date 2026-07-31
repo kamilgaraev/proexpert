@@ -19,7 +19,7 @@ final readonly class BudgetingReportSourceClose
         public string $contentHash,
         public int $approvedBy,
         public DateTimeImmutable $approvedAt,
-        public ?DateTimeImmutable $retainedUntil,
+        public DateTimeImmutable $retainedUntil,
         public BudgetingReportSourceCloseStatus $status,
         public ?string $restatesCloseId,
     ) {
@@ -28,6 +28,6 @@ final readonly class BudgetingReportSourceClose
     public function isAvailableAt(DateTimeImmutable $at): bool
     {
         return $this->status->isAvailableForReporting()
-            && ($this->retainedUntil === null || $this->retainedUntil > $at);
+            && $this->retainedUntil > $at;
     }
 }

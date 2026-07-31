@@ -22,7 +22,7 @@ final readonly class CreateBudgetingReportSourceClose
         public string $contentHash,
         public int $approvedBy,
         public DateTimeImmutable $approvedAt,
-        public ?DateTimeImmutable $retainedUntil,
+        public DateTimeImmutable $retainedUntil,
         public ?string $restatesCloseId = null,
     ) {
         if (!preg_match('/^[0-9A-HJKMNP-TV-Z]{26}$/', $this->closeId)
@@ -33,7 +33,7 @@ final readonly class CreateBudgetingReportSourceClose
             throw new InvalidArgumentException('budgeting_report_source_close_input_invalid');
         }
 
-        if ($this->retainedUntil instanceof DateTimeImmutable && $this->retainedUntil <= $this->approvedAt) {
+        if ($this->retainedUntil <= $this->approvedAt) {
             throw new InvalidArgumentException('budgeting_report_source_close_retention_invalid');
         }
 

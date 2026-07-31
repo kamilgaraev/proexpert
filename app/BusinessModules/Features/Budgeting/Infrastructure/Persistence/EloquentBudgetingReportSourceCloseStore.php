@@ -111,7 +111,7 @@ final class EloquentBudgetingReportSourceCloseStore implements BudgetingReportSo
             contentHash: (string) $record->content_hash,
             approvedBy: (int) $record->approved_by,
             approvedAt: DateTimeImmutable::createFromInterface($record->approved_at),
-            retainedUntil: $record->retained_until === null ? null : DateTimeImmutable::createFromInterface($record->retained_until),
+            retainedUntil: DateTimeImmutable::createFromInterface($record->retained_until),
             status: BudgetingReportSourceCloseStatus::from((string) $record->status),
             restatesCloseId: $record->restates_close_id === null ? null : (string) $record->restates_close_id,
         );
