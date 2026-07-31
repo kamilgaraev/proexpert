@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting;
 
 use App\BusinessModules\Features\Budgeting\Console\Commands\RecalculateEpmDataMartSnapshotsCommand;
+use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
+use App\BusinessModules\Features\Budgeting\Infrastructure\Persistence\EloquentBudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportService;
@@ -12,6 +14,7 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetImportValidator;
 use App\BusinessModules\Features\Budgeting\Services\BudgetLineService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodClosureService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodReopenService;
+use App\BusinessModules\Features\Budgeting\Services\BudgetingReportSourceCloseService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetVersionService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastReadService;
@@ -33,6 +36,8 @@ final class BudgetingServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->bind(BudgetingReportSourceCloseStore::class, EloquentBudgetingReportSourceCloseStore::class);
+        $this->app->singleton(BudgetingReportSourceCloseService::class);
         $this->app->singleton(BudgetCatalogService::class);
         $this->app->singleton(BudgetVersionService::class);
         $this->app->singleton(BudgetLineService::class);

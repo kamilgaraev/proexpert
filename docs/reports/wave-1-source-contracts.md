@@ -2,7 +2,7 @@
 
 ## Status
 
-G01, G04, G09 and G10 have identified business sources, but are blocked by source readiness: an immutable source snapshot and replay contract has not been evidenced. Their binding status is `blocked_by_source_readiness`, their provider is `null`, and they are not executable reports.
+G01, G04, G09 and G10 have identified business sources, but are blocked by source readiness. For G09/G10 the owner-approved close contract and storage now exist; source-derived writer wiring, PostgreSQL CI evidence and the replay acceptance test are still absent. Their binding status is `blocked_by_source_readiness`, their provider is `null`, and they are not executable reports.
 
 G06, G11, G12, G13 and G21-G24 remain blocked by an explicit source contract. Their binding status is `blocked_by_source_contract`, their provider is `null`, and they are not executable reports.
 
@@ -33,7 +33,7 @@ No Wave 1 candidate is implemented or registered in runtime.
 | Redaction | Rows exclude project, contract, counterparty, article and responsibility-center display names. Drill entries exclude raw line/source IDs, document numbers, titles, source URLs, route hints, permissions and nested labels; only `sha256(line_id)` is retained as the opaque attribution reference. |
 | Freshness and close limitation | The current source service reads live budget, act, work, payment, warehouse and time-entry tables. `BudgetPeriodClosure` locks the budgeting period but retains only a management summary (counts and totals), not the selected versions, fact inputs, per-source update watermarks or a content hash. Its period may be reopened. `BudgetVersion` has an approval/activation workflow but no immutable materialization of lines and amounts, and it covers neither facts nor the other G09 sources. `EpmDataMartSnapshot` is a recalculation artifact, not an owner-approved close; newer recalculations supersede it and no retention policy is attached. A writer may set `as_of`/`stale_at`, but this does not establish a close policy or admission. |
 
-G09 therefore remains `blocked_by_source_readiness` with a `null` provider. Admission still requires owner-approved close/version retention, a source freshness watermark, retention policy and a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation.
+G09 therefore remains `blocked_by_source_readiness` with a `null` provider. The owner-approved close/version, source watermark, retention and immutability storage contract now exist, but admission still requires wiring this writer to a validated close and a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation.
 
 ### G10 `budget_plan_fact` source snapshot contract (schema `1.0.0`)
 
@@ -52,7 +52,7 @@ G09 therefore remains `blocked_by_source_readiness` with a `null` provider. Admi
 | Redaction | Rows exclude article, responsibility-center, project, counterparty and scenario display payloads. Drill entries exclude raw IDs, numbers, titles, route hints and source URLs; `sha256(source_type|source_id)` is the only retained source reference. |
 | Freshness and close limitation | `PlanFactReportService` currently reads mutable budget, payment transaction, reservation, payment document and schedule tables. `BudgetPeriodClosure` locks budget edits but does not capture the active version identifiers, plan rows, factual inputs, per-source update watermarks or a content hash; the period may be reopened. A `BudgetVersion` approval/activation records lifecycle timestamps but is not a retained immutable plan snapshot and does not version facts, reservations or documents. `EpmDataMartSnapshot` is recalculated from live services, superseded on the next run and has no owner approval or retention policy. A writer may set `as_of`/`stale_at`, but this is only a captured live result and does not establish a close policy or admission. |
 
-G10 therefore remains `blocked_by_source_readiness` with a `null` provider. Admission still requires owner-approved plan/fact close and source-version retention, source freshness watermarks, retention policy, and a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation.
+G10 therefore remains `blocked_by_source_readiness` with a `null` provider. The owner-approved plan/fact close, source-version retention and watermark storage contract now exist, but admission still requires wiring this writer to a validated close and a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation.
 
 ### G09/G10 close and source-version decision (verified 2026-07-31)
 
@@ -64,7 +64,15 @@ No existing Budgeting model is an authoritative approved-close source for either
 | `BudgetPeriodClosure` | Budget changes were blocked at one moment and a management summary was recorded. | Its metadata stores counts and totals, not the complete selected version set, source rows, source update cutoffs, content hash, retention horizon or factual source state. A later reopen creates a new lifecycle event rather than a protected source version. |
 | `EpmDataMartSnapshot` | A live-service payload was generated with a derived `source_hash` and freshness data. | It is a recalculation artifact, not owner-approved close evidence. It is superseded on the next recalculation and has neither a close identity nor a documented retention policy or per-source update watermarks. |
 
-The next source-owner change must introduce an explicit approved-close record, outside the Reporting runtime, with at least: immutable `close_id`; organization and inclusive reporting period; selected plan/scenario version identities; a source watermark and cutoff for every factual source used by the candidate; formula/source-schema version; canonical content hash; approver and approval time; lifecycle/restatement relation; and a retention deadline or policy reference. A G09/G10 writer may consume that record only after it has a source-derived replay test proving that later upstream mutations do not alter the approved-close result. Until then, capture metadata, `as_of`, `stale_at`, `source_hash`, `BudgetVersion`, `BudgetPeriodClosure` and `EpmDataMartSnapshot` remain non-admission evidence.
+The approved-close contract now stores an explicit record outside the Reporting runtime with immutable `close_id`; organization and inclusive reporting period; selected plan/scenario version identities; a source watermark and cutoff for every factual source used by the candidate; formula/source-schema version; canonical content hash; approver and approval time; lifecycle/restatement relation; and a retention deadline. A G09/G10 writer may consume that record only after it has a source-derived replay test proving that later upstream mutations do not alter the approved-close result. Until then, capture metadata, `as_of`, `stale_at`, `source_hash`, `BudgetVersion`, `BudgetPeriodClosure` and `EpmDataMartSnapshot` remain non-admission evidence.
+
+### G09/G10 approved close contract and storage (implemented, not admitted)
+
+`budgeting_report_source_closes` and `budgeting_report_source_watermarks` provide the separate owner-owned close boundary outside Reporting runtime. A close has an ULID `close_id`, organization, inclusive period, scenario and plan identities, formula version, canonical source manifest/content hash, owner/approval time, retention deadline and restatement lifecycle. Every source has its own cutoff, watermark and source-schema version.
+
+PostgreSQL admits only one active `approved` close for an organization/period/scenario/plan identity. A second close must name that exact prior close as a restatement; the prior header transitions to `restated`. Header content and watermarks cannot be changed or deleted after creation; only the one-way approved-to-restated/expired lifecycle transition is permitted. `BudgetingReportSourceCloseService` can create explicit approved input and validate a retained approved close for a future G09/G10 writer, but it does not call live reporting services or recompute source data.
+
+This partially removes the contract/storage portion of the G09/G10 blocker only. The writers are deliberately not wired to this close yet, no candidate is admitted or implemented, and CI PostgreSQL migration/constraint evidence plus a source-derived replay-after-mutation test remain required before any runtime decision.
 
 ## Source contracts
 
