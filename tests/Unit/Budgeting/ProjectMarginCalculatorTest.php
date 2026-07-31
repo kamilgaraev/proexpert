@@ -132,6 +132,7 @@ final class ProjectMarginCalculatorTest extends TestCase
             scenarioId: 1,
             scenarioUuid: 'scenario-1',
             projectId: null,
+            projectIds: [],
             contractId: null,
             responsibilityCenterId: null,
             responsibilityCenterUuid: null,

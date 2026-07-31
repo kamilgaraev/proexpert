@@ -45,7 +45,12 @@ final class ProjectMarginReportService
 
     public function report(array $input, ?User $user = null): array
     {
-        $context = $this->resolveContext($input);
+        return $this->reportForProjectScope($input, [], $user);
+    }
+
+    public function reportForProjectScope(array $input, array $projectIds, ?User $user = null): array
+    {
+        $context = $this->resolveContext($input, $this->normalizeProjectScopeIds($projectIds));
         /** @var ProjectMarginReportFilters $filters */
         $filters = $context['filters'];
         $aggregateRows = $this->aggregateRows($filters);
@@ -91,7 +96,12 @@ final class ProjectMarginReportService
 
     public function drillDown(array $input, ?User $user = null): array
     {
-        $context = $this->resolveContext($input);
+        return $this->drillDownForProjectScope($input, [], $user);
+    }
+
+    public function drillDownForProjectScope(array $input, array $projectIds, ?User $user = null): array
+    {
+        $context = $this->resolveContext($input, $this->normalizeProjectScopeIds($projectIds));
         /** @var ProjectMarginReportFilters $filters */
         $filters = $context['filters'];
         try {
@@ -149,7 +159,7 @@ final class ProjectMarginReportService
         ];
     }
 
-    private function resolveContext(array $input): array
+    private function resolveContext(array $input, array $projectScopeIds = []): array
     {
         $organizationId = (int) ($input['organization_id'] ?? 0);
         if ($organizationId <= 0) {
@@ -194,6 +204,7 @@ final class ProjectMarginReportService
                 scenarioId: $scenario instanceof BudgetScenario ? (int) $scenario->id : null,
                 scenarioUuid: $scenario instanceof BudgetScenario ? (string) $scenario->uuid : null,
                 projectId: $projectId,
+                projectIds: $projectScopeIds,
                 contractId: $contractId,
                 responsibilityCenterId: $responsibilityCenterId,
                 responsibilityCenterUuid: $responsibilityCenterUuid,
@@ -338,6 +349,23 @@ final class ProjectMarginReportService
         }
 
         return $projectId;
+    }
+
+    private function normalizeProjectScopeIds(array $projectIds): array
+    {
+        $normalized = [];
+        foreach ($projectIds as $projectId) {
+            if (!is_int($projectId) || $projectId < 1 || isset($normalized[$projectId])) {
+                throw new InvalidArgumentException('project_margin_project_scope_invalid');
+            }
+
+            $normalized[$projectId] = $projectId;
+        }
+
+        $normalized = array_values($normalized);
+        sort($normalized, SORT_NUMERIC);
+
+        return $normalized;
     }
 
     private function resolveContractFilter(int $organizationId, ?int $projectId, mixed $value): ?int
@@ -870,6 +898,7 @@ final class ProjectMarginReportService
     {
         $query
             ->when($filters->projectId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('project_id', $filters->projectId))
+            ->when($filters->projectIds !== [], fn (QueryBuilder $builder): QueryBuilder => $builder->whereIn('project_id', $filters->projectIds))
             ->when($filters->contractId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('contract_id', $filters->contractId))
             ->when($filters->counterpartyId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('counterparty_id', $filters->counterpartyId))
             ->when($filters->budgetArticleId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('budget_article_id', $filters->budgetArticleId))

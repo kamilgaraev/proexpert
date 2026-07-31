@@ -46,6 +46,7 @@ final readonly class ProjectMarginReportFilters
         public ?int $scenarioId,
         public ?string $scenarioUuid,
         public ?int $projectId,
+        public array $projectIds,
         public ?int $contractId,
         public ?int $responsibilityCenterId,
         public ?string $responsibilityCenterUuid,

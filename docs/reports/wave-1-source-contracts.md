@@ -17,6 +17,24 @@ No Wave 1 candidate is implemented or registered in runtime.
 | G09 project_margin | Project-margin calculation | Immutable period-close inputs, formula/source version, and replay cursor | An approved close snapshot reproduces rows from `(organization_id, reporting_period, close_version)` after later source changes. |
 | G10 budget_plan_fact | Budget plan/fact calculation | Immutable plan/fact snapshot, scenario version, and replay cursor | A persisted `(organization_id, reporting_period, scenario_id, source_version)` snapshot reproduces plan, fact, and variance values. |
 
+### G09 `project_margin` source snapshot contract (schema `1.0.0`)
+
+`ProjectMarginSourceSnapshotWriter` is a pre-admission infrastructure writer. It calls the real `ProjectMarginReportService` and persists only through `ReportSourceSnapshotStore`; it is not a `ReportDataProvider`, `ReportRowQuery`, `ReportDrillDownProvider`, runtime binding, route or catalog registration.
+
+| Contract element | G09 rule |
+| --- | --- |
+| Grain | One canonical aggregate per selected `group_by` tuple. `currency` is always present. Source drill entries retain the report service's attribution-line grain. |
+| Allowed filters | `organization_id`, `period_start`, `period_end`, `budget_version_uuid`, `scenario_uuid`, `project_id`, `contract_id`, `responsibility_center_id`, `budget_article_id`, `counterparty_id`, `currency`, `group_by`. |
+| Scope handling | `organization_id` must equal `ReportScope.organizationId`. An empty `ReportScope.projectIds` keeps the service's organization-wide behavior. For a non-empty scope, the writer calls the internal `reportForProjectScope()` / `drillDownForProjectScope()` methods, which add `whereIn(project_id, allowedIds)` to every normalized source union. A requested `project_id` must be in `allowedIds`; no per-project slicing or client-side merge is used. |
+| Canonical row and cursor identity | `row_key = margin:sha256(canonical group)`. Rows are ordered lexically by that key and persisted with a contiguous ordinal; snapshot cursors address that ordinal only. |
+| Source fields | Canonical rows retain group IDs/month/currency, plan/forecast/actual/variance money blocks, quality, source counts/types and flags. Drill entries retain opaque attribution reference, source type, event/rule, period/date, signed amounts, statuses and flags. |
+| Drill reference | Every row exposes only `{column_id: attributions, key: drill_down_key}`. The writer pages the real live drill endpoint until its `meta.total` is materialized, then the stored ordinal is the replay order. |
+| Watermarks and hashes | `query_hash` binds the complete canonical report scope and allowed filters. `source_hash` binds canonical redacted rows, redacted drill entries and watermarks. Watermarks contain selected budget/scenario versions, reporting period, source types and source-row count. `snapshot_hash` is sealed by the snapshot store. |
+| Redaction | Rows exclude project, contract, counterparty, article and responsibility-center display names. Drill entries exclude raw line/source IDs, document numbers, titles, source URLs, route hints, permissions and nested labels; only `sha256(line_id)` is retained as the opaque attribution reference. |
+| Freshness and close limitation | The current source service reads live budget, act, work, payment, warehouse and time-entry tables. Its payload has no approved immutable period-close version nor source update watermark. A writer may set `as_of`/`stale_at`, but this does not establish a close policy or admission. |
+
+G09 therefore remains `blocked_by_source_readiness` with a `null` provider. Admission still requires owner-approved close/version retention, a source freshness watermark, retention policy and a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation.
+
 ## Source contracts
 
 | Candidate | Upstream owner | Required source fields | Grain | Scope key | Freshness rule | Acceptance test |
