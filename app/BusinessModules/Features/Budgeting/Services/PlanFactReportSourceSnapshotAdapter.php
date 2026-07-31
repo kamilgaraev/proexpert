@@ -14,6 +14,7 @@ final class PlanFactReportSourceSnapshotAdapter extends AbstractBudgetingReportS
 {
     public function __construct(
         private readonly PlanFactSourceSnapshotWriter $writer,
+        private readonly BudgetingReportSourceCloseService $closeService,
         ReportSourceSnapshotStore $store,
     ) {
         parent::__construct($store);
@@ -29,6 +30,15 @@ final class PlanFactReportSourceSnapshotAdapter extends AbstractBudgetingReportS
             $query->asOf,
             null,
         ));
+    }
+
+    protected function approvedCloseFormulaVersion(ReportQuery $query): string
+    {
+        return $this->closeService->validatedCloseForReporting(
+            $this->closeId($query),
+            $this->closeIdentity($query),
+            $query->asOf,
+        )->formulaVersion;
     }
 
     protected function reportCode(): string { return PlanFactSourceSnapshotMaterializer::REPORT_CODE; }

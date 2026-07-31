@@ -196,10 +196,15 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
     ): void {
         $context = (new ReportExecutionContextBuilder)->build();
 
-        $this->expectException(ReportContractException::class);
-        $this->expectExceptionMessage('REPORT_REQUEST_INVALID');
+        try {
+            $adapter->materialize($context, $this->query($code, $context->scope, formulaVersion: 'margin-v2'), new ReportProgress(0));
+            self::fail('Formula mismatch must be rejected before snapshot persistence.');
+        } catch (ReportContractException $exception) {
+            self::assertSame('REPORT_REQUEST_INVALID', $exception->getMessage());
+        }
 
-        $adapter->materialize($context, $this->query($code, $context->scope, formulaVersion: 'margin-v2'), new ReportProgress(0));
+        self::assertSame(0, $source->calls);
+        self::assertNull($store->headerValue);
     }
 
     public static function adapters(): array
@@ -208,13 +213,15 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
             'G09 project margin' => (static function (): array {
                 $store = new InMemoryReportSourceSnapshotStore();
                 $source = new ProjectMarginSnapshotSource();
+                $closeService = self::closeService();
                 $adapter = new ProjectMarginReportSourceSnapshotAdapter(
                     new ProjectMarginSourceSnapshotWriter(
                         $source,
                         new ProjectMarginSourceSnapshotMaterializer(),
                         $store,
-                        self::closeService(),
+                        $closeService,
                     ),
+                    $closeService,
                     $store,
                 );
 
@@ -223,13 +230,15 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
             'G10 plan fact' => (static function (): array {
                 $store = new InMemoryReportSourceSnapshotStore();
                 $source = new PlanFactSnapshotSource();
+                $closeService = self::closeService();
                 $adapter = new PlanFactReportSourceSnapshotAdapter(
                     new PlanFactSourceSnapshotWriter(
                         $source,
                         new PlanFactSourceSnapshotMaterializer(),
                         $store,
-                        self::closeService(),
+                        $closeService,
                     ),
+                    $closeService,
                     $store,
                 );
 

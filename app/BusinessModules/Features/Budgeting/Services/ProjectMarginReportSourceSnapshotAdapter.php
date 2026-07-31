@@ -14,6 +14,7 @@ final class ProjectMarginReportSourceSnapshotAdapter extends AbstractBudgetingRe
 {
     public function __construct(
         private readonly ProjectMarginSourceSnapshotWriter $writer,
+        private readonly BudgetingReportSourceCloseService $closeService,
         ReportSourceSnapshotStore $store,
     ) {
         parent::__construct($store);
@@ -29,6 +30,15 @@ final class ProjectMarginReportSourceSnapshotAdapter extends AbstractBudgetingRe
             $query->asOf,
             null,
         ));
+    }
+
+    protected function approvedCloseFormulaVersion(ReportQuery $query): string
+    {
+        return $this->closeService->validatedCloseForReporting(
+            $this->closeId($query),
+            $this->closeIdentity($query),
+            $query->asOf,
+        )->formulaVersion;
     }
 
     protected function reportCode(): string { return ProjectMarginSourceSnapshotMaterializer::REPORT_CODE; }

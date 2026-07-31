@@ -52,6 +52,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQueryContext($context, $query);
+        $this->assertFormulaCompatibility($query, $this->approvedCloseFormulaVersion($query));
         $header = $this->persistSourceSnapshot($query);
         $this->assertHeader($header, $context, $query);
         $progress->advance(100);
@@ -187,6 +188,8 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
 
     abstract protected function persistSourceSnapshot(ReportQuery $query): ReportSourceSnapshotHeader;
 
+    abstract protected function approvedCloseFormulaVersion(ReportQuery $query): string;
+
     abstract protected function reportCode(): string;
 
     abstract protected function sourceKind(): string;
@@ -220,9 +223,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
         }
 
-        if (! hash_equals($query->definition->formulaVersion, $this->closeFormulaVersion($header))) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
-        }
+        $this->assertFormulaCompatibility($query, $this->closeFormulaVersion($header));
     }
 
     private function header(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportSourceSnapshotHeader
@@ -349,6 +350,13 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
         }
 
         return $formulaVersion;
+    }
+
+    private function assertFormulaCompatibility(ReportQuery $query, string $formulaVersion): void
+    {
+        if (! hash_equals($query->definition->formulaVersion, $formulaVersion)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
+        }
     }
 
     private function reportQueryHash(ReportSnapshotRef $snapshot): Sha256Hash

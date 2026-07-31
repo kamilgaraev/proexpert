@@ -37,3 +37,10 @@ DB-free unit test с in-memory `ReportSourceSnapshotStore` покрывает о
 - Материализация требует совпадения `sourceSchemaVersion` definition с версией адаптера и `formulaVersion` definition с версией approved close из watermarks.
 - DB-free test покрывает оба кандидата для cursor source-hash drift, несовместимой schema version и несовместимой formula version.
 - Повторные проверки: PHPUnit — PASS, 10 tests / 54 assertions; PHPStan изменённого production-файла с `memory_limit=1G` — PASS; `php -l` — PASS.
+
+## Fix round 2/5
+
+- До вызова writer адаптер проверяет formula version через approved close из `BudgetingReportSourceCloseService`.
+- Несовместимая formula version завершается `REPORT_REQUEST_INVALID` без обращения к live source и без записи READY snapshot.
+- DB-free tests подтверждают это для обоих адаптеров.
+- Повторные проверки: PHPUnit — PASS, 10 tests / 56 assertions; PHPStan трёх изменённых production-файлов с `memory_limit=1G` — PASS; `php -l` — PASS.
