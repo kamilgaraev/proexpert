@@ -45,12 +45,17 @@ final class ProjectMarginReportService
 
     public function report(array $input, ?User $user = null): array
     {
-        return $this->reportForProjectScope($input, [], $user);
+        return $this->reportWithProjectScope($input, null, $user);
     }
 
     public function reportForProjectScope(array $input, array $projectIds, ?User $user = null): array
     {
-        $context = $this->resolveContext($input, $this->normalizeProjectScopeIds($projectIds));
+        return $this->reportWithProjectScope($input, $this->normalizeProjectScopeIds($projectIds), $user);
+    }
+
+    private function reportWithProjectScope(array $input, ?array $projectIds, ?User $user = null): array
+    {
+        $context = $this->resolveContext($input, $projectIds);
         /** @var ProjectMarginReportFilters $filters */
         $filters = $context['filters'];
         $aggregateRows = $this->aggregateRows($filters);
@@ -96,12 +101,17 @@ final class ProjectMarginReportService
 
     public function drillDown(array $input, ?User $user = null): array
     {
-        return $this->drillDownForProjectScope($input, [], $user);
+        return $this->drillDownWithProjectScope($input, null, $user);
     }
 
     public function drillDownForProjectScope(array $input, array $projectIds, ?User $user = null): array
     {
-        $context = $this->resolveContext($input, $this->normalizeProjectScopeIds($projectIds));
+        return $this->drillDownWithProjectScope($input, $this->normalizeProjectScopeIds($projectIds), $user);
+    }
+
+    private function drillDownWithProjectScope(array $input, ?array $projectIds, ?User $user = null): array
+    {
+        $context = $this->resolveContext($input, $projectIds);
         /** @var ProjectMarginReportFilters $filters */
         $filters = $context['filters'];
         try {
@@ -159,7 +169,7 @@ final class ProjectMarginReportService
         ];
     }
 
-    private function resolveContext(array $input, array $projectScopeIds = []): array
+    private function resolveContext(array $input, ?array $projectScopeIds = null): array
     {
         $organizationId = (int) ($input['organization_id'] ?? 0);
         if ($organizationId <= 0) {
@@ -896,14 +906,18 @@ final class ProjectMarginReportService
 
     private function applyNormalizedFilters(QueryBuilder $query, ProjectMarginReportFilters $filters): void
     {
-        $query
-            ->when($filters->projectId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('project_id', $filters->projectId))
-            ->when($filters->projectIds !== [], fn (QueryBuilder $builder): QueryBuilder => $builder->whereIn('project_id', $filters->projectIds))
+        $query->when($filters->projectId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('project_id', $filters->projectId))
             ->when($filters->contractId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('contract_id', $filters->contractId))
             ->when($filters->counterpartyId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('counterparty_id', $filters->counterpartyId))
             ->when($filters->budgetArticleId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('budget_article_id', $filters->budgetArticleId))
             ->when($filters->responsibilityCenterId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('responsibility_center_id', $filters->responsibilityCenterId))
             ->when($filters->currency !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('currency', $filters->currency));
+
+        if ($filters->projectIds === []) {
+            $query->whereRaw('1 = 0');
+        } elseif ($filters->projectIds !== null) {
+            $query->whereIn('project_id', $filters->projectIds);
+        }
     }
 
     private function applyDrillDownDimensions(QueryBuilder $query, ProjectMarginDrillDownKey $key): void
