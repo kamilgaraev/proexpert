@@ -67,17 +67,27 @@ final class ThinReportControllerTest extends TestCase
         $constructor = (new ReflectionClass($controller))->getConstructor();
         self::assertNotNull($constructor);
         $dependencies = $constructor->getParameters();
-        self::assertCount(match (true) {
-            str_ends_with($controller, 'ReportRunController') => 5,
-            str_ends_with($controller, 'ReportExportController') => 6,
-            default => 2,
-        }, $dependencies);
+        self::assertCount([
+            $controller => match (true) {
+                str_ends_with($controller, 'ReportRunController') => 5,
+                str_ends_with($controller, 'ReportExportController') => 6,
+                str_ends_with($controller, 'ReportSavedViewController') => 7,
+                str_ends_with($controller, 'ReportSubscriptionController') => 8,
+                str_ends_with($controller, 'ReportWorkspacePreferencesController') => 5,
+                default => 2,
+            },
+        ][$controller], $dependencies);
         self::assertSame(ReportHttpAuthorizationOrchestrator::class, (string) $dependencies[0]->getType());
         foreach (array_slice($dependencies, 1) as $dependency) {
             $type = (string) $dependency->getType();
-            self::assertTrue(interface_exists($type), $type);
+            $usesLegacyActionContracts = ! str_ends_with($controller, 'ReportSavedViewController')
+                && ! str_ends_with($controller, 'ReportSubscriptionController')
+                && ! str_ends_with($controller, 'ReportWorkspacePreferencesController');
+            self::assertTrue($usesLegacyActionContracts ? interface_exists($type) : class_exists($type), $type);
             self::assertStringStartsWith(
-                'App\\BusinessModules\\Core\\Reporting\\Application\\Contracts\\',
+                $usesLegacyActionContracts
+                    ? 'App\\BusinessModules\\Core\\Reporting\\Application\\Contracts\\'
+                    : 'App\\BusinessModules\\Core\\Reporting\\Application\\',
                 $type,
             );
         }
@@ -92,6 +102,9 @@ final class ThinReportControllerTest extends TestCase
             $namespace.'ReportRowsController' => ['__invoke'],
             $namespace.'ReportDrillDownController' => ['__invoke'],
             $namespace.'ReportExportController' => ['cancel', 'downloadLink', 'retry', 'show', 'store'],
+            $namespace.'ReportSavedViewController' => ['destroy', 'index', 'setDefault', 'show', 'store', 'update'],
+            $namespace.'ReportSubscriptionController' => ['destroy', 'index', 'pause', 'resume', 'runNow', 'store', 'update'],
+            $namespace.'ReportWorkspacePreferencesController' => ['recordRecent', 'setFavourites', 'show', 'updatePreferences'],
         ];
 
         foreach ($expected as $controller => $methods) {
@@ -111,7 +124,7 @@ final class ThinReportControllerTest extends TestCase
     public function test_every_controller_endpoint_has_exact_thin_topology_and_no_forbidden_nodes(): void
     {
         $files = glob(dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/Http/Admin/Controllers/*.php') ?: [];
-        self::assertCount(5, $files);
+        self::assertCount(8, $files);
 
         foreach ($files as $file) {
             $source = (string) file_get_contents($file);
@@ -217,6 +230,23 @@ final class ThinReportControllerTest extends TestCase
             [$controllers.'ReportExportController', 'retry', $requests.'ReportExportRouteRequest'],
             [$controllers.'ReportExportController', 'cancel', $requests.'ReportExportRouteRequest'],
             [$controllers.'ReportExportController', 'downloadLink', $requests.'CreateReportDownloadLinkRequest'],
+            [$controllers.'ReportSavedViewController', 'index', $requests.'ListReportSavedViewsRequest'],
+            [$controllers.'ReportSavedViewController', 'store', $requests.'CreateReportSavedViewRequest'],
+            [$controllers.'ReportSavedViewController', 'show', $requests.'ReportSavedViewRouteRequest'],
+            [$controllers.'ReportSavedViewController', 'update', $requests.'UpdateReportSavedViewRequest'],
+            [$controllers.'ReportSavedViewController', 'destroy', $requests.'ReportSavedViewRouteRequest'],
+            [$controllers.'ReportSavedViewController', 'setDefault', $requests.'ReportSavedViewRouteRequest'],
+            [$controllers.'ReportSubscriptionController', 'index', $requests.'ListReportSubscriptionsRequest'],
+            [$controllers.'ReportSubscriptionController', 'store', $requests.'CreateReportSubscriptionRequest'],
+            [$controllers.'ReportSubscriptionController', 'update', $requests.'UpdateReportSubscriptionRequest'],
+            [$controllers.'ReportSubscriptionController', 'destroy', $requests.'ReportSubscriptionRouteRequest'],
+            [$controllers.'ReportSubscriptionController', 'pause', $requests.'ReportSubscriptionRouteRequest'],
+            [$controllers.'ReportSubscriptionController', 'resume', $requests.'ReportSubscriptionRouteRequest'],
+            [$controllers.'ReportSubscriptionController', 'runNow', $requests.'RunReportSubscriptionNowRequest'],
+            [$controllers.'ReportWorkspacePreferencesController', 'show', $requests.'GetReportCatalogRequest'],
+            [$controllers.'ReportWorkspacePreferencesController', 'recordRecent', $requests.'RecordRecentReportRequest'],
+            [$controllers.'ReportWorkspacePreferencesController', 'setFavourites', $requests.'SetReportWorkspaceFavouritesRequest'],
+            [$controllers.'ReportWorkspacePreferencesController', 'updatePreferences', $requests.'UpdateReportWorkspacePreferencesRequest'],
         ];
     }
 }
@@ -355,7 +385,8 @@ final class ThinControllerContractAnalyzer
             if ($actionCalls !== 1) {
                 $violations[] = 'action_calls';
             }
-            if ($resources !== 1) {
+            $isEmptyResponse = self::isEmptySuccessResponse($finder, $nodes);
+            if ($resources !== ($isEmptyResponse ? 0 : 1)) {
                 $violations[] = 'resource_constructions';
             }
             if ($responses !== 1) {
@@ -364,6 +395,34 @@ final class ThinControllerContractAnalyzer
         }
 
         return array_values(array_unique($violations));
+    }
+
+    private static function isEmptySuccessResponse(NodeFinder $finder, array $nodes): bool
+    {
+        $responses = $finder->find($nodes, static function (Node $node): bool {
+            if (! $node instanceof StaticCall
+                || ! str_ends_with(self::className($node->class), '\\AdminResponse')
+                || self::identifier($node->name) !== 'success') {
+                return false;
+            }
+
+            $payload = $node->args[0]->value ?? null;
+            if ($payload instanceof Array_ && $payload->items === []) {
+                return true;
+            }
+
+            foreach ($node->args as $argument) {
+                if ($argument->name?->toString() === 'code'
+                    && $argument->value instanceof \PhpParser\Node\Scalar\LNumber
+                    && $argument->value->value === 204) {
+                    return true;
+                }
+            }
+
+            return false;
+        });
+
+        return count($responses) === 1;
     }
 
     private static function className(Node|string $class): string

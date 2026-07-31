@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 return [
+    'exports' => [
+        'total_label' => 'Итого',
+    ],
     'catalog_groups' => [
         'portfolio' => json_decode('"\\u041f\\u043e\\u0440\\u0442\\u0444\\u0435\\u043b\\u044c"'),
         'projects' => json_decode('"\\u041f\\u0440\\u043e\\u0435\\u043a\\u0442\\u044b"'),

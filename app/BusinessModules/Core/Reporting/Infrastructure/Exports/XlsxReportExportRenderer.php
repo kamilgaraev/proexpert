@@ -120,7 +120,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                     if (array_key_exists($columnId, $source->result->totals)) {
                         $totals[] = $source->result->totals[$columnId];
                     } elseif (!$labelPlaced) {
-                        $totals[] = str_starts_with($data->locale, 'ru') ? 'Итого' : 'Total';
+                        $totals[] = trans_message('reports.exports.total_label', [], explode('-', $data->locale)[0]);
                         $labelPlaced = true;
                     } else {
                         $totals[] = null;

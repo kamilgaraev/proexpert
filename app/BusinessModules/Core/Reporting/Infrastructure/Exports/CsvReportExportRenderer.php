@@ -216,7 +216,7 @@ final class CsvReportExportRenderer implements ReportExportRenderer
 
     private function totalLabel(CreateReportExportData $data): string
     {
-        return str_starts_with($data->locale, 'ru') ? 'Итого' : 'Total';
+        return trans_message('reports.exports.total_label', [], explode('-', $data->locale)[0]);
     }
 
     private function limit(): ReportContractException

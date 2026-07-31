@@ -37,6 +37,7 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
         self::assertStringContainsString('t="n"><v>-1.25</v>', $entries['xl/worksheets/sheet1.xml']);
         self::assertStringContainsString('<t>2026-07-29</t>', $entries['xl/worksheets/sheet1.xml']);
         self::assertStringContainsString('<t>Кран</t>', $entries['xl/worksheets/sheet1.xml']);
+        self::assertStringContainsString('<t>Total</t>', $entries['xl/worksheets/sheet1.xml']);
     }
 
     public function test_archive_checksum_is_stable_and_cancellation_stops_before_next_chunk(): void

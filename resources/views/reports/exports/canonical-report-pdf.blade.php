@@ -51,7 +51,7 @@
         <tfoot>
         <tr>
             @foreach($document->headers as $index => $header)
-                <td>{{ $document->totals[$header['id']] ?? ($index === 0 ? (str_starts_with($document->metadata['locale'], 'ru') ? 'Итого' : 'Total') : '') }}</td>
+                <td>{{ $document->totals[$header['id']] ?? ($index === 0 ? trans_message('reports.exports.total_label', [], explode('-', $document->metadata['locale'])[0]) : '') }}</td>
             @endforeach
         </tr>
         </tfoot>

@@ -20,6 +20,27 @@ use Throwable;
 
 final class PdfReportExportRendererTest extends ReportExportRendererTestCase
 {
+    public function test_blade_uses_total_label_translation_for_document_locale(): void
+    {
+        $document = new ReportPdfDocument(
+            [['id' => 'name', 'label' => 'Name'], ['id' => 'amount', 'label' => 'Amount']],
+            [['A', '1']],
+            ['amount' => '1'],
+            [
+                'locale' => 'en-US',
+                'report_code' => 'report',
+                'run_id' => 'run',
+                'snapshot' => ['id' => 'snapshot', 'seal' => null],
+                'definition_hash' => 'definition',
+                'query_hash' => 'query',
+                'source_hash' => 'source',
+                'result_hash' => 'result',
+            ],
+        );
+
+        self::assertStringContainsString('Total', $this->renderBlade($document));
+    }
+
     public function test_builds_bounded_semantic_document_and_writes_exact_pdf_artifact(): void
     {
         [$source, $definition] = $this->source(

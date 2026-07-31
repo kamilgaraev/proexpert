@@ -40,8 +40,12 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Container\Container;
+use Illuminate\Config\Repository;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
 use Illuminate\View\Compilers\BladeCompiler;
 use Illuminate\View\Engines\CompilerEngine;
 use Illuminate\View\Engines\EngineResolver;
@@ -56,6 +60,27 @@ use Throwable;
 
 abstract class ReportExportRendererTestCase extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $container = new Container();
+        $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
+        $container->instance('translator', new Translator(
+            new FileLoader(new Filesystem(), dirname(__DIR__, 4).'/lang'),
+            'ru',
+        ));
+        Facade::setFacadeApplication($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+
+        parent::tearDown();
+    }
+
     /**
      * @param list<array<string, mixed>> $rowSchema
      * @return array{ReportRunExportSource, PublishedReportDefinition}
