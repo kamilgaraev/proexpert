@@ -127,9 +127,9 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotSto
         return [
             'id' => $header->id, 'source_kind' => $header->sourceKind, 'report_code' => $header->reportCode,
             'schema_version' => $header->schemaVersion, 'organization_id' => $header->scope->organizationId,
-            'scope_identity' => json_encode($header->scopeIdentity(), JSON_THROW_ON_ERROR), 'query_hash' => $header->queryHash->value,
+            'scope_identity' => $header->scopeIdentity(), 'query_hash' => $header->queryHash->value,
             'as_of' => $header->asOf, 'source_hash' => $header->sourceHash->value,
-            'watermarks' => json_encode($header->watermarks, JSON_THROW_ON_ERROR), 'generated_at' => $header->generatedAt,
+            'watermarks' => $header->watermarks, 'generated_at' => $header->generatedAt,
             'stale_at' => $header->staleAt, 'status' => $header->status->value, 'row_count' => $header->rowCount,
             'drill_row_count' => $header->drillRowCount, 'snapshot_hash' => $header->snapshotHash->value,
             'ready_at' => null, 'expired_at' => null, 'created_at' => $header->generatedAt, 'updated_at' => $header->generatedAt,

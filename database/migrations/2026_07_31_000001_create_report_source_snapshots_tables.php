@@ -73,15 +73,25 @@ return new class extends Migration
             <<<'SQL'
 CREATE FUNCTION report_source_snapshot_prevent_ready_mutation() RETURNS trigger AS $$
 BEGIN
-    IF TG_TABLE_NAME = 'report_source_snapshots' AND OLD.status IN ('ready', 'expired') THEN
+    IF TG_TABLE_NAME = 'report_source_snapshots' AND TG_OP IN ('UPDATE', 'DELETE') AND OLD.status IN ('ready', 'expired') THEN
         RAISE EXCEPTION 'report_source_snapshot_immutable';
     END IF;
-    IF TG_TABLE_NAME <> 'report_source_snapshots' AND EXISTS (
-        SELECT 1 FROM report_source_snapshots WHERE id = COALESCE(NEW.snapshot_id, OLD.snapshot_id) AND status IN ('ready', 'expired')
-    ) THEN
-        RAISE EXCEPTION 'report_source_snapshot_immutable';
+    IF TG_TABLE_NAME <> 'report_source_snapshots' THEN
+        IF TG_OP = 'DELETE' AND EXISTS (
+            SELECT 1 FROM report_source_snapshots WHERE id = OLD.snapshot_id AND status IN ('ready', 'expired')
+        ) THEN
+            RAISE EXCEPTION 'report_source_snapshot_immutable';
+        END IF;
+        IF TG_OP IN ('INSERT', 'UPDATE') AND EXISTS (
+            SELECT 1 FROM report_source_snapshots WHERE id = NEW.snapshot_id AND status IN ('ready', 'expired')
+        ) THEN
+            RAISE EXCEPTION 'report_source_snapshot_immutable';
+        END IF;
     END IF;
-    RETURN COALESCE(NEW, OLD);
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql
 SQL,

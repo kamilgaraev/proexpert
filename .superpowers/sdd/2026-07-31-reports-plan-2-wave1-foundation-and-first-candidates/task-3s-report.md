@@ -18,3 +18,9 @@ No G01/G04/G09/G10 provider, source writer, route, UI, runtime registration or s
 - `git diff --check` — passed.
 
 Migrations and database-backed tests were intentionally not run under the repository rule that prohibits local database access.
+
+## Fix round 1
+
+- Header JSONB attributes now pass native arrays into Eloquent casts, preventing double JSON serialization during persistence.
+- The ready-immutability trigger branches by `TG_OP`; delete paths read and return `OLD`, while insert/update paths read and return `NEW`.
+- Added a PostgreSQL-gated integration test for `persistReady`, header/page/drill reads and database rejection of a ready-row mutation. It is intentionally not executed locally.
