@@ -173,10 +173,7 @@ After Task 3S acceptance evidence exists, add a provider and conformance fixture
 **Files:**
 
 - Create: `tests/Support/Reporting/WaveOneDeterministicSeedGenerator.php`
-- Create: `tests/Fixtures/Reporting/WaveOne/project_portfolio_health.v1.json`
-- Create: `tests/Fixtures/Reporting/WaveOne/portfolio_liquidity.v1.json`
-- Create: `tests/Fixtures/Reporting/WaveOne/project_margin.v1.json`
-- Create: `tests/Fixtures/Reporting/WaveOne/budget_plan_fact.v1.json`
+- Create: one `tests/Fixtures/Reporting/WaveOne/<admitted-candidate>.v1.json` fixture for each candidate admitted in Task 3A
 - Create: `tests/Fixtures/Reporting/WaveOne/wave-1-conformance-evidence.v1.json`
 - Test: `tests/Unit/Reporting/Conformance/WaveOneCandidateConformanceTest.php`
 
@@ -189,17 +186,21 @@ After Task 3S acceptance evidence exists, add a provider and conformance fixture
 
 ```php
 $evidence = $this->loadEvidence($path);
+$admittedFamilies = $this->admittedFamilies();
 
-self::assertSame(2000, $evidence['total_seed_count']);
-self::assertSame(500, $evidence['families']['wave1.project_margin']['seed_count']);
-self::assertSame(['cursor','scope','redaction'], $evidence['families']['wave1.project_margin']['assertions']);
+self::assertSame(count($admittedFamilies) * 500, $evidence['total_seed_count']);
+self::assertSame($admittedFamilies, array_keys($evidence['families']));
+foreach ($admittedFamilies as $family) {
+    self::assertSame(500, $evidence['families'][$family]['seed_count']);
+    self::assertSame(['cursor', 'scope', 'redaction', 'snapshot_replay'], $evidence['families'][$family]['assertions']);
+}
 ```
 
 - [ ] **Step 2: Run the test and confirm failure**
 
 Run: `vendor/bin/phpunit tests/Unit/Reporting/Conformance/WaveOneCandidateConformanceTest.php`
 
-Expected: FAIL because generator, fixtures and evidence do not exist.
+Expected: FAIL until Task 3A admits at least one candidate and its generator, fixture and evidence are added.
 
 - [ ] **Step 3: Add a deterministic generator and source-derived fixtures only for admitted candidates**
 
@@ -223,7 +224,7 @@ Expected: PASS; each admitted family proves provider/row/drill triples, immutabl
 
 - [ ] **Step 5: Commit conformance evidence**
 
-Run: `git add -- tests/Support/Reporting/WaveOneDeterministicSeedGenerator.php tests/Fixtures/Reporting/WaveOne tests/Unit/Reporting/Conformance/WaveOneCandidateConformanceTest.php; git commit -m "test[reports]: add Wave 1 conformance evidence"`
+Run: `git add -- tests/Support/Reporting/WaveOneDeterministicSeedGenerator.php tests/Fixtures/Reporting/WaveOne tests/Unit/Reporting/Conformance/WaveOneCandidateConformanceTest.php; git commit -m "test[reports]: add evidence for admitted Wave 1 candidates"`
 
 ### Task 5: Final boundary checks and handoff evidence
 

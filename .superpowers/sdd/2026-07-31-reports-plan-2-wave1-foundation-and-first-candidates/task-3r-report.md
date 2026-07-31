@@ -34,3 +34,8 @@ Completed. G01, G04, G09 and G10 are now blocked by source readiness, all twelve
 
 - No production snapshot/replay implementation exists yet; Task 3S must supply the immutable snapshot contract and admission evidence before any provider can be introduced.
 - PHPStan needs a higher local memory budget or a narrower project bootstrap to complete; PHPUnit and syntax checks passed for the changed contract.
+
+## Fix round 1/5
+
+- Task 4 evidence is now dynamic: it creates fixtures only for candidates admitted in Task 3A, derives `total_seed_count` from the number of admitted families, and requires 500 cases plus cursor, scope, redaction and snapshot-replay evidence for each admitted family.
+- The plan no longer makes G09, four fixtures, or 2,000 total cases a prerequisite for pre-admission Wave 1 state.
