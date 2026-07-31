@@ -38,3 +38,13 @@ No Wave 1 candidate is implemented or registered in runtime.
 ## Admission rule
 
 A source-contract-blocked candidate can receive a provider only after its owner supplies the stated fields at the stated grain and scope, the freshness and close rules are enforced, and the corresponding acceptance test passes. A source-readiness-blocked candidate additionally requires an immutable source snapshot and replay contract with the stated admission evidence. Until admission is complete, every Wave 1 candidate keeps a `null` provider and remains outside runtime publication and registration.
+
+## Immutable source snapshot foundation
+
+The source-snapshot store is a persistence boundary, not a Wave 1 provider. A snapshot header identifies one immutable source result by `snapshot_id`, `source_kind`, `report_code`, `schema_version`, `organization_id`, canonical report scope, canonical query hash, `as_of`, source hash, watermarks, generation/staleness timestamps, status, row counts and content hash. Rows and drill rows are stored separately and are always keyed by that same `snapshot_id`.
+
+Only a `ready` snapshot may be read. Reads must match organization, complete canonical scope, report code, source kind, schema version and query hash. Expired snapshots, snapshots past `stale_at` when stale reads are not explicitly allowed, non-ready headers, unknown IDs and invalid payload hashes are rejected. Cursor and drill reads address snapshot rows only; they must not query mutable business models.
+
+Persistence seals the header after row insertion. PostgreSQL constraints and triggers prevent a ready or expired header, its rows or its drill rows from being changed or appended. Replay ordering is the persisted ordinal with row-key uniqueness; drill ordering is persisted per `(snapshot_id, row_key, column_id, ordinal)`.
+
+This foundation alone is not candidate admission evidence. G01, G04, G09 and G10 remain `blocked_by_source_readiness` with `provider: null` until each owner supplies a source-specific writer, retention policy, redaction rules and a replay acceptance test against the real upstream source. No route, UI, catalog registration or production report provider is created by this contract.
