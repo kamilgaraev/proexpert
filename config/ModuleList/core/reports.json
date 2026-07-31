@@ -6,8 +6,8 @@
     "billing_model": "free",
     "category": "analytics",
     "description": "Унифицированный модуль отчетности, включающий базовые отчеты и расширенную аналитику.",
-    "class_name": "App\\BusinessModules\\Core\\Reports\\ReportsModule",
-    "service_provider": "App\\BusinessModules\\Core\\Reports\\ReportsServiceProvider",
+    "class_name": "App\\BusinessModules\\Core\\Reporting\\ReportingModule",
+    "service_provider": "App\\BusinessModules\\Core\\Reporting\\ReportingContractsServiceProvider",
     "auto_activate": true,
     "is_system_module": true,
     "can_deactivate": false,
@@ -18,10 +18,14 @@
     },
     "permissions": [
         "reports.view",
+        "reports.run",
         "reports.export",
-        "reports.manage_templates",
-        "reports.official_reports",
-        "reports.predictive"
+        "reports.download",
+        "reports.manage",
+        "reports.sensitive",
+        "reports.audit",
+        "reports.project_readiness.view",
+        "reports.project_readiness.export"
     ],
     "features": [
         "Базовые отчеты (материалы, работы, проекты)",
@@ -37,7 +41,7 @@
     "conflicts": [],
     "limits": {},
     "routes": [
-        "routes/api/v1/admin/reports.php"
+        "app/BusinessModules/Core/Reporting/routes.php"
     ],
     "settings": [
         {

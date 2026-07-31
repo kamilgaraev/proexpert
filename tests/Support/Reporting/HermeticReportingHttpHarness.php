@@ -633,7 +633,7 @@ final class HermeticReportingHttpHarness
     {
         $routes = [];
         foreach ($this->router->getRoutes()->getRoutes() as $route) {
-            if (is_string($route->getName()) && str_starts_with($route->getName(), 'admin.reports.')) {
+            if (is_string($route->getName()) && array_key_exists($route->getName(), self::expectedRoutes())) {
                 $routes[] = $route;
             }
         }

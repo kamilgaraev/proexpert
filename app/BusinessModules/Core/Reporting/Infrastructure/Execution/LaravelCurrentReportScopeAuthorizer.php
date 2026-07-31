@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
@@ -248,13 +249,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
     ): array {
         $policy = $target->definition->permissionPolicy;
         $checks = [
-            'base_view' => ['reports.view'],
-            'run' => ['reports.run'],
-            'export' => ['reports.export'],
-            'download' => ['reports.download'],
-            'manage' => ['reports.manage'],
-            'sensitive' => ['reports.sensitive'],
-            'audit' => ['reports.audit'],
+            ...ReportingPermissionMatrix::permissionChecks(),
             'definition_view' => $policy->viewPermissions,
             'definition_export' => $policy->exportPermissions,
             'definition_sensitive' => $policy->sensitivePermissions,

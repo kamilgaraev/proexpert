@@ -31,23 +31,23 @@ final readonly class ReportAccessService
         $actor = $this->reloadActor($context);
         $permissions = array_fill_keys($actor->permissionSlugs, true);
         $policy = $definition->permissionPolicy;
-        $canView = $this->has($permissions, ['reports.view'])
+        $canView = $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::VIEW))
             && $this->has($permissions, $policy->viewPermissions);
         $canExport = $canView
-            && $this->has($permissions, ['reports.export'])
+            && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::EXPORT))
             && $this->has($permissions, $policy->exportPermissions);
 
         $visibility = new ReportVisibility(
             $canView,
-            $canView && $this->has($permissions, ['reports.run']),
+            $canView && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::RUN)),
             $canExport,
-            $canExport && $this->has($permissions, ['reports.download']),
-            $canView && $this->has($permissions, ['reports.manage']),
+            $canExport && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::DOWNLOAD)),
+            $canView && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::MANAGE)),
             $canView
-                && $this->has($permissions, ['reports.sensitive'])
+                && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::VIEW_SENSITIVE))
                 && $this->has($permissions, $policy->sensitivePermissions),
             $canView
-                && $this->has($permissions, ['reports.audit'])
+                && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::VIEW_AUDIT))
                 && $this->has($permissions, $policy->auditPermissions),
         );
 
