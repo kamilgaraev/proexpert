@@ -9,6 +9,10 @@ use InvalidArgumentException;
 
 final readonly class PayrollReadinessPolicyDefinition
 {
+    private const MAX_BLOCKER_CODES = 64;
+
+    private const BLOCKER_CODE_PATTERN = '^[a-z0-9_]{1,120}$';
+
     public function __construct(
         public string $version,
         public string $timezone,
@@ -129,14 +133,14 @@ final readonly class PayrollReadinessPolicyDefinition
         $invalidBlockerCodes = array_filter(
             $blockerCodes,
             static fn (mixed $code): bool => ! is_string($code)
-                || preg_match('/^[a-z0-9_]{1,120}$/D', $code) !== 1,
+                || preg_match('/'.self::BLOCKER_CODE_PATTERN.'/D', $code) !== 1,
         );
         $normalizedBlockerCodes = $invalidBlockerCodes === [] ? $blockerCodes : [];
         sort($normalizedBlockerCodes, SORT_STRING);
         $normalizedBlockerCodes = array_values(array_unique($normalizedBlockerCodes));
         $blockerCodesValid = $invalidBlockerCodes === []
             && $normalizedBlockerCodes === $blockerCodes
-            && count($blockerCodes) <= 64
+            && count($blockerCodes) <= self::MAX_BLOCKER_CODES
             && count($blockerCodes) <= $blockerCount
             && ($blockerCount === 0) === ($blockerCodes === []);
         $sourceRowsValid = match ($rule['source_rows']) {
@@ -172,6 +176,10 @@ final readonly class PayrollReadinessPolicyDefinition
             'allowed_reasons' => $this->allowedReasons,
             'blocking_severities' => $this->blockingSeverities,
             'redacted_fields' => $this->redactedFields,
+            'evidence_limits' => [
+                'max_blocker_codes' => self::MAX_BLOCKER_CODES,
+                'blocker_code_pattern' => self::BLOCKER_CODE_PATTERN,
+            ],
             'reason_evidence' => $this->reasonEvidence,
         ];
     }

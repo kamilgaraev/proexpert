@@ -36,6 +36,10 @@ final class PayrollReadinessPolicyDefinitionTest extends TestCase
         self::assertSame('source_present', $policy->reasonEvidence['source_empty']['blocked_check']);
         self::assertSame('required', $policy->reasonEvidence['validation_blockers']['blocking_issues']);
         self::assertNull($policy->reasonEvidence['locked']['blocked_check']);
+        self::assertSame([
+            'max_blocker_codes' => 64,
+            'blocker_code_pattern' => '^[a-z0-9_]{1,120}$',
+        ], $policy->canonical()['evidence_limits']);
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $policy->hash());
         self::assertSame($policy->hash(), PayrollReadinessPolicyDefinition::v1()->hash());
     }
