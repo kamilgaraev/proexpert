@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatal
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionSemanticFingerprint;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationDeliveryContractHasher;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationIdentity;
@@ -17,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationReleaseIdenti
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
+use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -26,9 +28,88 @@ use Symfony\Component\Yaml\Yaml;
 use Tests\Support\Reporting\CatalogBindingTestFactory;
 use Tests\Support\Reporting\CatalogTestDataProvider;
 use Tests\Support\Reporting\Publication\ReportPublicationFixtureFactory;
+use Tests\Support\Reporting\Publication\ReportPublicationReleaseArtifactTestFactory;
 
 final class ReportPublicationEligibilityServiceTest extends TestCase
 {
+    public function test_self_declared_unsigned_ci_document_is_not_release_authority(): void
+    {
+        $scenario = $this->scenario();
+        $artifact = json_decode($scenario['ci_artifact'], true, 512, JSON_THROW_ON_ERROR);
+        $scenario['ci_artifact'] = CanonicalJson::encode($artifact['evidence']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_ineligible');
+
+        $this->service()->evaluate(
+            $scenario['candidate'],
+            $scenario['document'],
+            $scenario['binding'],
+            $scenario['evidence'],
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $scenario['ci_artifact'],
+        );
+    }
+
+    public function test_data_provider_cannot_claim_the_xlsx_renderer_contract(): void
+    {
+        $scenario = $this->scenario();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_ineligible');
+
+        $this->service(CatalogTestDataProvider::class)->evaluate(
+            $scenario['candidate'],
+            $scenario['document'],
+            $scenario['binding'],
+            $scenario['evidence'],
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $scenario['ci_artifact'],
+        );
+    }
+
+    public function test_release_timestamp_in_the_future_fails_closed(): void
+    {
+        $scenario = $this->scenario();
+        $payload = $scenario['proof']->payload();
+        $payload['release']['created_at_utc'] = '2099-08-01T02:03:04.654321Z';
+        $scenario['proof'] = ReportPublicationProof::fromArray($payload);
+        $scenario['release'] = new ReportPublicationReleaseIdentity(
+            $scenario['release']->gitSha,
+            new DateTimeImmutable('2099-08-01T02:03:04.654321+00:00'),
+            $scenario['release']->approverIdentity,
+        );
+        $artifact = json_decode($scenario['ci_artifact'], true, 512, JSON_THROW_ON_ERROR);
+        $scenario['ci_artifact'] = ReportPublicationReleaseArtifactTestFactory::issue(
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $artifact['evidence'],
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_ineligible');
+
+        $this->service()->evaluate(
+            $scenario['candidate'],
+            $scenario['document'],
+            $scenario['binding'],
+            $scenario['evidence'],
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $scenario['ci_artifact'],
+        );
+    }
+
     public function test_persistence_fixture_is_eligible_through_the_same_gate(): void
     {
         $fixture = ReportPublicationFixtureFactory::eligible();
@@ -65,7 +146,7 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
         self::assertSame($scenario['official_manifest_hash']->value, $result->publication()->officialManifestHash->value);
         self::assertSame($scenario['binding'], $result->publication()->binding);
         self::assertSame($scenario['evidence'], $result->publication()->evidence);
-        self::assertSame($scenario['ci_artifact'], $result->publication()->ciArtifactBytes);
+        self::assertSame($scenario['ci_artifact'], $result->publication()->releaseArtifactBytes);
     }
 
     public function test_later_release_can_reuse_evidence_only_from_the_exact_previous_publication(): void
@@ -266,6 +347,7 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             $temporaryBinding,
             new Sha256Hash(str_repeat('6', 64)),
         );
+        $temporaryEvidence = $this->withXlsxRenderer($temporary, $temporaryBinding, $temporaryEvidence);
         $fingerprints = new ReportDefinitionSemanticFingerprint;
         $row['semantic_fingerprints'] = [
             'formula' => $fingerprints->formula($temporaryEvidence),
@@ -278,6 +360,7 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             $binding,
             new Sha256Hash(str_repeat('6', 64)),
         );
+        $evidence = $this->withXlsxRenderer($definition, $binding, $evidence);
         $candidateManifestHash = new Sha256Hash(str_repeat('1', 64));
         $officialManifestHash = new Sha256Hash(str_repeat('0', 64));
         $requiredChecks = self::requiredChecks();
@@ -287,14 +370,30 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             'completed_at_utc' => '2026-08-01T01:02:03.123456Z',
             'checks' => array_fill_keys($requiredChecks, 'passed'),
         ];
-        $ciArtifact = CanonicalJson::encode($ciPayload);
+        $ciEvidenceBytes = CanonicalJson::encode($ciPayload);
 
         $components = [];
         foreach ($evidence->componentClassHashes as $class => $hash) {
             $components[] = ['class' => $class, 'sha256' => $hash->value];
         }
         $bindingHash = (new ReportPublicationBindingHasher)->hash($binding, $evidence);
-        $rendererHash = $components[0]['sha256'];
+        $rendererHash = $evidence->componentClassHashes[XlsxReportExportRenderer::class];
+        $rendererAssertions = [
+            'export.xlsx.fixture.passed',
+            'export.xlsx.provenance.passed',
+            'export.xlsx.redaction.passed',
+            'export.xlsx.renderer.passed',
+            'export.xlsx.schema.passed',
+        ];
+        $rendererContractHash = (new ReportPublicationDeliveryContractHasher)->hash(
+            'xlsx',
+            XlsxReportExportRenderer::class,
+            $rendererHash,
+            $definition->rendererVersion,
+            new Sha256Hash(str_repeat('e', 64)),
+            $evidence->fixtureHash,
+            $rendererAssertions,
+        );
         $proof = ReportPublicationProof::fromArray([
             'code' => $definition->code,
             'candidate_manifest_sha256' => $candidateManifestHash->value,
@@ -339,14 +438,10 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
                 'format' => 'xlsx',
                 'schema_sha256' => str_repeat('e', 64),
                 'fixture_sha256' => $evidence->fixtureHash->value,
-                'renderer_sha256' => $rendererHash,
-                'assertion_codes' => [
-                    'export.xlsx.fixture.passed',
-                    'export.xlsx.provenance.passed',
-                    'export.xlsx.redaction.passed',
-                    'export.xlsx.renderer.passed',
-                    'export.xlsx.schema.passed',
-                ],
+                'renderer_class' => XlsxReportExportRenderer::class,
+                'renderer_contract_sha256' => $rendererContractHash->value,
+                'renderer_sha256' => $rendererHash->value,
+                'assertion_codes' => $rendererAssertions,
             ]],
             'drill_down_contract' => [
                 'schema_sha256' => str_repeat('2', 64),
@@ -355,7 +450,7 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             'ci' => [
                 'run_id' => $ciPayload['run_id'],
                 'commit_sha' => $ciPayload['commit_sha'],
-                'suite_sha256' => hash('sha256', $ciArtifact),
+                'suite_sha256' => hash('sha256', $ciEvidenceBytes),
                 'completed_at_utc' => $ciPayload['completed_at_utc'],
                 'required_checks' => $requiredChecks,
             ],
@@ -366,6 +461,19 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             ],
         ]);
 
+        $release = new ReportPublicationReleaseIdentity(
+            $evidence->commitSha,
+            new DateTimeImmutable('2026-08-01T02:03:04.654321+00:00'),
+            'release-bot@most',
+        );
+        $releaseArtifact = ReportPublicationReleaseArtifactTestFactory::issue(
+            $proof,
+            $candidateManifestHash,
+            $officialManifestHash,
+            $release,
+            $ciPayload,
+        );
+
         return [
             'candidate' => new CandidateReportDefinition($definition),
             'document' => $row,
@@ -374,16 +482,12 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             'proof' => $proof,
             'candidate_manifest_hash' => $candidateManifestHash,
             'official_manifest_hash' => $officialManifestHash,
-            'release' => new ReportPublicationReleaseIdentity(
-                $evidence->commitSha,
-                new DateTimeImmutable('2026-08-01T02:03:04.654321+00:00'),
-                'release-bot@most',
-            ),
-            'ci_artifact' => $ciArtifact,
+            'release' => $release,
+            'ci_artifact' => $releaseArtifact,
         ];
     }
 
-    private function service(): ReportPublicationEligibilityService
+    private function service(string $rendererClass = XlsxReportExportRenderer::class): ReportPublicationEligibilityService
     {
         return new ReportPublicationEligibilityService(
             new ReportPermissionCatalog,
@@ -396,11 +500,15 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
                     'exports' => [
                         'xlsx' => [
                             'schema_sha256' => str_repeat('e', 64),
-                            'renderer_class' => CatalogTestDataProvider::class,
+                            'renderer_class' => $rendererClass,
                         ],
                     ],
                 ],
             ],
+            ReportPublicationReleaseArtifactTestFactory::verifier(),
+            new ReportDefinitionSemanticFingerprint,
+            new ReportPublicationDeliveryContractHasher,
+            static fn (): DateTimeImmutable => new DateTimeImmutable('2026-08-02T00:00:00.000000+00:00'),
         );
     }
 
@@ -428,11 +536,11 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             'completed_at_utc' => '2026-08-01T03:00:00.000000Z',
             'run_id' => 'ci-2002',
         ];
-        $ciArtifact = CanonicalJson::encode($ciPayload);
+        $ciEvidenceBytes = CanonicalJson::encode($ciPayload);
         $payload['ci'] = [
             'run_id' => $ciPayload['run_id'],
             'commit_sha' => $ciPayload['commit_sha'],
-            'suite_sha256' => hash('sha256', $ciArtifact),
+            'suite_sha256' => hash('sha256', $ciEvidenceBytes),
             'completed_at_utc' => $ciPayload['completed_at_utc'],
             'required_checks' => self::requiredChecks(),
         ];
@@ -447,10 +555,34 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             new DateTimeImmutable('2026-08-01T04:00:00.000000+00:00'),
             'release-bot@most',
         );
-        $scenario['ci_artifact'] = $ciArtifact;
+        $scenario['ci_artifact'] = ReportPublicationReleaseArtifactTestFactory::issue(
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $ciPayload,
+        );
         $scenario['previous'] = $previous;
 
         return $scenario;
+    }
+
+    private function withXlsxRenderer(
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $definition,
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding $binding,
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence $evidence,
+    ): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence {
+        $rendererFile = (new \ReflectionClass(XlsxReportExportRenderer::class))->getFileName();
+        self::assertIsString($rendererFile);
+        $components = $evidence->componentClassHashes;
+        $components[XlsxReportExportRenderer::class] = new Sha256Hash((string) hash_file('sha256', $rendererFile));
+
+        return CatalogBindingTestFactory::evidence(
+            $definition,
+            $binding,
+            $evidence->fixtureHash,
+            componentHashes: $components,
+        );
     }
 
     private static function requiredChecks(): array

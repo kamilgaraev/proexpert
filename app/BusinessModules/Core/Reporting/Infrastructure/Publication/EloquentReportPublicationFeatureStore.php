@@ -10,7 +10,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationIdentity;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use DateTimeImmutable;
 use Illuminate\Database\ConnectionInterface;
 use InvalidArgumentException;
 use LogicException;
@@ -73,18 +72,19 @@ final class EloquentReportPublicationFeatureStore implements ReportPublicationFe
                 && $current->userAllowlist === $configuration->userAllowlist) {
                 return $current;
             }
-            $updatedAt = new DateTimeImmutable('now');
-            $updated = $this->connection->table('report_publication_features')
-                ->where('code', $publication->code)
-                ->where('publication_id', $publication->publicationId)
-                ->where('proof_sha256', $publication->proofHash->value)
-                ->update([
-                    'mode' => $configuration->mode->value,
-                    'canary_organization_ids' => CanonicalJson::encode($configuration->organizationAllowlist),
-                    'canary_user_ids' => CanonicalJson::encode($configuration->userAllowlist),
-                    'updated_at' => $updatedAt,
-                ]);
-            if ($updated !== 1) {
+            $result = $this->connection->selectOne(<<<'SQL'
+                SELECT report_publication_configure_feature(
+                    ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb)
+                ) AS configured_at
+                SQL, [
+                $publication->code,
+                $publication->publicationId,
+                $publication->proofHash->value,
+                $configuration->mode->value,
+                CanonicalJson::encode($configuration->organizationAllowlist),
+                CanonicalJson::encode($configuration->userAllowlist),
+            ]);
+            if ($result === null) {
                 throw new LogicException('report_publication_feature_stale_identity');
             }
 

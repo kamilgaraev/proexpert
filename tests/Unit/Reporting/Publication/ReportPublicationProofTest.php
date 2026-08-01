@@ -139,6 +139,8 @@ final class ReportPublicationProofTest extends TestCase
                 'format' => 'xlsx',
                 'schema_sha256' => str_repeat('e', 64),
                 'fixture_sha256' => str_repeat('f', 64),
+                'renderer_class' => 'App\\BusinessModules\\Core\\Reporting\\Infrastructure\\Exports\\XlsxReportExportRenderer',
+                'renderer_contract_sha256' => str_repeat('d', 64),
                 'renderer_sha256' => str_repeat('1', 64),
                 'assertion_codes' => [
                     'export.xlsx.fixture.passed',

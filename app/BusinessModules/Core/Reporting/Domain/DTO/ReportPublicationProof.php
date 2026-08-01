@@ -178,6 +178,8 @@ final readonly class ReportPublicationProof
                 'format',
                 'schema_sha256',
                 'fixture_sha256',
+                'renderer_class',
+                'renderer_contract_sha256',
                 'renderer_sha256',
                 'assertion_codes',
             ]);
@@ -189,6 +191,8 @@ final readonly class ReportPublicationProof
             $formats[$contract['format']] = true;
             self::assertHash($contract['schema_sha256']);
             self::assertHash($contract['fixture_sha256']);
+            self::assertPattern($contract['renderer_class'], '/^[A-Za-z_][A-Za-z0-9_\\\\]{0,255}$/D');
+            self::assertHash($contract['renderer_contract_sha256']);
             self::assertHash($contract['renderer_sha256']);
             self::assertCodes(
                 $contract['assertion_codes'],

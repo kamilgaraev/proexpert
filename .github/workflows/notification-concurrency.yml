@@ -429,6 +429,12 @@ jobs:
           php -r "if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) { fwrite(STDERR, \"pdo_pgsql is unavailable\\n\"); exit(1); }"
           test -f tests/Feature/Reporting/Publication/ReportPublicationRegistryPostgresTest.php
 
+      - name: Run publication unit and proof-schema contracts
+        run: >-
+          php vendor/bin/phpunit
+          tests/Unit/Reporting/Publication
+          tests/Architecture/Reporting/ReportPublicationProofSchemaTest.php
+
       - name: Prepare isolated PostgreSQL schema
         run: php artisan migrate:fresh --force
 

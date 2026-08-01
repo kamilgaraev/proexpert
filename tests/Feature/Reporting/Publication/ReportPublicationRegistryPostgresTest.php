@@ -82,6 +82,86 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         self::assertSame(1, DB::table('report_publication_events')->where('publication_id', $publicationId)->count());
     }
 
+    public function test_runtime_role_cannot_forge_publication_event_or_outbox_rows(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $publicationId = (string) $published->publicationIdentity?->publicationId;
+
+        foreach ([
+            'report_publications',
+            'report_publication_events',
+            'report_publication_features',
+            'report_publication_outbox',
+        ] as $table) {
+            $exception = $this->queryException(static function () use ($table, $publicationId): void {
+                DB::transaction(static function () use ($table, $publicationId): void {
+                    DB::statement('SET LOCAL ROLE most_report_publication_runtime');
+                    if ($table === 'report_publications') {
+                        $row = (array) DB::table($table)->where('id', $publicationId)->first();
+                        $row['id'] = (string) Str::ulid();
+                        DB::table($table)->insert($row);
+
+                        return;
+                    }
+                    if ($table === 'report_publication_events') {
+                        DB::table($table)->insert([
+                            'id' => (string) Str::ulid(),
+                            'publication_id' => $publicationId,
+                            'event_type' => 'disabled',
+                            'actor_identity' => 'forged@most',
+                            'release_git_sha' => str_repeat('a', 40),
+                            'payload_sha256' => str_repeat('f', 64),
+                            'occurred_at' => now(),
+                        ]);
+
+                        return;
+                    }
+                    if ($table === 'report_publication_features') {
+                        $row = (array) DB::table($table)->where('publication_id', $publicationId)->first();
+                        $row['code'] = 'forged_publication';
+                        DB::table($table)->insert($row);
+
+                        return;
+                    }
+                    DB::table($table)->insert([
+                        'id' => (string) Str::ulid(),
+                        'publication_id' => $publicationId,
+                        'event_type' => 'report_publication_promoted',
+                        'deduplication_key' => 'forged:'.$publicationId,
+                        'payload_json' => '{}',
+                        'created_at' => now(),
+                        'delivered_at' => null,
+                    ]);
+                });
+            });
+
+            self::assertSame('42501', $exception->errorInfo[0] ?? null, $table);
+        }
+    }
+
+    public function test_issuer_role_promotes_only_through_the_owned_admission_function(): void
+    {
+        $fixture = ReportPublicationFixtureFactory::eligible();
+        $registry = new EloquentReportPublicationRegistry(
+            DB::connection(),
+            $fixture['eligibility_service'],
+            new ReportDefinitionFactory,
+        );
+
+        $published = DB::transaction(static function () use ($registry, $fixture) {
+            DB::statement('SET LOCAL ROLE most_report_publication_issuer');
+
+            return $registry->promote($fixture['eligible']);
+        });
+
+        self::assertSame($fixture['eligible']->proofHash->value, $published->publicationIdentity?->proofHash->value);
+        self::assertSame(
+            hash('sha256', $fixture['eligible']->releaseArtifactBytes),
+            DB::table('report_publications')->value('release_artifact_sha256'),
+        );
+    }
+
     public function test_only_one_active_publication_exists_per_code(): void
     {
         [$registry, $eligible] = $this->registry();
@@ -492,7 +572,16 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         });
         self::assertSame('55000', $reenable->errorInfo[0] ?? null);
 
-        $different = ReportPublicationFixtureFactory::eligible('f');
+        $disabledAt = DB::table('report_publications')
+            ->where('id', $oldIdentity->publicationId)
+            ->value('disabled_at');
+        self::assertIsString($disabledAt);
+        $nextReleaseAt = (new \DateTimeImmutable($disabledAt))->modify('+1 second');
+        $different = ReportPublicationFixtureFactory::eligible(
+            'e',
+            $nextReleaseAt,
+            $nextReleaseAt->modify('-1 microsecond'),
+        );
         $next = $registry->promote($different['eligible']);
         self::assertNotSame($oldIdentity->publicationId, $next->publicationIdentity?->publicationId);
         self::assertSame('off', DB::table('report_publication_features')->value('mode'));

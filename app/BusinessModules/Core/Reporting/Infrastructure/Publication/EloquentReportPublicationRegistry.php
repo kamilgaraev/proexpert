@@ -82,7 +82,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 $publication->candidateManifestHash,
                 $publication->officialManifestHash,
                 $publication->release,
-                $publication->ciArtifactBytes,
+                $publication->releaseArtifactBytes,
                 $previous,
             )->publication();
             if ($existingRecord !== null) {
@@ -91,52 +91,37 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
 
             $id = (string) Str::ulid();
             $proof = $publication->proof->payload();
+            $releaseArtifact = $this->eligibility->verifyReleaseArtifact($publication->releaseArtifactBytes);
+            $releaseArtifactPayload = $releaseArtifact->payload();
             $publishedAt = new DateTimeImmutable($proof['release']['created_at_utc']);
-            $this->connection->table('report_publications')->insert([
-                'id' => $id,
-                'code' => $publication->candidate->code,
-                'status' => ReportPublicationStatus::PUBLISHED->value,
-                'candidate_definition_json' => CanonicalJson::encode($publication->candidateDocument),
-                'proof_json' => $publication->proof->canonicalBytes(),
-                'proof_sha256' => $publication->proofHash->value,
-                'candidate_manifest_sha256' => $publication->candidateManifestHash->value,
-                'candidate_definition_sha256' => $publication->candidate->definitionHash->value,
-                'official_manifest_sha256' => $publication->officialManifestHash->value,
-                'binding_sha256' => $proof['binding_sha256'],
-                'conformance_evidence_sha256' => $proof['conformance_evidence_sha256'],
-                'contract_version' => $proof['versions']['contract'],
-                'source_schema_version' => $proof['versions']['source_schema'],
-                'formula_version' => $proof['versions']['formula'],
-                'renderer_version' => $proof['versions']['renderer'],
-                'release_git_sha' => $publication->release->gitSha,
-                'published_by' => $publication->release->approverIdentity,
-                'published_at' => $publishedAt,
-                'disabled_at' => null,
-                'disabled_reason' => null,
+            $this->connection->select(<<<'SQL'
+                SELECT report_publication_promote(
+                    ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, CAST(? AS timestamptz)
+                )
+                SQL, [
+                $id,
+                $publication->candidate->code,
+                CanonicalJson::encode($publication->candidateDocument),
+                $publication->proof->canonicalBytes(),
+                $publication->proofHash->value,
+                $publication->candidateManifestHash->value,
+                $publication->candidate->definitionHash->value,
+                $publication->officialManifestHash->value,
+                $proof['binding_sha256'],
+                $proof['conformance_evidence_sha256'],
+                $proof['versions']['contract'],
+                $proof['versions']['source_schema'],
+                $proof['versions']['formula'],
+                $proof['versions']['renderer'],
+                $publication->release->gitSha,
+                $releaseArtifact->canonicalBytes(),
+                hash('sha256', $releaseArtifact->canonicalBytes()),
+                $releaseArtifactPayload['issuer'],
+                $releaseArtifactPayload['key_id'],
+                $publication->release->approverIdentity,
+                $publication->release->createdAtUtc(),
             ]);
-            $feature = $this->connection->table('report_publication_features')
-                ->where('code', $publication->candidate->code)
-                ->lockForUpdate()
-                ->first();
-            $featureValues = [
-                'code' => $publication->candidate->code,
-                'publication_id' => $id,
-                'proof_sha256' => $publication->proofHash->value,
-                'mode' => 'off',
-                'canary_organization_ids' => '[]',
-                'canary_user_ids' => '[]',
-                'updated_at' => $publishedAt,
-            ];
-            if ($feature === null) {
-                $this->connection->table('report_publication_features')->insert($featureValues);
-            } else {
-                if ($feature->mode !== 'disabled') {
-                    throw new LogicException('report_publication_feature_rebind_conflict');
-                }
-                $this->connection->table('report_publication_features')
-                    ->where('code', $publication->candidate->code)
-                    ->update($featureValues);
-            }
 
             return $this->published(new ReportPublicationRecord(
                 new ReportPublicationIdentity(
@@ -171,13 +156,10 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             if ($row === null || $row->status !== ReportPublicationStatus::PUBLISHED->value) {
                 throw new LogicException('report_publication_not_active');
             }
-            $disabledAt = new DateTimeImmutable('now');
-            $this->connection->table('report_publications')->where('id', $publicationId)->update([
-                'status' => ReportPublicationStatus::DISABLED->value,
-                'disabled_at' => $disabledAt,
-                'disabled_reason' => $reason,
-                'disabled_by' => $actorIdentity,
-            ]);
+            $this->connection->select(
+                'SELECT report_publication_disable(?, ?, ?)',
+                [$publicationId, $reason, $actorIdentity],
+            );
         });
     }
 
@@ -226,6 +208,27 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
         if (! hash_equals($proofHash->value, $proof->digest()->value)) {
             throw new LogicException('report_publication_persisted_proof_drift');
         }
+        $releaseArtifactBytes = $row['release_artifact_json'] ?? null;
+        if (! is_string($releaseArtifactBytes)
+            || ! hash_equals((string) ($row['release_artifact_sha256'] ?? ''), hash('sha256', $releaseArtifactBytes))) {
+            throw new LogicException('report_publication_persisted_release_artifact_drift');
+        }
+        $releaseArtifact = $this->eligibility->verifyReleaseArtifact($releaseArtifactBytes);
+        $releasePayload = $releaseArtifact->payload();
+        $releaseSubject = $releasePayload['subject'];
+        if (! hash_equals($releaseSubject['proof_sha256'], $proofHash->value)
+            || ! hash_equals($releaseSubject['code'], (string) $row['code'])
+            || ! hash_equals($releaseSubject['candidate_manifest_sha256'], (string) $row['candidate_manifest_sha256'])
+            || ! hash_equals($releaseSubject['candidate_definition_sha256'], (string) $row['candidate_definition_sha256'])
+            || ! hash_equals($releaseSubject['official_manifest_sha256'], (string) $row['official_manifest_sha256'])
+            || ! hash_equals($releaseSubject['binding_sha256'], (string) $row['binding_sha256'])
+            || ! hash_equals($releaseSubject['conformance_evidence_sha256'], (string) $row['conformance_evidence_sha256'])
+            || ! hash_equals($releaseSubject['release_git_sha'], (string) $row['release_git_sha'])
+            || ! hash_equals($releaseSubject['approver_identity'], (string) $row['published_by'])
+            || ! hash_equals($releasePayload['issuer'], (string) $row['release_issuer'])
+            || ! hash_equals($releasePayload['key_id'], (string) $row['release_key_id'])) {
+            throw new LogicException('report_publication_persisted_release_artifact_drift');
+        }
 
         $record = new ReportPublicationRecord(
             new ReportPublicationIdentity(
@@ -240,6 +243,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             new DateTimeImmutable((string) $row['published_at']),
             $row['disabled_at'] === null ? null : new DateTimeImmutable((string) $row['disabled_at']),
             $row['disabled_reason'] === null ? null : (string) $row['disabled_reason'],
+            $releaseArtifactBytes,
         );
         $this->definition($record);
 

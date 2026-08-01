@@ -54,7 +54,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
 
         $sheetPath = tempnam(sys_get_temp_dir(), 'most-report-sheet-');
         $zipPath = tempnam(sys_get_temp_dir(), 'most-report-xlsx-');
-        if (!is_string($sheetPath) || !is_string($zipPath)) {
+        if (! is_string($sheetPath) || ! is_string($zipPath)) {
             throw $this->dependency();
         }
 
@@ -98,7 +98,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                 foreach ($chunk->rows as $row) {
                     $cells = [];
                     foreach ($data->columns as $columnId) {
-                        if (!array_key_exists($columnId, $row->values)) {
+                        if (! array_key_exists($columnId, $row->values)) {
                             throw $this->limit();
                         }
                         $cells[] = $row->values[$columnId];
@@ -119,7 +119,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                 foreach ($data->columns as $columnId) {
                     if (array_key_exists($columnId, $source->result->totals)) {
                         $totals[] = $source->result->totals[$columnId];
-                    } elseif (!$labelPlaced) {
+                    } elseif (! $labelPlaced) {
                         $totals[] = trans_message('reports.exports.total_label', [], explode('-', $data->locale)[0]);
                         $labelPlaced = true;
                     } else {
@@ -136,7 +136,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
 
         $this->createArchive($sheetPath, $zipPath);
         $size = filesize($zipPath);
-        if (!is_int($size) || $size < 1 || $size > $this->limits->maxBytes) {
+        if (! is_int($size) || $size < 1 || $size > $this->limits->maxBytes) {
             throw $this->limit();
         }
         $this->copyArchive($zipPath, $stream);
@@ -146,7 +146,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
 
     private function createArchive(string $sheetPath, string $zipPath): void
     {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
             throw $this->dependency();
         }
@@ -182,17 +182,17 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
 
         try {
             foreach ($entries as $name => $content) {
-                if (!$zip->addFromString($name, $content)) {
+                if (! $zip->addFromString($name, $content)) {
                     throw $this->dependency();
                 }
                 $zip->setMtimeName($name, 315532800);
             }
-            if (!$zip->addFile($sheetPath, 'xl/worksheets/sheet1.xml')) {
+            if (! $zip->addFile($sheetPath, 'xl/worksheets/sheet1.xml')) {
                 throw $this->dependency();
             }
             $zip->setMtimeName('xl/worksheets/sheet1.xml', 315532800);
         } finally {
-            if (!$zip->close()) {
+            if (! $zip->close()) {
                 throw $this->dependency();
             }
         }
@@ -206,7 +206,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         }
 
         try {
-            while (!feof($handle)) {
+            while (! feof($handle)) {
                 $bytes = fread($handle, 65_536);
                 if ($bytes === false) {
                     throw $this->dependency();
@@ -235,10 +235,12 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                     ? (string) $value
                     : json_encode($value, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
                 $cells .= '<c r="'.$reference.'"'.$style.' t="n"><v>'.$number.'</v></c>';
+
                 continue;
             }
             if (is_string($value) && preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/D', $value) === 1) {
                 $cells .= '<c r="'.$reference.'"'.$style.' t="n"><v>'.$value.'</v></c>';
+
                 continue;
             }
             $text = ReportPdfDocumentBuilder::normalizeCell($value, new \DateTimeZone('UTC'));
@@ -265,12 +267,12 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         if ($data->format !== 'xlsx'
             || count($data->columns) > $this->limits->maxColumns
             || ($this->definitionHash !== null
-                && (!hash_equals($this->definitionHash, $source->run->definitionHash->value)
-                    || !hash_equals((string) $this->rendererVersion, $source->rendererVersion)))) {
+                && (! hash_equals($this->definitionHash, $source->run->definitionHash->value)
+                    || ! hash_equals((string) $this->rendererVersion, $source->rendererVersion)))) {
             throw $this->limit();
         }
         foreach ($data->columns as $columnId) {
-            if (!isset($schemaIds[$columnId])) {
+            if (! isset($schemaIds[$columnId])) {
                 throw $this->limit();
             }
         }
@@ -283,11 +285,11 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         int $startedAt,
     ): void {
         if ($stream->cancellationRequested()
-            || !$chunk instanceof ReportRowChunk
+            || ! $chunk instanceof ReportRowChunk
             || count($chunk->rows) > $this->limits->maxChunkRows
-            || !hash_equals($source->snapshot->id, $chunk->snapshotId)
-            || !hash_equals($source->run->queryHash->value, $chunk->queryHash->value)
-            || !hash_equals($source->snapshot->sourceHash->value, $chunk->sourceHash->value)
+            || ! hash_equals($source->snapshot->id, $chunk->snapshotId)
+            || ! hash_equals($source->run->queryHash->value, $chunk->queryHash->value)
+            || ! hash_equals($source->snapshot->sourceHash->value, $chunk->sourceHash->value)
             || (hrtime(true) - $startedAt) > $this->limits->maxElapsedSeconds * 1_000_000_000) {
             throw $this->limit();
         }
@@ -329,6 +331,11 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
     private function escape(string $value): string
     {
         return htmlspecialchars($value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
+    }
+
+    public static function format(): string
+    {
+        return 'xlsx';
     }
 
     private function limit(): ReportContractException

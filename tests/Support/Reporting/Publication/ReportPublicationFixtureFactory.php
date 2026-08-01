@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatal
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionSemanticFingerprint;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationDeliveryContractHasher;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
@@ -15,17 +16,22 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationReleaseIdentity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
+use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use LogicException;
 use Symfony\Component\Yaml\Yaml;
 use Tests\Support\Reporting\CatalogBindingTestFactory;
-use Tests\Support\Reporting\CatalogTestDataProvider;
 
 final class ReportPublicationFixtureFactory
 {
-    public static function eligible(string $exportSchemaDigit = 'e'): array
-    {
+    public static function eligible(
+        string $exportSchemaDigit = 'e',
+        ?DateTimeImmutable $releaseAt = null,
+        ?DateTimeImmutable $ciCompletedAt = null,
+    ): array {
+        $releaseAt ??= new DateTimeImmutable('2026-08-01T02:03:04.654321+00:00');
+        $ciCompletedAt ??= new DateTimeImmutable('2026-08-01T01:02:03.123456+00:00');
         $document = Yaml::parseFile(dirname(__DIR__, 4).'/tests/Fixtures/Reporting/Publication/candidate.valid.yaml');
         $row = $document['definitions'][0];
         $factory = new ReportDefinitionFactory;
@@ -36,6 +42,7 @@ final class ReportPublicationFixtureFactory
             $temporaryBinding,
             new Sha256Hash(str_repeat('6', 64)),
         );
+        $temporaryEvidence = self::withXlsxRenderer($temporary, $temporaryBinding, $temporaryEvidence);
         $fingerprints = new ReportDefinitionSemanticFingerprint;
         $row['semantic_fingerprints'] = [
             'formula' => $fingerprints->formula($temporaryEvidence),
@@ -48,14 +55,15 @@ final class ReportPublicationFixtureFactory
             $binding,
             new Sha256Hash(str_repeat('6', 64)),
         );
+        $evidence = self::withXlsxRenderer($definition, $binding, $evidence);
         $requiredChecks = self::requiredChecks();
         $ciPayload = [
             'checks' => array_fill_keys($requiredChecks, 'passed'),
             'commit_sha' => $evidence->commitSha,
-            'completed_at_utc' => '2026-08-01T01:02:03.123456Z',
+            'completed_at_utc' => $ciCompletedAt->format('Y-m-d\TH:i:s.u\Z'),
             'run_id' => 'ci-1001',
         ];
-        $ciArtifact = CanonicalJson::encode($ciPayload);
+        $ciEvidenceBytes = CanonicalJson::encode($ciPayload);
         $components = [];
         foreach ($evidence->componentClassHashes as $class => $hash) {
             $components[] = ['class' => $class, 'sha256' => $hash->value];
@@ -64,8 +72,25 @@ final class ReportPublicationFixtureFactory
         $officialManifestHash = new Sha256Hash(str_repeat('0', 64));
         $release = new ReportPublicationReleaseIdentity(
             $evidence->commitSha,
-            new DateTimeImmutable('2026-08-01T02:03:04.654321+00:00'),
+            $releaseAt,
             'release-bot@most',
+        );
+        $rendererHash = $evidence->componentClassHashes[XlsxReportExportRenderer::class];
+        $rendererAssertions = [
+            'export.xlsx.fixture.passed',
+            'export.xlsx.provenance.passed',
+            'export.xlsx.redaction.passed',
+            'export.xlsx.renderer.passed',
+            'export.xlsx.schema.passed',
+        ];
+        $rendererContractHash = (new ReportPublicationDeliveryContractHasher)->hash(
+            'xlsx',
+            XlsxReportExportRenderer::class,
+            $rendererHash,
+            $definition->rendererVersion,
+            new Sha256Hash(str_repeat($exportSchemaDigit, 64)),
+            $evidence->fixtureHash,
+            $rendererAssertions,
         );
         $proof = ReportPublicationProof::fromArray([
             'code' => $definition->code,
@@ -111,14 +136,10 @@ final class ReportPublicationFixtureFactory
                 'format' => 'xlsx',
                 'schema_sha256' => str_repeat($exportSchemaDigit, 64),
                 'fixture_sha256' => $evidence->fixtureHash->value,
-                'renderer_sha256' => $components[0]['sha256'],
-                'assertion_codes' => [
-                    'export.xlsx.fixture.passed',
-                    'export.xlsx.provenance.passed',
-                    'export.xlsx.redaction.passed',
-                    'export.xlsx.renderer.passed',
-                    'export.xlsx.schema.passed',
-                ],
+                'renderer_class' => XlsxReportExportRenderer::class,
+                'renderer_contract_sha256' => $rendererContractHash->value,
+                'renderer_sha256' => $rendererHash->value,
+                'assertion_codes' => $rendererAssertions,
             ]],
             'drill_down_contract' => [
                 'schema_sha256' => str_repeat('2', 64),
@@ -127,7 +148,7 @@ final class ReportPublicationFixtureFactory
             'ci' => [
                 'run_id' => $ciPayload['run_id'],
                 'commit_sha' => $ciPayload['commit_sha'],
-                'suite_sha256' => hash('sha256', $ciArtifact),
+                'suite_sha256' => hash('sha256', $ciEvidenceBytes),
                 'completed_at_utc' => $ciPayload['completed_at_utc'],
                 'required_checks' => $requiredChecks,
             ],
@@ -149,11 +170,22 @@ final class ReportPublicationFixtureFactory
                     'exports' => [
                         'xlsx' => [
                             'schema_sha256' => str_repeat($exportSchemaDigit, 64),
-                            'renderer_class' => CatalogTestDataProvider::class,
+                            'renderer_class' => XlsxReportExportRenderer::class,
                         ],
                     ],
                 ],
             ],
+            ReportPublicationReleaseArtifactTestFactory::verifier(),
+            new ReportDefinitionSemanticFingerprint,
+            new ReportPublicationDeliveryContractHasher,
+            static fn (): DateTimeImmutable => $releaseAt->modify('+1 day'),
+        );
+        $releaseArtifact = ReportPublicationReleaseArtifactTestFactory::issue(
+            $proof,
+            $candidateManifestHash,
+            $officialManifestHash,
+            $release,
+            $ciPayload,
         );
         $eligible = $eligibilityService->evaluate(
             $candidate,
@@ -164,7 +196,7 @@ final class ReportPublicationFixtureFactory
             $candidateManifestHash,
             $officialManifestHash,
             $release,
-            $ciArtifact,
+            $releaseArtifact,
         )->publication();
 
         return [
@@ -173,6 +205,26 @@ final class ReportPublicationFixtureFactory
             'eligibility_service' => $eligibilityService,
             'registry' => new SingleCandidatePublicationRegistry($candidate),
         ];
+    }
+
+    private static function withXlsxRenderer(
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $definition,
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding $binding,
+        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence $evidence,
+    ): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence {
+        $rendererFile = (new \ReflectionClass(XlsxReportExportRenderer::class))->getFileName();
+        if (! is_string($rendererFile)) {
+            throw new LogicException('report_publication_fixture_renderer_unavailable');
+        }
+        $components = $evidence->componentClassHashes;
+        $components[XlsxReportExportRenderer::class] = new Sha256Hash((string) hash_file('sha256', $rendererFile));
+
+        return CatalogBindingTestFactory::evidence(
+            $definition,
+            $binding,
+            $evidence->fixtureHash,
+            componentHashes: $components,
+        );
     }
 
     private static function requiredChecks(): array

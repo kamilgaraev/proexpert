@@ -110,11 +110,13 @@
             "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["format", "schema_sha256", "fixture_sha256", "renderer_sha256", "assertion_codes"],
+                "required": ["format", "schema_sha256", "fixture_sha256", "renderer_class", "renderer_contract_sha256", "renderer_sha256", "assertion_codes"],
                 "properties": {
                     "format": {"enum": ["csv", "pdf", "xlsx"]},
                     "schema_sha256": {"$ref": "#/$defs/sha256"},
                     "fixture_sha256": {"$ref": "#/$defs/sha256"},
+                    "renderer_class": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_\\\\]{0,255}$"},
+                    "renderer_contract_sha256": {"$ref": "#/$defs/sha256"},
                     "renderer_sha256": {"$ref": "#/$defs/sha256"},
                     "assertion_codes": {
                         "type": "array",

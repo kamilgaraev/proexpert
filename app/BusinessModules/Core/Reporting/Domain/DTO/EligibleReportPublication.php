@@ -19,7 +19,7 @@ final readonly class EligibleReportPublication
         public Sha256Hash $candidateManifestHash,
         public Sha256Hash $officialManifestHash,
         public ReportPublicationReleaseIdentity $release,
-        public string $ciArtifactBytes,
+        public string $releaseArtifactBytes,
     ) {
         if (! hash_equals($candidate->code, $proof->payload()['code'])
             || ! hash_equals($candidate->code, $binding->code)

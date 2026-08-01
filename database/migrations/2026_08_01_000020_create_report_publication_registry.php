@@ -11,6 +11,43 @@ return new class extends Migration
 {
     public function up(): void
     {
+        DB::unprepared(<<<'SQL'
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'most_report_publication_owner') THEN
+                    CREATE ROLE most_report_publication_owner NOLOGIN NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'most_report_publication_issuer') THEN
+                    CREATE ROLE most_report_publication_issuer NOLOGIN NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'most_report_publication_operator') THEN
+                    CREATE ROLE most_report_publication_operator NOLOGIN NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'most_report_publication_runtime') THEN
+                    CREATE ROLE most_report_publication_runtime NOLOGIN NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'most_report_publication_outbox_worker') THEN
+                    CREATE ROLE most_report_publication_outbox_worker NOLOGIN NOINHERIT;
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM pg_roles
+                    WHERE rolname IN (
+                        'most_report_publication_owner',
+                        'most_report_publication_issuer',
+                        'most_report_publication_operator',
+                        'most_report_publication_runtime',
+                        'most_report_publication_outbox_worker'
+                    )
+                    AND (rolcanlogin OR rolinherit OR rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)
+                ) THEN
+                    RAISE EXCEPTION 'report_publication_role_shape_invalid' USING ERRCODE = '42501';
+                END IF;
+                EXECUTE format('GRANT most_report_publication_owner TO %I', current_user);
+                GRANT USAGE, CREATE ON SCHEMA public TO most_report_publication_owner;
+            END;
+            $$;
+            SQL);
+
         Schema::create('report_publications', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->string('code', 64);
@@ -28,6 +65,10 @@ return new class extends Migration
             $table->string('formula_version', 32);
             $table->string('renderer_version', 32);
             $table->char('release_git_sha', 40);
+            $table->text('release_artifact_json');
+            $table->char('release_artifact_sha256', 64);
+            $table->string('release_issuer', 64);
+            $table->string('release_key_id', 64);
             $table->string('published_by', 128);
             $table->timestampTz('published_at', 6);
             $table->timestampTz('disabled_at', 6)->nullable();
@@ -101,10 +142,34 @@ return new class extends Migration
             'official_manifest_sha256',
             'binding_sha256',
             'conformance_evidence_sha256',
+            'release_artifact_sha256',
         ] as $column) {
             DB::statement("ALTER TABLE report_publications ADD CONSTRAINT report_publications_{$column}_check CHECK (({$column} COLLATE \"C\") ~ '\\A[a-f0-9]{64}\\Z')");
         }
         DB::statement("ALTER TABLE report_publications ADD CONSTRAINT report_publications_release_sha_check CHECK ((release_git_sha COLLATE \"C\") ~ '\\A[a-f0-9]{40}\\Z')");
+        DB::unprepared(<<<'SQL'
+            CREATE OR REPLACE FUNCTION report_publication_release_checks_match(
+                artifact_json jsonb,
+                proof_document jsonb
+            )
+            RETURNS boolean
+            LANGUAGE sql
+            IMMUTABLE
+            STRICT
+            PARALLEL SAFE
+            AS $$
+                SELECT jsonb_typeof(artifact_json -> 'evidence' -> 'checks') = 'object'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM jsonb_each_text(artifact_json -> 'evidence' -> 'checks') AS check_state
+                        WHERE check_state.value <> 'passed'
+                    )
+                    AND (
+                        SELECT jsonb_agg(check_name ORDER BY check_name)
+                        FROM jsonb_object_keys(artifact_json -> 'evidence' -> 'checks') AS check_name
+                    ) = (proof_document -> 'ci' -> 'required_checks')
+            $$;
+            SQL);
         DB::statement(<<<'SQL'
             ALTER TABLE report_publications
                 ADD CONSTRAINT report_publications_state_shape_check
@@ -161,8 +226,66 @@ return new class extends Migration
                     AND ((proof_json ->> 'contract_version') = contract_version) IS TRUE
                     AND ((proof_json -> 'versions' ->> 'source_schema') = source_schema_version) IS TRUE
                     AND ((proof_json -> 'versions' ->> 'formula') = formula_version) IS TRUE
+                    AND ((proof_json -> 'versions' ->> 'contract') = contract_version) IS TRUE
                     AND ((proof_json -> 'versions' ->> 'renderer') = renderer_version) IS TRUE
                     AND ((proof_json -> 'release' ->> 'git_sha') = release_git_sha) IS TRUE
+                    AND ((proof_json -> 'release' ->> 'approver_identity') = published_by) IS TRUE
+                    AND ((proof_json -> 'release' ->> 'created_at_utc') =
+                        to_char(published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) IS TRUE
+                    AND ((proof_json -> 'ci' ->> 'commit_sha') = release_git_sha) IS TRUE
+                )
+            SQL);
+        DB::statement(<<<'SQL'
+            ALTER TABLE report_publications
+                ADD CONSTRAINT report_publications_release_artifact_shape_check
+                CHECK (
+                    (release_artifact_json::jsonb ?& ARRAY[
+                        'algorithm', 'artifact_id', 'evidence', 'issuer', 'key_id',
+                        'provenance', 'schema_version', 'signature', 'subject'
+                    ]) IS TRUE
+                    AND ((release_artifact_json::jsonb - ARRAY[
+                        'algorithm', 'artifact_id', 'evidence', 'issuer', 'key_id',
+                        'provenance', 'schema_version', 'signature', 'subject'
+                    ]) = '{}'::jsonb) IS TRUE
+                    AND (release_artifact_json::jsonb ->> 'artifact_id') = 'most.report_publication.release'
+                    AND (release_artifact_json::jsonb ->> 'schema_version') = '1.0.0'
+                    AND (release_artifact_json::jsonb ->> 'algorithm') = 'ed25519'
+                    AND (release_artifact_json::jsonb ->> 'issuer') = release_issuer
+                    AND (release_artifact_json::jsonb ->> 'key_id') = release_key_id
+                    AND ((release_artifact_json::jsonb ->> 'signature') COLLATE "C") ~ '\A[A-Za-z0-9_-]{86}\Z'
+                    AND ((release_artifact_json::jsonb -> 'subject') ?& ARRAY[
+                        'approver_identity', 'binding_sha256', 'candidate_definition_sha256',
+                        'candidate_manifest_sha256', 'code', 'conformance_evidence_sha256',
+                        'official_manifest_sha256', 'proof_sha256', 'release_created_at_utc',
+                        'release_git_sha'
+                    ]) IS TRUE
+                    AND (((release_artifact_json::jsonb -> 'subject') - ARRAY[
+                        'approver_identity', 'binding_sha256', 'candidate_definition_sha256',
+                        'candidate_manifest_sha256', 'code', 'conformance_evidence_sha256',
+                        'official_manifest_sha256', 'proof_sha256', 'release_created_at_utc',
+                        'release_git_sha'
+                    ]) = '{}'::jsonb) IS TRUE
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'code') = code
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'candidate_manifest_sha256') = candidate_manifest_sha256
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'candidate_definition_sha256') = candidate_definition_sha256
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'official_manifest_sha256') = official_manifest_sha256
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'binding_sha256') = binding_sha256
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'conformance_evidence_sha256') = conformance_evidence_sha256
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'proof_sha256') = proof_sha256
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'release_git_sha') = release_git_sha
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'approver_identity') = published_by
+                    AND (release_artifact_json::jsonb -> 'subject' ->> 'release_created_at_utc') =
+                        to_char(published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                    AND (release_artifact_json::jsonb -> 'provenance' ->> 'commit_sha') = release_git_sha
+                    AND (release_artifact_json::jsonb -> 'evidence' ->> 'commit_sha') = release_git_sha
+                    AND (release_artifact_json::jsonb -> 'evidence' ->> 'run_id') = (proof_json -> 'ci' ->> 'run_id')
+                    AND (release_artifact_json::jsonb -> 'evidence' ->> 'completed_at_utc') =
+                        (proof_json -> 'ci' ->> 'completed_at_utc')
+                    AND report_publication_release_checks_match(
+                        release_artifact_json::jsonb,
+                        proof_json
+                    ) IS TRUE
+                    AND encode(sha256(convert_to(release_artifact_json, 'UTF8')), 'hex') = release_artifact_sha256
                 )
             SQL);
         DB::statement(<<<'SQL'
@@ -226,6 +349,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_reject_mutation()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             BEGIN
                 IF TG_OP = 'DELETE' THEN
@@ -247,6 +372,10 @@ return new class extends Migration
                     OR OLD.formula_version IS DISTINCT FROM NEW.formula_version
                     OR OLD.renderer_version IS DISTINCT FROM NEW.renderer_version
                     OR OLD.release_git_sha IS DISTINCT FROM NEW.release_git_sha
+                    OR OLD.release_artifact_json IS DISTINCT FROM NEW.release_artifact_json
+                    OR OLD.release_artifact_sha256 IS DISTINCT FROM NEW.release_artifact_sha256
+                    OR OLD.release_issuer IS DISTINCT FROM NEW.release_issuer
+                    OR OLD.release_key_id IS DISTINCT FROM NEW.release_key_id
                     OR OLD.published_by IS DISTINCT FROM NEW.published_by
                     OR OLD.published_at IS DISTINCT FROM NEW.published_at
                     OR OLD.status <> 'published'
@@ -271,6 +400,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_append_transition_artifacts()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             DECLARE
                 transition_type text;
@@ -373,6 +504,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_require_event()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             DECLARE
                 required_type text;
@@ -466,6 +599,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_event_insert_guard()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             DECLARE
                 publication report_publications%ROWTYPE;
@@ -522,6 +657,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_event_reject_mutation()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             BEGIN
                 RAISE EXCEPTION 'report_publication_events_are_append_only' USING ERRCODE = '55000';
@@ -537,6 +674,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_feature_binding_guard()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             DECLARE
                 publication report_publications%ROWTYPE;
@@ -573,6 +712,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_append_feature_outbox()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             DECLARE
                 feature_payload jsonb;
@@ -626,6 +767,8 @@ return new class extends Migration
             CREATE OR REPLACE FUNCTION report_publication_outbox_guard()
             RETURNS trigger
             LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
             AS $$
             BEGIN
                 IF TG_OP = 'DELETE'
@@ -649,23 +792,304 @@ return new class extends Migration
                 BEFORE UPDATE OR DELETE ON report_publication_outbox
                 FOR EACH ROW EXECUTE FUNCTION report_publication_outbox_guard();
             SQL);
+
+        DB::unprepared(<<<'SQL'
+            CREATE OR REPLACE FUNCTION report_publication_promote(
+                p_id text,
+                p_code text,
+                p_candidate_definition_json jsonb,
+                p_proof_json jsonb,
+                p_proof_sha256 text,
+                p_candidate_manifest_sha256 text,
+                p_candidate_definition_sha256 text,
+                p_official_manifest_sha256 text,
+                p_binding_sha256 text,
+                p_conformance_evidence_sha256 text,
+                p_contract_version text,
+                p_source_schema_version text,
+                p_formula_version text,
+                p_renderer_version text,
+                p_release_git_sha text,
+                p_release_artifact_json text,
+                p_release_artifact_sha256 text,
+                p_release_issuer text,
+                p_release_key_id text,
+                p_published_by text,
+                p_published_at timestamptz
+            )
+            RETURNS void
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            BEGIN
+                PERFORM pg_advisory_xact_lock(hashtextextended('report-publication:' || p_code, 0));
+
+                INSERT INTO public.report_publications (
+                    id, code, status, candidate_definition_json, proof_json, proof_sha256,
+                    candidate_manifest_sha256, candidate_definition_sha256, official_manifest_sha256,
+                    binding_sha256, conformance_evidence_sha256, contract_version,
+                    source_schema_version, formula_version, renderer_version, release_git_sha,
+                    release_artifact_json, release_artifact_sha256, release_issuer, release_key_id,
+                    published_by, published_at, disabled_at, disabled_reason, disabled_by
+                ) VALUES (
+                    p_id, p_code, 'published', p_candidate_definition_json, p_proof_json, p_proof_sha256,
+                    p_candidate_manifest_sha256, p_candidate_definition_sha256, p_official_manifest_sha256,
+                    p_binding_sha256, p_conformance_evidence_sha256, p_contract_version,
+                    p_source_schema_version, p_formula_version, p_renderer_version, p_release_git_sha,
+                    p_release_artifact_json, p_release_artifact_sha256, p_release_issuer, p_release_key_id,
+                    p_published_by, p_published_at, NULL, NULL, NULL
+                );
+
+                INSERT INTO public.report_publication_features (
+                    code, publication_id, proof_sha256, mode,
+                    canary_organization_ids, canary_user_ids, updated_at
+                ) VALUES (
+                    p_code, p_id, p_proof_sha256, 'off', '[]'::jsonb, '[]'::jsonb, p_published_at
+                )
+                ON CONFLICT (code) DO UPDATE
+                    SET publication_id = EXCLUDED.publication_id,
+                        proof_sha256 = EXCLUDED.proof_sha256,
+                        mode = EXCLUDED.mode,
+                        canary_organization_ids = EXCLUDED.canary_organization_ids,
+                        canary_user_ids = EXCLUDED.canary_user_ids,
+                        updated_at = EXCLUDED.updated_at
+                    WHERE report_publication_features.mode = 'disabled';
+
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'report_publication_feature_rebind_conflict' USING ERRCODE = '23514';
+                END IF;
+            END;
+            $$;
+
+            CREATE OR REPLACE FUNCTION report_publication_disable(
+                p_publication_id text,
+                p_reason text,
+                p_actor_identity text
+            )
+            RETURNS timestamptz
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                disabled_at_value timestamptz;
+            BEGIN
+                UPDATE public.report_publications
+                SET status = 'disabled',
+                    disabled_at = GREATEST(clock_timestamp(), published_at),
+                    disabled_reason = p_reason,
+                    disabled_by = p_actor_identity
+                WHERE id = p_publication_id
+                    AND status = 'published'
+                RETURNING disabled_at INTO disabled_at_value;
+
+                IF disabled_at_value IS NULL THEN
+                    RAISE EXCEPTION 'report_publication_not_active' USING ERRCODE = 'P0002';
+                END IF;
+
+                RETURN disabled_at_value;
+            END;
+            $$;
+
+            CREATE OR REPLACE FUNCTION report_publication_configure_feature(
+                p_code text,
+                p_publication_id text,
+                p_proof_sha256 text,
+                p_mode text,
+                p_canary_organization_ids jsonb,
+                p_canary_user_ids jsonb
+            )
+            RETURNS timestamptz
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                configured_at timestamptz;
+                current_feature public.report_publication_features%ROWTYPE;
+            BEGIN
+                PERFORM 1
+                FROM public.report_publications
+                WHERE id = p_publication_id
+                    AND code = p_code
+                    AND proof_sha256 = p_proof_sha256
+                    AND status = 'published'
+                FOR UPDATE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'report_publication_feature_stale_identity' USING ERRCODE = 'P0002';
+                END IF;
+
+                SELECT * INTO current_feature
+                FROM public.report_publication_features
+                WHERE code = p_code
+                    AND publication_id = p_publication_id
+                    AND proof_sha256 = p_proof_sha256
+                FOR UPDATE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'report_publication_feature_stale_identity' USING ERRCODE = 'P0002';
+                END IF;
+                IF current_feature.mode = p_mode
+                    AND current_feature.canary_organization_ids = p_canary_organization_ids
+                    AND current_feature.canary_user_ids = p_canary_user_ids THEN
+                    RETURN current_feature.updated_at;
+                END IF;
+
+                configured_at := GREATEST(clock_timestamp(), current_feature.updated_at);
+                UPDATE public.report_publication_features
+                SET mode = p_mode,
+                    canary_organization_ids = p_canary_organization_ids,
+                    canary_user_ids = p_canary_user_ids,
+                    updated_at = configured_at
+                WHERE code = p_code
+                    AND publication_id = p_publication_id
+                    AND proof_sha256 = p_proof_sha256;
+
+                RETURN configured_at;
+            END;
+            $$;
+
+            CREATE OR REPLACE FUNCTION report_publication_mark_outbox_delivered(
+                p_outbox_id text,
+                p_delivered_at timestamptz
+            )
+            RETURNS void
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            BEGIN
+                UPDATE public.report_publication_outbox
+                SET delivered_at = p_delivered_at
+                WHERE id = p_outbox_id
+                    AND delivered_at IS NULL;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'report_publication_outbox_not_pending' USING ERRCODE = 'P0002';
+                END IF;
+            END;
+            $$;
+            SQL);
+
+        DB::unprepared(<<<'SQL'
+            ALTER TABLE report_publications OWNER TO most_report_publication_owner;
+            ALTER TABLE report_publication_events OWNER TO most_report_publication_owner;
+            ALTER TABLE report_publication_features OWNER TO most_report_publication_owner;
+            ALTER TABLE report_publication_outbox OWNER TO most_report_publication_owner;
+
+            ALTER FUNCTION report_publication_positive_unique_ids(jsonb) OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_release_checks_match(jsonb, jsonb)
+                OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_reject_mutation() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_append_transition_artifacts() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_require_event() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_event_insert_guard() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_event_reject_mutation() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_feature_binding_guard() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_append_feature_outbox() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_outbox_guard() OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_promote(
+                text, text, jsonb, jsonb, text, text, text, text, text, text, text,
+                text, text, text, text, text, text, text, text, text, timestamptz
+            ) OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_disable(text, text, text) OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_configure_feature(text, text, text, text, jsonb, jsonb)
+                OWNER TO most_report_publication_owner;
+            ALTER FUNCTION report_publication_mark_outbox_delivered(text, timestamptz)
+                OWNER TO most_report_publication_owner;
+
+            REVOKE ALL ON TABLE report_publications, report_publication_events,
+                report_publication_features, report_publication_outbox FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_positive_unique_ids(jsonb) FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_release_checks_match(jsonb, jsonb) FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_reject_mutation() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_append_transition_artifacts() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_require_event() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_event_insert_guard() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_event_reject_mutation() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_feature_binding_guard() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_append_feature_outbox() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_outbox_guard() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_promote(
+                text, text, jsonb, jsonb, text, text, text, text, text, text, text,
+                text, text, text, text, text, text, text, text, text, timestamptz
+            ) FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_disable(text, text, text) FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_configure_feature(text, text, text, text, jsonb, jsonb)
+                FROM PUBLIC;
+            REVOKE ALL ON FUNCTION report_publication_mark_outbox_delivered(text, timestamptz) FROM PUBLIC;
+
+            GRANT SELECT ON TABLE report_publications, report_publication_features
+                TO most_report_publication_runtime;
+            GRANT SELECT ON TABLE report_publications, report_publication_events,
+                report_publication_features, report_publication_outbox
+                TO most_report_publication_issuer, most_report_publication_operator;
+            GRANT SELECT ON TABLE report_publication_outbox TO most_report_publication_outbox_worker;
+            GRANT EXECUTE ON FUNCTION report_publication_promote(
+                text, text, jsonb, jsonb, text, text, text, text, text, text, text,
+                text, text, text, text, text, text, text, text, text, timestamptz
+            ) TO most_report_publication_issuer;
+            GRANT EXECUTE ON FUNCTION report_publication_disable(text, text, text),
+                report_publication_configure_feature(text, text, text, text, jsonb, jsonb)
+                TO most_report_publication_operator;
+            GRANT EXECUTE ON FUNCTION report_publication_mark_outbox_delivered(text, timestamptz)
+                TO most_report_publication_outbox_worker;
+
+            REVOKE CREATE ON SCHEMA public FROM most_report_publication_owner;
+            REVOKE most_report_publication_owner FROM CURRENT_USER;
+            SQL);
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('report_publication_outbox');
-        Schema::dropIfExists('report_publication_features');
-        Schema::dropIfExists('report_publication_events');
-        Schema::dropIfExists('report_publications');
+        DB::unprepared(<<<'SQL'
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'most_report_publication_owner') THEN
+                    EXECUTE format('GRANT most_report_publication_owner TO %I', current_user);
+                END IF;
+            END;
+            $$;
+            SQL);
+        DB::statement('SET ROLE most_report_publication_owner');
 
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_outbox_guard()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_append_feature_outbox()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_feature_binding_guard()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_require_event()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_append_transition_artifacts()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_event_reject_mutation()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_event_insert_guard()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_reject_mutation()');
-        DB::statement('DROP FUNCTION IF EXISTS report_publication_positive_unique_ids(jsonb)');
+        try {
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_mark_outbox_delivered(text, timestamptz)');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_configure_feature(text, text, text, text, jsonb, jsonb)');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_disable(text, text, text)');
+            DB::statement(<<<'SQL'
+                DROP FUNCTION IF EXISTS report_publication_promote(
+                    text, text, jsonb, jsonb, text, text, text, text, text, text, text,
+                    text, text, text, text, text, text, text, text, text, timestamptz
+                )
+                SQL);
+
+            Schema::dropIfExists('report_publication_outbox');
+            Schema::dropIfExists('report_publication_features');
+            Schema::dropIfExists('report_publication_events');
+            Schema::dropIfExists('report_publications');
+
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_outbox_guard()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_append_feature_outbox()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_feature_binding_guard()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_require_event()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_append_transition_artifacts()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_event_reject_mutation()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_event_insert_guard()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_reject_mutation()');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_positive_unique_ids(jsonb)');
+            DB::statement('DROP FUNCTION IF EXISTS report_publication_release_checks_match(jsonb, jsonb)');
+        } finally {
+            DB::statement('RESET ROLE');
+            DB::unprepared(<<<'SQL'
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'most_report_publication_owner') THEN
+                        REVOKE USAGE, CREATE ON SCHEMA public FROM most_report_publication_owner;
+                        EXECUTE format('REVOKE most_report_publication_owner FROM %I', current_user);
+                    END IF;
+                END;
+                $$;
+                SQL);
+        }
     }
 };

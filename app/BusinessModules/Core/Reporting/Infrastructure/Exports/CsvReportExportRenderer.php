@@ -65,7 +65,7 @@ final class CsvReportExportRenderer implements ReportExportRenderer
             foreach ($chunk->rows as $row) {
                 $cells = [];
                 foreach ($data->columns as $columnId) {
-                    if (!array_key_exists($columnId, $row->values)) {
+                    if (! array_key_exists($columnId, $row->values)) {
                         throw $this->limit();
                     }
 
@@ -87,7 +87,7 @@ final class CsvReportExportRenderer implements ReportExportRenderer
             foreach ($data->columns as $columnId) {
                 if (array_key_exists($columnId, $source->result->totals)) {
                     $value = $source->result->totals[$columnId];
-                } elseif (!$labelPlaced) {
+                } elseif (! $labelPlaced) {
                     $value = $this->totalLabel($data);
                     $labelPlaced = true;
                 } else {
@@ -107,13 +107,13 @@ final class CsvReportExportRenderer implements ReportExportRenderer
         if ($data->format !== 'csv'
             || count($data->columns) > $this->limits->maxColumns
             || ($this->definitionHash !== null
-                && (!hash_equals($this->definitionHash, $source->run->definitionHash->value)
-                    || !hash_equals((string) $this->rendererVersion, $source->rendererVersion)))) {
+                && (! hash_equals($this->definitionHash, $source->run->definitionHash->value)
+                    || ! hash_equals((string) $this->rendererVersion, $source->rendererVersion)))) {
             throw $this->limit();
         }
 
         foreach ($data->columns as $columnId) {
-            if (!isset($schemaIds[$columnId])) {
+            if (! isset($schemaIds[$columnId])) {
                 throw $this->limit();
             }
         }
@@ -126,11 +126,11 @@ final class CsvReportExportRenderer implements ReportExportRenderer
         int $startedAt,
     ): void {
         if ($stream->cancellationRequested()
-            || !$chunk instanceof ReportRowChunk
+            || ! $chunk instanceof ReportRowChunk
             || count($chunk->rows) > $this->limits->maxChunkRows
-            || !hash_equals($source->snapshot->id, $chunk->snapshotId)
-            || !hash_equals($source->run->queryHash->value, $chunk->queryHash->value)
-            || !hash_equals($source->snapshot->sourceHash->value, $chunk->sourceHash->value)
+            || ! hash_equals($source->snapshot->id, $chunk->snapshotId)
+            || ! hash_equals($source->run->queryHash->value, $chunk->queryHash->value)
+            || ! hash_equals($source->snapshot->sourceHash->value, $chunk->sourceHash->value)
             || (hrtime(true) - $startedAt) > $this->limits->maxElapsedSeconds * 1_000_000_000) {
             throw $this->limit();
         }
@@ -166,7 +166,7 @@ final class CsvReportExportRenderer implements ReportExportRenderer
             $cell = str_replace('.', ',', $cell);
         }
 
-        if ($neutralize && !$numeric && preg_match('/^[=+\-@\t\r]/u', $cell) === 1) {
+        if ($neutralize && ! $numeric && preg_match('/^[=+\-@\t\r]/u', $cell) === 1) {
             return "'".$cell;
         }
 
@@ -185,7 +185,7 @@ final class CsvReportExportRenderer implements ReportExportRenderer
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_DEPENDENCY_FAILED);
             }
             $line = stream_get_contents($handle);
-            if (!is_string($line)) {
+            if (! is_string($line)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_DEPENDENCY_FAILED);
             }
 
@@ -217,6 +217,11 @@ final class CsvReportExportRenderer implements ReportExportRenderer
     private function totalLabel(CreateReportExportData $data): string
     {
         return trans_message('reports.exports.total_label', [], explode('-', $data->locale)[0]);
+    }
+
+    public static function format(): string
+    {
+        return 'csv';
     }
 
     private function limit(): ReportContractException

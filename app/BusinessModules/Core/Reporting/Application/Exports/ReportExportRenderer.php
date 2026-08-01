@@ -9,6 +9,8 @@ use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 
 interface ReportExportRenderer
 {
+    public static function format(): string;
+
     /** @param iterable<\App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunk> $chunks */
     public function render(
         ReportRunExportSource $source,

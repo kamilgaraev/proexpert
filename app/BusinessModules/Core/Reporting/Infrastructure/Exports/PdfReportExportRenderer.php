@@ -54,7 +54,7 @@ final class PdfReportExportRenderer implements ReportExportRenderer
             $definition->definition->rendererVersion,
         );
         $budget = $this->budgets[$key] ?? null;
-        if (!$budget instanceof ReportPdfRenderBudget) {
+        if (! $budget instanceof ReportPdfRenderBudget) {
             throw $this->limit();
         }
 
@@ -75,11 +75,11 @@ final class PdfReportExportRenderer implements ReportExportRenderer
         ReportArtifactStream $stream,
     ): int {
         if ($data->format !== 'pdf'
-            || !$this->budget instanceof ReportPdfRenderBudget
+            || ! $this->budget instanceof ReportPdfRenderBudget
             || $this->definitionHash === null
             || $this->rendererVersion === null
-            || !hash_equals($this->definitionHash, $source->run->definitionHash->value)
-            || !hash_equals($this->rendererVersion, $source->rendererVersion)) {
+            || ! hash_equals($this->definitionHash, $source->run->definitionHash->value)
+            || ! hash_equals($this->rendererVersion, $source->rendererVersion)) {
             throw $this->limit();
         }
 
@@ -121,6 +121,7 @@ final class PdfReportExportRenderer implements ReportExportRenderer
             if (is_string($key) && $value instanceof ReportPdfRenderBudget
                 && preg_match('/^[a-f0-9]{64}@.+$/D', $key) === 1) {
                 $normalized[$key] = $value;
+
                 continue;
             }
             if (is_array($value)
@@ -129,6 +130,7 @@ final class PdfReportExportRenderer implements ReportExportRenderer
                 && is_string($value['renderer_version'])
                 && $value['budget'] instanceof ReportPdfRenderBudget) {
                 $normalized[self::budgetKey($value['definition_hash'], $value['renderer_version'])] = $value['budget'];
+
                 continue;
             }
 
@@ -136,6 +138,11 @@ final class PdfReportExportRenderer implements ReportExportRenderer
         }
 
         return $normalized;
+    }
+
+    public static function format(): string
+    {
+        return 'pdf';
     }
 
     private function limit(): ReportContractException

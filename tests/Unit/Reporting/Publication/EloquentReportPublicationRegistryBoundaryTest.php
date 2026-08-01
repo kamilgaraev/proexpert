@@ -17,6 +17,7 @@ use InvalidArgumentException;
 use LogicException;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\Publication\ReportPublicationFixtureFactory;
+use Tests\Support\Reporting\Publication\ReportPublicationReleaseArtifactTestFactory;
 
 final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
 {
@@ -26,18 +27,7 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
         $eligible = $fixture['eligible'];
         $query = $this->createMock(Builder::class);
         $query->method('where')->willReturnSelf();
-        $query->method('first')->willReturn((object) [
-            'id' => '01J00000000000000000000000',
-            'code' => $eligible->candidate->code,
-            'status' => 'published',
-            'candidate_definition_json' => CanonicalJson::encode($eligible->candidateDocument),
-            'proof_json' => $eligible->proof->canonicalBytes(),
-            'proof_sha256' => $eligible->proofHash->value,
-            'release_git_sha' => $eligible->release->gitSha,
-            'published_at' => $eligible->release->createdAtUtc(),
-            'disabled_at' => null,
-            'disabled_reason' => null,
-        ]);
+        $query->method('first')->willReturn((object) $this->persistedRow($eligible));
         $connection = $this->createMock(ConnectionInterface::class);
         $connection->method('table')->willReturn($query);
         $registry = new EloquentReportPublicationRegistry(
@@ -68,7 +58,7 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             $valid->candidateManifestHash,
             $valid->officialManifestHash,
             $valid->release,
-            $valid->ciArtifactBytes."\n",
+            $valid->releaseArtifactBytes."\n",
         );
         $query = $this->createMock(Builder::class);
         $query->method('where')->willReturnSelf();
@@ -109,7 +99,7 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             $candidate->candidateManifestHash,
             $candidate->officialManifestHash,
             $candidate->release,
-            $candidate->ciArtifactBytes."\n",
+            $candidate->releaseArtifactBytes."\n",
         );
         $query = $this->createMock(Builder::class);
         $query->method('where')->willReturnSelf();
@@ -145,11 +135,11 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             'completed_at_utc' => '2026-08-01T03:00:00.000000Z',
             'run_id' => 'ci-2002',
         ];
-        $ciArtifact = CanonicalJson::encode($ciPayload);
+        $ciEvidenceBytes = CanonicalJson::encode($ciPayload);
         $payload['ci'] = [
             'run_id' => $ciPayload['run_id'],
             'commit_sha' => $releaseSha,
-            'suite_sha256' => hash('sha256', $ciArtifact),
+            'suite_sha256' => hash('sha256', $ciEvidenceBytes),
             'completed_at_utc' => $ciPayload['completed_at_utc'],
             'required_checks' => $payload['ci']['required_checks'],
         ];
@@ -164,6 +154,13 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             new DateTimeImmutable('2026-08-01T04:00:00.000000+00:00'),
             'release-bot@most',
         );
+        $releaseArtifact = ReportPublicationReleaseArtifactTestFactory::issue(
+            $proof,
+            $previous->candidateManifestHash,
+            $previous->officialManifestHash,
+            $release,
+            $ciPayload,
+        );
         $publication = new EligibleReportPublication(
             $previous->candidate,
             $previous->candidateDocument,
@@ -174,7 +171,7 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             $previous->candidateManifestHash,
             $previous->officialManifestHash,
             $release,
-            $ciArtifact,
+            $releaseArtifact,
         );
         $query = $this->createMock(Builder::class);
         $query->method('where')->willReturnSelf();
@@ -209,6 +206,9 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
         ?string $disabledAt = null,
         ?string $disabledReason = null,
     ): array {
+        $artifact = json_decode($publication->releaseArtifactBytes, true, 512, JSON_THROW_ON_ERROR);
+        $proof = $publication->proof->payload();
+
         return [
             'id' => '01J00000000000000000000000',
             'code' => $publication->candidate->code,
@@ -216,7 +216,17 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             'candidate_definition_json' => CanonicalJson::encode($publication->candidateDocument),
             'proof_json' => $publication->proof->canonicalBytes(),
             'proof_sha256' => $publication->proofHash->value,
+            'candidate_manifest_sha256' => $publication->candidateManifestHash->value,
+            'candidate_definition_sha256' => $publication->candidate->definitionHash->value,
+            'official_manifest_sha256' => $publication->officialManifestHash->value,
+            'binding_sha256' => $proof['binding_sha256'],
+            'conformance_evidence_sha256' => $proof['conformance_evidence_sha256'],
+            'release_artifact_json' => $publication->releaseArtifactBytes,
+            'release_artifact_sha256' => hash('sha256', $publication->releaseArtifactBytes),
+            'release_issuer' => $artifact['issuer'],
+            'release_key_id' => $artifact['key_id'],
             'release_git_sha' => $publication->release->gitSha,
+            'published_by' => $publication->release->approverIdentity,
             'published_at' => $publication->release->createdAtUtc(),
             'disabled_at' => $disabledAt,
             'disabled_reason' => $disabledReason,

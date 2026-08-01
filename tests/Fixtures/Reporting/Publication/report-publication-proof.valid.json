@@ -20,6 +20,10 @@
     "code": "project_portfolio_health",
     "components": [
         {
+            "class": "App\\BusinessModules\\Core\\Reporting\\Infrastructure\\Exports\\XlsxReportExportRenderer",
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
             "class": "Tests\\Support\\Reporting\\CatalogTestDataProvider",
             "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
@@ -41,6 +45,8 @@
             ],
             "fixture_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             "format": "xlsx",
+            "renderer_class": "App\\BusinessModules\\Core\\Reporting\\Infrastructure\\Exports\\XlsxReportExportRenderer",
+            "renderer_contract_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             "renderer_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
             "schema_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         }

@@ -18,12 +18,14 @@ final readonly class ReportPublicationRecord
         public DateTimeImmutable $publishedAt,
         public ?DateTimeImmutable $disabledAt,
         public ?string $disabledReason,
+        public ?string $releaseArtifactBytes = null,
     ) {
         if (! hash_equals($identity->proofHash->value, $proof->digest()->value)
             || ($status === ReportPublicationStatus::PUBLISHED
                 && ($disabledAt !== null || $disabledReason !== null))
             || ($status === ReportPublicationStatus::DISABLED
-                && ($disabledAt === null || $disabledReason === null))) {
+                && ($disabledAt === null || $disabledReason === null))
+            || ($releaseArtifactBytes !== null && $releaseArtifactBytes === '')) {
             throw new InvalidArgumentException('report_publication_record_invalid');
         }
     }

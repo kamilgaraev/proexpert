@@ -44,6 +44,29 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('AND proof_sha256 = NEW.proof_sha256', $source);
         self::assertStringContainsString('FOR KEY SHARE NOWAIT', $source);
         self::assertStringContainsString('report_publication_outbox_guard', $source);
+        self::assertStringContainsString('most_report_publication_owner', $source);
+        self::assertStringContainsString('most_report_publication_issuer', $source);
+        self::assertStringContainsString('most_report_publication_operator', $source);
+        self::assertStringContainsString('most_report_publication_runtime', $source);
+        self::assertStringContainsString('most_report_publication_outbox_worker', $source);
+        self::assertStringContainsString('SECURITY DEFINER', $source);
+        self::assertStringContainsString('SET search_path = pg_catalog, public', $source);
+        self::assertStringContainsString('report_publication_promote(', $source);
+        self::assertStringContainsString('report_publication_disable(', $source);
+        self::assertStringContainsString('report_publication_configure_feature(', $source);
+        self::assertStringContainsString('report_publication_mark_outbox_delivered(', $source);
+        self::assertStringContainsString('release_artifact_sha256', $source);
+        self::assertStringContainsString("(proof_json -> 'versions' ->> 'contract') = contract_version", $source);
+        self::assertStringContainsString("(proof_json -> 'release' ->> 'approver_identity') = published_by", $source);
+        self::assertStringContainsString('REVOKE ALL ON TABLE report_publications', $source);
+        self::assertStringContainsString(
+            'GRANT USAGE, CREATE ON SCHEMA public TO most_report_publication_owner',
+            $source,
+        );
+        self::assertStringContainsString(
+            'REVOKE CREATE ON SCHEMA public FROM most_report_publication_owner',
+            $source,
+        );
         self::assertStringContainsString('DROP FUNCTION IF EXISTS report_publication_require_event()', $source);
         self::assertStringNotContainsString('superseded', $source);
 
@@ -83,6 +106,8 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('test_raw_feature_mutation_writes_transactional_outbox', $source);
         self::assertStringContainsString('test_feature_update_fails_fast_while_publication_is_locked', $source);
         self::assertStringContainsString('test_persisted_canary_allowlist_denies_other_tenants', $source);
+        self::assertStringContainsString('test_runtime_role_cannot_forge_publication_event_or_outbox_rows', $source);
+        self::assertStringContainsString('test_issuer_role_promotes_only_through_the_owned_admission_function', $source);
     }
 
     public function test_existing_postgres_workflow_executes_publication_gate_fail_closed(): void
@@ -100,6 +125,8 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         ));
         self::assertStringContainsString('git rev-parse HEAD', $commands);
         self::assertStringContainsString('php artisan migrate:fresh --force', $commands);
+        self::assertStringContainsString('tests/Unit/Reporting/Publication', $commands);
+        self::assertStringContainsString('ReportPublicationProofSchemaTest.php', $commands);
         self::assertStringContainsString('ReportPublicationRegistryPostgresTest.php', $commands);
         self::assertStringContainsString('--fail-on-skipped', $commands);
 
