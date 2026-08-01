@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Application\Catalog\ImmutableReportDefini
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
+use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistryFactory;
 use App\BusinessModules\Core\Reporting\Application\SavedViews\ReportSavedViewVersionHasher;
 use App\BusinessModules\Core\Reporting\Application\SavedViews\StoredReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionCoordinator;
@@ -53,13 +54,19 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
-use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistryFactory;
 
 final class ReportingCatalogServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
         $this->app->singleton(ProjectReportPublicationReleaseRequestRegistryFactory::class);
+        $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots::class,
+            fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots(
+                (string) config('reporting.publication_release.bundle_root'),
+                (string) config('reporting.publication_release.candidate_root'),
+            ),
+        );
         $this->app->singleton(
             \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolverFactory::class,
             fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestResolverFactory => new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestResolverFactory(
@@ -102,6 +109,7 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
         $this->app->singleton(
             \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion::class,
             fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion => new \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion(
+                $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots::class),
                 new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader,
                 $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolverFactory::class),
                 $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestor::class),

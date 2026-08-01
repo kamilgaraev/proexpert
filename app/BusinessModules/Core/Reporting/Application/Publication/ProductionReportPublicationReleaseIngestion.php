@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Publication;
 
-use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier;
+use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
 use InvalidArgumentException;
 
 final readonly class ProductionReportPublicationReleaseIngestion
 {
     public function __construct(
+        private ReportPublicationReleaseTrustedRoots $roots,
         private ReportPublicationReleaseRequestFileLoader $requests,
         private ReportPublicationReleaseRequestResolverFactory $resolvers,
         private ReportPublicationReleaseIngestor $ingestor,
@@ -21,15 +22,13 @@ final readonly class ProductionReportPublicationReleaseIngestion
 
     /** @param int[] $organizationAllowlist @param int[] $userAllowlist */
     public function ingest(
-        string $bundleRoot,
         string $artifactName,
-        string $candidateRoot,
         ReportPublicationFeatureMode $mode = ReportPublicationFeatureMode::OFF,
         array $organizationAllowlist = [],
         array $userAllowlist = [],
     ): PublishedReportDefinition {
-        $bundleRoot = $this->trustedDirectory($bundleRoot);
-        $candidateRoot = $this->trustedDirectory($candidateRoot);
+        $bundleRoot = $this->roots->bundleRoot;
+        $candidateRoot = $this->roots->candidateRoot;
         if (preg_match('/^report-publication-[a-z][a-z0-9_]*-[a-f0-9]{64}$/D', $artifactName) !== 1) {
             $this->invalid();
         }
@@ -61,16 +60,6 @@ final readonly class ProductionReportPublicationReleaseIngestion
             $organizationAllowlist,
             $userAllowlist,
         );
-    }
-
-    private function trustedDirectory(string $directory): string
-    {
-        $resolved = realpath($directory);
-        if (! is_string($resolved) || is_link($directory) || ! is_dir($resolved)) {
-            $this->invalid();
-        }
-
-        return $resolved;
     }
 
     private function assertTrustedFile(string $path, string $directory): void

@@ -12,9 +12,7 @@ use InvalidArgumentException;
 final class IngestReportPublicationReleaseCommand extends Command
 {
     protected $signature = 'reports:publications:ingest-release
-        {--bundle-root= : Корень доверенного артефакта с подписанным выпуском}
         {--artifact-name= : Имя подписанного артефакта без расширения}
-        {--candidate-root= : Корень доверенного R15-кандидата}
         {--mode=off : Режим доступности отчёта}
         {--organization-id=* : Идентификатор организации для ограниченного режима}
         {--user-id=* : Идентификатор пользователя для ограниченного режима}';
@@ -29,9 +27,7 @@ final class IngestReportPublicationReleaseCommand extends Command
                 throw new InvalidArgumentException('report_publication_release_input_invalid');
             }
             $published = $ingestion->ingest(
-                $this->requiredOption('bundle-root'),
                 $this->requiredOption('artifact-name'),
-                $this->requiredOption('candidate-root'),
                 $mode,
                 $this->integerOptions('organization-id'),
                 $this->integerOptions('user-id'),

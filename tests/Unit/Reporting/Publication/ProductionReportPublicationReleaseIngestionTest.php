@@ -6,11 +6,11 @@ namespace Tests\Unit\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleFileLoader;
-use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseAdmission;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestor;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolver;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolverFactory;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationResolvedReleaseRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
@@ -58,8 +58,8 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
             [77],
         )->willReturn($this->published($fixture));
 
-        $published = $this->service($resolvers, $ingestor)->ingest(
-            $bundleRoot, $artifactName, $candidateRoot, ReportPublicationFeatureMode::ON, [42], [77],
+        $published = $this->service($bundleRoot, $candidateRoot, $resolvers, $ingestor)->ingest(
+            $artifactName, ReportPublicationFeatureMode::ON, [42], [77],
         );
 
         self::assertSame($fixture['eligible']->candidate->code, $published->definition->code);
@@ -77,7 +77,14 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
 
         $this->expectException(\InvalidArgumentException::class);
 
-        $this->service($resolvers, $ingestor)->ingest($bundleRoot, $artifactName, $candidateRoot);
+        $this->service($bundleRoot, $candidateRoot, $resolvers, $ingestor)->ingest($artifactName);
+    }
+
+    public function test_rejects_missing_configured_trusted_roots(): void
+    {
+        $this->expectExceptionMessage('report_publication_release_trusted_root_invalid');
+
+        new ReportPublicationReleaseTrustedRoots('', $this->root);
     }
 
     public function test_rejects_a_tampered_serialized_bundle_before_release_resolution(): void
@@ -92,7 +99,7 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
 
         $this->expectException(\InvalidArgumentException::class);
 
-        $this->service($resolvers, $ingestor)->ingest($bundleRoot, $artifactName, $candidateRoot);
+        $this->service($bundleRoot, $candidateRoot, $resolvers, $ingestor)->ingest($artifactName);
     }
 
     private function writeTrustedInputs(string $proof, string $artifact, string $commit): array
@@ -150,10 +157,13 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
     }
 
     private function service(
+        string $bundleRoot,
+        string $candidateRoot,
         ReportPublicationReleaseRequestResolverFactory $resolvers,
         ReportPublicationReleaseIngestor $ingestor,
     ): ProductionReportPublicationReleaseIngestion {
         return new ProductionReportPublicationReleaseIngestion(
+            new ReportPublicationReleaseTrustedRoots($bundleRoot, $candidateRoot),
             new ReportPublicationReleaseRequestFileLoader,
             $resolvers,
             $ingestor,
