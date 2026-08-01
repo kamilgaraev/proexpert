@@ -14,6 +14,7 @@ use DateTimeImmutable;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Query\Builder;
 use InvalidArgumentException;
+use LogicException;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\Publication\ReportPublicationFixtureFactory;
 
@@ -89,6 +90,45 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('report_publication_ineligible');
+
+        $registry->promote($forged);
+    }
+
+    public function test_different_proof_for_an_active_code_conflicts_before_candidate_revalidation(): void
+    {
+        $active = ReportPublicationFixtureFactory::eligible();
+        $different = ReportPublicationFixtureFactory::eligible('f');
+        $candidate = $different['eligible'];
+        $forged = new EligibleReportPublication(
+            $candidate->candidate,
+            $candidate->candidateDocument,
+            $candidate->binding,
+            $candidate->evidence,
+            $candidate->proof,
+            $candidate->proofHash,
+            $candidate->candidateManifestHash,
+            $candidate->officialManifestHash,
+            $candidate->release,
+            $candidate->ciArtifactBytes."\n",
+        );
+        $query = $this->createMock(Builder::class);
+        $query->method('where')->willReturnSelf();
+        $query->method('lockForUpdate')->willReturnSelf();
+        $query->method('first')->willReturn((object) $this->persistedRow($active['eligible']));
+        $connection = $this->createMock(ConnectionInterface::class);
+        $connection->method('transaction')->willReturnCallback(
+            static fn (callable $callback): mixed => $callback(),
+        );
+        $connection->method('select')->willReturn([]);
+        $connection->method('table')->willReturn($query);
+        $registry = new EloquentReportPublicationRegistry(
+            $connection,
+            $different['eligibility_service'],
+            new ReportDefinitionFactory,
+        );
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('report_publication_promotion_conflict');
 
         $registry->promote($forged);
     }

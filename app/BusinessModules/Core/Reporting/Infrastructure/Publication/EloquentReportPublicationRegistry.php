@@ -54,13 +54,25 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 ->where('status', ReportPublicationStatus::PUBLISHED->value)
                 ->lockForUpdate()
                 ->first();
-            $previousRow = $existing ?? $this->connection->table('report_publications')
-                ->where('code', $publication->candidate->code)
-                ->orderByDesc('published_at')
-                ->orderByDesc('id')
-                ->lockForUpdate()
-                ->first();
-            $previous = $previousRow === null ? null : $this->record((array) $previousRow);
+            $existingRecord = $existing === null ? null : $this->record((array) $existing);
+            if ($existingRecord !== null
+                && (! hash_equals($existingRecord->identity->proofHash->value, $publication->proofHash->value)
+                    || ! hash_equals(
+                        (string) $existing->official_manifest_sha256,
+                        $publication->officialManifestHash->value,
+                    ))) {
+                throw new LogicException('report_publication_promotion_conflict');
+            }
+            $previous = $existingRecord;
+            if ($previous === null) {
+                $previousRow = $this->connection->table('report_publications')
+                    ->where('code', $publication->candidate->code)
+                    ->orderByDesc('published_at')
+                    ->orderByDesc('id')
+                    ->lockForUpdate()
+                    ->first();
+                $previous = $previousRow === null ? null : $this->record((array) $previousRow);
+            }
             $publication = $this->eligibility->evaluate(
                 $publication->candidate,
                 $publication->candidateDocument,
@@ -73,17 +85,8 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 $publication->ciArtifactBytes,
                 $previous,
             )->publication();
-            if ($existing !== null) {
-                $record = $this->record((array) $existing);
-                if (! hash_equals($record->identity->proofHash->value, $publication->proofHash->value)
-                    || ! hash_equals(
-                        (string) $existing->official_manifest_sha256,
-                        $publication->officialManifestHash->value,
-                    )) {
-                    throw new LogicException('report_publication_promotion_conflict');
-                }
-
-                return $this->published($record);
+            if ($existingRecord !== null) {
+                return $this->published($existingRecord);
             }
 
             $id = (string) Str::ulid();
