@@ -14,6 +14,11 @@ final readonly class ReportDefinitionVisibilityResolver
 {
     public function __construct(private ReportDefinitionModuleAuthorizer $modules) {}
 
+    public function moduleAccessDecision(int $organizationId): ReportDefinitionModuleAccessDecision
+    {
+        return $this->modules->decision($organizationId);
+    }
+
     /** @param Closure(string): bool $permissionGranted */
     public function resolve(
         int $organizationId,
@@ -21,8 +26,10 @@ final readonly class ReportDefinitionVisibilityResolver
         ReportOperation $operation,
         ?string $exportFormat,
         Closure $permissionGranted,
+        ?ReportDefinitionModuleAccessDecision $moduleAccess = null,
     ): ReportVisibility {
-        if (! $this->modules->allows($organizationId, $definition)) {
+        $moduleAccess ??= $this->moduleAccessDecision($organizationId);
+        if (! $moduleAccess->allows($organizationId, $definition)) {
             return $this->denied();
         }
 

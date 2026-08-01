@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAccessDecision;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
@@ -49,8 +50,9 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             $holdingIds = $this->accessibleHoldingOrganizationIds($organizationId);
             $projectIds = $this->accessibleProjectIds($actorId, $organizationId, $holdingIds);
             $scope = new ReportScope($organizationId, $holdingIds, $projectIds, [], $timezone);
+            $moduleAccess = $this->visibilityResolver->moduleAccessDecision($organizationId);
 
-            return $this->authorizeInsideTransaction($actor, $scope, $target);
+            return $this->authorizeInsideTransaction($actor, $scope, $target, $moduleAccess);
         });
     }
 
@@ -67,6 +69,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             $scope = new ReportScope($organizationId, $holdingIds, $projectIds, [], $timezone);
             $occurredAt = new DateTimeImmutable;
             $correlationId = (string) Str::uuid();
+            $moduleAccess = $this->visibilityResolver->moduleAccessDecision($organizationId);
             $this->resources->authorizeAll($actor, $scope->organizationId, $scope->resources, $occurredAt);
             $authorizations = [];
             $context = null;
@@ -84,6 +87,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
                     $occurredAt,
                     false,
                     $correlationId,
+                    $moduleAccess,
                 );
                 if (! $authorization->visibility->canView) {
                     continue;
@@ -133,7 +137,9 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
                 }
             }
 
-            return $this->authorizeInsideTransaction($actor, $requestedScope, $target);
+            $moduleAccess = $this->visibilityResolver->moduleAccessDecision($requestedScope->organizationId);
+
+            return $this->authorizeInsideTransaction($actor, $requestedScope, $target, $moduleAccess);
         });
     }
 
@@ -167,6 +173,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             }
 
             $occurredAt = new DateTimeImmutable;
+            $moduleAccess = $this->visibilityResolver->moduleAccessDecision($requestedScope->organizationId);
             $this->resources->authorizeAll(
                 $actor,
                 $requestedScope->organizationId,
@@ -184,6 +191,8 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
                     $target,
                     $occurredAt,
                     true,
+                    null,
+                    $moduleAccess,
                 );
             }
 
@@ -195,11 +204,12 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         User $actor,
         ReportScope $scope,
         CurrentReportAuthorizationTarget $target,
+        ReportDefinitionModuleAccessDecision $moduleAccess,
     ): CurrentReportAuthorization {
         $occurredAt = new DateTimeImmutable;
         $this->resources->authorizeAll($actor, $scope->organizationId, $scope->resources, $occurredAt);
 
-        return $this->authorization($actor, $scope, $target, $occurredAt, true);
+        return $this->authorization($actor, $scope, $target, $occurredAt, true, null, $moduleAccess);
     }
 
     private function authorization(
@@ -208,9 +218,10 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         CurrentReportAuthorizationTarget $target,
         DateTimeImmutable $occurredAt,
         bool $assertOperation,
-        ?string $correlationId = null,
+        ?string $correlationId,
+        ReportDefinitionModuleAccessDecision $moduleAccess,
     ): CurrentReportAuthorization {
-        $permissions = $this->permissionVector((int) $actor->id, $scope, $target, $occurredAt);
+        $permissions = $this->permissionVector((int) $actor->id, $scope, $target, $occurredAt, $moduleAccess);
         $visibility = new ReportVisibility(
             $permissions['view'],
             $permissions['run'],
@@ -247,6 +258,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         ReportScope $scope,
         CurrentReportAuthorizationTarget $target,
         DateTimeImmutable $occurredAt,
+        ReportDefinitionModuleAccessDecision $moduleAccess,
     ): array {
         $visibility = $this->visibilityResolver->resolve(
             $scope->organizationId,
@@ -259,6 +271,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
                 $occurredAt,
                 $permission,
             ),
+            $moduleAccess,
         );
 
         return [

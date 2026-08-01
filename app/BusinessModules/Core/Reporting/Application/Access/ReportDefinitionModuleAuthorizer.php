@@ -12,6 +12,11 @@ final readonly class ReportDefinitionModuleAuthorizer
 {
     public function __construct(private ReportModuleEntitlement $entitlements) {}
 
+    public function decision(int $organizationId): ReportDefinitionModuleAccessDecision
+    {
+        return new ReportDefinitionModuleAccessDecision($organizationId, $this);
+    }
+
     public function allows(int $organizationId, ReportDefinition $definition): bool
     {
         if ($organizationId <= 0) {

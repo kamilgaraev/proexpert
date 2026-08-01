@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthoriza
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModuleEntitlement;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -18,6 +19,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -491,6 +493,78 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         );
     }
 
+    public function test_catalog_checks_each_source_module_once_and_rechecks_it_in_the_next_decision(): void
+    {
+        [$actor, $organization] = $this->actorFixture('all');
+        $entitlements = new MutableCurrentReportModuleEntitlement([
+            'act-reporting' => true,
+            'reports' => true,
+        ]);
+        $authorizer = $this->authorizer(entitlements: $entitlements);
+        $sourcePolicy = new ReportPermissionPolicy(
+            ['act_reports.view'],
+            ['act_reports.export.excel'],
+            [],
+            [],
+        );
+        $sourceFirst = (new ReportDefinitionBuilder)
+            ->code('source_first')
+            ->sourceModule('act-reporting')
+            ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
+            ->formats(['xlsx'])
+            ->permissionPolicy($sourcePolicy)
+            ->definitionHash(new Sha256Hash(str_repeat('1', 64)))
+            ->payload();
+        $sourceSecond = (new ReportDefinitionBuilder)
+            ->code('source_second')
+            ->sourceModule('act-reporting')
+            ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
+            ->formats(['xlsx'])
+            ->permissionPolicy($sourcePolicy)
+            ->definitionHash(new Sha256Hash(str_repeat('2', 64)))
+            ->payload();
+        $generic = (new ReportDefinitionBuilder)
+            ->code('generic_report')
+            ->sourceModule('reports')
+            ->definitionHash(new Sha256Hash(str_repeat('3', 64)))
+            ->payload();
+        $targets = array_map(
+            static fn (ReportDefinition $definition): CurrentReportAuthorizationTarget => new CurrentReportAuthorizationTarget(
+                $definition,
+                ReportOperation::VIEW,
+                null,
+            ),
+            [$sourceFirst, $sourceSecond, $generic],
+        );
+
+        $allowed = $authorizer->authorizeCatalog(
+            (int) $actor->id,
+            (int) $organization->id,
+            new DateTimeZone('UTC'),
+            $targets,
+        );
+
+        self::assertCount(3, $allowed->authorizations);
+        self::assertSame([
+            ((int) $organization->id).':act-reporting' => 1,
+            ((int) $organization->id).':reports' => 1,
+        ], $entitlements->calls);
+
+        $entitlements->allowed['act-reporting'] = false;
+        $revoked = $authorizer->authorizeCatalog(
+            (int) $actor->id,
+            (int) $organization->id,
+            new DateTimeZone('UTC'),
+            $targets,
+        );
+
+        self::assertSame([$generic->definitionHash->value], array_keys($revoked->authorizations));
+        self::assertSame([
+            ((int) $organization->id).':act-reporting' => 2,
+            ((int) $organization->id).':reports' => 2,
+        ], $entitlements->calls);
+    }
+
     private function assertOrganizationDenied(User $actor, Organization $organization): void
     {
         try {
@@ -547,13 +621,15 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         ]);
     }
 
-    private function authorizer(?CurrentReportAbacEvaluator $evaluator = null): LaravelCurrentReportScopeAuthorizer
-    {
+    private function authorizer(
+        ?CurrentReportAbacEvaluator $evaluator = null,
+        ?ReportModuleEntitlement $entitlements = null,
+    ): LaravelCurrentReportScopeAuthorizer {
         return new LaravelCurrentReportScopeAuthorizer(
             $evaluator ?? new AlwaysGrantedCurrentReportEvaluator,
             new LaravelReportScopedResourceAuthorizerRegistry([]),
             new ReportDefinitionVisibilityResolver(
-                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement),
+                new ReportDefinitionModuleAuthorizer($entitlements ?? new DeterministicReportModuleEntitlement),
             ),
         );
     }
@@ -652,6 +728,29 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         sort($ids, SORT_NUMERIC);
 
         return $ids;
+    }
+}
+
+final class MutableCurrentReportModuleEntitlement implements ReportModuleEntitlement
+{
+    /** @var array<string, bool> */
+    public array $allowed;
+
+    /** @var array<string, int> */
+    public array $calls = [];
+
+    /** @param array<string, bool> $allowed */
+    public function __construct(array $allowed)
+    {
+        $this->allowed = $allowed;
+    }
+
+    public function organizationHasModule(int $organizationId, string $moduleSlug): bool
+    {
+        $key = $organizationId.':'.$moduleSlug;
+        $this->calls[$key] = ($this->calls[$key] ?? 0) + 1;
+
+        return $this->allowed[$moduleSlug] ?? false;
     }
 }
 
