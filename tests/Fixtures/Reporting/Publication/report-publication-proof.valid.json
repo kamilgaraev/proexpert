@@ -1,0 +1,85 @@
+{
+    "binding_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "candidate_definition_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "candidate_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "ci": {
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "completed_at_utc": "2026-08-01T01:02:03.123456Z",
+        "required_checks": [
+            "binding_contract",
+            "drill_down_contract",
+            "export_xlsx_contract",
+            "formula_contract",
+            "postgresql_contract",
+            "rbac_contract",
+            "source_contract"
+        ],
+        "run_id": "ci-1001",
+        "suite_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "code": "project_portfolio_health",
+    "components": [
+        {
+            "class": "Tests\\Support\\Reporting\\CatalogTestDataProvider",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+    ],
+    "conformance_evidence_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "contract_version": "1.0.0",
+    "drill_down_contract": {
+        "assertion_codes": ["drill_down.schema.passed"],
+        "schema_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "export_contracts": [
+        {
+            "assertion_codes": [
+                "export.xlsx.fixture.passed",
+                "export.xlsx.provenance.passed",
+                "export.xlsx.redaction.passed",
+                "export.xlsx.renderer.passed",
+                "export.xlsx.schema.passed"
+            ],
+            "fixture_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "format": "xlsx",
+            "renderer_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "schema_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+    ],
+    "fixture_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "formula": {
+        "assertion_codes": ["formula.identity.passed"],
+        "formula_version": "1.0.0",
+        "totals_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "permissions": {
+        "audit": [],
+        "download": ["budgeting.portfolio_dashboard.export"],
+        "export": ["budgeting.portfolio_dashboard.export"],
+        "run": ["budgeting.portfolio_dashboard.view"],
+        "sensitive": [],
+        "view": ["budgeting.portfolio_dashboard.view"]
+    },
+    "release": {
+        "approver_identity": "release-bot@most",
+        "created_at_utc": "2026-08-01T02:03:04.654321Z",
+        "git_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "semantic_fingerprints": {
+        "formula": "5555555555555555555555555555555555555555555555555555555555555555",
+        "source": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "source": {
+        "assertion_codes": ["source.identity.passed"],
+        "row_count": 1,
+        "rows_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "snapshot_id": "snapshot-1",
+        "snapshot_kind": "sealed_snapshot",
+        "source_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    "versions": {
+        "contract": "1.0.0",
+        "formula": "1.0.0",
+        "renderer": "1.0.0",
+        "source_schema": "1.0.0"
+    }
+}

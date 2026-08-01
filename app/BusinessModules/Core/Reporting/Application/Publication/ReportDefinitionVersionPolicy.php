@@ -54,6 +54,23 @@ final class ReportDefinitionVersionPolicy
         return $diff;
     }
 
+    public function assertInitial(
+        array $candidate,
+        ReportDefinitionConformanceEvidence $conformance,
+    ): void {
+        $candidateVersions = $this->versions($candidate);
+        if (! hash_equals($candidateVersions['formula'], $conformance->formula->formulaVersion)
+            || ! hash_equals($candidateVersions['source_schema'], $conformance->sourceSchemaVersion)) {
+            throw new InvalidArgumentException('report_definition_version_evidence_mismatch');
+        }
+
+        $candidateFingerprints = $this->semanticFingerprints($candidate);
+        if (! hash_equals($candidateFingerprints['formula'], $this->fingerprints->formula($conformance))
+            || ! hash_equals($candidateFingerprints['source'], $this->fingerprints->source($candidate, $conformance))) {
+            throw new InvalidArgumentException('report_definition_semantic_fingerprint_evidence_mismatch');
+        }
+    }
+
     public function diff(
         array $current,
         array $candidate,

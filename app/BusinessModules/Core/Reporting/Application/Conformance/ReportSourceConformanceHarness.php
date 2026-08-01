@@ -663,6 +663,9 @@ final class ReportSourceConformanceHarness
             $binding->rowQuery::class,
             $this->drillExpectations::class,
         ];
+        if ($binding->readinessProbe !== null) {
+            $components[] = $binding->readinessProbe::class;
+        }
         $hashes = [];
         foreach ($components as $class) {
             $file = (new ReflectionClass($class))->getFileName();

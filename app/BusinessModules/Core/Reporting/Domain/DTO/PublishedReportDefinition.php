@@ -14,8 +14,10 @@ final readonly class PublishedReportDefinition
 
     public Sha256Hash $definitionHash;
 
-    public function __construct(public ReportDefinition $definition)
-    {
+    public function __construct(
+        public ReportDefinition $definition,
+        public ?ReportPublicationIdentity $publicationIdentity = null,
+    ) {
         if ($definition->publicationReadiness !== ReportPublicationReadiness::PUBLISHED) {
             throw new InvalidArgumentException('published_definition_readiness_invalid');
         }
