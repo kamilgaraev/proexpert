@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Application\Publication;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportConformanceEvidenceRepository;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Core\Reporting\Infrastructure\Conformance\FilesystemReportConformanceEvidenceRepository;
@@ -48,6 +49,7 @@ final class ProjectReportPublicationReleaseRequestRegistryFactory
             new EligibilityServiceReportPublicationReleaseGate(
                 $container->make(ReportPublicationEligibilityService::class),
             ),
+            $container->make(ReportPublicationRegistry::class),
         );
     }
 }

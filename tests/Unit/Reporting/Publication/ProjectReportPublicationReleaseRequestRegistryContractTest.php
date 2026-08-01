@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -26,8 +27,9 @@ final class ProjectReportPublicationReleaseRequestRegistryContractTest extends T
             'bindings',
             'evidence',
             'gate',
-            'previous',
+            'publications',
         ], $parameters);
         self::assertSame(Sha256Hash::class, $constructor->getParameters()[2]->getType()?->getName());
+        self::assertSame(ReportPublicationRegistry::class, $constructor->getParameters()[8]->getType()?->getName());
     }
 }

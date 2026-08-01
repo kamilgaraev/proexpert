@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Application\Publication;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportConformanceEvidenceRepository;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationRecord;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\ProcurementCycleReleaseCandidateResolver;
@@ -26,7 +26,7 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry
         private ProcurementCycleReportBindingFactory $bindings,
         private ReportConformanceEvidenceRepository $evidence,
         private ReportPublicationReleaseEligibilityGate $gate,
-        private ?ReportPublicationRecord $previous = null,
+        private ReportPublicationRegistry $publications,
     ) {
         $root = realpath($trustedDirectory);
         if (! is_string($root) || is_link($trustedDirectory) || ! is_dir($root)
@@ -46,6 +46,7 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry
         }
         $definition = $this->definitions->fromManifest($definitionDocument);
         $candidate = new CandidateReportDefinition($definition);
+        $previous = $this->publications->currentRecord($candidate->code);
         $binding = $this->bindings->create($definition);
         $proof = ReportPublicationProof::fromArray($documents['r15-proof-template.json']);
         $fixtureHash = new Sha256Hash($proof->payload()['fixture_sha256']);
@@ -77,7 +78,7 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry
             $proof->payload()['ci']['required_checks'],
             $candidateManifestBytes,
             $this->officialManifestBytes,
-            $this->previous,
+            $previous,
         );
         $admission->assertProductionSafe();
 
