@@ -51,8 +51,8 @@ PEM;
         $clock = new FixedR15Clock(new DateTimeImmutable('@2000000000'));
         $http = new FakeR15HttpClient($this->jwtResponse($this->token($privateKey)), ['keys' => [$jwk]]);
         $verifier = $this->verifier($http, $clock);
-        $verifier->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
-        $verifier->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
+        $verifier->verify('https://pipelines.actions.githubusercontent.com/idtoken', 'endpoint-token', str_repeat('a', 40), '123');
+        $verifier->verify('https://pipelines.actions.githubusercontent.com/idtoken', 'endpoint-token', str_repeat('a', 40), '123');
 
         self::assertSame(1, $http->jwksRequests);
     }
@@ -93,7 +93,7 @@ PEM;
         $http = new FakeR15HttpClient($this->jwtResponse($jwt), $jwks);
 
         $this->expectException(RuntimeException::class);
-        $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
+        $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://pipelines.actions.githubusercontent.com/idtoken', 'endpoint-token', str_repeat('a', 40), '123');
     }
 
     /** @return array<string,array{string}> */
@@ -114,12 +114,35 @@ PEM;
         }
     }
 
+    #[DataProvider('untrustedEndpointUrls')]
+    public function test_rejects_untrusted_actions_subdomains_ports_and_paths_before_any_request(string $url): void
+    {
+        [, $jwk] = $this->key();
+        $http = new FakeR15HttpClient('{}', ['keys' => [$jwk]]);
+        $this->expectException(RuntimeException::class);
+        try {
+            $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify($url, 'syntactically-plausible-token', str_repeat('a', 40), '123');
+        } finally {
+            self::assertSame(0, $http->requests);
+        }
+    }
+
+    /** @return array<string,array{string}> */
+    public static function untrustedEndpointUrls(): array
+    {
+        return [
+            'spoofed subdomain' => ['https://spoof.actions.githubusercontent.com/idtoken'],
+            'non-default port' => ['https://pipelines.actions.githubusercontent.com:8443/idtoken'],
+            'unexpected path' => ['https://pipelines.actions.githubusercontent.com/other'],
+        ];
+    }
+
     public function test_rejects_endpoint_failure(): void
     {
         [, $jwk] = $this->key();
         $http = new FakeR15HttpClient('{}', ['keys' => [$jwk]], true);
         $this->expectException(RuntimeException::class);
-        $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
+        $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://pipelines.actions.githubusercontent.com/idtoken', 'endpoint-token', str_repeat('a', 40), '123');
     }
 
     private function verifier(FakeR15HttpClient $http, R15Clock $clock): GitHubActionsOidcProvenanceVerifier

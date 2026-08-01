@@ -180,9 +180,12 @@ final class GitHubActionsOidcProvenanceVerifier
         if (! is_array($parts) || ($parts['scheme'] ?? null) !== 'https' || ! is_string($parts['host'] ?? null)) {
             return false;
         }
-        $host = strtolower($parts['host']);
 
-        return $host === 'actions.githubusercontent.com' || str_ends_with($host, '.actions.githubusercontent.com');
+        return strtolower($parts['host']) === 'pipelines.actions.githubusercontent.com'
+            && ! isset($parts['user'])
+            && ! isset($parts['pass'])
+            && (! isset($parts['port']) || $parts['port'] === 443)
+            && ($parts['path'] ?? null) === '/idtoken';
     }
 
     private function reject(): never
