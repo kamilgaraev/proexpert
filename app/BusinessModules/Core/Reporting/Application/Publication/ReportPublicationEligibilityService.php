@@ -55,6 +55,7 @@ final class ReportPublicationEligibilityService
     ): ReportPublicationEligibilityResult {
         try {
             $profile = $this->admissionProfiles->forCode($candidate->code);
+            $profile->assertCompatibleFormats($candidate->definition->formats);
             $this->assertEligible(
                 $candidate,
                 $candidateDocument,

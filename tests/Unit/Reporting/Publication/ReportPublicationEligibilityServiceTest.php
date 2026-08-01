@@ -89,12 +89,45 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
         );
     }
 
+    public function test_candidate_with_a_profile_for_another_export_set_is_rejected_before_eligibility_checks(): void
+    {
+        $scenario = $this->scenario();
+        $profiles = new ReportPublicationAdmissionProfileCatalog([
+            new ReportPublicationAdmissionProfile(
+                'project_portfolio_health',
+                ['binding_contract', 'drill_down_contract', 'export_csv_contract', 'formula_contract', 'rbac_contract', 'source_contract'],
+                str_repeat('2', 64),
+                [
+                    'csv' => [
+                        'schema_sha256' => str_repeat('e', 64),
+                        'renderer_class' => \App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRenderer::class,
+                    ],
+                ],
+            ),
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_ineligible');
+
+        $this->service(XlsxReportExportRenderer::class, $profiles)->evaluate(
+            $scenario['candidate'],
+            $scenario['document'],
+            $scenario['binding'],
+            $scenario['evidence'],
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $scenario['ci_artifact'],
+        );
+    }
+
     public function test_data_provider_cannot_claim_the_xlsx_renderer_contract(): void
     {
         $scenario = $this->scenario();
 
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('report_publication_ineligible');
+        $this->expectExceptionMessage('report_publication_admission_profile_invalid');
 
         $this->service(CatalogTestDataProvider::class)->evaluate(
             $scenario['candidate'],

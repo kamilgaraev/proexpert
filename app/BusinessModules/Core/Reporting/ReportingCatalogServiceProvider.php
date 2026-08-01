@@ -74,11 +74,15 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
                 $app->make(ProjectReportPublicationReleaseRequestRegistryFactory::class),
             ),
         );
-        $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class, fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService(
+        $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog::class,
+            fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog => \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements::profileCatalog(),
+        );
+        $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class, fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService(
             new \App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog,
             new \App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy,
             new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher,
-            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements::profileCatalog(),
+            $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog::class),
             (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
         ));
         $this->app->singleton(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier::class, fn (): \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier => (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create());

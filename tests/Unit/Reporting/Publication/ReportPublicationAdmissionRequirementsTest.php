@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\Publication;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfile;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements;
+use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -88,9 +89,9 @@ final class ReportPublicationAdmissionRequirementsTest extends TestCase
     {
         $profile = new ReportPublicationAdmissionProfile(
             'procurement_cycle',
-            ['binding_contract'],
+            ['binding_contract', 'drill_down_contract', 'export_xlsx_contract', 'formula_contract', 'rbac_contract', 'source_contract'],
             str_repeat('a', 64),
-            ['xlsx' => ['schema_sha256' => str_repeat('b', 64), 'renderer_class' => 'App\\Renderer']],
+            ['xlsx' => ['schema_sha256' => str_repeat('b', 64), 'renderer_class' => XlsxReportExportRenderer::class]],
         );
 
         $this->expectException(\InvalidArgumentException::class);
@@ -105,5 +106,18 @@ final class ReportPublicationAdmissionRequirementsTest extends TestCase
         $this->expectExceptionMessage('report_publication_ineligible');
 
         ReportPublicationAdmissionRequirements::profileCatalog()->forCode('unknown_report');
+    }
+
+    public function test_unknown_required_check_is_rejected_when_building_a_profile(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_admission_profile_invalid');
+
+        new ReportPublicationAdmissionProfile(
+            'procurement_cycle',
+            ['binding_contract', 'drill_down_contract', 'export_xlsx_contract', 'formula_contract', 'rbac_contract', 'source_contract', 'unknown_contract'],
+            str_repeat('a', 64),
+            ['xlsx' => ['schema_sha256' => str_repeat('b', 64), 'renderer_class' => XlsxReportExportRenderer::class]],
+        );
     }
 }
