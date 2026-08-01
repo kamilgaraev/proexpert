@@ -24,6 +24,13 @@ final readonly class DocumentUnitData
         if ($sourceVersion === '' || strlen($sourceVersion) > 80) {
             throw new InvalidArgumentException('Document source version must contain at most 80 characters.');
         }
+
+        DocumentUnitProvenance::fromLocator($type, $sourceVersion, $locator);
+    }
+
+    public function provenance(): DocumentUnitProvenance
+    {
+        return DocumentUnitProvenance::fromLocator($this->type, $this->sourceVersion, $this->locator);
     }
 
     public function identity(): string

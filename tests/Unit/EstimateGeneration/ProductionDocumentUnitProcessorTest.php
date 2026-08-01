@@ -99,7 +99,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
     {
         return new DocumentUnitExecutionContext(
             1, 2, 3, 4, 5, DocumentUnitType::CadDrawing, 1,
-            'sha256:'.str_repeat('a', 64), [], 'org-2/source.dxf', 'application/dxf', 'source.dxf',
+            'sha256:'.str_repeat('a', 64), $this->cadLocator(), 'org-2/source.dxf', 'application/dxf', 'source.dxf',
             'claim', 1, 1, 'processing_documents', 6,
         );
     }
@@ -151,7 +151,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
         );
         $context = new DocumentUnitExecutionContext(
             1, 2, 3, 4, 5, DocumentUnitType::CadDrawing, 1,
-            'sha256:'.str_repeat('a', 64), [], 'org-2/source.dxf', 'application/dxf', 'source.dxf',
+            'sha256:'.str_repeat('a', 64), $this->cadLocator(), 'org-2/source.dxf', 'application/dxf', 'source.dxf',
             'claim', 1, 1, 'processing', 6,
         );
 
@@ -160,5 +160,23 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
         self::assertSame('cad', $output->normalizedPayload['source_kind']);
         self::assertSame($geometry->runtimeVersion, $output->normalizedPayload['provenance']['runtime_version']);
         self::assertNotEmpty($output->normalizedPayload['vector_geometry']['entities']);
+    }
+
+    /** @return array<string, scalar> */
+    private function cadLocator(): array
+    {
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+
+        return [
+            'source_kind' => 'cad',
+            'source_version' => $sourceVersion,
+            'coordinate_space' => 'cad_model',
+            'artifact_path' => 'org-2/source.dxf',
+            'artifact_bytes' => 1,
+            'artifact_sha256' => $sourceVersion,
+            'artifact_version_id' => 'source-v1',
+            'artifact_source_version' => $sourceVersion,
+            'content_type' => 'application/dxf',
+        ];
     }
 }

@@ -286,18 +286,26 @@ final class ManageEstimateGenerationDocumentPages
             return $unit;
         }
 
+        $type = DocumentUnitType::from($this->unitType($document));
+
         return EstimateGenerationProcessingUnit::query()->create([
             'organization_id' => $document->organization_id,
             'project_id' => $document->project_id,
             'session_id' => $document->session_id,
             'document_id' => $document->id,
-            'unit_type' => $this->unitType($document),
+            'unit_type' => $type,
             'unit_index' => $page->page_number,
             'source_version' => $sourceVersion,
             'status' => DocumentProcessingUnitStatus::Pending,
             'attempt_count' => 0,
             'output_count' => 0,
-            'locator' => ['page' => $page->page_number],
+            'locator' => OriginalDocumentArtifactLocator::forUnit(
+                $document,
+                $type,
+                (int) $page->page_number,
+                $sourceVersion,
+                ['page' => (int) $page->page_number],
+            ),
             'metadata' => [],
         ]);
     }
