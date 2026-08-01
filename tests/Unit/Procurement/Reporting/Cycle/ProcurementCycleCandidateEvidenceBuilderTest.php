@@ -8,51 +8,33 @@ use PHPUnit\Framework\TestCase;
 
 final class ProcurementCycleCandidateEvidenceBuilderTest extends TestCase
 {
-    public function test_builder_writes_blocked_candidate_artifacts_bound_to_the_exact_checkout(): void
+    public function test_builder_rejects_local_environment_spoofing_without_endpoint_backed_oidc(): void
     {
         $root = dirname(__DIR__, 5);
-        $output = $root.'/build/reports/r15-candidate-evidence';
         $sha = trim((string) shell_exec('git -C '.escapeshellarg($root).' rev-parse HEAD'));
-
+        foreach ([
+            'GITHUB_ACTIONS=true', 'GITHUB_SHA='.$sha, 'GITHUB_RUN_ID=123456', 'GITHUB_RUN_ATTEMPT=1',
+            'ACTIONS_ID_TOKEN_REQUEST_URL=https://example.test/token', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN=spoofed',
+        ] as $setting) {
+            putenv($setting);
+        }
         try {
             exec(escapeshellarg(PHP_BINARY).' '.escapeshellarg($root.'/scripts/reporting/build-r15-publication-candidate.php'), $lines, $exitCode);
             self::assertSame(1, $exitCode);
-            return;
-
-            putenv('GITHUB_ACTIONS=true');
-            putenv('GITHUB_SHA='.$sha);
-            putenv('GITHUB_RUN_ID=123456');
-            putenv('GITHUB_RUN_ATTEMPT=1');
-            exec(implode(' ', [
-                escapeshellarg(PHP_BINARY),
-                escapeshellarg($root.'/scripts/reporting/build-r15-publication-candidate.php'),
-            ]), $lines, $exitCode);
-
-            self::assertSame(0, $exitCode);
-            $candidate = json_decode((string) file_get_contents($output.'/r15-candidate-manifest.json'), true);
-            $proof = json_decode((string) file_get_contents($output.'/r15-proof-template.json'), true);
-            $request = json_decode((string) file_get_contents($output.'/r15-release-request.json'), true);
-
-            self::assertSame('procurement_cycle', $candidate['code']);
-            self::assertSame('candidate', $candidate['admission_status']);
-            self::assertSame('blocked', $candidate['publication_status']);
-            self::assertSame($sha, $proof['ci']['commit_sha']);
-            self::assertSame('blocked', $proof['admission_status']);
-            self::assertSame('r15_candidate_evidence', $request['request_kind']);
-            self::assertSame('blocked', $request['admission_status']);
-            self::assertArrayHasKey('source_runtime', $proof['artifacts']);
-            self::assertArrayHasKey('delivery_contract', $proof['artifacts']);
-            self::assertArrayHasKey('rbac', $proof['artifacts']);
-            self::assertArrayHasKey('formula_runtime', $proof['artifacts']);
         } finally {
-            putenv('GITHUB_ACTIONS');
-            putenv('GITHUB_SHA');
-            putenv('GITHUB_RUN_ID');
-            putenv('GITHUB_RUN_ATTEMPT');
-            foreach (glob($output.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
-                @unlink($file);
+            foreach (['GITHUB_ACTIONS', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'] as $name) {
+                putenv($name);
             }
-            @rmdir($output);
         }
+    }
+
+    public function test_ci_workflow_uses_only_fixed_builder_arguments_output_and_oidc_permission(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 5).'/.github/workflows/notification-concurrency.yml');
+        self::assertIsString($workflow);
+        self::assertStringContainsString('id-token: write', $workflow);
+        self::assertStringContainsString("if: github.event_name == 'push' && github.ref == 'refs/heads/main'", $workflow);
+        self::assertStringContainsString('php scripts/reporting/build-r15-publication-candidate.php', $workflow);
+        self::assertStringContainsString('path: build/reports/r15-candidate-evidence/', $workflow);
     }
 }

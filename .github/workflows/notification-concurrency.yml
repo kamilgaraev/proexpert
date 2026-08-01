@@ -272,7 +272,11 @@ jobs:
           --group=postgresql --fail-on-skipped
 
   procurement-cycle-r15-candidate-evidence:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: procurement-cycle-postgres-contract
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
