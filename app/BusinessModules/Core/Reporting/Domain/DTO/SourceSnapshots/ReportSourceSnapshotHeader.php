@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQueryIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -58,10 +59,18 @@ final readonly class ReportSourceSnapshotHeader
         }
 
         CanonicalJson::encode($watermarks);
-        if (($reportQueryIdentity === null) !== ($reportQueryHash === null)
-            || ($reportQueryIdentity !== null
-                && ! hash_equals($reportQueryHash->value, hash('sha256', CanonicalJson::encode($reportQueryIdentity))))) {
+        if (($reportQueryIdentity === null) !== ($reportQueryHash === null)) {
             throw new InvalidArgumentException('report_source_snapshot_header_invalid');
+        }
+        if ($reportQueryIdentity !== null) {
+            try {
+                $identity = new ReportQueryIdentity($reportQueryIdentity);
+            } catch (InvalidArgumentException $exception) {
+                throw new InvalidArgumentException('report_source_snapshot_header_invalid', 0, $exception);
+            }
+            if (! hash_equals($reportQueryHash->value, $identity->hash->value)) {
+                throw new InvalidArgumentException('report_source_snapshot_header_invalid');
+            }
         }
     }
 

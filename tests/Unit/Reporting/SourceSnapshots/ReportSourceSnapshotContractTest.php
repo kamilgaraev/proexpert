@@ -6,6 +6,7 @@ namespace Tests\Unit\Reporting\SourceSnapshots;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQueryIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
@@ -47,6 +48,16 @@ final class ReportSourceSnapshotContractTest extends TestCase
         $this->assertError(ReportErrorCode::REPORT_INTERNAL_ERROR, static fn () => ReportSourceSnapshotIntegrity::assertWrite($changed));
     }
 
+    public function test_rejects_empty_extra_and_wrong_hash_report_query_identity(): void
+    {
+        $write = $this->write();
+        $header = $write->header;
+        $this->assertInvalidIdentity($header, [], $this->hash([]));
+        $extra = [...$header->reportQueryIdentity, 'extra' => true];
+        $this->assertInvalidIdentity($header, $extra, $this->hash($extra));
+        $this->assertInvalidIdentity($header, $header->reportQueryIdentity, $this->hash(['wrong' => true]));
+    }
+
     public function test_cursor_is_snapshot_bound_and_pagination_is_stable_by_ordinal(): void
     {
         $write = $this->write();
@@ -77,8 +88,11 @@ final class ReportSourceSnapshotContractTest extends TestCase
         ];
         $drillRows = [new ReportSourceSnapshotDrillRow($id, 'project:1', 'amount', 1, ['document_id' => 11], $this->hash(['document_id' => 11]))];
         $scope = (new ReportExecutionContextBuilder)->build()->scope;
-        $identity = [];
-        $identityHash = $this->hash($identity);
+        $identity = [
+            'as_of' => '2026-07-31T00:00:00.000000Z', 'comparison' => [], 'definition_hash' => str_repeat('a', 64),
+            'filters' => [], 'locale' => 'ru', 'scope' => $scope->canonicalIdentity(),
+        ];
+        $identityHash = (new ReportQueryIdentity($identity))->hash;
         $header = new ReportSourceSnapshotHeader($id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3], new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'), ReportSourceSnapshotStatus::WRITING, 2, 1, $this->hash(['placeholder' => 1]), null, null, $identity, $identityHash);
         $hash = ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows);
         $header = new ReportSourceSnapshotHeader($id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3], new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'), ReportSourceSnapshotStatus::WRITING, 2, 1, $hash, null, null, $header->reportQueryIdentity, $header->reportQueryHash);
@@ -91,6 +105,16 @@ final class ReportSourceSnapshotContractTest extends TestCase
         $header = $write->header;
 
         return new ReportSourceSnapshotHeader($header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope, $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt, $header->staleAt, ReportSourceSnapshotStatus::READY, $header->rowCount, $header->drillRowCount, $header->snapshotHash, new DateTimeImmutable('2026-07-31T00:00:01+00:00'), null, $header->reportQueryIdentity, $header->reportQueryHash);
+    }
+
+    private function assertInvalidIdentity(ReportSourceSnapshotHeader $header, array $identity, Sha256Hash $hash): void
+    {
+        try {
+            new ReportSourceSnapshotHeader($header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope, $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt, $header->staleAt, $header->status, $header->rowCount, $header->drillRowCount, $header->snapshotHash, null, null, $identity, $hash);
+            self::fail('Invalid report query identity must fail closed.');
+        } catch (\InvalidArgumentException) {
+            self::assertTrue(true);
+        }
     }
 
     private function request(string $snapshotId): ReportSourceSnapshotReadRequest
