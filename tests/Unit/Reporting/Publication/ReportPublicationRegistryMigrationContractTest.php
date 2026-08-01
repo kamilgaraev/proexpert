@@ -172,7 +172,10 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
 
         $discoveryJob = $workflow['jobs']['report-publication-release-request-discovery'] ?? null;
         self::assertIsArray($discoveryJob);
-        self::assertSame('report-publication-postgres-contract', $discoveryJob['needs'] ?? null);
+        self::assertEqualsCanonicalizing([
+            'procurement-cycle-postgres-contract',
+            'report-publication-postgres-contract',
+        ], $discoveryJob['needs'] ?? null);
         self::assertArrayNotHasKey('environment', $discoveryJob);
         $discoveryCommands = implode("\n", array_map(
             static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',

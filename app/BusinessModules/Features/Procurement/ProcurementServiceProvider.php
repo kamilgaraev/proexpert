@@ -51,6 +51,27 @@ class ProcurementServiceProvider extends ServiceProvider
     protected function registerServices(): void
     {
         $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore::class,
+            \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSourceSnapshotStore::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementCycleSourceReader::class,
+            Reporting\Cycle\Services\EloquentProcurementCycleSourceReader::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementCycleSourceSnapshotWriter::class,
+            Reporting\Cycle\Services\CanonicalProcurementCycleSourceSnapshotWriter::class,
+        );
+
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleFormula::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleSourceSnapshotMaterializer::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReportAdapter::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReadinessProbe::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReportBindingFactory::class);
+
+        $this->app->singleton(
             Reporting\Cycle\Contracts\ProcurementProcessEventStore::class,
             Reporting\Cycle\Services\EloquentProcurementProcessEventStore::class,
         );

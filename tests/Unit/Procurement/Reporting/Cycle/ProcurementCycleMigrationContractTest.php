@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Procurement\Reporting\Cycle;
 
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Yaml\Yaml;
 
 final class ProcurementCycleMigrationContractTest extends TestCase
 {
@@ -85,6 +86,55 @@ final class ProcurementCycleMigrationContractTest extends TestCase
             .'ProcurementCycleSourcePostgresTest.php';
         self::assertStringContainsString($command, $workflow);
         self::assertStringContainsString('--group=postgresql --fail-on-skipped', $workflow);
+    }
+
+    public function test_ci_pins_exact_source_revision_and_blocks_release_without_r15_gate(): void
+    {
+        $workflow = Yaml::parseFile(
+            dirname(__DIR__, 5).'/.github/workflows/notification-concurrency.yml',
+        );
+        self::assertIsArray($workflow);
+
+        $job = $workflow['jobs']['procurement-cycle-postgres-contract'] ?? null;
+        self::assertIsArray($job);
+        self::assertSame('', $job['env']['DB_URL'] ?? null);
+        self::assertSame('most_procurement_cycle_testing', $job['env']['DB_DATABASE'] ?? null);
+
+        $uses = array_values(array_filter(array_column($job['steps'] ?? [], 'uses')));
+        self::assertContains(
+            'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683',
+            $uses,
+        );
+        self::assertContains(
+            'shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45',
+            $uses,
+        );
+        self::assertContains(
+            'actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830',
+            $uses,
+        );
+        foreach ($uses as $action) {
+            self::assertMatchesRegularExpression('/@[a-f0-9]{40}$/D', $action);
+        }
+
+        $commands = implode("\n", array_map(
+            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
+            $job['steps'] ?? [],
+        ));
+        $shaCheck = strpos($commands, 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"');
+        $migration = strpos($commands, 'php artisan migrate:fresh --force');
+        self::assertIsInt($shaCheck);
+        self::assertIsInt($migration);
+        self::assertLessThan($migration, $shaCheck);
+        self::assertStringContainsString('test "$DB_URL" = ""', $commands);
+        self::assertStringContainsString('case "$DB_DATABASE" in *_testing)', $commands);
+
+        $discovery = $workflow['jobs']['report-publication-release-request-discovery'] ?? null;
+        self::assertIsArray($discovery);
+        self::assertEqualsCanonicalizing([
+            'procurement-cycle-postgres-contract',
+            'report-publication-postgres-contract',
+        ], $discovery['needs'] ?? null);
     }
 
     private function migration(): string

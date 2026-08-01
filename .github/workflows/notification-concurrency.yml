@@ -187,6 +187,7 @@ jobs:
       APP_DEBUG: false
       CI: true
       DB_CONNECTION: pgsql
+      DB_URL: ''
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
       DB_DATABASE: most_procurement_cycle_testing
@@ -198,11 +199,13 @@ jobs:
       MAIL_MAILER: array
       PROCUREMENT_CYCLE_POSTGRES_TESTS: 1
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout exact workflow SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45
         with:
           php-version: 8.2
           extensions: mbstring, pcntl, pdo_pgsql, pgsql
@@ -214,7 +217,7 @@ jobs:
         run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ steps.procurement-composer-cache.outputs.dir }}
           key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
@@ -223,8 +226,18 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
-      - name: Prepare isolated PostgreSQL schema
-        run: php artisan migrate:fresh --force
+      - name: Verify exact checkout and PostgreSQL prerequisites
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$DB_URL" = ""
+          case "$DB_DATABASE" in *_testing) ;; *) echo "R15 database must end with _testing" >&2; exit 1;; esac
+          php -r "if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) { fwrite(STDERR, \"pdo_pgsql is unavailable\\n\"); exit(1); }"
+          test -f tests/Feature/Procurement/Reporting/Cycle/ProcurementCycleSourcePostgresTest.php
+
+      - name: Prepare isolated PostgreSQL schema from exact checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          php artisan migrate:fresh --force
 
       - name: Require process-race prerequisites
         run: >-
@@ -483,7 +496,9 @@ jobs:
 
   report-publication-release-request-discovery:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: report-publication-postgres-contract
+    needs:
+      - procurement-cycle-postgres-contract
+      - report-publication-postgres-contract
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
