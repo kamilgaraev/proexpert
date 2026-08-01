@@ -6,6 +6,10 @@ namespace Tests\Unit\Procurement\Reporting\Cycle;
 
 use App\BusinessModules\Core\Reporting\Application\Conformance\ReportConformanceDrillExpectation;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\R15CiFixtureSnapshotStore;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\R15CiConformanceEvidenceGenerator;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\R15CiEvidenceRuntimeGuard;
@@ -80,5 +84,25 @@ final class R15CiConformanceEvidenceGeneratorE2eTest extends TestCase
             $scenario['candidate'], $scenario['binding'], $scenario['context'], $scenario['query'],
             $scenario['fixture'], str_repeat('1', 40), new DateTimeImmutable('2026-08-01T00:00:00+00:00'),
         );
+    }
+
+    public function test_fixture_store_rejects_tampered_row_and_snapshot_hash(): void
+    {
+        $scenario = (new R15CiRuntimeFixtureFactory)->build();
+        $header = $scenario['write']->header;
+        $tampered = new ReportSourceSnapshotWrite(
+            new ReportSourceSnapshotHeader(
+                $header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion,
+                $header->scope, $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks,
+                $header->generatedAt, $header->staleAt, ReportSourceSnapshotStatus::WRITING,
+                $header->rowCount, $header->drillRowCount, new Sha256Hash(str_repeat('f', 64)), null, null,
+                $header->reportQueryIdentity, $header->reportQueryHash,
+            ),
+            $scenario['write']->rows,
+            $scenario['write']->drillRows,
+        );
+
+        $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
+        new R15CiFixtureSnapshotStore($tampered);
     }
 }

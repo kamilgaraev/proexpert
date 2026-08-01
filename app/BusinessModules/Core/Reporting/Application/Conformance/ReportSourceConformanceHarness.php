@@ -157,7 +157,9 @@ final class ReportSourceConformanceHarness
                 $fixture->sort,
                 $fixture->cursorChunkSize,
             ) as $row) {
-                $rows[] = $row;
+                $rows[] = is_array($row) && isset($row['values']) && is_array($row['values'])
+                    ? $row['values']
+                    : $row;
             }
             $drillInput = $this->drillDownInput($fixture, $drillExpectation);
             $drill = $binding->drillDownProvider->drillDown(

@@ -31,6 +31,6 @@ final readonly class ReportSourceRef
 
     private static function isSafeIdentifier(string $value): bool
     {
-        return preg_match('/^[a-z][a-z0-9_]{0,63}$/', $value) === 1;
+        return preg_match('/^(?:[a-z][a-z0-9_]{0,63}|v[0-9]+_[0-9]+_[0-9]+|[0-9]+\\.[0-9]+\\.[0-9]+)$/', $value) === 1;
     }
 }

@@ -130,7 +130,7 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
                     'procurement',
                     'cycle_snapshot',
                     'sealed_snapshot',
-                    'v1_0_0',
+                    self::SCHEMA_VERSION,
                     'event_'.(string) ($header->watermarks['max_event_id'] ?? 0),
                     $header->rowCount,
                     $header->sourceHash,
@@ -214,7 +214,10 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
 
         return new ReportDrillDownResult(
             array_map(
-                static fn ($row): array => ['row_key' => $row->rowKey.':'.$row->columnId.':'.$row->ordinal, ...$row->payload],
+                static fn ($row): array => [
+                    'row_key' => $row->rowKey.':'.$row->columnId.':'.$row->ordinal,
+                    $row->columnId => $row->payload,
+                ],
                 $page->rows,
             ),
             $page->nextCursor === null ? null : $this->cursorToken($page->nextCursor),
