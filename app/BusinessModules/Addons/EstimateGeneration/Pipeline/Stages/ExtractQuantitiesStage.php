@@ -57,10 +57,12 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         $diagnostics = [];
         $metrics = [];
         $model = null;
+        $hasEffectiveAreaCorrections = false;
         if (is_array($normalized)) {
             $model = NormalizedBuildingModelData::fromArray($normalized);
             $effectiveValues = is_array($analysis['effective_project_model_values'] ?? null)
                 ? $analysis['effective_project_model_values'] : [];
+            $hasEffectiveAreaCorrections = $this->effectiveProjection->hasAreaCorrections($effectiveValues);
             $calculation = $this->calculator->calculate($this->effectiveProjection->project($this->inputMapper->map($model), $effectiveValues));
             $quantities = $calculation->all();
             $diagnostics = $calculation->diagnostics;
@@ -75,11 +77,14 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
                 $context->baseInputVersion,
             ), $model, $expectedFloorCount);
             foreach ($roomAreas as $roomArea) {
+                if ($roomArea->key === 'floor_area' && $hasEffectiveAreaCorrections) {
+                    continue;
+                }
                 $quantities[$roomArea->key] = $roomArea;
             }
         }
         $documentArea = $this->analysisFloorArea->make($analysis);
-        if ($documentArea !== null
+        if (! $hasEffectiveAreaCorrections && $documentArea !== null
             && ($documentArea->source === QuantitySource::Evidenced
                 || ! isset($quantities['floor_area']))) {
             $quantities[$documentArea->key] = $documentArea;

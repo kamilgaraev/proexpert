@@ -8,6 +8,18 @@ use InvalidArgumentException;
 
 final class EffectiveProjectModelQuantityInputProjector
 {
+    /** @param list<array<string, mixed>> $effectiveValues */
+    public function hasAreaCorrections(array $effectiveValues): bool
+    {
+        foreach ($effectiveValues as $effective) {
+            if (($effective['assertion_type'] ?? null) === 'area') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * @param array<string, mixed> $input
      * @param list<array{entity_stable_key: string, assertion_stable_key: string, assertion_type: string, value: array<string, mixed>, correction_stable_key: string}> $effectiveValues
