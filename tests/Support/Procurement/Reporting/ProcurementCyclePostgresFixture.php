@@ -12,133 +12,173 @@ final class ProcurementCyclePostgresFixture
 
     public function create(string $namespace): array
     {
-        $now = '2026-08-01 09:00:00+00';
-        $userId = (int) $this->connection->table('users')->insertGetId([
-            'name' => "Procurement cycle {$namespace}",
-            'email' => "procurement-cycle-{$namespace}@example.test",
-            'password' => 'not-used-by-contract-tests',
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+        return $this->connection->transaction(function () use ($namespace): array {
+            $now = '2026-08-01 09:00:00+00';
+            $userId = (int) $this->connection->table('users')->insertGetId([
+                'name' => "Procurement cycle {$namespace}",
+                'email' => "procurement-cycle-{$namespace}@example.test",
+                'password' => 'not-used-by-contract-tests',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        $organizationA = $this->organization("{$namespace}-org-a", $now);
-        $organizationB = $this->organization("{$namespace}-org-b", $now);
-        $projectA = $this->project($organizationA, "{$namespace}-project-a", $now);
-        $projectA2 = $this->project($organizationA, "{$namespace}-project-a2", $now);
-        $projectB = $this->project($organizationB, "{$namespace}-project-b", $now);
-        $warehouseA = $this->warehouse($organizationA, "{$namespace}-warehouse-a", $now);
-        $warehouseB = $this->warehouse($organizationB, "{$namespace}-warehouse-b", $now);
+            $organizationA = $this->organization("{$namespace}-org-a", $now);
+            $organizationB = $this->organization("{$namespace}-org-b", $now);
+            $projectA = $this->project($organizationA, "{$namespace}-project-a", $now);
+            $projectA2 = $this->project($organizationA, "{$namespace}-project-a2", $now);
+            $projectB = $this->project($organizationB, "{$namespace}-project-b", $now);
+            $warehouseA = $this->warehouse($organizationA, "{$namespace}-warehouse-a", $now);
+            $warehouseB = $this->warehouse($organizationB, "{$namespace}-warehouse-b", $now);
 
-        $policyA = $this->policy(
-            $organizationA,
-            $projectA,
-            1,
-            str_repeat('a', 64),
-            str_repeat('1', 64),
-            ['request_cancelled'],
-            $now,
-        );
-        $policyA2 = $this->policy(
-            $organizationA,
-            $projectA2,
-            1,
-            str_repeat('b', 64),
-            str_repeat('2', 64),
-            ['request_rejected'],
-            $now,
-        );
-        $policyAOrganization = $this->policy(
-            $organizationA,
-            null,
-            2,
-            str_repeat('c', 64),
-            str_repeat('3', 64),
-            ['request_cancelled', 'order_cancelled'],
-            $now,
-        );
-        $policyB = $this->policy(
-            $organizationB,
-            $projectB,
-            1,
-            str_repeat('d', 64),
-            str_repeat('4', 64),
-            ['request_cancelled'],
-            $now,
-        );
+            $policyA = $this->policy(
+                $organizationA,
+                $projectA,
+                1,
+                str_repeat('a', 64),
+                str_repeat('1', 64),
+                ['request_cancelled'],
+                $now,
+            );
+            $policyA2 = $this->policy(
+                $organizationA,
+                $projectA2,
+                1,
+                str_repeat('b', 64),
+                str_repeat('2', 64),
+                ['request_rejected'],
+                $now,
+            );
+            $policyAOrganization = $this->policy(
+                $organizationA,
+                null,
+                2,
+                str_repeat('c', 64),
+                str_repeat('3', 64),
+                ['request_cancelled', 'order_cancelled'],
+                $now,
+            );
+            $policyB = $this->policy(
+                $organizationB,
+                $projectB,
+                1,
+                str_repeat('d', 64),
+                str_repeat('4', 64),
+                ['request_cancelled'],
+                $now,
+            );
 
-        $chainA = $this->chain(
-            $namespace,
-            'a',
-            $organizationA,
-            $projectA,
-            $warehouseA,
-            $userId,
-            $policyA,
-            $now,
-        );
-        $chainA2 = $this->chain(
-            $namespace,
-            'a2',
-            $organizationA,
-            $projectA2,
-            $warehouseA,
-            $userId,
-            $policyA2,
-            $now,
-        );
-        $chainB = $this->chain(
-            $namespace,
-            'b',
-            $organizationB,
-            $projectB,
-            $warehouseB,
-            $userId,
-            $policyB,
-            $now,
-        );
-        $noProject = $this->requestLine(
-            $namespace,
-            'no-project',
-            $organizationA,
-            null,
-            $userId,
-            $now,
-        );
+            $chainA = $this->chain(
+                $namespace,
+                'a',
+                $organizationA,
+                $projectA,
+                $warehouseA,
+                $userId,
+                $policyA,
+                $now,
+            );
+            $chainA2 = $this->chain(
+                $namespace,
+                'a2',
+                $organizationA,
+                $projectA2,
+                $warehouseA,
+                $userId,
+                $policyA2,
+                $now,
+            );
+            $chainB = $this->chain(
+                $namespace,
+                'b',
+                $organizationB,
+                $projectB,
+                $warehouseB,
+                $userId,
+                $policyB,
+                $now,
+            );
+            $noProject = $this->requestLine(
+                $namespace,
+                'no-project',
+                $organizationA,
+                null,
+                $userId,
+                $now,
+            );
 
-        $crossedOrderItemId = (int) $this->connection->table('purchase_order_items')->insertGetId([
-            'purchase_order_id' => $chainA['purchase_order_id'],
-            'purchase_request_line_id' => $chainA['purchase_request_line_id'],
-            'supplier_request_line_id' => $chainA['supplier_request_line_id'],
-            'supplier_proposal_line_id' => $chainA2['supplier_proposal_line_id'],
-            'material_name' => 'Crossed lineage item',
-            'quantity' => 1,
-            'unit' => 'pcs',
-            'unit_price' => 10,
-            'total_price' => 10,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            $crossedProposalPartyId = (int) $this->connection->table('supplier_proposals')->insertGetId([
+                'organization_id' => $organizationA,
+                'supplier_request_id' => $chainA['supplier_request_id'],
+                'supplier_id' => $chainA2['supplier_id'],
+                'supplier_party_id' => $chainA2['supplier_party_id'],
+                'supplier_snapshot' => json_encode(['id' => $chainA2['supplier_party_id']], JSON_THROW_ON_ERROR),
+                'proposal_number' => "SP-{$namespace}-crossed-party",
+                'proposal_date' => '2026-08-01',
+                'status' => 'submitted',
+                'subtotal_amount' => 10,
+                'delivery_amount' => 0,
+                'vat_amount' => 0,
+                'total_amount' => 10,
+                'currency' => 'RUB',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $crossedOrderPartyId = (int) $this->connection->table('purchase_orders')->insertGetId([
+                'organization_id' => $organizationA,
+                'purchase_request_id' => $chainA['purchase_request_id'],
+                'accepted_supplier_proposal_id' => $chainA['supplier_proposal_id'],
+                'accepted_supplier_proposal_version_id' => $chainA['supplier_proposal_version_id'],
+                'supplier_id' => $chainA2['supplier_id'],
+                'supplier_party_id' => $chainA2['supplier_party_id'],
+                'supplier_snapshot' => json_encode(['id' => $chainA2['supplier_party_id']], JSON_THROW_ON_ERROR),
+                'order_number' => "PO-{$namespace}-crossed-party",
+                'order_date' => '2026-08-01',
+                'status' => 'sent',
+                'total_amount' => 10,
+                'currency' => 'RUB',
+                'pricing_source' => 'accepted_supplier_proposal',
+                'sent_at' => '2026-08-01',
+                'sent_at_exact' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $crossedOrderItemId = (int) $this->connection->table('purchase_order_items')->insertGetId([
+                'purchase_order_id' => $chainA['purchase_order_id'],
+                'purchase_request_line_id' => $chainA['purchase_request_line_id'],
+                'supplier_request_line_id' => $chainA['supplier_request_line_id'],
+                'supplier_proposal_line_id' => $chainA2['supplier_proposal_line_id'],
+                'material_name' => 'Crossed lineage item',
+                'quantity' => 1,
+                'unit' => 'pcs',
+                'unit_price' => 10,
+                'total_price' => 10,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        return [
-            'namespace' => $namespace,
-            'user_id' => $userId,
-            'organization_a_id' => $organizationA,
-            'organization_b_id' => $organizationB,
-            'project_a_id' => $projectA,
-            'project_a2_id' => $projectA2,
-            'project_b_id' => $projectB,
-            'warehouse_a_id' => $warehouseA,
-            'warehouse_b_id' => $warehouseB,
-            'policy_a' => $policyA,
-            'policy_a2' => $policyA2,
-            'policy_a_organization' => $policyAOrganization,
-            'policy_b' => $policyB,
-            'a' => $chainA,
-            'a2' => $chainA2,
-            'b' => $chainB,
-            'no_project' => $noProject,
-            'crossed_order_item_id' => $crossedOrderItemId,
-        ];
+            return [
+                'namespace' => $namespace,
+                'user_id' => $userId,
+                'organization_a_id' => $organizationA,
+                'organization_b_id' => $organizationB,
+                'project_a_id' => $projectA,
+                'project_a2_id' => $projectA2,
+                'project_b_id' => $projectB,
+                'warehouse_a_id' => $warehouseA,
+                'warehouse_b_id' => $warehouseB,
+                'policy_a' => $policyA,
+                'policy_a2' => $policyA2,
+                'policy_a_organization' => $policyAOrganization,
+                'policy_b' => $policyB,
+                'a' => $chainA,
+                'a2' => $chainA2,
+                'b' => $chainB,
+                'no_project' => $noProject,
+                'crossed_proposal_party_id' => $crossedProposalPartyId,
+                'crossed_order_party_id' => $crossedOrderPartyId,
+                'crossed_order_item_id' => $crossedOrderItemId,
+            ];
+        });
     }
 
     public function cleanup(array $fixture): void

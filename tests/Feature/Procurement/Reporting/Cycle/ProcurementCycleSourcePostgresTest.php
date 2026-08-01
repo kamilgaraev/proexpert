@@ -169,7 +169,24 @@ final class ProcurementCycleSourcePostgresTest extends TestCase
         });
 
         $this->assertSqlState($exception, '23514');
-        self::assertStringContainsString('unpinned terminal reason is not permitted', $exception->getMessage());
+        self::assertSame(0, $this->eventCount($cancelled));
+    }
+
+    public function test_database_rejects_unpinned_request_rejected_cancellation(): void
+    {
+        $chain = $this->fixture()['no_project'];
+        $this->insertRawEvent($this->rawEvent($chain));
+        $cancelled = $this->rawEvent($chain, [
+            'event_code' => ProcurementProcessEventCode::CANCELLED->value,
+            'terminal_reason' => 'request_rejected',
+            'occurred_at' => '2026-08-01 10:05:00+00',
+        ]);
+
+        $exception = $this->captureQueryException(static function () use ($cancelled): void {
+            DB::table('procurement_process_events')->insert($cancelled);
+        });
+
+        $this->assertSqlState($exception, '23514');
         self::assertSame(0, $this->eventCount($cancelled));
     }
 
@@ -361,6 +378,10 @@ final class ProcurementCycleSourcePostgresTest extends TestCase
         if (! function_exists('pcntl_fork')
             || ! function_exists('pcntl_waitpid')
             || ! function_exists('posix_kill')) {
+            if (getenv('CI') === 'true') {
+                self::fail('CI PostgreSQL process-race gate requires pcntl and posix extensions.');
+            }
+
             $this->markTestSkipped('Requires pcntl and posix extensions for a real PostgreSQL process race.');
         }
 
@@ -679,17 +700,10 @@ final class ProcurementCycleSourcePostgresTest extends TestCase
             ]],
             'proposal_party' => [$a, [
                 ...$clearAfterProposal,
-                'supplier_request_id' => null,
-                'supplier_request_line_id' => null,
-                'supplier_party_id' => $a2['supplier_party_id'],
+                'supplier_proposal_id' => $fixture['crossed_proposal_party_id'],
             ]],
             'order_party' => [$a, [
-                'supplier_request_id' => null,
-                'supplier_request_line_id' => null,
-                'supplier_party_id' => $a2['supplier_party_id'],
-                'supplier_proposal_id' => null,
-                'supplier_proposal_version_id' => null,
-                'supplier_proposal_decision_id' => null,
+                'purchase_order_id' => $fixture['crossed_order_party_id'],
                 'purchase_order_item_id' => null,
                 'purchase_receipt_id' => null,
                 'purchase_receipt_line_id' => null,
