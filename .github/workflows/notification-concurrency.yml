@@ -308,6 +308,8 @@ jobs:
           export MOST_R15_CI_EVIDENCE_ARTIFACT="$conformance_artifact"
           php scripts/reporting/build-r15-publication-candidate.php
           php scripts/reporting/build-r15-publication-candidate.php --check
+          export MOST_R15_PUBLICATION_FIXTURE_DIR="$GITHUB_WORKSPACE/build/reports/r15-candidate-evidence"
+          php vendor/bin/phpunit tests/Unit/Procurement/Reporting/Cycle/ProcurementCycleReleaseCandidateResolverE2ETest.php --fail-on-skipped --no-coverage
 
       - name: Upload R15 candidate evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
