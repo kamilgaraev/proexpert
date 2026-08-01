@@ -7,6 +7,9 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSheetAnalysisOperation;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 final class EstimateGenerationAuditService
 {
@@ -27,22 +30,23 @@ final class EstimateGenerationAuditService
             'routing_version' => 'sheet-routing:v1',
             'outcome' => $outcome,
         ];
-        $existing = EstimateGenerationAuditEvent::query()
-            ->where('session_id', $session->id)
-            ->where('event_type', self::EVENT_SHEET_TARGETED_REANALYSIS)
-            ->where('payload->operation_id', $operationId)
-            ->where('payload->outcome', $outcome)
-            ->first();
-        if ($existing instanceof EstimateGenerationAuditEvent) {
-            return;
-        }
-        EstimateGenerationAuditEvent::query()->create([
-            'session_id' => $session->id,
-            'package_id' => null,
-            'user_id' => $session->user_id,
-            'event_type' => self::EVENT_SHEET_TARGETED_REANALYSIS,
-            'payload' => $payload,
-        ]);
+        DB::transaction(function () use ($session, $operationId, $payload): void {
+            $operation = EstimateGenerationSheetAnalysisOperation::query()->lockForUpdate()->find($operationId);
+            if (! $operation instanceof EstimateGenerationSheetAnalysisOperation || $operation->audit_recorded_at !== null) {
+                return;
+            }
+            try {
+                EstimateGenerationAuditEvent::query()->create([
+                    'session_id' => $session->id, 'package_id' => null, 'user_id' => $session->user_id,
+                    'event_type' => self::EVENT_SHEET_TARGETED_REANALYSIS, 'payload' => $payload,
+                ]);
+            } catch (QueryException $exception) {
+                if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '23505') {
+                    throw $exception;
+                }
+            }
+            $operation->forceFill(['audit_recorded_at' => now()])->save();
+        }, 3);
     }
 
     /**

@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationIdentity;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationJournal;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\DocumentSheetOperationScope;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
@@ -35,6 +37,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private BoundedVersionedS3ObjectReader $reader,
         private ?SheetAnalysisRouter $sheetAnalysisRouter = null,
         private ?EstimateGenerationAuditService $audit = null,
+        private ?SheetAnalysisOperationJournal $sheetAnalysisJournal = null,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -171,7 +174,14 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             ),
             sourceTransform: $preprocessed->transform,
         );
-        $analysis = $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
+        $scope = new DocumentSheetOperationScope($context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $context->claimToken);
+        $primaryRouting = ['role' => 'unknown', 'needs_review' => false, 'outcome' => 'not_applicable'];
+        $primaryRun = $this->sheetAnalysisJournal?->run($correlationId, 'primary', $scope, $primaryRouting,
+            fn () => $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform));
+        $analysis = $primaryRun?->analysis ?? $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
+        if ($analysis === null) {
+            throw new DocumentUnitProcessingException('sheet_analysis_requires_review');
+        }
         $pdfGeometry = null;
         $nativePdfText = null;
         $geometryPath = $context->locator['geometry_artifact_path'] ?? null;
@@ -205,6 +215,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $nativePdfText = $decoded['text'];
         }
         $routing = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
+        $targetedRouting = null;
         if ($routing?->classification->requiresTargetedReanalysis()) {
             $targetedRouting = $routing->toArray();
             $targetedOperation = SheetAnalysisOperationIdentity::targeted(
@@ -212,7 +223,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 $targetedRouting,
             );
             try {
-                $analysis = $this->vision->analyze(new VisionDocumentInput(
+                $targetedInput = new VisionDocumentInput(
                 organizationId: $input->organizationId,
                 projectId: $input->projectId,
                 sessionId: $input->sessionId,
@@ -241,18 +252,36 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 sourceTransform: $input->sourceTransform,
                 focusedSheetRole: $routing->classification->role->value,
                 reanalysisReason: $routing->classification->reanalysisReason,
-                ))->mapPolygonsToSource($preprocessed->transform);
-                $this->recordTargetedReanalysis($context, $targetedRouting, $targetedOperation, 'succeeded');
+                );
+                $targetedRun = $this->sheetAnalysisJournal?->run($targetedOperation, 'targeted', $scope, $targetedRouting,
+                    fn () => $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform));
+                if ($targetedRun?->analysis === null) {
+                    $targetedRouting['outcome'] = 'needs_review';
+                    $targetedRouting['needs_review'] = true;
+                    $this->recordTargetedReanalysis($context, $targetedRouting, $targetedOperation, 'needs_review');
+                } else {
+                    $analysis = $targetedRun?->analysis ?? $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform);
+                    $final = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
+                    $targetedRouting = $final?->toArray() ?? $targetedRouting;
+                    $targetedRouting['outcome'] = $targetedRun?->outcome ?? 'succeeded';
+                    $this->sheetAnalysisJournal?->persistFinalRouting($targetedOperation, $scope, $targetedRouting);
+                    $this->recordTargetedReanalysis($context, $targetedRouting, $targetedOperation, $targetedRun?->outcome ?? 'succeeded');
+                }
             } catch (Throwable $exception) {
+                $noCall = $exception instanceof VisionProviderException && $exception->reason === 'vision_wire_replay_forbidden';
+                if ($noCall) {
+                    $targetedRouting['outcome'] = 'needs_review';
+                    $targetedRouting['needs_review'] = true;
+                }
                 $this->recordTargetedReanalysis(
                     $context,
                     $targetedRouting,
                     $targetedOperation,
-                    $exception instanceof VisionProviderException && $exception->reason === 'vision_wire_replay_forbidden'
-                        ? 'no_call'
-                        : 'failed',
+                    $noCall ? 'needs_review' : 'failed',
                 );
-                throw $exception;
+                if (! $noCall) {
+                    throw $exception;
+                }
             }
         }
         $payload = $analysis->toArray();
@@ -266,7 +295,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'geometry_incomplete',
         ]));
         $finalRouting = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
-        $routingPayload = $routing?->toArray();
+        $routingPayload = $targetedRouting ?? $finalRouting?->toArray() ?? $routing?->toArray();
         if ($routingPayload !== null && $finalRouting?->classification->requiresTargetedReanalysis()) {
             $routingPayload['outcome'] = 'needs_review';
             $routingPayload['exhausted_reason'] = $finalRouting->classification->reanalysisReason;
@@ -275,7 +304,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode([
                 'vision_analysis' => $payload,
-                'sheet_analysis_routing' => $routingPayload,
                 'sheet_analysis_routing' => $routingPayload,
                 'pdf_native_text' => $nativePdfText,
             ], JSON_THROW_ON_ERROR)),
@@ -289,6 +317,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'source_kind' => $provenance->sourceKind,
                 'source' => $provenance->toArray(),
                 'vision_analysis' => $payload,
+                'sheet_analysis_routing' => $routingPayload,
                 'pdf_geometry' => $pdfGeometry,
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,

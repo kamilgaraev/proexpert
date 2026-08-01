@@ -49,4 +49,21 @@ final class SheetAnalysisRoutingContractTest extends TestCase
             'max_output_tokens' => 2048,
         ], $result->toArray());
     }
+
+    #[Test]
+    public function durable_operation_contract_fences_a_wire_attempt_and_persists_recoverable_final_routing(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $journal = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/Understanding/SheetAnalysisOperationJournal.php');
+        $migration = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000300_create_estimate_generation_sheet_analysis_operations.php');
+
+        self::assertStringContainsString("'completed' && is_array(\$stored->analysis_payload)", $journal);
+        self::assertStringContainsString("->where('lease_token', \$scope->claimToken)", $journal);
+        self::assertStringContainsString("'final_routing' => \$routing", $journal);
+        self::assertStringContainsString('eg_sheet_analysis_scope_kind_uq', $migration);
+        self::assertStringContainsString('eg_sheet_analysis_audit_operation_uq', $migration);
+        $processor = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/ProductionDocumentUnitProcessor.php');
+        self::assertStringContainsString("\$targetedRouting['outcome'] = 'needs_review'", $processor);
+        self::assertStringContainsString("'sheet_analysis_routing' => \$routingPayload", $processor);
+    }
 }
