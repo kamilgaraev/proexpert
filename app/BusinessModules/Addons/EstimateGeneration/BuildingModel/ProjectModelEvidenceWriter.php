@@ -180,6 +180,7 @@ final readonly class ProjectModelEvidenceWriter
             'evidence_id' => (int) $evidence->id,
             'candidate_source' => $candidate['source'],
             'candidate_value_fingerprint' => ProjectModelValueFingerprint::for($candidate['value']),
+            'candidate_locator_fingerprint' => ProjectModelLocatorFingerprint::for($candidate['locator']),
             'evidence_source_version' => (string) $evidence->source_version,
             'evidence_invalidation_version' => (int) $evidence->invalidation_version,
             'created_at' => now(),

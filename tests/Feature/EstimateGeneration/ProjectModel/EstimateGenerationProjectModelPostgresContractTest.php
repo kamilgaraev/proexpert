@@ -81,7 +81,9 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
         $migration200 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php';
         $migration225 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000225_add_project_model_correction_scope_unique.php';
         $migration250 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php';
+        $migration275 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php';
 
+        $migration275->down();
         $migration250->down();
         $migration225->down();
         $migration200->down();
@@ -104,6 +106,7 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
         $migration200->up();
         $migration225->up();
         $migration250->up();
+        $migration275->up();
         $this->assertSchemaObjects();
     }
 
@@ -154,6 +157,7 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'eg_project_model_evidence_candidate_source_ck',
             'eg_project_model_evidence_candidate_fingerprint_ck',
             'eg_project_model_evidence_candidate_version_ck',
+            'eg_project_model_evidence_candidate_locator_ck',
         ] as $constraint) {
             self::assertTrue((bool) DB::table('pg_constraint')->where('conname', $constraint)->value('convalidated'), $constraint);
         }
@@ -161,6 +165,7 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
         foreach ([
             'eg_project_model_entity_payload_guard_trg',
             'eg_project_model_evidence_binding_guard_trg',
+            'eg_project_model_evidence_locator_guard_trg',
             'eg_project_model_entity_append_trg',
             'eg_project_model_assertion_append_trg',
             'eg_project_model_relation_append_trg',

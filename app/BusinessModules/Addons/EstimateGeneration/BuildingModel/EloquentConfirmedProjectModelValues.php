@@ -35,15 +35,17 @@ final readonly class EloquentConfirmedProjectModelValues
             $payload = $this->json($row->assertion_id === null ? $row->correction_assertion_payload : $row->assertion_payload);
             $candidate = $payload;
             unset($candidate['source']);
-            if (! ProjectModelEvidenceContract::confirms((string) $row->candidate_source, [
+            $locator = $this->json($row->evidence_locator_actual);
+            if (! hash_equals((string) $row->candidate_locator_fingerprint, ProjectModelLocatorFingerprint::for($locator))
+                || ! ProjectModelEvidenceContract::confirms((string) $row->candidate_source, [
                 'type' => $row->evidence_type_actual,
                 'source_type' => $row->evidence_source_type_actual,
                 'source_ref' => $row->evidence_source_ref_actual,
                 'producer_name' => $row->evidence_producer_name_actual,
                 'producer_version' => $row->evidence_producer_version_actual,
-                'locator' => $this->json($row->evidence_locator_actual),
+                'locator' => $locator,
                 'value' => $this->json($row->evidence_value_actual),
-            ], $candidate, $this->json($row->evidence_locator_actual))
+            ], $candidate, $locator)
                 || ! hash_equals((string) $row->candidate_value_fingerprint, ProjectModelValueFingerprint::for($candidate))) continue;
             $bindings[] = new ProjectModelEvidenceBinding((int) $row->building_model_id, (int) $row->organization_id, (int) $row->project_id, (int) $row->session_id, (string) $row->source_version, (string) $row->entity_stable_key, (string) ($row->assertion_id === null ? $row->correction_assertion_stable_key : $row->assertion_stable_key), $row->correction_id === null ? null : (string) $row->correction_stable_key, (int) $row->evidence_id, (string) $row->candidate_source, (string) $row->candidate_value_fingerprint, (string) $row->evidence_source_version, (int) $row->evidence_invalidation_version);
         }

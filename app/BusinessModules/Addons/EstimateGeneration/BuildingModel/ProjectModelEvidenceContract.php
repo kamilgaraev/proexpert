@@ -10,7 +10,15 @@ final class ProjectModelEvidenceContract
     /** @param array<string,mixed> $evidence @param array<string,mixed> $candidate */
     public static function confirms(string $source, array $evidence, array $candidate, array $locator): bool
     {
-        if (! self::trustedEnvelope($source, $evidence) || ! self::trustedLocator($source, $evidence['source_ref'] ?? null, $evidence['locator'] ?? null) || ($evidence['locator'] ?? null) !== $locator) {
+        if (! self::trustedEnvelope($source, $evidence) || ! self::trustedLocator($source, $evidence['source_ref'] ?? null, $evidence['locator'] ?? null)) {
+            return false;
+        }
+
+        try {
+            if (! hash_equals(ProjectModelLocatorFingerprint::for(self::map($evidence['locator'] ?? null)), ProjectModelLocatorFingerprint::for($locator))) {
+                return false;
+            }
+        } catch (\InvalidArgumentException) {
             return false;
         }
 

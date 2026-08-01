@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRep
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
@@ -120,6 +122,26 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
             DB::rollBack();
             DB::purge('project_model_exact_binding_secondary');
         }
+    }
+
+    #[Test]
+    public function canonical_postgres_fingerprints_accept_794_and_reordered_locator_but_distinguish_other_evidence(): void
+    {
+        $this->requireEnvironment();
+        $root = dirname(__DIR__, 4);
+        EstimateGenerationContractDatabaseProvisioner::provision(DB::connection(), $root, 'training');
+        foreach (['2026_08_01_000225_add_project_model_correction_scope_unique.php', '2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php', '2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php'] as $migration) {
+            (require EstimateGenerationContractDatabaseProvisioner::subjectMigration('project-model', $migration, $root))->up();
+        }
+        $locator = ['document_id' => 1, 'unit_index' => 2, 'page' => 2, 'region_key' => 'region:'.str_repeat('a', 64), 'element_key' => 'element:'.str_repeat('b', 64), 'bbox' => [1, 2, 3, 4]];
+        $reordered = ['bbox' => [1.0, 2.0, 3.0, 4.0], 'element_key' => 'element:'.str_repeat('b', 64), 'page' => 2, 'document_id' => 1, 'region_key' => 'region:'.str_repeat('a', 64), 'unit_index' => 2];
+        $wrongLocator = [...$locator, 'element_key' => 'element:'.str_repeat('c', 64)];
+
+        self::assertSame(ProjectModelValueFingerprint::for(['value' => 7.94, 'unit' => 'm2']), DB::scalar("SELECT eg_project_model_value_fingerprint('{\"unit\":\"m2\",\"value\":7.94}'::jsonb)"));
+        self::assertSame(ProjectModelValueFingerprint::for(['value' => 7.94, 'unit' => 'm2']), DB::scalar("SELECT eg_project_model_value_fingerprint('{\"unit\":\"m2\",\"value\":7.9400000000001}'::jsonb)"));
+        self::assertSame(ProjectModelLocatorFingerprint::for($locator), DB::scalar('SELECT eg_project_model_locator_fingerprint(?::jsonb)', [json_encode($reordered, JSON_THROW_ON_ERROR)]));
+        self::assertNotSame(ProjectModelLocatorFingerprint::for($locator), ProjectModelLocatorFingerprint::for($wrongLocator));
+        self::assertNotSame(ProjectModelValueFingerprint::for(['value' => 7.94, 'unit' => 'm2']), ProjectModelValueFingerprint::for(['value' => 7.95, 'unit' => 'm2']));
     }
 
     private function addFirstAuditColumn(): void
