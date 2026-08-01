@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DocumentTotalAreaConstraintResolver;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionChainProjector;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentConfirmedProjectModelValues;
 use Illuminate\Database\DatabaseManager;
 use stdClass;
 
@@ -15,6 +16,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
         private DatabaseManager $database,
         private DocumentTotalAreaConstraintResolver $areaConstraints = new DocumentTotalAreaConstraintResolver,
         private ProjectModelCorrectionChainProjector $corrections = new ProjectModelCorrectionChainProjector,
+        private ?EloquentConfirmedProjectModelValues $confirmedValues = null,
     ) {}
 
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
@@ -33,7 +35,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
         return $model === null ? null : [
             'content_version' => (string) $row->content_version,
             'model' => $model,
-            'effective_values' => $this->corrections->project($this->correctionRows($row)),
+            'effective_values' => $this->effectiveValues($row),
         ];
     }
 
@@ -211,5 +213,18 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
                 ];
             })
             ->all();
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function effectiveValues(stdClass $model): array
+    {
+        $confirmed = ($this->confirmedValues ?? new EloquentConfirmedProjectModelValues($this->database))->forModel($model);
+        $corrections = $this->corrections->project($this->correctionRows($model));
+        $byAssertion = [];
+        foreach ($confirmed as $value) $byAssertion[(string) $value['assertion_stable_key']] = $value;
+        foreach ($corrections as $value) $byAssertion[(string) $value['assertion_stable_key']] = $value;
+        ksort($byAssertion, SORT_STRING);
+
+        return array_values($byAssertion);
     }
 }

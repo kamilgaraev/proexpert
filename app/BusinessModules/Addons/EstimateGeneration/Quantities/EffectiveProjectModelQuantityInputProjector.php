@@ -34,12 +34,12 @@ final class EffectiveProjectModelQuantityInputProjector
             }
             $entityKey = $effective['entity_stable_key'] ?? null;
             $value = $effective['value'] ?? null;
-            $correctionKey = $effective['correction_stable_key'] ?? null;
-            if (! is_string($entityKey) || ! is_string($correctionKey) || ! is_array($value)
+            $provenanceKey = $effective['correction_stable_key'] ?? $effective['assertion_stable_key'] ?? null;
+            if (! is_string($entityKey) || ! is_string($provenanceKey) || ! is_array($value)
                 || ! $this->positiveNumber($value['value'] ?? null) || ($value['unit'] ?? null) !== 'm2' || count($value) !== 2) {
                 throw new InvalidArgumentException('Effective project model area correction is invalid.');
             }
-            $roomAreas[$entityKey] = ['value' => $value['value'], 'correction_key' => $correctionKey];
+            $roomAreas[$entityKey] = ['value' => $value['value'], 'correction_key' => $provenanceKey];
         }
         if ($roomAreas === []) {
             return $input;

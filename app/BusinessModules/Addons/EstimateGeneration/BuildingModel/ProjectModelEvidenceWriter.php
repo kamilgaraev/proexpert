@@ -162,7 +162,7 @@ final readonly class ProjectModelEvidenceWriter
         if ($candidate['source'] === 'ai_candidate') {
             return;
         }
-        $evidence = $this->activeEvidence($stored, $candidate['unit'], $candidate['locator']);
+        $evidence = $this->activeEvidence($stored, $candidate['unit'], $candidate['locator'], $candidate['value']);
         if ($evidence === null) {
             return;
         }
@@ -236,8 +236,12 @@ final readonly class ProjectModelEvidenceWriter
         return (int) $id;
     }
 
-    private function activeEvidence(StoredBuildingModel $stored, SessionBuildingModelUnitData $unit, array $locator): ?object
+    /** @param array<string,mixed> $candidateValue */
+    private function activeEvidence(StoredBuildingModel $stored, SessionBuildingModelUnitData $unit, array $locator, array $candidateValue): ?object
     {
+        if ($locator === [] || array_is_list($locator)) {
+            return null;
+        }
         $context = $stored->context;
         $query = $this->database->table('estimate_generation_building_model_evidence as link')
             ->join('estimate_generation_evidence as evidence', function ($join): void {
@@ -253,25 +257,33 @@ final readonly class ProjectModelEvidenceWriter
             ->where('evidence.source_version', $unit->sourceVersion)
             ->whereNull('evidence.invalidated_at')
             ->where('evidence.source_ref', 'document:'.$unit->documentId);
-        foreach ($query->orderBy('evidence.id')->get(['evidence.id', 'evidence.source_version', 'evidence.invalidation_version', 'evidence.locator']) as $row) {
+        foreach ($query->orderBy('evidence.id')->get(['evidence.id', 'evidence.source_version', 'evidence.invalidation_version', 'evidence.locator', 'evidence.value']) as $row) {
             $evidenceLocator = $this->decode($row->locator);
             if (($evidenceLocator['document_id'] ?? null) !== $unit->documentId
                 || (($evidenceLocator['unit_index'] ?? $evidenceLocator['page'] ?? null) !== $unit->index)) {
                 continue;
             }
-            $matches = true;
-            foreach ($locator as $key => $value) {
-                if (! array_key_exists($key, $evidenceLocator) || $evidenceLocator[$key] !== $value) {
-                    $matches = false;
-                    break;
-                }
-            }
-            if ($matches) {
+            if ($evidenceLocator === $locator && $this->evidenceValueMatches($row->value, $candidateValue)) {
                 return $row;
             }
         }
 
         return null;
+    }
+
+    /** @param array<string,mixed> $candidateValue */
+    private function evidenceValueMatches(mixed $rawValue, array $candidateValue): bool
+    {
+        $value = $this->decode($rawValue);
+        if (isset($value['candidate_value']) && is_array($value['candidate_value']) && ! array_is_list($value['candidate_value'])) {
+            $value = $value['candidate_value'];
+        }
+
+        try {
+            return hash_equals(ProjectModelValueFingerprint::for($candidateValue), ProjectModelValueFingerprint::for($value));
+        } catch (InvalidArgumentException) {
+            return false;
+        }
     }
 
     /** @param array<string,mixed> $identity */
@@ -303,8 +315,10 @@ final readonly class ProjectModelEvidenceWriter
         $measurement = $this->identityToken($identity['measurement'] ?? null);
         $role = $this->identityToken($identity['role'] ?? null);
 
-        return $axis !== null && $entityType !== null && $measurement !== null && $role !== null
-            ? 'axis:'.$axis.'|entity:'.$entityType.'|measurement:'.$measurement.'|role:'.$role
+        $drawing = $this->identityToken($identity['drawing_identity'] ?? $identity['section_identity'] ?? $identity['elevation_identity'] ?? null);
+
+        return $axis !== null && $entityType !== null && $measurement !== null && $role !== null && $drawing !== null
+            ? 'drawing:'.$drawing.'|axis:'.$axis.'|entity:'.$entityType.'|measurement:'.$measurement.'|role:'.$role
             : null;
     }
 

@@ -66,6 +66,21 @@ final class ProjectModelEvidenceWriterTest extends TestCase
     }
 
     #[Test]
+    public function same_axis_from_different_sheets_remains_source_local_without_explicit_drawing_identity(): void
+    {
+        $payload = ['project_model_candidates' => [[
+            'identity' => ['axis' => '2', 'entity_type' => 'wall', 'measurement' => 'height', 'role' => 'top'],
+            'entity' => ['kind' => 'dimension', 'value' => 6.5, 'unit' => 'm'],
+            'assertion' => ['type' => 'dimension', 'source' => 'cad', 'value' => ['value' => 6.5, 'unit' => 'm']],
+        ]]];
+
+        $first = $this->candidates($this->unit(504, 4, $payload));
+        $second = $this->candidates($this->unit(505, 5, $payload));
+
+        self::assertNotSame($first[0]['entity_key'], $second[0]['entity_key']);
+    }
+
+    #[Test]
     public function writer_contract_pins_active_evidence_and_never_deletes_historical_projection(): void
     {
         $source = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/BuildingModel/ProjectModelEvidenceWriter.php');
@@ -75,6 +90,9 @@ final class ProjectModelEvidenceWriterTest extends TestCase
             "->where('evidence.source_version', \$unit->sourceVersion)",
             "'candidate_value_fingerprint' => ProjectModelValueFingerprint::for(\$candidate['value'])",
             "if (\$candidate['source'] === 'ai_candidate')",
+            'if ($locator === [] || array_is_list($locator))',
+            'if ($evidenceLocator === $locator)',
+            "'drawing_identity'",
             "'axis'",
             "'room_number'",
             "'section_marker'",
