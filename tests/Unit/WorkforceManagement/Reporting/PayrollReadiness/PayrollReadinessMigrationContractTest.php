@@ -29,6 +29,10 @@ final class PayrollReadinessMigrationContractTest extends TestCase
             $migration,
             'PERFORM workforce_payroll_readiness_assert_complete(NEW.id, NEW.sealed_at);',
         ));
+        self::assertStringNotContainsString('COUNT(DISTINCT position)', $migration);
+        self::assertStringNotContainsString('jsonb_agg(DISTINCT evidence_code ORDER BY evidence_code)', $migration);
+        self::assertStringContainsString('undeclared_blocker_count', $migration);
+        self::assertStringContainsString('missing_blocker_code_count', $migration);
         self::assertStringContainsString('IF snapshot.sealed_at IS NOT NULL THEN', $migration);
         self::assertStringContainsString('payroll readiness snapshot is already sealed', $migration);
         self::assertStringContainsString('payroll readiness item set incomplete', $migration);
@@ -46,7 +50,7 @@ final class PayrollReadinessMigrationContractTest extends TestCase
         self::assertStringContainsString("NEW.policy_definition <> '", $migration);
         self::assertStringContainsString("snapshot.reason_code = 'source_empty'", $migration);
         self::assertStringContainsString("snapshot.reason_code IN ('validation_blockers', 'accounting_blockers')", $migration);
-        self::assertStringContainsString('actual_blocker_codes <> snapshot.blocker_codes', $migration);
+        self::assertStringContainsString('snapshot.blocker_codes ? evidence_code', $migration);
         self::assertStringContainsString('source_row.created_at > snapshot.evaluated_at', $migration);
         self::assertStringContainsString('validation_issue.created_at > snapshot.evaluated_at', $migration);
 

@@ -126,6 +126,18 @@ final readonly class PayrollReadinessPolicyDefinition
         array $blockerCodes,
     ): void {
         $rule = $this->rule($reason);
+        $invalidBlockerCodes = array_filter(
+            $blockerCodes,
+            static fn (mixed $code): bool => ! is_string($code)
+                || preg_match('/^[a-z0-9_]{1,120}$/D', $code) !== 1,
+        );
+        $normalizedBlockerCodes = $invalidBlockerCodes === [] ? $blockerCodes : [];
+        sort($normalizedBlockerCodes, SORT_STRING);
+        $normalizedBlockerCodes = array_values(array_unique($normalizedBlockerCodes));
+        $blockerCodesValid = $invalidBlockerCodes === []
+            && $normalizedBlockerCodes === $blockerCodes
+            && count($blockerCodes) <= $blockerCount
+            && ($blockerCount === 0) === ($blockerCodes === []);
         $sourceRowsValid = match ($rule['source_rows']) {
             'none' => $sourceRowCount === 0,
             'required' => $sourceRowCount > 0,
@@ -139,7 +151,7 @@ final readonly class PayrollReadinessPolicyDefinition
             default => false,
         };
 
-        if (! $sourceRowsValid || ! $blockingIssuesValid) {
+        if (! $blockerCodesValid || ! $sourceRowsValid || ! $blockingIssuesValid) {
             throw new InvalidArgumentException('payroll_readiness_reason_evidence_mismatch');
         }
     }

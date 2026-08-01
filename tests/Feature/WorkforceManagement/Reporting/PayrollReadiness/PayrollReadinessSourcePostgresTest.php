@@ -50,7 +50,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $fixture = $this->fixture(withBlockingIssue: true);
         $recorder = $this->recorder();
         $identity = $this->identity($fixture);
-        $evaluatedAt = new DateTimeImmutable('2026-08-01T10:15:00+00:00');
+        $evaluatedAt = $this->utcNow();
 
         $recorder->recordBlocked(
             $identity,
@@ -73,7 +73,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $recorder->recordBlocked(
             $identity,
             $fixture['user_id'],
-            new DateTimeImmutable('2026-08-01T10:20:00+00:00'),
+            $this->utcNow(),
             str_repeat('a', 64),
             PayrollReadinessReason::VALIDATION_BLOCKERS,
         );
@@ -107,7 +107,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $this->recorder()->recordBlocked(
             $this->identity($fixture),
             $fixture['user_id'],
-            new DateTimeImmutable('2026-08-01T10:15:00+00:00'),
+            $this->utcNow(),
             str_repeat('a', 64),
             PayrollReadinessReason::VALIDATION_BLOCKERS,
         );
@@ -139,7 +139,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $snapshot = $this->recorder()->recordBlocked(
             $this->identity($fixture),
             $fixture['user_id'],
-            new DateTimeImmutable('2026-08-01T10:15:00+00:00'),
+            $this->utcNow(),
             str_repeat('a', 64),
             PayrollReadinessReason::SOURCE_CHANGED,
         );
@@ -163,14 +163,14 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $snapshot = $this->recorder()->recordBlocked(
             $this->identity($fixture),
             $fixture['user_id'],
-            new DateTimeImmutable('now', new DateTimeZone('UTC')),
+            $this->utcNow(),
             str_repeat('a', 64),
             PayrollReadinessReason::SOURCE_CHANGED,
         );
-        $exception = $this->captureQueryException(static function () use ($snapshot): void {
+        $exception = $this->captureQueryException(function () use ($snapshot): void {
             $payload = $snapshot->toPersistence();
             $payload['evaluated_at'] = $snapshot->evaluatedAt;
-            $payload['created_at'] = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+            $payload['created_at'] = $this->utcNow();
             $payload['reason_code'] = PayrollReadinessReason::SOURCE_EMPTY->value;
             $payload['source_hash'] = str_repeat('f', 64);
             $payload['state_hash'] = str_repeat('e', 64);
@@ -183,14 +183,14 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
                     'organization_id' => $snapshot->organizationId,
                     'payroll_period_id' => $snapshot->periodId,
                     'payroll_readiness_snapshot_id' => $snapshotId,
-                    'created_at' => new DateTimeImmutable('now', new DateTimeZone('UTC')),
+                    'created_at' => $this->utcNow(),
                 ];
             }
 
             DB::table('workforce_payroll_readiness_snapshot_items')->insert($items);
             DB::table('workforce_payroll_readiness_snapshots')
                 ->where('id', $snapshotId)
-                ->update(['sealed_at' => new DateTimeImmutable('now', new DateTimeZone('UTC'))]);
+                ->update(['sealed_at' => $this->utcNow()]);
         });
 
         $this->assertSqlState($exception, '23514');
@@ -226,7 +226,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $this->recorder()->recordBlocked(
             $this->identity($fixture),
             $fixture['user_id'],
-            new DateTimeImmutable('now', new DateTimeZone('UTC')),
+            $this->utcNow(),
             str_repeat('a', 64),
             PayrollReadinessReason::SOURCE_CHANGED,
         );
@@ -268,7 +268,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
                     '2026-07-31',
                 ),
                 $fixture['user_id'],
-                new DateTimeImmutable('2026-08-01T10:15:00+00:00'),
+                $this->utcNow(),
                 str_repeat('a', 64),
                 PayrollReadinessReason::SOURCE_CHANGED,
             );
@@ -287,7 +287,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
             $this->recorder()->recordBlocked(
                 $this->identity($fixture),
                 (int) $foreignUser->id,
-                new DateTimeImmutable('2026-08-01T10:15:00+00:00'),
+                $this->utcNow(),
                 str_repeat('a', 64),
                 PayrollReadinessReason::SOURCE_CHANGED,
             );
@@ -300,7 +300,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
     public function test_locked_snapshot_requires_exact_period_hash_actor_and_utc_time(): void
     {
         $fixture = $this->fixture(withBlockingIssue: false);
-        $lockedAt = new DateTimeImmutable('2026-08-01T10:15:00+00:00');
+        $lockedAt = $this->utcNow();
         $lockedHash = str_repeat('b', 64);
         DB::table('workforce_payroll_periods')->where('id', $fixture['period_id'])->update([
             'status' => 'locked',
@@ -334,7 +334,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
     public function test_snapshot_and_owner_lock_roll_back_together(): void
     {
         $fixture = $this->fixture(withBlockingIssue: false);
-        $lockedAt = new DateTimeImmutable('2026-08-01T10:15:00+00:00');
+        $lockedAt = $this->utcNow();
         $lockedHash = str_repeat('d', 64);
 
         try {
@@ -370,7 +370,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $organization = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $user = User::factory()->create();
-        $now = '2026-08-01 10:00:00+00';
+        $now = $this->utcNow()->modify('-1 minute')->format('Y-m-d H:i:s.uP');
         DB::table('organization_user')->insert([
             'organization_id' => $organization->id,
             'user_id' => $user->id,
@@ -470,5 +470,10 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
     private function assertSqlState(QueryException $exception, string $expected): void
     {
         self::assertSame($expected, (string) ($exception->errorInfo[0] ?? $exception->getCode()));
+    }
+
+    private function utcNow(): DateTimeImmutable
+    {
+        return new DateTimeImmutable('now', new DateTimeZone('UTC'));
     }
 }

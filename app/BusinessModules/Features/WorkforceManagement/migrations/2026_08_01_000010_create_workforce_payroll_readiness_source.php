@@ -76,6 +76,10 @@ return new class extends Migration
                 ['organization_id', 'payroll_period_id', 'source_type'],
                 'workforce_payroll_readiness_item_period_index',
             );
+            $table->index(
+                ['payroll_readiness_snapshot_id', 'source_type', 'evidence_status', 'evidence_code'],
+                'workforce_payroll_readiness_item_blocker_index',
+            );
         });
 
         if (DB::getDriverName() !== 'pgsql') {
@@ -140,6 +144,25 @@ BEGIN
        OR NEW.item_count < 5
        OR NEW.item_count <> 5 + NEW.source_row_count + NEW.validation_issue_count
        OR NEW.blocker_count > NEW.validation_issue_count
+       OR jsonb_array_length(NEW.blocker_codes) > 64
+       OR jsonb_array_length(NEW.blocker_codes) > NEW.blocker_count
+       OR (NEW.blocker_count = 0) <> (jsonb_array_length(NEW.blocker_codes) = 0)
+       OR EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(NEW.blocker_codes) AS blocker(value)
+            WHERE jsonb_typeof(blocker.value) <> 'string'
+       )
+       OR EXISTS (
+           SELECT 1
+             FROM (
+                 SELECT code,
+                        lag(code) OVER (ORDER BY position) AS previous_code
+                   FROM jsonb_array_elements_text(NEW.blocker_codes)
+                        WITH ORDINALITY AS blockers(code, position)
+             ) AS ordered_blockers
+            WHERE code !~ '^[a-z0-9_]{1,120}$'
+               OR (previous_code IS NOT NULL AND code <= previous_code)
+       )
        OR NEW.created_at < NEW.evaluated_at
        OR NEW.sealed_at IS NOT NULL THEN
         RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'payroll readiness snapshot payload invalid';
@@ -313,7 +336,6 @@ CREATE FUNCTION workforce_payroll_readiness_assert_complete(
 DECLARE
     snapshot workforce_payroll_readiness_snapshots%ROWTYPE;
     actual_item_count bigint;
-    actual_position_count bigint;
     first_position integer;
     last_position integer;
     actual_check_count bigint;
@@ -321,7 +343,8 @@ DECLARE
     actual_validation_count bigint;
     actual_blocker_count bigint;
     invalid_check_count bigint;
-    actual_blocker_codes jsonb;
+    undeclared_blocker_count bigint;
+    missing_blocker_code_count bigint;
     first_item_created_at timestamptz;
     last_item_created_at timestamptz;
 BEGIN
@@ -334,13 +357,17 @@ BEGIN
     END IF;
 
     SELECT COUNT(*),
-           COUNT(DISTINCT position),
            MIN(position),
            MAX(position),
            COUNT(*) FILTER (WHERE source_type = 'readiness_check'),
            COUNT(*) FILTER (WHERE source_type = 'payroll_source_row'),
            COUNT(*) FILTER (WHERE source_type = 'validation_issue'),
            COUNT(*) FILTER (WHERE source_type = 'validation_issue' AND evidence_status = 'blocking'),
+           COUNT(*) FILTER (
+               WHERE source_type = 'validation_issue'
+                 AND evidence_status = 'blocking'
+                 AND NOT (snapshot.blocker_codes ? evidence_code)
+           ),
            COUNT(*) FILTER (
                WHERE source_type = 'readiness_check'
                  AND evidence_status IS DISTINCT FROM CASE snapshot.reason_code
@@ -352,38 +379,44 @@ BEGIN
                      WHEN 'locked' THEN 'passed'
                  END
            ),
-           COALESCE(
-               jsonb_agg(DISTINCT evidence_code ORDER BY evidence_code)
-                   FILTER (WHERE source_type = 'validation_issue' AND evidence_status = 'blocking'),
-               '[]'::jsonb
-           ),
            MIN(created_at),
            MAX(created_at)
       INTO actual_item_count,
-           actual_position_count,
            first_position,
            last_position,
            actual_check_count,
            actual_source_count,
            actual_validation_count,
            actual_blocker_count,
+           undeclared_blocker_count,
            invalid_check_count,
-           actual_blocker_codes,
            first_item_created_at,
            last_item_created_at
       FROM workforce_payroll_readiness_snapshot_items
      WHERE payroll_readiness_snapshot_id = snapshot_id;
 
+    SELECT COUNT(*)
+      INTO missing_blocker_code_count
+      FROM jsonb_array_elements_text(snapshot.blocker_codes) AS declared(code)
+     WHERE NOT EXISTS (
+         SELECT 1
+           FROM workforce_payroll_readiness_snapshot_items AS item
+          WHERE item.payroll_readiness_snapshot_id = snapshot_id
+            AND item.source_type = 'validation_issue'
+            AND item.evidence_status = 'blocking'
+            AND item.evidence_code = declared.code
+     );
+
     IF actual_item_count <> snapshot.item_count
-       OR actual_position_count <> snapshot.item_count
        OR first_position <> 1
        OR last_position <> snapshot.item_count
        OR actual_check_count <> 5
        OR actual_source_count <> snapshot.source_row_count
        OR actual_validation_count <> snapshot.validation_issue_count
        OR actual_blocker_count <> snapshot.blocker_count
+       OR undeclared_blocker_count <> 0
+       OR missing_blocker_code_count <> 0
        OR invalid_check_count <> 0
-       OR actual_blocker_codes <> snapshot.blocker_codes
        OR first_item_created_at < snapshot.created_at
        OR last_item_created_at > sealing_at
        OR (snapshot.reason_code = 'source_empty' AND actual_source_count <> 0)

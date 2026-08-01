@@ -379,6 +379,34 @@ final class PayrollReadinessSnapshotBuilderTest extends TestCase
         );
     }
 
+    #[DataProvider('invalidBlockerCodeStateProvider')]
+    public function test_snapshot_dto_rejects_non_normalized_or_count_mismatched_blocker_codes(
+        int $blockerCount,
+        array $blockerCodes,
+    ): void {
+        $policy = PayrollReadinessPolicyDefinition::v1();
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('payroll_readiness_reason_evidence_mismatch');
+
+        $policy->assertEvidenceState(
+            PayrollReadinessReason::SOURCE_CHANGED,
+            1,
+            $blockerCount,
+            $blockerCodes,
+        );
+    }
+
+    public static function invalidBlockerCodeStateProvider(): array
+    {
+        return [
+            'ghost code without blocker' => [0, ['ghost_code']],
+            'more codes than blockers' => [1, ['first_code', 'second_code']],
+            'duplicate code' => [2, ['same_code', 'same_code']],
+            'unsorted codes' => [2, ['second_code', 'first_code']],
+            'invalid code shape' => [1, ['Invalid code']],
+        ];
+    }
+
     private function sourceRows(): array
     {
         return [
