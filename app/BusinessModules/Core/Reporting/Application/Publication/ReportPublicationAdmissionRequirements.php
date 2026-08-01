@@ -8,7 +8,6 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRen
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use InvalidArgumentException;
 use JsonException;
 use RuntimeException;
 
@@ -75,15 +74,35 @@ final class ReportPublicationAdmissionRequirements
             throw new RuntimeException('report_publication_delivery_contracts_invalid', 0, $exception);
         }
         if (! is_array($decoded) || array_is_list($decoded) || ! is_string($bytes)
+            || array_keys($decoded) !== ['codes', 'schema_version']
             || ($decoded['schema_version'] ?? null) !== '1.0.0') {
             throw new RuntimeException('report_publication_delivery_contracts_invalid');
         }
         $code = $decoded['codes']['procurement_cycle'] ?? null;
-        if (! is_array($code) || ! is_array($code['drill_down'] ?? null) || ! is_array($code['exports'] ?? null)) {
+        if (! is_array($decoded['codes'] ?? null) || array_keys($decoded['codes']) !== ['procurement_cycle']
+            || ! is_array($code) || array_keys($code) !== ['drill_down', 'exports', 'version']
+            || $code['version'] !== '1.0.0'
+            || ! is_array($code['drill_down'] ?? null) || ! is_array($code['exports'] ?? null)
+            || array_keys($code['drill_down']) !== ['schema', 'schema_sha256']
+            || array_keys($code['exports']) !== ['csv', 'pdf', 'xlsx']) {
             throw new RuntimeException('report_publication_delivery_contracts_invalid');
         }
-        foreach ([$code['drill_down'], ...array_values($code['exports'])] as $contract) {
+        $renderers = [
+            'csv' => CsvReportExportRenderer::class,
+            'pdf' => PdfReportExportRenderer::class,
+            'xlsx' => XlsxReportExportRenderer::class,
+        ];
+        foreach ([$code['drill_down']] as $contract) {
             if (! is_array($contract) || ! is_array($contract['schema'] ?? null)
+                || ! is_string($contract['schema_sha256'] ?? null)
+                || ! hash_equals($contract['schema_sha256'], hash('sha256', CanonicalJson::encode($contract['schema'])))) {
+                throw new RuntimeException('report_publication_delivery_contracts_invalid');
+            }
+        }
+        foreach ($renderers as $format => $renderer) {
+            $contract = $code['exports'][$format];
+            if (! is_array($contract) || array_keys($contract) !== ['renderer_class', 'schema', 'schema_sha256']
+                || $contract['renderer_class'] !== $renderer || ! is_array($contract['schema'] ?? null)
                 || ! is_string($contract['schema_sha256'] ?? null)
                 || ! hash_equals($contract['schema_sha256'], hash('sha256', CanonicalJson::encode($contract['schema'])))) {
                 throw new RuntimeException('report_publication_delivery_contracts_invalid');

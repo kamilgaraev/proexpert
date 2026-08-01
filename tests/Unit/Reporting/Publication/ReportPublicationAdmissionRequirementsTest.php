@@ -60,4 +60,22 @@ final class ReportPublicationAdmissionRequirementsTest extends TestCase
             @unlink($tampered);
         }
     }
+
+    public function test_tampered_renderer_or_format_is_rejected(): void
+    {
+        $source = dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/resources/report-publication-delivery-contracts.v1.json';
+        $bytes = file_get_contents($source);
+        self::assertIsString($bytes);
+        $decoded = json_decode($bytes, true, 64, JSON_THROW_ON_ERROR);
+        $decoded['codes']['procurement_cycle']['exports']['csv']['renderer_class'] = 'App\\FakeRenderer';
+        $tampered = tempnam(sys_get_temp_dir(), 'most-report-contract-');
+        self::assertIsString($tampered);
+        file_put_contents($tampered, json_encode($decoded, JSON_THROW_ON_ERROR));
+        try {
+            $this->expectException(RuntimeException::class);
+            ReportPublicationAdmissionRequirements::validateFile($tampered);
+        } finally {
+            @unlink($tampered);
+        }
+    }
 }
