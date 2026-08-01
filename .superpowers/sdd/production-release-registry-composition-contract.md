@@ -74,3 +74,28 @@ CLI `issue-report-publication-release.php` получает trusted root и requ
 10. Production composition boundary: test classes и CI fixture adapters cannot be injected.
 
 До прохождения всей матрицы публикация отчёта не объявляется готовой.
+## Уточнения после независимого ревью
+
+### Trusted checkout SHA и layout
+
+Ожидаемый SHA checkout является обязательным типизированным аргументом composition: compose(request, TrustedReleaseDirectory, CommitSha expectedCommitSha). CommitSha принимает только 40 символов lower-case hexadecimal. Значение нельзя получать из request, окружения или содержимого артефакта: workflow передаёт SHA проверенного checkout отдельно.
+
+TrustedReleaseDirectory строится только из realpath(config('reports.publication_release.trusted_directory')). CLI проверяет, что request path является прямым child этого root, затем ReportPublicationReleaseRequestFileLoader::load(requestPath, root) проверяет extension, symlink, canonical JSON и имя {request_id}.json. Composition выводит артефакты только из фиксированного artifact_paths request и требует, чтобы каждый путь был прямым child того же root; каталог не должен содержать альтернативных имён или произвольных подкаталогов. Request-файл не считается артефактом.
+
+### Точные lookup signatures и ownership
+
+- CandidateReportDefinitionRegistry::candidate(string $code): CandidateReportDefinition — authoritative candidate lookup; adapter проверяет code и definition hash.
+- ReportDefinitionBindingAssembler::assemble(ReportDefinitionRegistry $registry): ReportDefinitionBindingMap — единственный владелец production binding composition; map lookup проверяет definition hash.
+- FilesystemReportConformanceEvidenceRepository::load(string $code, string $commitSha): ReportDefinitionConformanceEvidence — единственный владелец evidence hydrate.
+- ReportPublicationProof::fromArray(array $payload): ReportPublicationProof — единственный parser proof.
+- ReportPublicationAdmissionRequirements::requiredChecks(string $code): array — authoritative verifiedChecks; adapter не принимает caller-provided список и сохраняет порядок proof.ci.required_checks.
+
+Перед возвратом admission adapter сравнивает candidate, binding, evidence и proof definition hashes.
+
+### Replay port и атомарная уникальность
+
+Replay требует обязательный порт ReportPublicationReleaseReplayStore::reserveOrMatch(ReportPublicationReleaseIdempotencyKey $key): ReplayReservation.
+
+ReportPublicationReleaseIdempotencyKey — immutable value object из requestId, code, commitSha, proofSha256; canonical digest используется как уникальный ключ. reserveOrMatch атомарен: отсутствующий ключ резервируется; существующий с тем же digest возвращает matched; иной digest/commit возвращает conflict. Adapter не продвигает публикацию и не пишет частичные записи до полной верификации.
+
+Owner replay-контракта — infrastructure release registry. Тесты-владельцы: tests/Unit/Reporting/Publication/ReportPublicationReleaseReplayStoreTest.php и tests/Feature/Reporting/Publication/ReportPublicationReleaseCompositionTest.php. Матрица: first reserve, same-key match, digest conflict, commit conflict и atomic concurrent reservation через deterministic in-memory contract double.
