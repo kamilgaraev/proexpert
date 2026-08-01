@@ -15,6 +15,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
@@ -109,6 +111,8 @@ final class PlanFactSourceSnapshotTest extends TestCase
         $store = new class implements ReportSourceSnapshotStreamingStore
         {
             public ?ReportSourceSnapshotStream $stream = null;
+
+            public ?ReportSourceSnapshotWrite $write = null;
 
             public int $drillRows = 0;
 
@@ -273,6 +277,43 @@ final class PlanFactSourceSnapshotTest extends TestCase
         self::assertSame(2, $store->drillRowCount);
     }
 
+    public function test_stream_preserves_the_existing_canonical_source_and_snapshot_hashes(): void
+    {
+        $report = $this->report();
+        $drills = [
+            'first-key' => [$this->drill(101)],
+            'second-key' => [$this->drill(102)],
+        ];
+        $materializer = new PlanFactSourceSnapshotMaterializer;
+        $expected = $materializer->materialize(
+            '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            $this->scope([10, 20]),
+            $this->filters(),
+            $report,
+            $drills,
+            new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
+            new DateTimeImmutable('2026-07-31T10:05:00+00:00'),
+            $this->close(),
+        );
+        $stream = $materializer->stream(
+            '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            $this->scope([10, 20]),
+            $this->filters(),
+            $report,
+            static fn (string $key): iterable => $drills[$key],
+            new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
+            new DateTimeImmutable('2026-07-31T10:05:00+00:00'),
+            $this->close(),
+        );
+        $streamDrills = $this->orderedStreamDrills($stream);
+        $sourceHash = ReportSourceSnapshotIntegrity::materializedSourceHash($stream->rows, $streamDrills, $stream->watermarks);
+        $writing = $stream->header($sourceHash, count($streamDrills), new Sha256Hash(str_repeat('a', 64)));
+        $snapshotHash = ReportSourceSnapshotIntegrity::hashStream($writing, $stream->rows, $streamDrills);
+
+        self::assertSame($expected->header->sourceHash->value, $sourceHash->value);
+        self::assertSame($expected->header->snapshotHash->value, $snapshotHash->value);
+    }
+
     public function test_source_hash_changes_when_the_validated_close_identity_changes(): void
     {
         $first = $this->materialize($this->report());
@@ -317,6 +358,8 @@ final class PlanFactSourceSnapshotTest extends TestCase
         $store = new class implements ReportSourceSnapshotStreamingStore
         {
             public ?ReportSourceSnapshotStream $stream = null;
+
+            public ?ReportSourceSnapshotWrite $write = null;
 
             public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
             {
@@ -399,6 +442,34 @@ final class PlanFactSourceSnapshotTest extends TestCase
             new DateTimeImmutable('2026-07-31T10:05:00+00:00'),
             $close ?? $this->close(),
         );
+    }
+
+    /** @return list<ReportSourceSnapshotDrillRow> */
+    private function orderedStreamDrills(ReportSourceSnapshotStream $stream): array
+    {
+        $grouped = [];
+        foreach ($stream->drillRows() as $row) {
+            $grouped[$row->rowKey][$row->columnId][] = $row;
+        }
+        $result = [];
+        foreach ($grouped as $rowKey => $columns) {
+            foreach ($columns as $columnId => $rows) {
+                usort($rows, static fn ($left, $right): int => $left->sortKey <=> $right->sortKey);
+                foreach ($rows as $ordinal => $row) {
+                    $result[] = new ReportSourceSnapshotDrillRow(
+                        $stream->id,
+                        $rowKey,
+                        $columnId,
+                        $ordinal + 1,
+                        $row->payload,
+                        $row->payloadHash,
+                    );
+                }
+            }
+        }
+        usort($result, static fn (ReportSourceSnapshotDrillRow $left, ReportSourceSnapshotDrillRow $right): int => [$left->rowKey, $left->columnId, $left->ordinal] <=> [$right->rowKey, $right->columnId, $right->ordinal]);
+
+        return $result;
     }
 
     private function request(array $projectIds): PlanFactSourceSnapshotRequest

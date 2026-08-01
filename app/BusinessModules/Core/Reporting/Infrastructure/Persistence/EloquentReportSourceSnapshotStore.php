@@ -166,14 +166,14 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStr
         ReportSourceSnapshotIdentity $identity,
         ReportSourceSnapshotStream $snapshot,
     ): ReportSourceSnapshotHeader {
-        return DB::transaction(function () use ($identity, $snapshot): ReportSourceSnapshotHeader {
-            $pendingHash = new Sha256Hash(hash('sha256', 'report-source-snapshot-pending:'.$snapshot->id));
-            $pending = $snapshot->header($pendingHash, 0, $pendingHash);
-            if (! $identity->matches($pending)) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
-            }
+        $pendingHash = new Sha256Hash(hash('sha256', 'report-source-snapshot-pending:'.$snapshot->id));
+        $pending = $snapshot->header($pendingHash, 0, $pendingHash);
+        if (! $identity->matches($pending)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+        DB::transaction(fn (): ReportSourceSnapshotRecord => ReportSourceSnapshotRecord::query()->create($this->headerAttributes($pending, $identity)));
 
-            ReportSourceSnapshotRecord::query()->create($this->headerAttributes($pending, $identity));
+        try {
             $this->insertRows($pending, $snapshot->rows);
             $drillRowCount = $this->insertStreamDrillRows($pending, $snapshot);
             $this->normalizeStreamDrillOrdinals($pending->id, $drillRowCount);
@@ -191,49 +191,24 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStr
             );
             $writing = $snapshot->header($sourceHash, $drillRowCount, $snapshotHash);
 
-            ReportSourceSnapshotRecord::query()->whereKey($writing->id)->where('status', ReportSourceSnapshotStatus::WRITING->value)->update([
-                'source_hash' => $writing->sourceHash->value,
-                'materialized_source_hash' => $writing->materializedSourceHash->value,
-                'row_count' => $writing->rowCount,
-                'drill_row_count' => $writing->drillRowCount,
-                'snapshot_hash' => $writing->snapshotHash->value,
-                'updated_at' => $writing->generatedAt,
-            ]);
+            return $this->sealStream($writing);
+        } catch (Throwable $exception) {
+            $this->discardWritingStream($pending->id);
 
-            $readyAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-            try {
-                $affected = ReportSourceSnapshotRecord::query()->whereKey($writing->id)
-                    ->where('status', ReportSourceSnapshotStatus::WRITING->value)
-                    ->update(['status' => ReportSourceSnapshotStatus::READY->value, 'ready_at' => $readyAt, 'updated_at' => $readyAt]);
-            } catch (QueryException $exception) {
-                if ($this->isReadyIdentityUniqueViolation($exception)) {
-                    throw new ReportSourceSnapshotStreamConflict($writing, $exception);
-                }
-
-                throw $exception;
-            }
-            if ($affected !== 1) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
-            }
-
-            return new ReportSourceSnapshotHeader(
-                $writing->id, $writing->sourceKind, $writing->reportCode, $writing->schemaVersion, $writing->scope,
-                $writing->queryHash, $writing->asOf, $writing->sourceHash, $writing->watermarks, $writing->generatedAt,
-                $writing->staleAt, ReportSourceSnapshotStatus::READY, $writing->rowCount, $writing->drillRowCount,
-                $writing->snapshotHash, $readyAt, null, $writing->reportQueryIdentity, $writing->reportQueryHash,
-            );
-        });
+            throw $exception;
+        }
     }
 
     /** @param list<ReportSourceSnapshotRow> $rows */
     private function insertRows(ReportSourceSnapshotHeader $header, array $rows): void
     {
         foreach (array_chunk($rows, self::INSERT_CHUNK_SIZE) as $chunk) {
-            ReportSourceSnapshotRowRecord::query()->insert(array_map(fn (ReportSourceSnapshotRow $row): array => [
+            $attributes = array_map(fn (ReportSourceSnapshotRow $row): array => [
                 'snapshot_id' => $row->snapshotId, 'ordinal' => $row->ordinal, 'row_key' => $row->rowKey,
                 'payload' => json_encode($row->payload, JSON_THROW_ON_ERROR), 'payload_hash' => $row->payloadHash->value,
                 'created_at' => $header->generatedAt,
-            ], $chunk));
+            ], $chunk);
+            DB::transaction(static fn (): bool => ReportSourceSnapshotRowRecord::query()->insert($attributes));
         }
     }
 
@@ -248,15 +223,21 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStr
             $chunk[] = $this->streamDrillAttributes($header, $row, $ordinal);
             $count++;
             if (count($chunk) === self::INSERT_CHUNK_SIZE) {
-                ReportSourceSnapshotDrillRowRecord::query()->insert($chunk);
+                $this->insertDrillChunk($chunk);
                 $chunk = [];
             }
         }
         if ($chunk !== []) {
-            ReportSourceSnapshotDrillRowRecord::query()->insert($chunk);
+            $this->insertDrillChunk($chunk);
         }
 
         return $count;
+    }
+
+    /** @param list<array<string, mixed>> $chunk */
+    private function insertDrillChunk(array $chunk): void
+    {
+        DB::transaction(static fn (): bool => ReportSourceSnapshotDrillRowRecord::query()->insert($chunk));
     }
 
     private function streamDrillAttributes(
@@ -282,16 +263,63 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStr
             return;
         }
 
-        ReportSourceSnapshotDrillRowRecord::query()->where('snapshot_id', $snapshotId)->whereNotNull('sort_key')->increment('ordinal', $drillRowCount);
-        DB::statement(
-            'WITH ranked AS (SELECT snapshot_id, row_key, column_id, sort_key, row_number() OVER '
-            . '(PARTITION BY row_key, column_id ORDER BY sort_key) AS target_ordinal FROM report_source_snapshot_drill_rows '
-            . 'WHERE snapshot_id = ? AND sort_key IS NOT NULL) '
-            . 'UPDATE report_source_snapshot_drill_rows AS target SET ordinal = ranked.target_ordinal FROM ranked '
-            . 'WHERE target.snapshot_id = ranked.snapshot_id AND target.row_key = ranked.row_key '
-            . 'AND target.column_id = ranked.column_id AND target.sort_key = ranked.sort_key',
-            [$snapshotId],
-        );
+        DB::transaction(function () use ($snapshotId, $drillRowCount): void {
+            ReportSourceSnapshotDrillRowRecord::query()->where('snapshot_id', $snapshotId)->whereNotNull('sort_key')->increment('ordinal', $drillRowCount);
+            DB::statement(
+                'WITH ranked AS (SELECT snapshot_id, row_key, column_id, sort_key, row_number() OVER '
+                . '(PARTITION BY row_key, column_id ORDER BY sort_key) AS target_ordinal FROM report_source_snapshot_drill_rows '
+                . 'WHERE snapshot_id = ? AND sort_key IS NOT NULL) '
+                . 'UPDATE report_source_snapshot_drill_rows AS target SET ordinal = ranked.target_ordinal FROM ranked '
+                . 'WHERE target.snapshot_id = ranked.snapshot_id AND target.row_key = ranked.row_key '
+                . 'AND target.column_id = ranked.column_id AND target.sort_key = ranked.sort_key',
+                [$snapshotId],
+            );
+        });
+    }
+
+    private function sealStream(ReportSourceSnapshotHeader $writing): ReportSourceSnapshotHeader
+    {
+        return DB::transaction(function () use ($writing): ReportSourceSnapshotHeader {
+            ReportSourceSnapshotRecord::query()->whereKey($writing->id)->where('status', ReportSourceSnapshotStatus::WRITING->value)->update([
+                'source_hash' => $writing->sourceHash->value,
+                'materialized_source_hash' => $writing->materializedSourceHash->value,
+                'row_count' => $writing->rowCount,
+                'drill_row_count' => $writing->drillRowCount,
+                'snapshot_hash' => $writing->snapshotHash->value,
+                'updated_at' => $writing->generatedAt,
+            ]);
+            $readyAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+            try {
+                $affected = ReportSourceSnapshotRecord::query()->whereKey($writing->id)
+                    ->where('status', ReportSourceSnapshotStatus::WRITING->value)
+                    ->update(['status' => ReportSourceSnapshotStatus::READY->value, 'ready_at' => $readyAt, 'updated_at' => $readyAt]);
+            } catch (QueryException $exception) {
+                if ($this->isReadyIdentityUniqueViolation($exception)) {
+                    throw new ReportSourceSnapshotStreamConflict($writing, $exception);
+                }
+
+                throw $exception;
+            }
+            if ($affected !== 1) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+            }
+
+            return new ReportSourceSnapshotHeader(
+                $writing->id, $writing->sourceKind, $writing->reportCode, $writing->schemaVersion, $writing->scope,
+                $writing->queryHash, $writing->asOf, $writing->sourceHash, $writing->watermarks, $writing->generatedAt,
+                $writing->staleAt, ReportSourceSnapshotStatus::READY, $writing->rowCount, $writing->drillRowCount,
+                $writing->snapshotHash, $readyAt, null, $writing->reportQueryIdentity, $writing->reportQueryHash,
+            );
+        });
+    }
+
+    private function discardWritingStream(string $snapshotId): void
+    {
+        DB::transaction(function () use ($snapshotId): void {
+            ReportSourceSnapshotDrillRowRecord::query()->where('snapshot_id', $snapshotId)->delete();
+            ReportSourceSnapshotRowRecord::query()->where('snapshot_id', $snapshotId)->delete();
+            ReportSourceSnapshotRecord::query()->whereKey($snapshotId)->where('status', ReportSourceSnapshotStatus::WRITING->value)->delete();
+        });
     }
 
     /** @return \Generator<int, ReportSourceSnapshotRow> */
