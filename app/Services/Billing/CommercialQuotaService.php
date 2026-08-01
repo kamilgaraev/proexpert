@@ -26,12 +26,25 @@ class CommercialQuotaService
 
     public function getEffectiveLimits(Organization $organization): array
     {
-        $summary = $this->buildLimitSummary($organization, $this->getUsage($organization));
+        $summary = $this->buildLimitSummary($organization, []);
 
         return array_combine(
             array_column($summary, 'key'),
             array_column($summary, 'limit'),
         );
+    }
+
+    /** @return array{limit: int|null, used: int} */
+    public function getAiEstimateQuota(Organization $organization): array
+    {
+        $limits = $this->getEffectiveLimits($organization);
+        $usage = $this->getUsage($organization);
+        $limit = $limits['ai_estimates_month'] ?? null;
+
+        return [
+            'limit' => $limit === null ? null : max(0, (int) $limit),
+            'used' => max(0, (int) ($usage['ai_estimates_month'] ?? 0)),
+        ];
     }
 
     public function getUsage(Organization $organization): array

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationAction;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 
@@ -14,6 +15,10 @@ use function trans_message;
 
 final class BuildSessionSnapshot
 {
+    public function __construct(
+        private readonly AiEstimateQuotaService $aiEstimateQuota,
+    ) {}
+
     /** @var array<string, list<EstimateGenerationAction>> */
     private const STATUS_ACTIONS = [
         'draft' => [EstimateGenerationAction::UploadDocuments, EstimateGenerationAction::StartDocumentProcessing, EstimateGenerationAction::Cancel],
@@ -96,6 +101,7 @@ final class BuildSessionSnapshot
             canGenerate: (bool) ($readinessSummary['can_generate'] ?? false),
             canApply: (bool) ($readinessSummary['can_apply'] ?? false),
             scopeSummary: (new EstimateScopeMetadataProjector)->project($draft, $budgetScope),
+            aiEstimateQuota: $this->aiEstimateQuota->snapshot($session),
         );
     }
 

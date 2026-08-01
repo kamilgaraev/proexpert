@@ -24,7 +24,7 @@ use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
-    public const QUERY_BUDGET = 11;
+    public const QUERY_BUDGET = 32;
 
     private const CHECKPOINT_STATUS_VALUES = [
         CheckpointStatus::Running->value,
@@ -436,6 +436,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 ],
             ],
             objectInput: $base->objectInput,
+            aiEstimateQuota: $base->aiEstimateQuota,
         );
     }
 

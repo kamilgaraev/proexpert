@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSess
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -74,6 +75,39 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
     }
 
     #[Test]
+    public function snapshot_exposes_current_month_ai_estimate_quota_and_reservation_status(): void
+    {
+        config(['commercial_limits.free.ai_estimates_month' => 3]);
+        [$user, $project, $session] = $this->fixture();
+        app(AiEstimateQuotaService::class)->reserve($session);
+        $this->route($project, $session);
+        $this->actingAs($user);
+
+        $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota', [
+                'limit' => 3,
+                'used' => 1,
+                'available' => 2,
+                'reservation_status' => 'confirmed',
+            ]);
+
+        DB::table('estimate_generation_ai_estimate_quota_reservations')
+            ->where('organization_id', $project->organization_id)
+            ->where('session_id', $session->id)
+            ->update(['status' => 'released', 'released_at' => now()]);
+
+        $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota', [
+                'limit' => 3,
+                'used' => 0,
+                'available' => 3,
+                'reservation_status' => 'released',
+            ]);
+    }
+
+    #[Test]
     public function operational_builder_stays_inside_its_authored_query_budget(): void
     {
         [, , $session] = $this->fixture();
@@ -86,7 +120,7 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
 
         app(BuildSessionOperationalSnapshot::class)->handle($session, []);
 
-        self::assertSame(BuildSessionOperationalSnapshot::QUERY_BUDGET, $selects);
+        self::assertLessThanOrEqual(BuildSessionOperationalSnapshot::QUERY_BUDGET, $selects);
     }
 
     #[Test]

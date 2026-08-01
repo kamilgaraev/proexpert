@@ -251,10 +251,17 @@ final class BuildSessionSnapshotTest extends TestCase
             'readiness_evaluated',
             'documents_summary', 'estimate_summary', 'review_summary',
             'scope_summary',
+            'ai_estimate_quota',
             'applied_estimate_id', 'updated_at',
         ], array_keys($snapshot->toArray()));
         self::assertSame(['total_count' => 2, 'ready_count' => 2], $snapshot->documentsSummary);
         self::assertSame(['review_items_total' => 3, 'review_items_blocking' => 1], $snapshot->reviewSummary);
+        self::assertSame([
+            'limit' => null,
+            'used' => 0,
+            'available' => null,
+            'reservation_status' => null,
+        ], $snapshot->aiEstimateQuota);
         self::assertSame('review', $snapshot->nextAction);
         self::assertSame('capital_repair', $snapshot->objectInput['construction_type']);
     }

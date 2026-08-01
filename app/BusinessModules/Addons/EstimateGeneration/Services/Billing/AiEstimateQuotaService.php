@@ -48,6 +48,35 @@ final readonly class AiEstimateQuotaService
         }, 3);
     }
 
+    /** @return array{limit: int|null, used: int, available: int|null, reservation_status: 'confirmed'|'released'|null} */
+    public function snapshot(EstimateGenerationSession $session): array
+    {
+        $organizationId = (int) $session->organization_id;
+        $sessionId = (int) $session->getKey();
+
+        if (! $session->exists || $organizationId < 1 || $sessionId < 1) {
+            return $this->emptySnapshot();
+        }
+
+        $organization = $session->relationLoaded('organization')
+            ? $session->getRelation('organization')
+            : Organization::query()->find($organizationId);
+
+        if (! $organization instanceof Organization) {
+            return $this->emptySnapshot();
+        }
+
+        $quota = $this->commercialQuota->getAiEstimateQuota($organization);
+        $limit = $quota['limit'];
+
+        return [
+            'limit' => $limit,
+            'used' => $quota['used'],
+            'available' => $limit === null ? null : $limit - $quota['used'],
+            'reservation_status' => $this->reservationStatus($organizationId, $sessionId),
+        ];
+    }
+
     /** @param Closure(EstimateGenerationSession): EstimateGenerationSession $transition */
     public function startGeneration(EstimateGenerationSession $session, Closure $transition): EstimateGenerationSession
     {
@@ -202,5 +231,28 @@ final readonly class AiEstimateQuotaService
             ->where('monthly_period', now()->startOfMonth()->toDateString())
             ->where('status', self::CONFIRMED)
             ->count();
+    }
+
+    /** @return 'confirmed'|'released'|null */
+    private function reservationStatus(int $organizationId, int $sessionId): ?string
+    {
+        $status = $this->database->table(self::TABLE)
+            ->where('organization_id', $organizationId)
+            ->where('session_id', $sessionId)
+            ->where('monthly_period', now()->startOfMonth()->toDateString())
+            ->value('status');
+
+        return in_array($status, [self::CONFIRMED, self::RELEASED], true) ? $status : null;
+    }
+
+    /** @return array{limit: null, used: 0, available: null, reservation_status: null} */
+    private function emptySnapshot(): array
+    {
+        return [
+            'limit' => null,
+            'used' => 0,
+            'available' => null,
+            'reservation_status' => null,
+        ];
     }
 }

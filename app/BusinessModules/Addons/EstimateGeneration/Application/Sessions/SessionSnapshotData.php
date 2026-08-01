@@ -37,6 +37,12 @@ final readonly class SessionSnapshotData
         public array $failureSummary = [],
         public array $objectInput = [],
         public array $scopeSummary = [],
+        public array $aiEstimateQuota = [
+            'limit' => null,
+            'used' => 0,
+            'available' => null,
+            'reservation_status' => null,
+        ],
     ) {}
 
     /** @return array<string, mixed> */
@@ -62,6 +68,7 @@ final readonly class SessionSnapshotData
             'estimate_summary' => $this->estimateSummary,
             'review_summary' => $this->reviewSummary,
             'scope_summary' => $this->scopeSummary,
+            'ai_estimate_quota' => $this->aiEstimateQuota,
             'applied_estimate_id' => $this->appliedEstimateId,
             'updated_at' => $this->updatedAt,
         ];
@@ -95,6 +102,7 @@ final readonly class SessionSnapshotData
             'evidence_summary' => $this->evidenceSummary,
             'quality_summary' => $this->qualitySummary,
             'scope_summary' => $this->scopeSummary,
+            'ai_estimate_quota' => $this->aiEstimateQuota,
             'usage_summary' => $this->usageSummary,
             'failure_summary' => $this->failureSummary,
             'applied_estimate_id' => $this->appliedEstimateId,
