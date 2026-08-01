@@ -48,8 +48,6 @@ return new class extends Migration
             $$;
             SQL);
 
-        DB::statement('SET ROLE most_report_publication_owner');
-
         Schema::create('report_publications', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->string('code', 64);
@@ -1027,32 +1025,6 @@ return new class extends Migration
             SQL);
 
         DB::unprepared(<<<'SQL'
-            ALTER TABLE report_publications OWNER TO most_report_publication_owner;
-            ALTER TABLE report_publication_events OWNER TO most_report_publication_owner;
-            ALTER TABLE report_publication_features OWNER TO most_report_publication_owner;
-            ALTER TABLE report_publication_outbox OWNER TO most_report_publication_owner;
-
-            ALTER FUNCTION report_publication_positive_unique_ids(jsonb) OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_release_checks_match(jsonb, jsonb)
-                OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_reject_mutation() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_append_transition_artifacts() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_require_event() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_event_insert_guard() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_event_reject_mutation() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_feature_binding_guard() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_append_feature_outbox() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_outbox_guard() OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_promote(
-                text, text, jsonb, jsonb, text, text, text, text, text, text, text,
-                text, text, text, text, text, text, text, text, text, timestamptz
-            ) OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_disable(text, text, text) OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_configure_feature(text, text, text, text, jsonb, jsonb)
-                OWNER TO most_report_publication_owner;
-            ALTER FUNCTION report_publication_mark_outbox_delivered(text, timestamptz)
-                OWNER TO most_report_publication_owner;
-
             REVOKE ALL ON TABLE report_publications, report_publication_events,
                 report_publication_features, report_publication_outbox FROM PUBLIC;
             REVOKE ALL ON FUNCTION report_publication_positive_unique_ids(jsonb) FROM PUBLIC;
@@ -1092,7 +1064,6 @@ return new class extends Migration
 
             SQL);
 
-        DB::statement('RESET ROLE');
         DB::unprepared(<<<'SQL'
             REVOKE CREATE ON SCHEMA public FROM most_report_publication_owner;
             DO $$
