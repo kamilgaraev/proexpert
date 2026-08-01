@@ -48,7 +48,13 @@ final class WorkforceProService
             ]));
             $record = DB::table($table)->where('id', $id)->first();
             if ($this->capacityCapture->supports($table)) {
-                $this->capacityCapture->afterMutation($table, $organizationId, null, (array) $record);
+                $this->capacityCapture->afterMutation(
+                    $table,
+                    $organizationId,
+                    null,
+                    (array) $record,
+                    (string) $record->updated_at,
+                );
             }
 
             return $this->decorateRecord($table, $organizationId, $record);
@@ -70,7 +76,13 @@ final class WorkforceProService
             ]));
             $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
             if ($this->capacityCapture->supports($table)) {
-                $this->capacityCapture->afterMutation($table, $organizationId, (array) $current, (array) $record);
+                $this->capacityCapture->afterMutation(
+                    $table,
+                    $organizationId,
+                    (array) $current,
+                    (array) $record,
+                    (string) $record->updated_at,
+                );
             }
 
             return $this->decorateRecord($table, $organizationId, $record);

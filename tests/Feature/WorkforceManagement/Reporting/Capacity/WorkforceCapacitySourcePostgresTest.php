@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Tests\Feature\WorkforceManagement\Reporting\Capacity;
 
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityCurrentSource;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacitySnapshotStore;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCaptureCommand;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCohortKey;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityEvidenceItem;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityFrozenCapturePins;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityPolicyDefinition;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacitySnapshot;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\EloquentWorkforceCapacityDeferredCaptureStore;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\EloquentWorkforceCapacitySnapshotStore;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\PostgresWorkforceCapacityCohortLock;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacitySnapshotBuilder;
@@ -340,6 +342,23 @@ final class WorkforceCapacitySourcePostgresTest extends TestCase
         $this->assertSqlState($cursor, '23514');
     }
 
+    public function test_synchronous_capture_request_rejects_nonzero_progress_on_insert(): void
+    {
+        $fixture = $this->fixture();
+        $exception = $this->captureQueryException(function () use ($fixture): void {
+            DB::table('workforce_capacity_capture_requests')->insert([
+                'organization_id' => $fixture['organization_id'],
+                'mutation_id' => 'r19-pg-invalid-sync-progress-001',
+                'status' => 'processing',
+                'snapshot_count' => 1,
+                'started_at' => $this->utcNow(),
+            ]);
+        });
+
+        $this->assertSqlState($exception, '23514');
+        self::assertStringContainsString('synchronous capture invalid', $exception->getMessage());
+    }
+
     public function test_zero_affected_frozen_capture_seals_as_completed_without_dispatchable_work(): void
     {
         $fixture = $this->fixture();
@@ -358,6 +377,147 @@ final class WorkforceCapacitySourcePostgresTest extends TestCase
         self::assertSame('completed', $request?->status);
         self::assertSame(0, (int) $request?->range_count);
         self::assertSame(0, (int) $request?->source_row_count);
+    }
+
+    public function test_real_deferred_store_claim_reclaim_cas_progress_reset_and_exhaustion(): void
+    {
+        $fixture = $this->fixture();
+        [$requestId, $pins] = $this->preparingRequest($fixture, 'r19-pg-real-deferred-store-001');
+        DB::table('workforce_capacity_capture_ranges')->insert([
+            'capture_request_id' => $requestId,
+            'organization_id' => $fixture['organization_id'],
+            'staff_unit_id' => $fixture['staff_unit_id'],
+            'project_id' => $fixture['project_id'],
+            'from_month' => '2026-08-01',
+            'through_month' => '2026-08-01',
+            'created_at' => $pins->capturedAt,
+        ]);
+        DB::table('workforce_capacity_capture_requests')->where('id', $requestId)->update([
+            'status' => 'pending',
+            'range_count' => 1,
+            'source_row_count' => 0,
+            'frozen_at' => $pins->capturedAt,
+            'available_at' => $pins->capturedAt,
+        ]);
+        $store = new EloquentWorkforceCapacityDeferredCaptureStore(new ProgressOnlyWorkforceCapacitySnapshotStore);
+        $firstAt = $pins->capturedAt->modify('+1 second');
+        $first = $store->claim($requestId, $firstAt, 960);
+        self::assertNotNull($first);
+        self::assertSame(1, $first->attemptCount);
+        self::assertNull($store->claim($requestId, $firstAt->modify('+100 seconds'), 960));
+
+        $reclaimed = $store->claim($requestId, $firstAt->modify('+961 seconds'), 960);
+        self::assertNotNull($reclaimed);
+        self::assertSame(2, $reclaimed->attemptCount);
+        self::assertFalse($store->failClaim($first, 'stale_claim_must_not_win', $firstAt, false));
+
+        $snapshot = (new WorkforceCapacitySnapshotBuilder($pins->policy))->build(
+            key: new WorkforceCapacityCohortKey(
+                $fixture['organization_id'],
+                '2026-08-01',
+                '2026-08-01',
+                $fixture['staff_unit_id'],
+                $fixture['project_id'],
+            ),
+            captureKind: 'change_capture',
+            capturedAt: $pins->capturedAt,
+            actorUserId: null,
+            serviceActor: 'workforce-owner',
+            source: $fixture['source'],
+        );
+        self::assertTrue($store->appendClaimedChunk(
+            $reclaimed,
+            $snapshot->key->sortIdentity(),
+            str_repeat('a', 64),
+            [$snapshot],
+            false,
+            $firstAt->modify('+962 seconds'),
+        ));
+        $afterProgress = $store->claim($requestId, $firstAt->modify('+963 seconds'), 960);
+        self::assertNotNull($afterProgress);
+        self::assertSame(1, $afterProgress->attemptCount);
+        self::assertTrue($store->failClaim(
+            $afterProgress,
+            'workforce_capacity_materialization_failed',
+            $firstAt->modify('+964 seconds'),
+            false,
+        ));
+        $last = $store->claim($requestId, $firstAt->modify('+965 seconds'), 960);
+        self::assertNotNull($last);
+        self::assertSame(2, $last->attemptCount);
+        self::assertTrue($store->failClaim(
+            $last,
+            'workforce_capacity_materialization_failed',
+            $firstAt->modify('+966 seconds'),
+            true,
+        ));
+
+        $request = DB::table('workforce_capacity_capture_requests')->where('id', $requestId)->first();
+        self::assertSame('dead_lettered', $request?->status);
+        self::assertSame(2, (int) $request?->attempt_count);
+        self::assertSame(1, (int) $request?->snapshot_count);
+        self::assertSame(1, (int) $request?->chunk_count);
+    }
+
+    public function test_real_deferred_store_rolls_back_progress_when_snapshot_persistence_crashes(): void
+    {
+        $fixture = $this->fixture();
+        [$requestId, $pins] = $this->preparingRequest($fixture, 'r19-pg-real-deferred-crash-001');
+        DB::table('workforce_capacity_capture_ranges')->insert([
+            'capture_request_id' => $requestId,
+            'organization_id' => $fixture['organization_id'],
+            'staff_unit_id' => $fixture['staff_unit_id'],
+            'project_id' => $fixture['project_id'],
+            'from_month' => '2026-08-01',
+            'through_month' => '2026-08-01',
+            'created_at' => $pins->capturedAt,
+        ]);
+        DB::table('workforce_capacity_capture_requests')->where('id', $requestId)->update([
+            'status' => 'pending',
+            'range_count' => 1,
+            'source_row_count' => 0,
+            'frozen_at' => $pins->capturedAt,
+            'available_at' => $pins->capturedAt,
+        ]);
+        $store = new EloquentWorkforceCapacityDeferredCaptureStore(new CrashingWorkforceCapacitySnapshotStore);
+        $claim = $store->claim($requestId, $pins->capturedAt->modify('+1 second'), 960);
+        self::assertNotNull($claim);
+        $snapshot = (new WorkforceCapacitySnapshotBuilder($pins->policy))->build(
+            key: new WorkforceCapacityCohortKey(
+                $fixture['organization_id'],
+                '2026-08-01',
+                '2026-08-01',
+                $fixture['staff_unit_id'],
+                $fixture['project_id'],
+            ),
+            captureKind: 'change_capture',
+            capturedAt: $pins->capturedAt,
+            actorUserId: null,
+            serviceActor: 'workforce-owner',
+            source: $fixture['source'],
+        );
+
+        try {
+            $store->appendClaimedChunk(
+                $claim,
+                $snapshot->key->sortIdentity(),
+                str_repeat('b', 64),
+                [$snapshot],
+                false,
+                $pins->capturedAt->modify('+2 seconds'),
+            );
+            self::fail('The simulated snapshot crash must escape the transaction.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('workforce_capacity_snapshot_crash_fixture', $exception->getMessage());
+        }
+
+        $request = DB::table('workforce_capacity_capture_requests')->where('id', $requestId)->first();
+        self::assertSame('processing', $request?->status);
+        self::assertSame($claim->claimToken, $request?->claim_token);
+        self::assertNull($request?->current_cursor);
+        self::assertNull($request?->cohort_cursor);
+        self::assertSame(0, (int) $request?->snapshot_count);
+        self::assertSame(0, (int) $request?->chunk_count);
     }
 
     public function test_competing_connections_serialize_on_the_production_cohort_lock(): void
@@ -1120,5 +1280,60 @@ final class WorkforceCapacitySourcePostgresTest extends TestCase
     private function utcNow(): DateTimeImmutable
     {
         return new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    }
+}
+
+final class ProgressOnlyWorkforceCapacitySnapshotStore implements WorkforceCapacitySnapshotStore
+{
+    public function appendBatch(
+        string $mutationId,
+        ?string $priorCursor,
+        string $cursor,
+        array $snapshots,
+    ): void {
+        $updated = DB::table('workforce_capacity_capture_requests')
+            ->where('mutation_id', $mutationId)
+            ->where('status', 'processing')
+            ->where('current_cursor', $priorCursor)
+            ->update([
+                'current_cursor' => $cursor,
+                'snapshot_count' => DB::raw('snapshot_count + '.count($snapshots)),
+                'chunk_count' => DB::raw('chunk_count + 1'),
+            ]);
+        if ($updated !== 1) {
+            throw new RuntimeException('workforce_capacity_progress_fixture_failed');
+        }
+    }
+
+    public function completeCapture(
+        string $mutationId,
+        int $organizationId,
+        ?string $cursor,
+        int $snapshotCount,
+        int $chunkCount,
+    ): void {
+        throw new RuntimeException('workforce_capacity_progress_fixture_must_not_complete');
+    }
+}
+
+final class CrashingWorkforceCapacitySnapshotStore implements WorkforceCapacitySnapshotStore
+{
+    public function appendBatch(
+        string $mutationId,
+        ?string $priorCursor,
+        string $cursor,
+        array $snapshots,
+    ): void {
+        throw new RuntimeException('workforce_capacity_snapshot_crash_fixture');
+    }
+
+    public function completeCapture(
+        string $mutationId,
+        int $organizationId,
+        ?string $cursor,
+        int $snapshotCount,
+        int $chunkCount,
+    ): void {
+        throw new RuntimeException('workforce_capacity_snapshot_crash_fixture');
     }
 }

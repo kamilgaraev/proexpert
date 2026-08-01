@@ -86,6 +86,10 @@ final class WorkforceCapacityMigrationContractTest extends TestCase
             "NEW.lineage->>'staff_unit_id'",
             "NEW.lineage->>'project_id'",
             "NEW.lineage->>'month_start'",
+            'NEW.command_canonical IS NOT NULL',
+            'NEW.current_cursor IS NOT NULL',
+            'NEW.snapshot_count <> 0',
+            'NEW.claim_token IS NOT NULL',
         ] as $requiredFragment) {
             self::assertStringContainsString($requiredFragment, $migration);
         }
@@ -104,10 +108,18 @@ final class WorkforceCapacityMigrationContractTest extends TestCase
             __DIR__.'/../../../../../app/BusinessModules/Features/WorkforceManagement/Reporting/Capacity/Services/'
             .'EloquentWorkforceCapacityDeferredCaptureStore.php',
         );
+        $frozenGateway = file_get_contents(
+            __DIR__.'/../../../../../app/BusinessModules/Features/WorkforceManagement/Reporting/Capacity/Services/'
+            .'EloquentWorkforceCapacityRequestScopedFrozenSourceGateway.php',
+        );
 
         self::assertIsString($snapshotStore);
         self::assertIsString($deferredStore);
+        self::assertIsString($frozenGateway);
         self::assertStringContainsString("->where('capture_request_id', \$captureRequestId)", $snapshotStore);
         self::assertStringContainsString("'attempt_count' => 0", $deferredStore);
+        self::assertStringContainsString('(string) $request->command_canonical !== $commandCanonical', $frozenGateway);
+        self::assertStringContainsString('(string) $request->business_date !== $pins->businessDate', $frozenGateway);
+        self::assertStringContainsString('new DateTimeImmutable((string) $request->captured_at) != $pins->capturedAt', $frozenGateway);
     }
 }

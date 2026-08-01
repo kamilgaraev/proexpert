@@ -59,6 +59,7 @@ final readonly class WorkforceCapacityOwnerMutationBridge
         int $organizationId,
         ?array $oldState,
         ?array $newState,
+        string $occurrenceVersion,
     ): void {
         $sourceType = self::TABLE_TYPES[$table] ?? null;
         if ($sourceType === null || $organizationId < 1) {
@@ -72,7 +73,7 @@ final readonly class WorkforceCapacityOwnerMutationBridge
         $oldState = $this->sanitize($sourceType, $organizationId, $oldState);
         $newState = $this->sanitize($sourceType, $organizationId, $newState);
         $this->capture->capture(new WorkforceCapacityCaptureCommand(
-            mutationId: $this->mutationId($sourceType, $organizationId, $oldState, $newState),
+            mutationId: $this->mutationId($sourceType, $organizationId, $oldState, $newState, $occurrenceVersion),
             organizationId: $organizationId,
             sourceType: $sourceType,
             oldState: $oldState,
@@ -118,12 +119,21 @@ final readonly class WorkforceCapacityOwnerMutationBridge
         return array_intersect_key($state, $allowed);
     }
 
-    private function mutationId(string $sourceType, int $organizationId, ?array $oldState, ?array $newState): string
-    {
+    private function mutationId(
+        string $sourceType,
+        int $organizationId,
+        ?array $oldState,
+        ?array $newState,
+        string $occurrenceVersion,
+    ): string {
         $identity = $newState['id'] ?? $newState['employee_id'] ?? $oldState['id'] ?? $oldState['employee_id'] ?? 0;
+        if ($occurrenceVersion === '') {
+            throw new InvalidArgumentException('workforce_capacity_owner_occurrence_version_missing');
+        }
         $hash = hash('sha256', json_encode([
             'source_type' => $sourceType,
             'organization_id' => $organizationId,
+            'occurrence_version' => $occurrenceVersion,
             'old' => $this->canonical($oldState ?? []),
             'new' => $this->canonical($newState ?? []),
         ], JSON_THROW_ON_ERROR));

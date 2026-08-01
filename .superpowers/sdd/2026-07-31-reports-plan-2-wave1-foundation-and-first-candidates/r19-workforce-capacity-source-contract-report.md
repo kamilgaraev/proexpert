@@ -21,6 +21,7 @@
 - Frozen snapshot сверяет policy definition/canonical/hash с immutable request pins и не зависит от текущего timezone организации. Evidence assignment/absence/trip дополнительно доказывает попадание в `as_of_date`; публичная lineage JSON связана с routing-колонками snapshot item.
 - Идентификаторы staff unit/project/employee в immutable snapshots/items не имеют FK к изменяемым owner-строкам. Live capture проверяет владельцев триггером, а frozen capture опирается только на request ranges и frozen source rows, поэтому удаление исходной строки после freeze не ломает worker.
 - Cohort advisory lock сериализует запись одинаковой когорты. Профильные mutation-методы `WorkforceProService` удерживают owner lock и вызывают единый capture boundary внутри owner-транзакции; ошибка evidence откатывает owner mutation.
+- Owner boundary передаёт в capture стабильную версию фактически записанной строки. Повторная доставка одной операции получает тот же idempotency key, а более позднее повторение тех же A→B-состояний с новой версией строки создаёт отдельную occurrence и отдельный capture request.
 - Dismissal использует двухфазный lifecycle capture: affected ranges фиксируются до изменения владельца, frozen source — после изменения в той же транзакции. В command pins не сохраняются вложенные assignments.
 - Старый `WorkforceCapacityFrozenSource`, `WorkforceCapacityFrozenGeneration`, budget-based giant-JSON путь и соответствующие DI bindings удалены; runtime fallback на прежнюю модель отсутствует.
 
@@ -39,10 +40,10 @@ DB-free disclosure policy требует точный `workforce.view`, совп
 
 ## Проверки
 
-- PHPUnit DB-free: 67 tests, 360 assertions — PASS суммарно; после исправлений ревью повторно выполнен затронутый набор 12 tests, 93 assertions — PASS.
+- PHPUnit DB-free: 68 tests, 372 assertions — PASS.
 - Targeted PHPStan/Larastan — PASS.
 - Scoped Pint и `git diff --check` — PASS.
-- Opt-in PostgreSQL suite и отдельный CI gate добавлены. Gate требует PostgreSQL 16, изолированную БД с суффиксом `_test`/`_testing`, exact checkout SHA и `--fail-on-skipped`.
+- Opt-in PostgreSQL suite и отдельный CI gate добавлены. Gate требует PostgreSQL 16, изолированную БД с суффиксом `_test`/`_testing`, exact checkout SHA и `--fail-on-skipped`; покрывает claim/reclaim, stale lease, CAS, progress reset, exhaustion/dead-letter и rollback при сбое snapshot persistence реального deferred store.
 - PostgreSQL suite, DB-команды и миграции локально не запускались: это запрещено правилами проекта. Локальная граница проверки — DB-free unit, статический анализ, syntax/style и contract tests.
 - Smoke/UI проверки не проводились по явному ограничению пользователя и из-за отсутствия provider/route/UI в этом блоке.
 

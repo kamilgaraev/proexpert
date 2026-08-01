@@ -503,7 +503,30 @@ BEGIN
 
     IF TG_OP = 'INSERT' THEN
         IF NEW.status = 'processing' THEN
-            IF NEW.command_payload IS NOT NULL OR NEW.frozen_at IS NOT NULL THEN
+            IF NEW.command_payload IS NOT NULL
+               OR NEW.command_canonical IS NOT NULL
+               OR NEW.command_hash IS NOT NULL
+               OR NEW.policy_definition IS NOT NULL
+               OR NEW.policy_canonical IS NOT NULL
+               OR NEW.policy_hash IS NOT NULL
+               OR NEW.source_schema_version IS NOT NULL
+               OR NEW.formula_version IS NOT NULL
+               OR NEW.business_date IS NOT NULL
+               OR NEW.captured_at IS NOT NULL
+               OR NEW.frozen_at IS NOT NULL
+               OR NEW.current_cursor IS NOT NULL
+               OR NEW.cohort_cursor IS NOT NULL
+               OR NEW.snapshot_count <> 0
+               OR NEW.chunk_count <> 0
+               OR NEW.attempt_count <> 0
+               OR NEW.range_count <> 0
+               OR NEW.source_row_count <> 0
+               OR NEW.available_at IS NOT NULL
+               OR NEW.claim_token IS NOT NULL
+               OR NEW.claimed_at IS NOT NULL
+               OR NEW.last_error_code IS NOT NULL
+               OR NEW.completed_at IS NOT NULL
+               OR NEW.dead_lettered_at IS NOT NULL THEN
                 RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'workforce capacity synchronous capture invalid';
             END IF;
 

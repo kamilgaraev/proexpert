@@ -30,7 +30,10 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
         ];
 
         foreach ($cases as [$table, $type, $state]) {
-            $bridge->afterMutation($table, 7, null, ['organization_id' => 7, ...$state]);
+            $bridge->afterMutation($table, 7, null, [
+                'organization_id' => 7,
+                ...$state,
+            ], '2026-08-15 09:00:00.000001+00');
             self::assertSame($type, $capture->commands[array_key_last($capture->commands)]->sourceType);
         }
 
@@ -49,7 +52,7 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
             'employee_id' => 41,
             'status' => 'draft',
             'comment' => 'medical details',
-        ]);
+        ], '2026-08-15 09:00:00.000001+00');
         self::assertCount(0, $capture->commands);
 
         $bridge->afterMutation(
@@ -69,6 +72,7 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
                 'status' => 'cancelled',
                 'comment' => 'medical details',
             ],
+            '2026-08-15 09:01:00.000001+00',
         );
 
         self::assertCount(1, $capture->commands);
@@ -98,6 +102,42 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
         self::assertSame(41, $draft->employeeId);
         self::assertSame('2026-08-15', $draft->dismissalDate);
         self::assertStringNotContainsString('assignments', json_encode($draft, JSON_THROW_ON_ERROR));
+    }
+
+    #[Test]
+    public function row_version_is_a_stable_idempotency_key_and_distinguishes_later_occurrences(): void
+    {
+        $capture = new RecordingCaptureBoundary;
+        $bridge = new WorkforceCapacityOwnerMutationBridge($capture, new RecordingLifecycleCaptureCoordinator);
+        $oldState = [
+            'id' => 12,
+            'organization_id' => 7,
+            'staff_unit_id' => 11,
+            'project_id' => 21,
+            'rate' => '1.0000',
+        ];
+        $firstOccurrence = [...$oldState, 'rate' => '0.7500'];
+
+        $bridge->afterMutation(
+            'workforce_employee_assignments', 7, $oldState, $firstOccurrence,
+            '2026-08-15 09:01:00.000001+00',
+        );
+        $bridge->afterMutation(
+            'workforce_employee_assignments', 7, $oldState, $firstOccurrence,
+            '2026-08-15 09:01:00.000001+00',
+        );
+        $bridge->afterMutation(
+            'workforce_employee_assignments', 7, $oldState, $firstOccurrence,
+            '2026-08-15 10:01:00.000001+00',
+        );
+
+        self::assertCount(3, $capture->commands);
+        self::assertSame($capture->commands[0]->mutationId, $capture->commands[1]->mutationId);
+        self::assertNotSame($capture->commands[0]->mutationId, $capture->commands[2]->mutationId);
+        self::assertMatchesRegularExpression(
+            '/^assignment:12:[a-f0-9]{64}$/D',
+            $capture->commands[0]->mutationId,
+        );
     }
 }
 

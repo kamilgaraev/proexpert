@@ -70,10 +70,14 @@ final readonly class EloquentWorkforceCapacityRequestScopedFrozenSourceGateway i
             ->lockForUpdate()
             ->first();
         if (! is_object($request)
+            || (string) $request->command_canonical !== $commandCanonical
             || ! hash_equals((string) $request->command_hash, $pins->commandHash())
+            || (string) $request->policy_canonical !== $policyCanonical
             || ! hash_equals((string) $request->policy_hash, $pins->policyHash())
             || (string) $request->source_schema_version !== $pins->sourceSchemaVersion
-            || (string) $request->formula_version !== $pins->formulaVersion) {
+            || (string) $request->formula_version !== $pins->formulaVersion
+            || (string) $request->business_date !== $pins->businessDate
+            || new DateTimeImmutable((string) $request->captured_at) != $pins->capturedAt) {
             throw new LogicException('workforce_capacity_deferred_idempotency_conflict');
         }
 
