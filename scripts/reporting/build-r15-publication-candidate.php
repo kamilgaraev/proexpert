@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\GitHubActionsOidcProvenanceVerifier;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\R15EvidenceIdentity;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\StreamR15HttpClient;
@@ -54,11 +55,11 @@ try {
         'schema_version' => '1.0.0',
     ];
     $request = [
-        'admission_status' => 'candidate',
+        'request_id' => 'r15_release_request',
         'artifact_paths' => ['candidate_manifest' => 'r15-candidate-manifest.json', 'conformance_evidence' => 'r15-conformance-evidence.json', 'proof_template' => 'r15-proof-template.json'],
-        'code' => R15_CODE, 'commit_sha' => $sha, 'proof_sha256' => digest($proof), 'request_kind' => 'r15_release_candidate', 'schema_version' => '1.0.0',
+        'code' => R15_CODE, 'commit_sha' => $sha, 'proof_sha256' => digest($proof), 'schema_version' => '1.0.0',
     ];
-    $documents = ['r15-candidate-manifest.json' => $candidate, 'r15-conformance-evidence.json' => $conformance, 'r15-proof-template.json' => $proof, 'r15-release-request.json' => $request];
+    $documents = ['r15-candidate-manifest.json' => $candidate, 'r15-conformance-evidence.json' => $conformance, 'r15-proof-template.json' => $proof, 'r15_release_request.json' => $request];
     validateDocuments($root, $documents, $sha);
     writeDocuments($directory, $documents);
 } catch (Throwable $exception) {
@@ -268,7 +269,10 @@ function candidateDefinition(array $artifacts): array
         'grain' => 'request_line_process',
         'permissions' => ['audit' => ['procurement.audit.view'], 'export' => ['procurement.reports.export'], 'sensitive' => [], 'view' => ['procurement.dashboard.view']],
         'readiness' => ['delivery' => 'verified', 'formula' => 'verified', 'publication' => 'candidate', 'source' => 'verified'],
-        'runtime' => ['binding' => $artifacts['runtime_binding'], 'delivery_contract_sha256' => digest($artifacts['core_reporting_delivery_and_drill']), 'drill_contract_sha256' => digest($artifacts['cycle_runtime'])],
+        'runtime' => ['binding' => $artifacts['runtime_binding'],
+            'delivery_contract_sha256' => ReportPublicationAdmissionRequirements::contractHashesByCode()[R15_CODE]['delivery_contract_sha256'],
+            'drill_contract_sha256' => ReportPublicationAdmissionRequirements::contractHashesByCode()[R15_CODE]['drill_contract_sha256'],
+        ],
         'semantic_fingerprints' => ['formula' => digest($artifacts['formula_and_calendar']), 'source' => digest($artifacts['source_state'])],
         'sorts' => [['direction' => 'asc', 'id' => 'cohort_date']],
         'versions' => ['contract' => '1.0.0', 'formula' => '1.0.0', 'renderer' => '1.0.0', 'source_schema' => '1.0.0'],
@@ -284,7 +288,7 @@ function requiredChecks(): array
 /** @param array<string,array<string,mixed>> $documents */
 function validateDocuments(string $root, array $documents, string $sha): void
 {
-    $schemas = ['r15-candidate-manifest.json' => 'docs/reports/contracts/r15-candidate-manifest.v1.schema.json', 'r15-conformance-evidence.json' => 'docs/reports/contracts/r15-candidate-conformance.v1.schema.json', 'r15-proof-template.json' => 'docs/reports/contracts/r15-candidate-proof-template.v1.schema.json', 'r15-release-request.json' => 'docs/reports/contracts/r15-publication-request.v1.schema.json'];
+    $schemas = ['r15-candidate-manifest.json' => 'docs/reports/contracts/r15-candidate-manifest.v1.schema.json', 'r15-conformance-evidence.json' => 'docs/reports/contracts/r15-candidate-conformance.v1.schema.json', 'r15-proof-template.json' => 'docs/reports/contracts/r15-candidate-proof-template.v1.schema.json', 'r15_release_request.json' => 'docs/reports/contracts/r15-publication-request.v1.schema.json'];
     $validator = new CompliantValidator;
     foreach ($schemas as $document => $schema) {
         if (! $validator->validate(json_decode(CanonicalJson::encode($documents[$document]), false, 512, JSON_THROW_ON_ERROR), json_decode((string) file_get_contents($root.'/'.$schema), false, 512, JSON_THROW_ON_ERROR))->isValid()) {
@@ -292,7 +296,7 @@ function validateDocuments(string $root, array $documents, string $sha): void
         }
     }
     $conformance = $documents['r15-conformance-evidence.json'];
-    if (($documents['r15-candidate-manifest.json']['generated_from_commit'] ?? null) !== $sha || ($conformance['commit_sha'] ?? null) !== $sha || ($conformance['verification_status'] ?? null) !== 'passed' || ($conformance['status'] ?? null) !== 'passed' || ($conformance['conformance']['commit_sha'] ?? null) !== $sha || ($conformance['conformance']['status'] ?? null) !== 'passed' || ($documents['r15-proof-template.json']['ci']['commit_sha'] ?? null) !== $sha || ($documents['r15-release-request.json']['commit_sha'] ?? null) !== $sha || ! hash_equals(digest((array) ($documents['r15-candidate-manifest.json']['candidate_definition'] ?? null)), (string) ($documents['r15-candidate-manifest.json']['candidate_definition_sha256'] ?? '')) || ! hash_equals((string) ($documents['r15-candidate-manifest.json']['candidate_definition_sha256'] ?? ''), (string) ($documents['r15-proof-template.json']['candidate_definition_sha256'] ?? '')) || ($documents['r15-proof-template.json']['definition'] ?? null) !== ($documents['r15-candidate-manifest.json']['candidate_definition'] ?? null) || ($documents['r15-proof-template.json']['ci']['required_checks'] ?? null) !== requiredChecks() || ! hash_equals(digest($documents['r15-candidate-manifest.json']), (string) ($documents['r15-proof-template.json']['candidate_manifest_sha256'] ?? '')) || ! hash_equals(digest($conformance), (string) ($documents['r15-proof-template.json']['conformance_evidence_sha256'] ?? '')) || ! hash_equals(digest($documents['r15-proof-template.json']), (string) ($documents['r15-release-request.json']['proof_sha256'] ?? ''))) {
+    if (($documents['r15-candidate-manifest.json']['generated_from_commit'] ?? null) !== $sha || ($conformance['commit_sha'] ?? null) !== $sha || ($conformance['verification_status'] ?? null) !== 'passed' || ($conformance['status'] ?? null) !== 'passed' || ($conformance['conformance']['commit_sha'] ?? null) !== $sha || ($conformance['conformance']['status'] ?? null) !== 'passed' || ($documents['r15-proof-template.json']['ci']['commit_sha'] ?? null) !== $sha || ($documents['r15_release_request.json']['commit_sha'] ?? null) !== $sha || ! hash_equals(digest((array) ($documents['r15-candidate-manifest.json']['candidate_definition'] ?? null)), (string) ($documents['r15-candidate-manifest.json']['candidate_definition_sha256'] ?? '')) || ! hash_equals((string) ($documents['r15-candidate-manifest.json']['candidate_definition_sha256'] ?? ''), (string) ($documents['r15-proof-template.json']['candidate_definition_sha256'] ?? '')) || ($documents['r15-proof-template.json']['definition'] ?? null) !== ($documents['r15-candidate-manifest.json']['candidate_definition'] ?? null) || ($documents['r15-proof-template.json']['ci']['required_checks'] ?? null) !== requiredChecks() || ! hash_equals(digest($documents['r15-candidate-manifest.json']), (string) ($documents['r15-proof-template.json']['candidate_manifest_sha256'] ?? '')) || ! hash_equals(digest($conformance), (string) ($documents['r15-proof-template.json']['conformance_evidence_sha256'] ?? '')) || ! hash_equals(digest($documents['r15-proof-template.json']), (string) ($documents['r15_release_request.json']['proof_sha256'] ?? ''))) {
         throw new RuntimeException('r15_candidate_evidence_links_invalid');
     }
 }
@@ -300,7 +304,7 @@ function validateDocuments(string $root, array $documents, string $sha): void
 function validateExistingDocuments(string $root, string $directory, string $sha): void
 {
     $documents = [];
-    foreach (['r15-candidate-manifest.json', 'r15-conformance-evidence.json', 'r15-proof-template.json', 'r15-release-request.json'] as $name) {
+    foreach (['r15-candidate-manifest.json', 'r15-conformance-evidence.json', 'r15-proof-template.json', 'r15_release_request.json'] as $name) {
         $bytes = is_file($directory.DIRECTORY_SEPARATOR.$name) ? file_get_contents($directory.DIRECTORY_SEPARATOR.$name) : false;
         if (! is_string($bytes)) {
             throw new RuntimeException('r15_candidate_evidence_not_current');
