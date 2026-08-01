@@ -21,7 +21,7 @@ final readonly class BudgetPlanFactCandidateContract
 {
     public const CODE = 'budget_plan_fact';
 
-    public const FORMULA_VERSION = 'plan-fact-v1';
+    public const FORMULA_VERSION = '1.0.0';
 
     public const FORMULA_HASH = 'be8618c2f770e98c295dca6236e421d762d914add6e119a738d9b73630450c90';
 
@@ -80,7 +80,7 @@ final readonly class BudgetPlanFactCandidateContract
     /** @return list<string> */
     public function formats(): array
     {
-        return [];
+        return ['csv', 'xlsx'];
     }
 
     public function drillColumnId(): string

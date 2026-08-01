@@ -15,7 +15,7 @@ use Tests\Support\Budgeting\BudgetPlanFactCandidateFixture;
 
 final class BudgetPlanFactCandidateContractTest extends TestCase
 {
-    public function test_contract_locks_the_real_runtime_versions_hashes_and_unrendered_formats(): void
+    public function test_contract_locks_the_real_runtime_versions_hashes_and_delivery_formats(): void
     {
         $contract = BudgetPlanFactCandidateFixture::contract();
 
@@ -23,7 +23,7 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
 
         self::assertSame(BudgetPlanFactCandidateContract::CODE, PlanFactSourceSnapshotMaterializer::REPORT_CODE);
         self::assertSame(PlanFactSourceSnapshotMaterializer::SCHEMA_VERSION, $contract->sourceSchemaVersion);
-        self::assertSame([], $contract->formats());
+        self::assertSame(['csv', 'xlsx'], $contract->formats());
         self::assertSame([
             'actual_amount', 'committed_amount', 'currency', 'drill', 'forecast_amount', 'group', 'plan_amount', 'risk_level',
             'row_key', 'variance_amount', 'variance_percent',

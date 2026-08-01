@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
 
@@ -49,20 +50,23 @@ final class BudgetPlanFactReleaseCandidateResolver
         $definition = $candidate['candidate_definition'] ?? null;
         $closeIdentity = $candidate['source_close_identity'] ?? null;
 
+        try {
+            $publicationProof = ReportPublicationProof::fromArray($proof);
+        } catch (\Throwable) {
+            $this->reject();
+        }
+
         if (! is_array($definition) || array_is_list($definition)
             || ! is_array($closeIdentity) || array_is_list($closeIdentity)
             || ! $this->validCloseIdentity($closeIdentity)
             || ! $this->sameKeys($candidate, [
                 'candidate_definition', 'candidate_definition_sha256', 'code', 'formula_sha256', 'formula_version',
                 'generated_from_commit', 'publication_status', 'source_close_identity', 'source_close_identity_sha256',
-                'source_schema_version', 'source_sha256',
+                'source_close_id', 'source_schema_version', 'source_sha256',
             ])
             || ! $this->sameKeys($conformance, [
-                'code', 'commit_sha', 'definition_sha256', 'formula_sha256', 'source_close_identity_sha256', 'source_sha256', 'status',
-            ])
-            || ! $this->sameKeys($proof, [
-                'candidate_definition_sha256', 'candidate_manifest_sha256', 'code', 'conformance_evidence_sha256',
-                'formula_sha256', 'release_commit_sha', 'source_close_identity_sha256', 'source_sha256',
+                'assertion_count', 'code', 'commit_sha', 'component_class_hashes', 'contract_version', 'definition_hash', 'digest',
+                'fixture_hash', 'formula', 'generated_at', 'source', 'source_schema_version', 'status',
             ])
             || $candidate['code'] !== BudgetPlanFactCandidateContract::CODE
             || $candidate['publication_status'] !== 'candidate'
@@ -71,20 +75,29 @@ final class BudgetPlanFactReleaseCandidateResolver
             || $candidate['formula_sha256'] !== BudgetPlanFactCandidateContract::FORMULA_HASH
             || $candidate['source_sha256'] !== BudgetPlanFactCandidateContract::SOURCE_HASH
             || $candidate['source_schema_version'] !== (new BudgetPlanFactCandidateContract)->sourceSchemaVersion
+            || ! is_string($candidate['source_close_id'])
+            || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $candidate['source_close_id']) !== 1
             || ! hash_equals(hash('sha256', CanonicalJson::encode($definition)), (string) $candidate['candidate_definition_sha256'])
             || ! hash_equals(hash('sha256', CanonicalJson::encode($closeIdentity)), (string) $candidate['source_close_identity_sha256'])
             || ! $this->matchesContract($definition)
             || $conformance['code'] !== BudgetPlanFactCandidateContract::CODE
             || $conformance['commit_sha'] !== $commitSha
             || $conformance['status'] !== 'passed'
-            || ! $this->identicalHashes($candidate, $conformance, ['candidate_definition_sha256' => 'definition_sha256', 'formula_sha256' => 'formula_sha256', 'source_close_identity_sha256' => 'source_close_identity_sha256', 'source_sha256' => 'source_sha256'])
-            || $proof['code'] !== BudgetPlanFactCandidateContract::CODE
-            || $proof['release_commit_sha'] !== $commitSha
-            || ! $this->identicalHashes($candidate, $proof, ['candidate_definition_sha256' => 'candidate_definition_sha256', 'formula_sha256' => 'formula_sha256', 'source_close_identity_sha256' => 'source_close_identity_sha256', 'source_sha256' => 'source_sha256'])
-            || ! hash_equals(hash('sha256', CanonicalJson::encode($candidate)), (string) $proof['candidate_manifest_sha256'])
-            || ! hash_equals(hash('sha256', CanonicalJson::encode($conformance)), (string) $proof['conformance_evidence_sha256'])
+            || ($conformance['definition_hash'] ?? null) !== $candidate['candidate_definition_sha256']
+            || ($conformance['source_schema_version'] ?? null) !== $candidate['source_schema_version']
+            || ($conformance['formula']['formula_version'] ?? null) !== BudgetPlanFactCandidateContract::FORMULA_VERSION
+            || ($conformance['source']['source_hash'] ?? null) !== BudgetPlanFactCandidateContract::SOURCE_HASH
+            || ($conformance['source']['snapshot_id'] ?? null) !== $candidate['source_close_id']
+            || $publicationProof->payload()['code'] !== BudgetPlanFactCandidateContract::CODE
+            || $publicationProof->payload()['release']['git_sha'] !== $commitSha
+            || $publicationProof->payload()['candidate_definition_sha256'] !== $candidate['candidate_definition_sha256']
+            || ! hash_equals(hash('sha256', CanonicalJson::encode($candidate)), $publicationProof->payload()['candidate_manifest_sha256'])
+            || $publicationProof->payload()['conformance_evidence_sha256'] !== $conformance['digest']
+            || $publicationProof->payload()['formula']['formula_version'] !== BudgetPlanFactCandidateContract::FORMULA_VERSION
+            || $publicationProof->payload()['source']['source_sha256'] !== BudgetPlanFactCandidateContract::SOURCE_HASH
+            || ! $this->hasRuntimeComponentHashes($conformance)
             || ! hash_equals(
-                CanonicalJson::encode(BudgetPlanFactReleaseCandidateLayout::request($commitSha, hash('sha256', CanonicalJson::encode($proof)))),
+                CanonicalJson::encode(BudgetPlanFactReleaseCandidateLayout::request($commitSha, $publicationProof->digest()->value)),
                 CanonicalJson::encode($request),
             )) {
             $this->reject();
@@ -134,11 +147,11 @@ final class BudgetPlanFactReleaseCandidateResolver
     private function validCloseIdentity(array $identity): bool
     {
         if (! $this->sameKeys($identity, [
-            'budget_version_uuid',
+            'plan_identity',
             'organization_id',
             'period_end',
             'period_start',
-            'scenario_uuid',
+            'scenario_identity',
         ])) {
             return false;
         }
@@ -150,10 +163,31 @@ final class BudgetPlanFactReleaseCandidateResolver
             && preg_match('/^\\d{4}-\\d{2}-\\d{2}$/D', $identity['period_start']) === 1
             && preg_match('/^\\d{4}-\\d{2}-\\d{2}$/D', $identity['period_end']) === 1
             && $identity['period_start'] <= $identity['period_end']
-            && is_string($identity['scenario_uuid'])
-            && $identity['scenario_uuid'] !== ''
-            && is_string($identity['budget_version_uuid'])
-            && $identity['budget_version_uuid'] !== '';
+            && is_string($identity['scenario_identity'])
+            && $identity['scenario_identity'] !== ''
+            && is_string($identity['plan_identity'])
+            && $identity['plan_identity'] !== '';
+    }
+
+    /** @param array<string, mixed> $conformance */
+    private function hasRuntimeComponentHashes(array $conformance): bool
+    {
+        $components = $conformance['component_class_hashes'] ?? null;
+        if (! is_array($components) || ! array_is_list($components)) {
+            return false;
+        }
+        $hashes = [];
+        foreach ($components as $component) {
+            if (! is_array($component)
+                || ! is_string($component['class'] ?? null)
+                || ! is_string($component['sha256'] ?? null)) {
+                return false;
+            }
+            $hashes[$component['class']] = $component['sha256'];
+        }
+
+        return ($hashes[\App\BusinessModules\Features\Budgeting\Services\PlanFactCalculator::class] ?? null) === BudgetPlanFactCandidateContract::FORMULA_HASH
+            && ($hashes[\App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotMaterializer::class] ?? null) === BudgetPlanFactCandidateContract::SOURCE_HASH;
     }
 
     private function reject(): never
