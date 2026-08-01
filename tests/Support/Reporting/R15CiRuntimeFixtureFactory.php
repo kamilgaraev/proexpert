@@ -35,6 +35,39 @@ use DateTimeZone;
 
 final class R15CiRuntimeFixtureFactory
 {
+    /** @return array<string,mixed> */
+    public function buildMissingDrillEvidence(): array
+    {
+        $scenario = $this->build();
+        $header = $scenario['write']->header;
+        $rows = $scenario['write']->rows;
+        $drillRows = [];
+        $header = new ReportSourceSnapshotHeader(
+            $header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope,
+            $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt,
+            $header->staleAt, ReportSourceSnapshotStatus::WRITING, $header->rowCount, 0,
+            new Sha256Hash(str_repeat('0', 64)), null, null, $header->reportQueryIdentity, $header->reportQueryHash,
+        );
+        $write = new ReportSourceSnapshotWrite(
+            $header,
+            $rows,
+            $drillRows,
+        );
+        $sealed = new ReportSourceSnapshotHeader(
+            $header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope,
+            $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt,
+            $header->staleAt, ReportSourceSnapshotStatus::WRITING, $header->rowCount, 0,
+            ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows), null, null,
+            $header->reportQueryIdentity, $header->reportQueryHash,
+        );
+        $write = new ReportSourceSnapshotWrite($sealed, $rows, $drillRows);
+        $adapter = new ProcurementCycleReportAdapter(new R15CiFixtureSourceSnapshotWriter($write), new R15CiFixtureSnapshotStore($write));
+        $scenario['binding'] = (new ProcurementCycleReportBindingFactory($adapter, new ProcurementCycleReadinessProbe))->create($scenario['candidate']->payload());
+        $scenario['write'] = $write;
+
+        return $scenario;
+    }
+
     /** @return array{candidate: \App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition, binding: \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding, context: ReportExecutionContext, query: ReportQuery, fixture: ReportConformanceFixture, drill: ReportDrillDownCell} */
     public function build(): array
     {

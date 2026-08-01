@@ -105,4 +105,30 @@ final class R15CiConformanceEvidenceGeneratorE2eTest extends TestCase
         $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
         new R15CiFixtureSnapshotStore($tampered);
     }
+
+    public function test_generator_rejects_missing_drill_evidence_artifact(): void
+    {
+        $complete = (new R15CiRuntimeFixtureFactory)->build();
+        $missing = (new R15CiRuntimeFixtureFactory)->buildMissingDrillEvidence();
+        $expectedHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
+            'next_cursor' => $complete['drillResult']->nextCursor,
+            'resource_links' => [],
+            'rows' => $complete['drillResult']->rows,
+        ])));
+        $generator = new R15CiConformanceEvidenceGenerator(
+            R15CiEvidenceRuntimeGuard::ciComposition(),
+            new R15CiFixtureDrillExpectationResolver(new ReportConformanceDrillExpectation(
+                $missing['fixture']->fixtureHash,
+                $missing['drillCell'],
+                $expectedHash,
+            )),
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('r15_ci_evidence_conformance_failed');
+        $generator->generate(
+            $missing['candidate'], $missing['binding'], $missing['context'], $missing['query'],
+            $missing['fixture'], str_repeat('1', 40), new DateTimeImmutable('2026-08-01T00:00:00+00:00'),
+        );
+    }
 }
