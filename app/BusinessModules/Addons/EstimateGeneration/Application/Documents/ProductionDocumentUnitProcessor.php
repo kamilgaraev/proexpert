@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
@@ -17,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvide
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -138,10 +140,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $preprocessed->derivativeHash,
             $preprocessed->derivativeVersionId,
         )->body;
-        $correlationId = AiOperationContext::deterministicId(implode('|', [
-            'vision-unit', $context->sessionId, $context->documentId, $context->unitId,
-            $context->sourceVersion, $context->claimToken, $context->unitAttemptCount,
-        ]));
+        $correlationId = SheetAnalysisOperationIdentity::primary(
+            $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
+        );
         $input = new VisionDocumentInput(
             organizationId: $context->organizationId,
             projectId: $context->projectId,
@@ -205,8 +206,13 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         }
         $routing = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
         if ($routing?->classification->requiresTargetedReanalysis()) {
-            $this->recordTargetedReanalysis($context, $routing->toArray());
-            $analysis = $this->vision->analyze(new VisionDocumentInput(
+            $targetedRouting = $routing->toArray();
+            $targetedOperation = SheetAnalysisOperationIdentity::targeted(
+                $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
+                $targetedRouting,
+            );
+            try {
+                $analysis = $this->vision->analyze(new VisionDocumentInput(
                 organizationId: $input->organizationId,
                 projectId: $input->projectId,
                 sessionId: $input->sessionId,
@@ -220,8 +226,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 imageContent: $input->imageContent,
                 imageDetail: $input->imageDetail,
                 operationContext: new AiOperationContext(
-                    correlationId: AiOperationContext::deterministicId($input->operationContext->correlationId.'|sheet-targeted'),
-                    attemptId: AiOperationContext::deterministicId($input->operationContext->attemptId.'|sheet-targeted'),
+                    correlationId: $targetedOperation,
+                    attemptId: $targetedOperation,
                     organizationId: $input->operationContext->organizationId,
                     projectId: $input->operationContext->projectId,
                     sessionId: $input->operationContext->sessionId,
@@ -235,7 +241,19 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 sourceTransform: $input->sourceTransform,
                 focusedSheetRole: $routing->classification->role->value,
                 reanalysisReason: $routing->classification->reanalysisReason,
-            ))->mapPolygonsToSource($preprocessed->transform);
+                ))->mapPolygonsToSource($preprocessed->transform);
+                $this->recordTargetedReanalysis($context, $targetedRouting, $targetedOperation, 'succeeded');
+            } catch (Throwable $exception) {
+                $this->recordTargetedReanalysis(
+                    $context,
+                    $targetedRouting,
+                    $targetedOperation,
+                    $exception instanceof VisionProviderException && $exception->reason === 'vision_wire_replay_forbidden'
+                        ? 'no_call'
+                        : 'failed',
+                );
+                throw $exception;
+            }
         }
         $payload = $analysis->toArray();
         $geometryConfidence = $analysis->elements === []
@@ -257,6 +275,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode([
                 'vision_analysis' => $payload,
+                'sheet_analysis_routing' => $routingPayload,
                 'sheet_analysis_routing' => $routingPayload,
                 'pdf_native_text' => $nativePdfText,
             ], JSON_THROW_ON_ERROR)),
@@ -290,6 +309,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             unitIndex: $context->index,
             sourceVersion: $context->sourceVersion,
             qualitySignals: [
+                'sheet_analysis_routing' => $routingPayload ?? [
+                    'role' => 'unknown',
+                    'needs_review' => false,
+                    'outcome' => 'not_applicable',
+                ],
                 'geometry' => [
                     'confidence' => $geometryConfidence,
                     'hard_blockers' => $hardGeometryWarnings,
@@ -299,7 +323,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
     }
 
     /** @param array<string, mixed> $routing */
-    private function recordTargetedReanalysis(DocumentUnitExecutionContext $context, array $routing): void
+    private function recordTargetedReanalysis(DocumentUnitExecutionContext $context, array $routing, string $operationId, string $outcome): void
     {
         if ($this->audit === null) {
             return;
@@ -307,7 +331,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
 
         $session = EstimateGenerationSession::query()->find($context->sessionId);
         if ($session instanceof EstimateGenerationSession) {
-            $this->audit->recordSheetTargetedReanalysis($session, $context->documentId, $context->unitId, $routing);
+            $this->audit->recordSheetTargetedReanalysis($session, $context->documentId, $context->unitId, $context->sourceVersion, $routing, $operationId, $outcome);
         }
     }
 

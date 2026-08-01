@@ -15,21 +15,33 @@ final class EstimateGenerationAuditService
     public const EVENT_SHEET_TARGETED_REANALYSIS = 'sheet_targeted_reanalysis';
 
     /** @param array<string, mixed> $routing */
-    public function recordSheetTargetedReanalysis(EstimateGenerationSession $session, int $documentId, int $unitId, array $routing): void
+    public function recordSheetTargetedReanalysis(EstimateGenerationSession $session, int $documentId, int $unitId, string $sourceVersion, array $routing, string $operationId, string $outcome): void
     {
+        $payload = [
+            'operation_id' => $operationId,
+            'document_id' => $documentId,
+            'unit_id' => $unitId,
+            'source_version' => $sourceVersion,
+            'reason' => $routing['reanalysis_reason'] ?? null,
+            'target_role' => $routing['role'] ?? null,
+            'routing_version' => 'sheet-routing:v1',
+            'outcome' => $outcome,
+        ];
+        $existing = EstimateGenerationAuditEvent::query()
+            ->where('session_id', $session->id)
+            ->where('event_type', self::EVENT_SHEET_TARGETED_REANALYSIS)
+            ->where('payload->operation_id', $operationId)
+            ->where('payload->outcome', $outcome)
+            ->first();
+        if ($existing instanceof EstimateGenerationAuditEvent) {
+            return;
+        }
         EstimateGenerationAuditEvent::query()->create([
             'session_id' => $session->id,
             'package_id' => null,
             'user_id' => $session->user_id,
             'event_type' => self::EVENT_SHEET_TARGETED_REANALYSIS,
-            'payload' => [
-                'document_id' => $documentId,
-                'unit_id' => $unitId,
-                'reason' => $routing['reanalysis_reason'] ?? null,
-                'target_role' => $routing['role'] ?? null,
-                'attempt_limit' => 1,
-                'outcome' => 'targeted_reanalysis',
-            ],
+            'payload' => $payload,
         ]);
     }
 

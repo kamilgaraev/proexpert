@@ -14,7 +14,7 @@ final readonly class SheetAnalysisRoutingResult
     ) {
     }
 
-    /** @return array{role: string, source_role: ?string, confidence: float, inference_reason: string, targeted_reanalysis: bool, reanalysis_reason: ?string, max_facts: int, max_elements: int, max_output_tokens: int} */
+    /** @return array{role: string, source_role: ?string, confidence: float, inference_reason: string, targeted_reanalysis: bool, needs_review: bool, reanalysis_reason: ?string, max_facts: int, max_elements: int, max_output_tokens: int} */
     public function toArray(): array
     {
         return [
@@ -23,6 +23,7 @@ final readonly class SheetAnalysisRoutingResult
             'confidence' => $this->classification->confidence,
             'inference_reason' => $this->classification->inferenceReason,
             'targeted_reanalysis' => $this->classification->requiresTargetedReanalysis(),
+            'needs_review' => $this->classification->requiresTargetedReanalysis(),
             'reanalysis_reason' => $this->classification->reanalysisReason,
             'max_facts' => $this->maxFacts,
             'max_elements' => $this->maxElements,
