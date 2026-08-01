@@ -299,6 +299,13 @@ jobs:
       - name: Generate exact R15 candidate evidence
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          export MOST_R15_CI_EVIDENCE=1
+          export APP_ENV=testing
+          export GITHUB_ACTIONS=true
+          php artisan test tests/Unit/Reporting/Conformance/ReportSourceConformanceHarnessTest.php tests/Unit/Procurement/Reporting/Cycle/ProcurementCycleRuntimeContractTest.php tests/Unit/Procurement/Reporting/Cycle/R15CiConformanceArtifactTest.php --no-coverage
+          conformance_artifact="$RUNNER_TEMP/r15-conformance-evidence.json"
+          php scripts/reporting/generate-r15-conformance-evidence.php > "$conformance_artifact"
+          export MOST_R15_CI_EVIDENCE_ARTIFACT="$conformance_artifact"
           php scripts/reporting/build-r15-publication-candidate.php
           php scripts/reporting/build-r15-publication-candidate.php --check
 

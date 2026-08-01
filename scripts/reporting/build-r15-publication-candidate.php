@@ -33,26 +33,30 @@ try {
     }
     $artifacts = artifactGroups($root, $sha);
     $timestamp = commitTimestamp($sha);
+    $definition = candidateDefinition($artifacts);
+    $conformance = generateConformanceEvidence($root, $sha, $timestamp, $artifacts);
     $candidate = [
-        'admission_status' => 'candidate', 'code' => R15_CODE, 'contract_version' => '1.0.0',
-        'formula_version' => 'procurement-cycle.v1', 'generated_from_commit' => $sha,
-        'publication_status' => 'blocked', 'runtime_binding' => $artifacts['runtime_binding'], 'source_schema_version' => '1.0.0',
-    ];
-    $conformance = [
-        'artifact_id' => 'r15_candidate_conformance', 'artifacts' => $artifacts, 'code' => R15_CODE,
-        'commit_sha' => $sha, 'generated_at' => $timestamp, 'schema_version' => '1.0.0', 'verification_status' => 'ci_required',
+        'admission_status' => 'candidate', 'candidate_definition' => $definition,
+        'candidate_definition_sha256' => digest($definition), 'code' => R15_CODE,
+        'contract_version' => '1.0.0', 'formula_version' => 'procurement-cycle.v1',
+        'generated_from_commit' => $sha, 'publication_status' => 'candidate',
+        'runtime_binding' => $artifacts['runtime_binding'], 'source_schema_version' => '1.0.0',
     ];
     $proof = [
-        'admission_status' => 'blocked', 'artifacts' => $artifacts,
+        'admission_status' => 'candidate', 'artifacts' => $artifacts,
+        'binding_sha256' => digest($artifacts['runtime_binding']),
+        'candidate_definition_sha256' => digest($definition),
         'candidate_manifest_sha256' => digest($candidate),
         'canonical_publication_proof_schema_sha256' => gitBlobHash($sha, 'docs/reports/contracts/report-publication-proof.v1.schema.json'),
-        'ci' => ['commit_sha' => $sha, 'required_checks' => ['r15_formula_contract', 'r15_postgresql_contract', 'r15_runtime_contract'], 'run_id' => $runId.'.'.$attempt, 'suite_sha256' => manifestIdentity($artifacts)],
-        'code' => R15_CODE, 'conformance_evidence_sha256' => digest($conformance), 'schema_version' => '1.0.0',
+        'ci' => ['commit_sha' => $sha, 'required_checks' => requiredChecks(), 'run_id' => $runId.'.'.$attempt, 'suite_sha256' => manifestIdentity($artifacts)],
+        'code' => R15_CODE, 'conformance_evidence_sha256' => digest($conformance),
+        'contract_version' => '1.0.0', 'definition' => $definition,
+        'schema_version' => '1.0.0',
     ];
     $request = [
-        'admission_status' => 'blocked',
+        'admission_status' => 'candidate',
         'artifact_paths' => ['candidate_manifest' => 'r15-candidate-manifest.json', 'conformance_evidence' => 'r15-conformance-evidence.json', 'proof_template' => 'r15-proof-template.json'],
-        'code' => R15_CODE, 'commit_sha' => $sha, 'proof_sha256' => digest($proof), 'request_kind' => 'r15_candidate_evidence', 'schema_version' => '1.0.0',
+        'code' => R15_CODE, 'commit_sha' => $sha, 'proof_sha256' => digest($proof), 'request_kind' => 'r15_release_candidate', 'schema_version' => '1.0.0',
     ];
     $documents = ['r15-candidate-manifest.json' => $candidate, 'r15-conformance-evidence.json' => $conformance, 'r15-proof-template.json' => $proof, 'r15-release-request.json' => $request];
     validateDocuments($root, $documents, $sha);
@@ -103,7 +107,7 @@ function artifactGroups(string $root, string $sha): array
         'core_reporting_delivery_and_drill' => array_merge(gitTreePaths($root, $sha, 'app/BusinessModules/Core/Reporting'), ['composer.json', 'composer.lock']),
         'cycle_runtime' => gitTreePaths($root, $sha, 'app/BusinessModules/Features/Procurement/Reporting/Cycle'),
         'rbac_and_translation' => array_merge(['lang/ru/permissions.php', 'lang/ru/reports.php'], roleDefinitionPaths($root, $sha)),
-        'ci_contract' => ['.github/workflows/notification-concurrency.yml', 'scripts/reporting/build-r15-publication-candidate.php', 'docs/reports/contracts/r15-candidate-manifest.v1.schema.json', 'docs/reports/contracts/r15-candidate-conformance.v1.schema.json', 'docs/reports/contracts/r15-candidate-proof-template.v1.schema.json', 'docs/reports/contracts/r15-publication-request.v1.schema.json'],
+            'ci_contract' => ['.github/workflows/notification-concurrency.yml', 'scripts/reporting/build-r15-publication-candidate.php', 'scripts/reporting/generate-r15-conformance-evidence.php', 'tests/Support/Reporting/ReportDefinitionBuilder.php', 'tests/Support/Reporting/ReportExecutionContextBuilder.php', 'tests/Support/Reporting/R15CiRuntimeFixtureFactory.php', 'docs/reports/contracts/r15-candidate-manifest.v1.schema.json', 'docs/reports/contracts/r15-candidate-conformance.v1.schema.json', 'docs/reports/contracts/r15-candidate-proof-template.v1.schema.json', 'docs/reports/contracts/r15-publication-request.v1.schema.json'],
     ];
     assertNoUntrackedInputs($root, ['app/BusinessModules/Features/Procurement/Reporting/Cycle', 'app/BusinessModules/Features/Procurement/migrations/2026_08_01_000001_create_procurement_cycle_source.php', 'app/BusinessModules/Core/Reporting', 'config/RoleDefinitions', 'lang/ru/permissions.php', 'lang/ru/reports.php', 'docs/reports/contracts', '.github/workflows/notification-concurrency.yml', 'scripts/reporting/build-r15-publication-candidate.php', 'composer.json', 'composer.lock']);
     $result = [];
@@ -114,6 +118,69 @@ function artifactGroups(string $root, string $sha): array
     ksort($result, SORT_STRING);
 
     return $result;
+}
+
+/** @param array<string,mixed> $artifacts @return array<string,mixed> */
+function generateConformanceEvidence(string $root, string $sha, string $timestamp, array $artifacts): array
+{
+    $artifactPath = getenv('MOST_R15_CI_EVIDENCE_ARTIFACT');
+    if (is_string($artifactPath) && $artifactPath !== '') {
+        $output = is_link($artifactPath) || ! is_file($artifactPath) ? false : file_get_contents($artifactPath);
+    } else {
+        $output = command('php '.escapeshellarg($root.'/scripts/reporting/generate-r15-conformance-evidence.php'));
+    }
+    try {
+        if (! is_string($output)) {
+            throw new JsonException('r15_ci_evidence_artifact_missing');
+        }
+        $artifact = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        throw new RuntimeException('r15_ci_evidence_artifact_invalid');
+    }
+    if (! is_array($artifact) || array_is_list($artifact)
+        || ($artifact['artifact_id'] ?? null) !== 'r15_runtime_conformance'
+        || ($artifact['code'] ?? null) !== R15_CODE
+        || ($artifact['schema_version'] ?? null) !== '1.0.0'
+        || ($artifact['status'] ?? null) !== 'passed'
+        || ! is_array($artifact['conformance'] ?? null)
+        || ! is_string($artifact['conformance_digest'] ?? null)
+        || preg_match('/^[a-f0-9]{64}$/D', $artifact['conformance_digest']) !== 1
+        || ! hash_equals($artifact['conformance_digest'], digest((array) $artifact['conformance']))) {
+        throw new RuntimeException('r15_ci_evidence_artifact_invalid');
+    }
+    validatePassedConformance($artifact['conformance'], $sha);
+    $artifact['artifacts'] = $artifacts;
+    $artifact['commit_sha'] = $sha;
+    $artifact['generated_at'] = $timestamp;
+    $artifact['verification_status'] = 'passed';
+
+    return $artifact;
+}
+
+/** @param array<string,mixed> $conformance */
+function validatePassedConformance(array $conformance, string $sha): void
+{
+    $source = $conformance['source'] ?? null;
+    $formula = $conformance['formula'] ?? null;
+    $assertions = array_merge(
+        is_array($source) && is_array($source['assertion_codes'] ?? null) ? $source['assertion_codes'] : [],
+        is_array($formula) && is_array($formula['assertion_codes'] ?? null) ? $formula['assertion_codes'] : [],
+    );
+    if (($conformance['code'] ?? null) !== R15_CODE
+        || ($conformance['commit_sha'] ?? null) !== $sha
+        || ($conformance['status'] ?? null) !== 'passed'
+        || ! is_int($conformance['assertion_count'] ?? null)
+        || $conformance['assertion_count'] < 1
+        || $conformance['assertion_count'] !== count($assertions)
+        || ! is_array($source)
+        || ($source['passed'] ?? null) !== true
+        || ! is_array($formula)
+        || ($formula['passed'] ?? null) !== true
+        || count($assertions) !== count(array_filter($assertions, static fn (mixed $code): bool => is_string($code) && str_ends_with($code, '.passed')))
+        || ! is_array($conformance['component_class_hashes'] ?? null)
+        || ($conformance['component_class_hashes'] ?? []) === []) {
+        throw new RuntimeException('r15_ci_evidence_artifact_invalid');
+    }
 }
 
 /** @return list<string> */
@@ -187,6 +254,33 @@ function manifestIdentity(array $artifacts): string
     return R15EvidenceIdentity::fromArtifacts($artifacts);
 }
 
+/** @return array<string,mixed> */
+function candidateDefinition(array $artifacts): array
+{
+    $columns = ['row_key', 'cohort_date', 'purchase_request_line_id', 'request_number', 'material_name', 'requester_id', 'buyer_id', 'priority', 'current_stage', 'outcome', 'total_cycle_seconds', 'open_age_seconds', 'awarded_supplier_party_id', 'awarded_amount', 'currency', 'quality_status', 'gap_codes', 'stage_breakdown', 'audit_timeline'];
+
+    return [
+        'capabilities' => ['reproducible_scheduled_snapshot' => false, 'supports_subscriptions' => false],
+        'code' => R15_CODE,
+        'columns' => array_map(static fn (string $id): array => ['id' => $id], $columns),
+        'filters' => [['id' => 'project_ids'], ['id' => 'as_of']],
+        'formats' => ['csv', 'pdf', 'xlsx'],
+        'grain' => 'request_line_process',
+        'permissions' => ['audit' => ['procurement.audit.view'], 'export' => ['procurement.reports.export'], 'sensitive' => [], 'view' => ['procurement.dashboard.view']],
+        'readiness' => ['delivery' => 'verified', 'formula' => 'verified', 'publication' => 'candidate', 'source' => 'verified'],
+        'runtime' => ['binding' => $artifacts['runtime_binding'], 'delivery_contract_sha256' => digest($artifacts['core_reporting_delivery_and_drill']), 'drill_contract_sha256' => digest($artifacts['cycle_runtime'])],
+        'semantic_fingerprints' => ['formula' => digest($artifacts['formula_and_calendar']), 'source' => digest($artifacts['source_state'])],
+        'sorts' => [['direction' => 'asc', 'id' => 'cohort_date']],
+        'versions' => ['contract' => '1.0.0', 'formula' => '1.0.0', 'renderer' => '1.0.0', 'source_schema' => '1.0.0'],
+    ];
+}
+
+/** @return list<string> */
+function requiredChecks(): array
+{
+    return ['binding_contract', 'drill_down_contract', 'export_csv_contract', 'export_pdf_contract', 'export_xlsx_contract', 'formula_contract', 'postgresql_contract', 'rbac_contract', 'source_contract'];
+}
+
 /** @param array<string,array<string,mixed>> $documents */
 function validateDocuments(string $root, array $documents, string $sha): void
 {
@@ -197,7 +291,8 @@ function validateDocuments(string $root, array $documents, string $sha): void
             throw new RuntimeException('r15_candidate_evidence_schema_invalid');
         }
     }
-    if (($documents['r15-candidate-manifest.json']['generated_from_commit'] ?? null) !== $sha || ($documents['r15-conformance-evidence.json']['commit_sha'] ?? null) !== $sha || ($documents['r15-proof-template.json']['ci']['commit_sha'] ?? null) !== $sha || ($documents['r15-release-request.json']['commit_sha'] ?? null) !== $sha || ! hash_equals(digest($documents['r15-candidate-manifest.json']), (string) ($documents['r15-proof-template.json']['candidate_manifest_sha256'] ?? '')) || ! hash_equals(digest($documents['r15-conformance-evidence.json']), (string) ($documents['r15-proof-template.json']['conformance_evidence_sha256'] ?? '')) || ! hash_equals(digest($documents['r15-proof-template.json']), (string) ($documents['r15-release-request.json']['proof_sha256'] ?? ''))) {
+    $conformance = $documents['r15-conformance-evidence.json'];
+    if (($documents['r15-candidate-manifest.json']['generated_from_commit'] ?? null) !== $sha || ($conformance['commit_sha'] ?? null) !== $sha || ($conformance['verification_status'] ?? null) !== 'passed' || ($conformance['status'] ?? null) !== 'passed' || ($conformance['conformance']['commit_sha'] ?? null) !== $sha || ($conformance['conformance']['status'] ?? null) !== 'passed' || ($documents['r15-proof-template.json']['ci']['commit_sha'] ?? null) !== $sha || ($documents['r15-release-request.json']['commit_sha'] ?? null) !== $sha || ! hash_equals(digest((array) ($documents['r15-candidate-manifest.json']['candidate_definition'] ?? null)), (string) ($documents['r15-candidate-manifest.json']['candidate_definition_sha256'] ?? '')) || ! hash_equals((string) ($documents['r15-candidate-manifest.json']['candidate_definition_sha256'] ?? ''), (string) ($documents['r15-proof-template.json']['candidate_definition_sha256'] ?? '')) || ($documents['r15-proof-template.json']['definition'] ?? null) !== ($documents['r15-candidate-manifest.json']['candidate_definition'] ?? null) || ($documents['r15-proof-template.json']['ci']['required_checks'] ?? null) !== requiredChecks() || ! hash_equals(digest($documents['r15-candidate-manifest.json']), (string) ($documents['r15-proof-template.json']['candidate_manifest_sha256'] ?? '')) || ! hash_equals(digest($conformance), (string) ($documents['r15-proof-template.json']['conformance_evidence_sha256'] ?? '')) || ! hash_equals(digest($documents['r15-proof-template.json']), (string) ($documents['r15-release-request.json']['proof_sha256'] ?? ''))) {
         throw new RuntimeException('r15_candidate_evidence_links_invalid');
     }
 }
