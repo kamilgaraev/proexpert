@@ -201,6 +201,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
 
         $originalDefault = (string) config('database.default');
         $winnerConnection = DB::connection('report_snapshot_winner');
+        $observerConnection = DB::connection('report_snapshot_observer');
         $resultFile = tempnam(sys_get_temp_dir(), 'report-snapshot-race-');
         if ($resultFile === false) {
             throw new RuntimeException('Cannot create race result file.');
@@ -235,7 +236,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
 
             $this->waitForChildState($resultFile, 'started');
             $blocked = $this->waitForUniqueConstraintLock(
-                DB::connection('report_snapshot_observer'),
+                $observerConnection,
                 'report_snapshot_race_contender',
             );
             $winnerConnection->commit();
@@ -248,7 +249,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
             self::assertSame(SIGKILL, pcntl_wtermsig($status));
             self::assertNull($result['error'] ?? null);
             self::assertSame($winner->id, $result['snapshot_id'] ?? null);
-            self::assertSame(1, DB::connection('report_snapshot_observer')
+            self::assertSame(1, $observerConnection
                 ->table('report_source_snapshots')
                 ->where('source_version', $identity->sourceVersion)
                 ->where('status', ReportSourceSnapshotStatus::READY->value)
@@ -262,7 +263,14 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
                 posix_kill($pid, SIGKILL);
                 pcntl_waitpid($pid, $unusedStatus);
             }
-            @unlink($resultFile);
+            try {
+                $this->cleanupCommittedFixture($observerConnection);
+            } finally {
+                foreach (['report_snapshot_winner', 'report_snapshot_contender', 'report_snapshot_observer'] as $connection) {
+                    DB::purge($connection);
+                }
+                @unlink($resultFile);
+            }
         }
     }
 
@@ -413,5 +421,13 @@ SQL,
     {
         posix_kill(posix_getpid(), SIGKILL);
         exit(1);
+    }
+
+    private function cleanupCommittedFixture(Connection $connection): void
+    {
+        $connection->statement(
+            'TRUNCATE TABLE report_source_snapshot_drill_rows, '
+            .'report_source_snapshot_rows, report_source_snapshots',
+        );
     }
 }
