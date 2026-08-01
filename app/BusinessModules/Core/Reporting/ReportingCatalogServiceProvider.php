@@ -36,8 +36,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LogReportSubscriptionEventRecorder;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabasePublishedReportDefinitionRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportCatalogMetadataRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportSchedulingCapabilityRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabaseReportCatalogMetadataRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabaseReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSavedViewCursorCodec;
@@ -58,6 +58,15 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class, fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService(
+            new \App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog,
+            new \App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy,
+            new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher,
+            [],
+            [],
+            (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
+        ));
+        $this->app->singleton(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier::class, fn (): \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier => (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create());
         $this->app->singleton(
             LoadedReportManifest::class,
             fn (Application $app): LoadedReportManifest => $app
@@ -69,21 +78,22 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
         );
         $this->app->singleton(ReportPublicationRegistry::class, fn (Application $app): EloquentReportPublicationRegistry => new EloquentReportPublicationRegistry(
             $app['db']->connection(),
-            null,
+            $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class),
             $app->make(\App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory::class),
             (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
         ));
         $this->app->singleton(ReportPublicationFeatureStore::class, fn (Application $app): EloquentReportPublicationFeatureStore => new EloquentReportPublicationFeatureStore(
             $app['db']->connection(),
         ));
+        $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestionService::class);
         $this->app->singleton(ReportDefinitionRegistry::class, DatabasePublishedReportDefinitionRegistry::class);
         $this->app->singleton(
             ReportCatalogMetadataRegistry::class,
-            ManifestReportCatalogMetadataRegistry::class,
+            DatabaseReportCatalogMetadataRegistry::class,
         );
         $this->app->singleton(
             ReportSchedulingCapabilityRegistry::class,
-            ManifestReportSchedulingCapabilityRegistry::class,
+            DatabaseReportSchedulingCapabilityRegistry::class,
         );
         $this->app->singleton(GetReportCatalogAction::class, GetReportCatalogHandler::class);
         $this->app->singleton(

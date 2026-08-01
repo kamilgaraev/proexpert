@@ -55,6 +55,7 @@ final class ReportPublicationReleaseIngestionServiceTest extends TestCase
             $artifactPath,
             $this->directory,
             ReportPublicationReleaseArtifactTestFactory::releaseAdmission($fixture),
+            str_repeat('b', 40),
         );
     }
 

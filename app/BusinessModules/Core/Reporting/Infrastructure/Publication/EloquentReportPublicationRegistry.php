@@ -45,6 +45,17 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
         return $row === null ? null : $this->published($this->record((array) $row));
     }
 
+    public function currentRecord(string $code): ?ReportPublicationRecord
+    {
+        $this->assertCode($code);
+        $row = $this->connection->table('public.report_publications')
+            ->where('code', $code)
+            ->where('status', ReportPublicationStatus::PUBLISHED->value)
+            ->first();
+
+        return $row === null ? null : $this->record((array) $row);
+    }
+
     public function publishedCodes(): array
     {
         return $this->connection->table('public.report_publications')

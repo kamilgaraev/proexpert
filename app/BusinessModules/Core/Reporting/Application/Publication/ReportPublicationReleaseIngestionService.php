@@ -30,12 +30,13 @@ final readonly class ReportPublicationReleaseIngestionService
         string $artifactPath,
         string $trustedDirectory,
         ReportPublicationReleaseAdmission $admission,
+        string $expectedCommitSha,
         ReportPublicationFeatureMode $mode = ReportPublicationFeatureMode::OFF,
         array $organizationAllowlist = [],
         array $userAllowlist = [],
     ): PublishedReportDefinition {
         $bundle = $this->bundles->load($proofPath, $artifactPath, $trustedDirectory);
-        $release = $this->assertTrustedBundle($bundle, $admission);
+        $release = $this->assertTrustedBundle($bundle, $admission, $expectedCommitSha);
         $proof = $bundle->proof;
         $publication = $this->publications->promote($this->eligibility->evaluate(
             $admission->candidate,
@@ -67,12 +68,14 @@ final readonly class ReportPublicationReleaseIngestionService
     private function assertTrustedBundle(
         ReportPublicationReleaseBundle $bundle,
         ReportPublicationReleaseAdmission $admission,
+        string $expectedCommitSha,
     ): ReportPublicationReleaseIdentity {
         $artifact = $this->artifacts->verify($bundle->artifactBytes);
         $proof = $bundle->proof->payload();
         $subject = $artifact->payload()['subject'];
         $evidence = $artifact->payload()['evidence'];
-        if (! hash_equals($admission->candidate->code, $proof['code'])
+        if (preg_match('/^[a-f0-9]{40}$/D', $expectedCommitSha) !== 1
+            || ! hash_equals($admission->candidate->code, $proof['code'])
             || ! hash_equals($proof['code'], $subject['code'])
             || ! hash_equals($bundle->proof->digest()->value, $subject['proof_sha256'])
             || ! hash_equals($proof['candidate_manifest_sha256'], $subject['candidate_manifest_sha256'])
@@ -80,6 +83,8 @@ final readonly class ReportPublicationReleaseIngestionService
             || ! hash_equals($proof['binding_sha256'], $subject['binding_sha256'])
             || ! hash_equals($proof['conformance_evidence_sha256'], $subject['conformance_evidence_sha256'])
             || ! hash_equals($proof['release']['git_sha'], $subject['release_git_sha'])
+            || ! hash_equals($expectedCommitSha, $proof['release']['git_sha'])
+            || ! hash_equals($expectedCommitSha, $artifact->payload()['provenance']['commit_sha'])
             || ! hash_equals($proof['release']['created_at_utc'], $subject['release_created_at_utc'])
             || ! hash_equals($proof['release']['approver_identity'], $subject['approver_identity'])
             || ! hash_equals($proof['ci']['run_id'], $evidence['run_id'])
