@@ -196,6 +196,31 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $this->assertSqlState($exception, '23514');
     }
 
+    public function test_database_rejects_unsealed_snapshot_at_deferred_owner_commit_boundary(): void
+    {
+        $fixture = $this->fixture(withBlockingIssue: false);
+        $snapshot = $this->recorder()->recordBlocked(
+            $this->identity($fixture),
+            $fixture['user_id'],
+            $this->utcNow(),
+            str_repeat('a', 64),
+            PayrollReadinessReason::SOURCE_CHANGED,
+        );
+        $payload = $snapshot->toPersistence();
+        $payload['evaluated_at'] = $snapshot->evaluatedAt;
+        $payload['created_at'] = $this->utcNow();
+        $payload['source_hash'] = str_repeat('f', 64);
+        $payload['state_hash'] = str_repeat('e', 64);
+
+        $exception = $this->captureQueryException(static function () use ($payload): void {
+            DB::table('workforce_payroll_readiness_snapshots')->insert($payload);
+            DB::statement('SET CONSTRAINTS workforce_payroll_readiness_snapshots_complete IMMEDIATE');
+        });
+
+        $this->assertSqlState($exception, '23514');
+        self::assertSame(1, DB::table('workforce_payroll_readiness_snapshots')->count());
+    }
+
     public function test_production_sized_snapshot_uses_one_full_set_seal_and_constant_time_late_append_guard(): void
     {
         $fixture = $this->fixture(withBlockingIssue: false);
@@ -214,6 +239,33 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
             DB::table('workforce_payroll_source_rows')->insert($batch);
         }
 
+        $evidenceCreatedAt = $this->utcNow()->modify('-1 second');
+        $issues = DB::table('workforce_payroll_source_rows')
+            ->where('payroll_period_id', $fixture['period_id'])
+            ->orderBy('id')
+            ->get(['id', 'employee_id', 'project_id'])
+            ->map(static function (object $row, int $index) use ($fixture, $evidenceCreatedAt): array {
+                return [
+                    'organization_id' => $fixture['organization_id'],
+                    'payroll_period_id' => $fixture['period_id'],
+                    'severity' => 'blocking',
+                    'issue_code' => sprintf('bulk_blocker_%02d', $index % 64),
+                    'message' => 'fixture-only',
+                    'entity_type' => 'payroll_source_row',
+                    'entity_id' => $row->id,
+                    'employee_id' => $row->employee_id,
+                    'project_id' => $row->project_id,
+                    'payload' => json_encode([], JSON_THROW_ON_ERROR),
+                    'created_at' => $evidenceCreatedAt,
+                    'updated_at' => $evidenceCreatedAt,
+                ];
+            })
+            ->all();
+
+        foreach (array_chunk($issues, 500) as $batch) {
+            DB::table('workforce_payroll_validation_issues')->insert($batch);
+        }
+
         $sealUpdates = 0;
         DB::listen(static function (QueryExecuted $query) use (&$sealUpdates): void {
             if (str_contains($query->sql, 'workforce_payroll_readiness_snapshots')
@@ -228,15 +280,17 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
             $fixture['user_id'],
             $this->utcNow(),
             str_repeat('a', 64),
-            PayrollReadinessReason::SOURCE_CHANGED,
+            PayrollReadinessReason::VALIDATION_BLOCKERS,
         );
 
         $snapshot = (array) DB::table('workforce_payroll_readiness_snapshots')->first();
-        self::assertSame(1506, (int) $snapshot['item_count']);
+        self::assertSame(3007, (int) $snapshot['item_count']);
+        self::assertSame(1501, (int) $snapshot['blocker_count']);
+        self::assertCount(64, json_decode((string) $snapshot['blocker_codes'], true, flags: JSON_THROW_ON_ERROR));
         self::assertNotNull($snapshot['sealed_at']);
         self::assertSame(1, $sealUpdates);
         self::assertSame(
-            1506,
+            3007,
             DB::table('workforce_payroll_readiness_snapshot_items')
                 ->where('payroll_readiness_snapshot_id', $snapshot['id'])
                 ->count(),
@@ -247,7 +301,7 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
             ->where('source_type', 'payroll_source_row')
             ->first();
         unset($lateItem['id']);
-        $lateItem['position'] = 1507;
+        $lateItem['position'] = 3008;
         $this->assertSqlState($this->captureQueryException(static function () use ($lateItem): void {
             DB::table('workforce_payroll_readiness_snapshot_items')->insert($lateItem);
         }), '55000');
