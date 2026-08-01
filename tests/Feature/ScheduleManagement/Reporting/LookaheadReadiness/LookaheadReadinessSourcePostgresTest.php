@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\ScheduleManagement\Reporting\LookaheadReadiness;
 
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\CommitmentDraft;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\AuthorizationDecision;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessEvent;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessPolicyDefinition;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ScheduleRevisionDraft;
@@ -14,16 +15,22 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\EloquentLookaheadReadinessSourceStore;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\EloquentScheduleRevisionSourceGuard;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\LookaheadReadinessCanonicalJson;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\LookaheadReadinessAbility;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\ReadinessEventStateMachine;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\ReadinessPolicyEvaluator;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\ReadinessSnapshotFactory;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\ScheduleRevisionFactory;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\ScheduleSourceWatermark;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -66,50 +73,55 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
 
     protected function tearDown(): void
     {
-        if (! $this->databaseSafetyApproved) {
-            return;
-        }
-
         parent::tearDown();
+    }
+
+    public function test_postgres_guard_replays_events_for_forged_green_and_revoked_waiver(): void
+    {
+        $definition = DB::selectOne(
+            "SELECT pg_get_functiondef('lookahead_readiness_expected_evaluation(bigint,bigint,bigint,timestamptz)'::regprocedure) AS source",
+        );
+        self::assertNotNull($definition);
+        self::assertStringContainsString("event_type = 'waiver_approved'", (string) $definition->source);
+        self::assertStringContainsString('aggregate_latest', (string) $definition->source);
+        self::assertStringContainsString('component_outcomes', (string) $definition->source);
+    }
+
+    public function test_postgres_task_stream_lock_closes_event_snapshot_race_and_tail_branch(): void
+    {
+        $eventGuard = DB::selectOne(
+            "SELECT pg_get_functiondef('lookahead_readiness_validate_event()'::regprocedure) AS source",
+        );
+        $snapshotGuard = DB::selectOne(
+            "SELECT pg_get_functiondef('lookahead_readiness_validate_snapshot()'::regprocedure) AS source",
+        );
+        self::assertNotNull($eventGuard);
+        self::assertNotNull($snapshotGuard);
+        self::assertStringContainsString('lookahead-task-event-stream:', (string) $eventGuard->source);
+        self::assertStringContainsString('lookahead-task-event-stream:', (string) $snapshotGuard->source);
+        self::assertStringContainsString('prior event is not aggregate tail', (string) $eventGuard->source);
     }
 
     public function test_sealed_source_is_append_only_cross_lineage_safe_and_replays_after_operational_mutation(): void
     {
         $fixture = $this->sourceFixture();
         $event = $this->constraintEvent($fixture);
-        $eventReceipt = $this->store()->transaction(fn () => $this->store()->appendEvent($event));
-        $evaluation = (new ReadinessPolicyEvaluator)->evaluate(
-            $fixture['policy'],
-            'standard',
-            new DateTimeImmutable('2026-08-09T12:00:00+03:00'),
-            [
-                $this->satisfied('design'),
-                $this->satisfied('materials'),
-                ['category' => 'permit', 'outcome' => 'unsatisfied'],
-            ],
-            $fixture['policy']->hash(),
-            $fixture['schedule_receipt']->contentHash,
-        );
-        $snapshot = (new ReadinessSnapshotFactory)->seal([
+        $eventReceipt = $this->store()->transaction(fn () => $this->store()->appendEvent(
+            $event,
+            $this->decision($fixture, LookaheadReadinessAbility::MANAGE_CONSTRAINTS),
+        ));
+        $snapshotReceipt = $this->store()->transaction(fn () => $this->store()->materializeReadiness([
             'organization_id' => $fixture['organization_id'],
             'project_id' => $fixture['project_id'],
             'schedule_id' => $fixture['schedule_id'],
             'commitment_revision_id' => (int) $fixture['commitment_receipt']->entityId,
             'commitment_task_id' => $fixture['commitment_task_id'],
-            'snapshot_revision' => 1,
-            'policy_id' => (int) $fixture['policy_receipt']->entityId,
-            'policy_hash' => $fixture['policy']->hash(),
-            'schedule_revision_hash' => $fixture['schedule_receipt']->contentHash,
-            'commitment_revision_hash' => $fixture['commitment_receipt']->contentHash,
-            'source_watermark' => 'events:1',
-            'blocker_event_ids' => [(string) $eventReceipt->entityId],
-            'waiver_event_ids' => [],
-        ], $evaluation, new DateTimeImmutable('2026-08-09T12:00:00+03:00'), null);
-        $snapshotReceipt = $this->store()->transaction(
-            fn () => $this->store()->sealSnapshot($snapshot, 'snapshot-task-a-v1'),
-        );
+            'as_of_utc' => $event->occurredAtUtc(),
+            'actor_id' => $fixture['actor_id'],
+            'idempotency_key' => 'snapshot-task-a-v1',
+        ], $this->decision($fixture, LookaheadReadinessAbility::SEAL_EVALUATION)));
 
-        self::assertSame(ReadinessState::BLOCKED, $evaluation->state);
+        self::assertSame('blocked', DB::table('lookahead_readiness_snapshots')->value('state'));
         self::assertSame(1, DB::table('lookahead_readiness_snapshots')->count());
         $this->assertMutationRejected('lookahead_readiness_policy_versions', (int) $fixture['policy_receipt']->entityId);
         $this->assertMutationRejected('schedule_plan_revisions', (int) $fixture['schedule_receipt']->entityId);
@@ -150,14 +162,14 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         $first = $store->transaction(fn () => $store->approveScheduleRevision(
             $draft,
             (new ScheduleRevisionFactory)->contentHash($draft),
-            $fixture['actor_id'],
+            $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
             '2026-08-05T05:00:00.000000Z',
             'schedule-approved-v1',
         ));
         $replay = $store->transaction(fn () => $store->approveScheduleRevision(
             $draft,
             (new ScheduleRevisionFactory)->contentHash($draft),
-            $fixture['actor_id'],
+            $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
             '2026-08-05T05:00:00.000000Z',
             'schedule-approved-v1',
         ));
@@ -171,7 +183,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             $store->transaction(fn () => $store->approveScheduleRevision(
                 $changedDraft,
                 (new ScheduleRevisionFactory)->contentHash($changedDraft),
-                $fixture['actor_id'],
+                $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
                 '2026-08-05T05:00:00.000000Z',
                 'schedule-approved-v1',
             ));
@@ -185,7 +197,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
                 $store->approveScheduleRevision(
                     $draft,
                     (new ScheduleRevisionFactory)->contentHash($draft),
-                    $fixture['actor_id'],
+                    $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
                     '2026-08-06T05:00:00.000000Z',
                     'schedule-approved-rollback',
                 );
@@ -211,7 +223,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             $this->store()->transaction(fn () => $this->store()->approveScheduleRevision(
                 $draft,
                 (new ScheduleRevisionFactory)->contentHash($draft),
-                $fixture['actor_id'],
+                $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
                 '2026-08-05T05:00:00.000000Z',
                 'stale-schedule-approval',
             ));
@@ -234,7 +246,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             $this->store()->transaction(fn () => $this->store()->approveScheduleRevision(
                 $draft,
                 (new ScheduleRevisionFactory)->contentHash($draft),
-                $fixture['actor_id'],
+                $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
                 '2026-08-05T05:00:00.000000Z',
                 'fabricated-schedule-approval',
             ));
@@ -260,11 +272,15 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'event_type' => ReadinessEventType::WAIVER_REQUESTED->value,
             'occurred_at' => '2026-08-05T09:00:00+03:00',
             'actor_id' => $fixture['actor_id'],
+            'aggregate_id' => 'waiver:900',
             'payload' => ['category' => 'permit', 'reason' => 'Awaiting authority response'],
             'evidence' => null,
             'prior_event_id' => null,
         ], $fixture['policy']);
-        $this->store()->transaction(fn () => $this->store()->appendEvent($request));
+        $this->store()->transaction(fn () => $this->store()->appendEvent(
+            $request,
+            $this->decision($fixture, LookaheadReadinessAbility::MANAGE_CONSTRAINTS),
+        ));
         $approved = ReadinessEvent::fromArray([
             'event_id' => '018f6f5a-4ca2-7a11-bf61-0242ac120011',
             'idempotency_key' => 'waiver-900-approved-v1',
@@ -276,6 +292,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'event_type' => ReadinessEventType::WAIVER_APPROVED->value,
             'occurred_at' => '2026-08-05T10:00:00+03:00',
             'actor_id' => $fixture['actor_id'],
+            'aggregate_id' => 'waiver:900',
             'payload' => [
                 'category' => 'permit',
                 'reason' => 'Authority response documented',
@@ -299,8 +316,12 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         $payload['approver_permission'] = 'schedule.view';
         $forged['payload'] = LookaheadReadinessCanonicalJson::encode($payload);
         $forged['payload_hash'] = LookaheadReadinessCanonicalJson::hash($payload);
+        $forgedAuthorization = $this->decodeJson($forged['authorization_decision']);
+        $forgedAuthorization['permission'] = 'schedule.view';
+        $forged['authorization_decision'] = LookaheadReadinessCanonicalJson::encode($forgedAuthorization);
         $forged['evidence_hash'] = LookaheadReadinessCanonicalJson::hash([
             'actor_id' => (string) $approved->actorId,
+            'aggregate_id' => $approved->aggregateId,
             'commitment_revision_id' => (string) $approved->commitmentRevisionId,
             'commitment_task_id' => (string) $approved->commitmentTaskId,
             'event_id' => $forged['event_id'],
@@ -320,7 +341,10 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         );
         self::assertSame('23514', $exception->errorInfo[0] ?? null);
 
-        $receipt = $this->store()->transaction(fn () => $this->store()->appendEvent($approved));
+        $receipt = $this->store()->transaction(fn () => $this->store()->appendEvent(
+            $approved,
+            $this->decision($fixture, LookaheadReadinessAbility::APPROVE_WAIVER),
+        ));
         self::assertSame($approved->eventId, $receipt->entityId);
     }
 
@@ -329,7 +353,10 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         $fixture = $this->sourceFixture();
         $event = $this->constraintEvent($fixture);
         $store = $this->store();
-        $store->transaction(fn () => $store->appendEvent($event));
+        $store->transaction(fn () => $store->appendEvent(
+            $event,
+            $this->decision($fixture, LookaheadReadinessAbility::MANAGE_CONSTRAINTS),
+        ));
         $changed = ReadinessEvent::fromArray([
             'event_id' => $event->eventId,
             'idempotency_key' => $event->idempotencyKey,
@@ -340,14 +367,18 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'commitment_task_id' => $event->commitmentTaskId,
             'event_type' => $event->eventType->value,
             'occurred_at' => $event->occurredAtUtc(),
-            'actor_id' => $event->actorId + 1,
-            'payload' => $event->payload,
+            'actor_id' => $event->actorId,
+            'aggregate_id' => $event->aggregateId,
+            'payload' => [...$event->payload, 'owner_ref' => 'user:changed'],
             'evidence' => $event->evidence,
             'prior_event_id' => $event->priorEventId,
         ], $event->policy);
 
         try {
-            $store->transaction(fn () => $store->appendEvent($changed));
+            $store->transaction(fn () => $store->appendEvent(
+                $changed,
+                $this->decision($fixture, LookaheadReadinessAbility::MANAGE_CONSTRAINTS),
+            ));
             self::fail('Same idempotency key with changed audit lineage must be rejected.');
         } catch (LogicException $exception) {
             self::assertSame('lookahead_readiness_idempotency_conflict', $exception->getMessage());
@@ -370,7 +401,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         $this->store()->transaction(fn () => $this->store()->approveScheduleRevision(
             $draft,
             (new ScheduleRevisionFactory)->contentHash($draft),
-            $fixture['actor_id'],
+            $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
             '2026-08-05T05:00:00.000000Z',
             'schedule-race-base',
         ));
@@ -387,15 +418,12 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
                 $harness->independentConnection($name);
                 DB::setDefaultConnection($name);
                 $workerId = $index + 1;
-                $children[] = $harness->spawn($workerId, static function () use ($draft, $fixture, $workerId): array {
-                    $store = new EloquentLookaheadReadinessSourceStore(
-                        new ScheduleRevisionFactory,
-                        new EloquentScheduleRevisionSourceGuard(new ScheduleSourceWatermark),
-                    );
+                $children[] = $harness->spawn($workerId, function () use ($draft, $fixture, $workerId): array {
+                    $store = $this->store();
                     $receipt = $store->transaction(fn () => $store->approveScheduleRevision(
                         $draft,
                         (new ScheduleRevisionFactory)->contentHash($draft),
-                        $fixture['actor_id'],
+                        $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
                         '2026-08-0'.($workerId + 5).'T05:00:00.000000Z',
                         "schedule-race-{$workerId}",
                     ));
@@ -456,12 +484,12 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
                 $harness->independentConnection($name);
                 DB::setDefaultConnection($name);
                 $workerId = $index + 1;
-                $children[] = $harness->spawn($workerId, static function () use ($event): array {
-                    $store = new EloquentLookaheadReadinessSourceStore(
-                        new ScheduleRevisionFactory,
-                        new EloquentScheduleRevisionSourceGuard(new ScheduleSourceWatermark),
-                    );
-                    $receipt = $store->transaction(fn () => $store->appendEvent($event));
+                $children[] = $harness->spawn($workerId, function () use ($event, $fixture): array {
+                    $store = $this->store();
+                    $receipt = $store->transaction(fn () => $store->appendEvent(
+                        $event,
+                        $this->decision($fixture, LookaheadReadinessAbility::MANAGE_CONSTRAINTS),
+                    ));
 
                     return ['event_id' => $receipt->entityId, 'replay' => $receipt->replay];
                 });
@@ -490,7 +518,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         }
     }
 
-    public function test_snapshot_as_of_cursor_query_uses_the_scale_index(): void
+    public function test_snapshot_as_of_cursor_query_uses_the_covering_index(): void
     {
         $fixture = $this->sourceFixture();
         DB::transaction(function () use ($fixture): void {
@@ -517,14 +545,18 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         $store = $this->store();
         $policy = ReadinessPolicyDefinition::v1($fixture['organization_id']);
         $policyReceipt = $store->transaction(
-            fn () => $store->publishPolicy($policy, $fixture['actor_id'], 'policy-v1'),
+            fn () => $store->publishPolicy(
+                $policy,
+                $this->decision($fixture, LookaheadReadinessAbility::PUBLISH_POLICY, 0),
+                'policy-v1',
+            ),
         );
         $scheduleDraft = $this->scheduleDraft($fixture);
         $scheduleReceipt = $store->transaction(fn () => $store->approveScheduleRevision(
             $scheduleDraft,
             (new ScheduleRevisionFactory)->contentHash($scheduleDraft),
-            $fixture['actor_id'],
-            '2026-08-05T05:00:00.000000Z',
+            $this->decision($fixture, LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION),
+            (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.u\Z'),
             'schedule-approved-v1',
         ));
         $commitment = (new CommitmentFactory)->publish(
@@ -550,12 +582,13 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             $scheduleReceipt->contentHash,
             $policy,
             $fixture['actor_id'],
-            new DateTimeImmutable('2026-08-05T08:00:00+03:00'),
+            new DateTimeImmutable('now', new DateTimeZone('UTC')),
         );
         $commitmentReceipt = $store->transaction(fn () => $store->publishCommitment(
             $commitment,
             (int) $scheduleReceipt->entityId,
             (int) $policyReceipt->entityId,
+            $this->decision($fixture, LookaheadReadinessAbility::PUBLISH_COMMITMENT),
             'commitment-v1',
         ));
 
@@ -567,6 +600,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'schedule_receipt' => $scheduleReceipt,
             'commitment_receipt' => $commitmentReceipt,
             'commitment_task_id' => (int) DB::table('lookahead_commitment_tasks')->value('id'),
+            'commitment_published_at' => $commitment->publishedAtUtc,
         ];
     }
 
@@ -580,9 +614,21 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'user_id' => $actor->id,
             'is_active' => true,
             'is_owner' => false,
-            'project_access_mode' => 'all',
+            'project_access_mode' => 'all_projects',
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+        $systemContext = AuthorizationContext::getSystemContext();
+        AuthorizationContext::getOrganizationContext((int) $organization->id);
+        AuthorizationContext::getProjectContext((int) $project->id, (int) $organization->id);
+        $assignment = UserRoleAssignment::query()->create([
+            'user_id' => $actor->id,
+            'role_slug' => 'super_admin',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+            'context_id' => $systemContext->id,
+            'assigned_by' => $actor->id,
+            'expires_at' => null,
+            'is_active' => true,
         ]);
         $schedule = ProjectSchedule::query()->create([
             'organization_id' => $organization->id,
@@ -619,6 +665,8 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'actor_id' => (int) $actor->id,
             'schedule_id' => (int) $schedule->id,
             'source_task_id' => (int) $task->id,
+            'assignment_id' => (int) $assignment->id,
+            'system_context_id' => (int) $systemContext->id,
         ];
     }
 
@@ -671,8 +719,9 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'commitment_revision_id' => (int) $fixture['commitment_receipt']->entityId,
             'commitment_task_id' => $fixture['commitment_task_id'],
             'event_type' => ReadinessEventType::CONSTRAINT_REGISTERED->value,
-            'occurred_at' => '2026-08-05T08:30:00+03:00',
+            'occurred_at' => $fixture['commitment_published_at'],
             'actor_id' => $fixture['actor_id'],
+            'aggregate_id' => 'constraint:900',
             'payload' => [
                 'category' => 'permit',
                 'severity' => 'hard',
@@ -703,6 +752,7 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'idempotency_key' => $event->idempotencyKey,
             'occurred_at' => $event->occurredAtUtc(),
             'actor_id' => $event->actorId,
+            'aggregate_id' => $event->aggregateId,
             'payload' => LookaheadReadinessCanonicalJson::encode($event->payload),
             'payload_hash' => $event->payloadHash(),
             'evidence' => LookaheadReadinessCanonicalJson::encode($event->evidence ?? []),
@@ -710,7 +760,26 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
             'prior_event_id' => $event->priorEventId,
             'policy_hash' => $event->policy->hash(),
             'schedule_revision_hash' => $fixture['schedule_receipt']->contentHash,
+            ...$this->authorizationColumns($this->decision(
+                $fixture,
+                match ($event->eventType) {
+                    ReadinessEventType::WAIVER_APPROVED,
+                    ReadinessEventType::WAIVER_REJECTED,
+                    ReadinessEventType::WAIVER_EXPIRED,
+                    ReadinessEventType::WAIVER_REVOKED => LookaheadReadinessAbility::APPROVE_WAIVER,
+                    ReadinessEventType::READINESS_EVALUATED => LookaheadReadinessAbility::SEAL_EVALUATION,
+                    default => LookaheadReadinessAbility::MANAGE_CONSTRAINTS,
+                },
+            )),
             'created_at' => $event->occurredAtUtc(),
+        ];
+    }
+
+    private function authorizationColumns(AuthorizationDecision $decision): array
+    {
+        return [
+            'authorization_decision' => LookaheadReadinessCanonicalJson::encode($decision->canonicalSnapshot()),
+            'authorization_decision_hash' => $decision->decisionHash,
         ];
     }
 
@@ -729,7 +798,71 @@ final class LookaheadReadinessSourcePostgresTest extends TestCase
         return new EloquentLookaheadReadinessSourceStore(
             new ScheduleRevisionFactory,
             new EloquentScheduleRevisionSourceGuard(new ScheduleSourceWatermark),
+            new ReadinessEventStateMachine,
+            new ReadinessPolicyEvaluator,
+            new ReadinessSnapshotFactory,
+            new RoleScanner,
         );
+    }
+
+    private function decision(array $fixture, string $permission, ?int $projectId = null): AuthorizationDecision
+    {
+        $projectId ??= $fixture['project_id'];
+        $roleDefinition = $this->decodeJson(DB::table('lookahead_readiness_system_role_definitions')
+            ->where('role_slug', 'super_admin')
+            ->value('canonical_definition'));
+        $assignment = DB::table('user_role_assignments')->where('id', $fixture['assignment_id'])->first();
+        $membership = DB::table('organization_user')
+            ->where('organization_id', $fixture['organization_id'])
+            ->where('user_id', $fixture['actor_id'])
+            ->first();
+        self::assertNotNull($assignment);
+        self::assertNotNull($membership);
+        $grants = [[
+            'assignment_id' => (string) $assignment->id,
+            'context_id' => (string) $assignment->context_id,
+            'matched_permission' => '*',
+            'role_definition' => $roleDefinition,
+            'role_definition_hash' => LookaheadReadinessCanonicalJson::hash($roleDefinition),
+            'role_slug' => 'super_admin',
+            'role_type' => 'system',
+            'assignment_updated_at' => (string) $assignment->updated_at,
+            'conditions_hash' => LookaheadReadinessCanonicalJson::hash([]),
+        ]];
+        $contextFactors = [
+            'organization_membership' => [
+                'organization_id' => (string) $fixture['organization_id'],
+                'project_access_mode' => 'all_projects',
+                'updated_at' => (string) $membership->updated_at,
+            ],
+            'project_membership' => null,
+            'context_ids' => [(string) $fixture['system_context_id']],
+        ];
+
+        return new AuthorizationDecision(
+            $fixture['actor_id'],
+            $permission,
+            $fixture['organization_id'],
+            $projectId,
+            LookaheadReadinessCanonicalJson::hash($grants),
+            LookaheadReadinessCanonicalJson::hash([
+                'context_factors' => $contextFactors,
+                'granting_assignments' => $grants,
+                'permission' => $permission,
+            ]),
+            ['super_admin'],
+            (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.u\Z'),
+            $contextFactors,
+            $grants,
+        );
+    }
+
+    private function decodeJson(mixed $value): array
+    {
+        $decoded = is_array($value) ? $value : json_decode((string) $value, true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($decoded);
+
+        return $decoded;
     }
 
     private function currentSourceWatermark(array $fixture): string
