@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardCanonicalizer;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardVersionProjection;
 
 class SupplierProposalVersionService
 {
@@ -64,6 +65,7 @@ class SupplierProposalVersionService
                 'unit' => $line->unit,
                 'unit_price' => ProcurementAwardCanonicalizer::decimal($line->unit_price),
                 'total_amount' => ProcurementAwardCanonicalizer::decimal($line->total_amount),
+                'comment' => $line->comment,
             ])
             ->values()
             ->all();
@@ -83,13 +85,16 @@ class SupplierProposalVersionService
             'valid_until' => $proposal->valid_until?->format('Y-m-d'),
             'delivery_due_date' => $proposal->delivery_due_date?->format('Y-m-d'),
             'lead_time_days' => $proposal->lead_time_days,
+            'delivery_terms' => $proposal->delivery_terms,
+            'payment_terms' => $proposal->payment_terms,
+            'warranty_terms' => $proposal->warranty_terms,
             'lines' => $lines,
         ];
     }
 
     public function contentHash(array $commercialSnapshot): string
     {
-        return ProcurementAwardCanonicalizer::hash($commercialSnapshot);
+        return ProcurementAwardVersionProjection::proposalHash($commercialSnapshot);
     }
 
     private function attachmentSnapshot(SupplierProposal $proposal): array

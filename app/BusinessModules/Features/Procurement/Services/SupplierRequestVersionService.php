@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequestVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardCanonicalizer;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardVersionProjection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -69,6 +70,8 @@ class SupplierRequestVersionService
                 ? $supplierRequest->status->value
                 : (string) $supplierRequest->status,
             'sent_at' => $supplierRequest->sent_at?->toIso8601String(),
+            'comment' => $supplierRequest->comment,
+            'metadata' => $supplierRequest->metadata,
             'purchase_request_id' => $supplierRequest->purchase_request_id,
             'purchase_request_number' => $supplierRequest->purchaseRequest?->request_number,
         ];
@@ -87,17 +90,16 @@ class SupplierRequestVersionService
                 'specification_hash' => $line->specification === null
                     ? null
                     : hash('sha256', trim((string) $line->specification)),
+                'specification' => $line->specification,
+                'metadata' => $line->metadata,
             ])
             ->values()
             ->all();
-        $hashPayload = [
-            'request_snapshot' => $requestSnapshot,
-            'line_snapshot' => $lineSnapshot,
-        ];
 
         return [
-            ...$hashPayload,
-            'content_hash' => ProcurementAwardCanonicalizer::hash($hashPayload),
+            'request_snapshot' => $requestSnapshot,
+            'line_snapshot' => $lineSnapshot,
+            'content_hash' => ProcurementAwardVersionProjection::requestHash($requestSnapshot, $lineSnapshot),
         ];
     }
 

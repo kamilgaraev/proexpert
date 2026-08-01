@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Award\Services;
 
 use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardSelectionSource;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardVersionProjection;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,7 @@ final class EloquentProcurementAwardSelectionSource implements ProcurementAwardS
             ->where('proposal.supplier_request_id', $supplierRequestId)
             ->whereNull('proposal.deleted_at')
             ->orderBy('proposal.id')
+            ->limit(ProcurementAwardManifestBuilder::CANDIDATE_LIMIT + 1)
             ->lock('FOR UPDATE OF proposal')
             ->pluck('proposal.id')
             ->map(static fn (mixed $id): int => (int) $id)
@@ -28,6 +30,9 @@ final class EloquentProcurementAwardSelectionSource implements ProcurementAwardS
 
         if ($proposalIds === []) {
             throw new DomainException('procurement_award_candidates_required');
+        }
+        if (count($proposalIds) > ProcurementAwardManifestBuilder::CANDIDATE_LIMIT) {
+            throw new DomainException('procurement_award_candidate_limit_exceeded');
         }
 
         $rows = DB::table('supplier_proposals as proposal')
@@ -84,8 +89,8 @@ final class EloquentProcurementAwardSelectionSource implements ProcurementAwardS
                 : (string) $row->proposal_valid_until,
             'selection_date' => $occurredAt->format('Y-m-d'),
             'version_content_hash' => $row->version_content_hash,
-            'request_lines' => self::jsonArrayOrEmpty($row->request_lines),
-            'commercial_snapshot' => self::jsonArrayOrEmpty($row->commercial_snapshot),
+            'request_lines' => ProcurementAwardVersionProjection::requestLines(self::jsonArrayOrEmpty($row->request_lines)),
+            'commercial_snapshot' => ProcurementAwardVersionProjection::proposal(self::jsonArrayOrEmpty($row->commercial_snapshot)),
         ])->all();
     }
 

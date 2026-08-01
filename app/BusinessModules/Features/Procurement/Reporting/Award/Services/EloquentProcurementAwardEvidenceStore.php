@@ -27,7 +27,22 @@ final class EloquentProcurementAwardEvidenceStore implements ProcurementAwardEvi
             ->lockForUpdate()
             ->get();
 
-        return $rows->map(fn (object $row): ProcurementAwardEvidenceEvent => $this->hydrate($row))->all();
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $candidatesByEvent = DB::table('procurement_award_evidence_candidates')
+            ->whereIn('event_id', $rows->pluck('id')->all())
+            ->orderBy('event_id')
+            ->orderBy('ordinal')
+            ->get()
+            ->groupBy('event_id')
+            ->all();
+
+        return $rows->map(fn (object $row): ProcurementAwardEvidenceEvent => $this->hydrate(
+            $row,
+            $candidatesByEvent[$row->id] ?? [],
+        ))->all();
     }
 
     public function append(ProcurementAwardEvidenceEvent $event): ProcurementAwardEvidenceEvent
@@ -171,13 +186,14 @@ final class EloquentProcurementAwardEvidenceStore implements ProcurementAwardEvi
         return $this->hydrate($row);
     }
 
-    private function hydrate(object $row): ProcurementAwardEvidenceEvent
+    /** @param iterable<object> $candidateRows */
+    private function hydrate(object $row, ?iterable $candidateRows = null): ProcurementAwardEvidenceEvent
     {
-        $candidateRows = DB::table('procurement_award_evidence_candidates')
+        $candidateRows ??= DB::table('procurement_award_evidence_candidates')
             ->where('event_id', $row->id)
             ->orderBy('ordinal')
             ->get();
-        $candidates = $candidateRows->map(static fn (object $candidate): ProcurementAwardCandidateEvidence => new ProcurementAwardCandidateEvidence(
+        $candidates = collect($candidateRows)->map(static fn (object $candidate): ProcurementAwardCandidateEvidence => new ProcurementAwardCandidateEvidence(
             organizationId: (int) $candidate->organization_id,
             projectId: $candidate->project_id === null ? null : (int) $candidate->project_id,
             purchaseRequestId: (int) $candidate->purchase_request_id,

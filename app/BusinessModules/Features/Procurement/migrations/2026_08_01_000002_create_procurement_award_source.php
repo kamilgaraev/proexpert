@@ -314,7 +314,11 @@ SQL);
 CREATE OR REPLACE FUNCTION procurement_award_candidate_source_validate()
 RETURNS trigger AS $$
 BEGIN
-    IF NOT EXISTS (
+    IF EXISTS (
+        SELECT 1 FROM procurement_award_evidence_events event
+        WHERE event.id = NEW.event_id
+          AND event.event_type = 'comparison_captured'
+    ) AND NOT EXISTS (
         SELECT 1 FROM supplier_proposals proposal
         WHERE proposal.id = NEW.proposal_id
           AND proposal.organization_id = NEW.organization_id
@@ -366,7 +370,7 @@ BEGIN
             RAISE EXCEPTION 'procurement award candidate event scope mismatch' USING ERRCODE = '23514';
         END IF;
 
-        IF NOT EXISTS (
+        IF checked_event.event_type = 'comparison_captured' AND NOT EXISTS (
             SELECT 1
             FROM supplier_proposals proposal
             JOIN supplier_requests supplier_request ON supplier_request.id = proposal.supplier_request_id
@@ -409,6 +413,16 @@ BEGIN
             FOR KEY SHARE OF proposal, supplier_request, purchase_request
         ) THEN
             RAISE EXCEPTION 'procurement award candidate full lineage mismatch' USING ERRCODE = '23514';
+        END IF;
+
+        IF checked_event.event_type <> 'comparison_captured' AND NOT EXISTS (
+            SELECT 1
+            FROM procurement_award_evidence_candidates predecessor_candidate
+            WHERE predecessor_candidate.event_id = checked_event.predecessor_event_id
+              AND predecessor_candidate.ordinal = checked_candidate.ordinal
+              AND predecessor_candidate.candidate_hash = checked_candidate.candidate_hash
+        ) THEN
+            RAISE EXCEPTION 'procurement award outcome candidate predecessor mismatch' USING ERRCODE = '23514';
         END IF;
 
         SELECT string_agg(concat_ws(',',
@@ -611,6 +625,34 @@ BEGIN
            )
            OR checked_event.occurred_at < predecessor.occurred_at THEN
             RAISE EXCEPTION 'procurement award predecessor mismatch' USING ERRCODE = '23514';
+        END IF;
+
+        IF predecessor.organization_id <> checked_event.organization_id
+           OR predecessor.project_id IS DISTINCT FROM checked_event.project_id
+           OR predecessor.purchase_request_id <> checked_event.purchase_request_id
+           OR predecessor.supplier_request_id <> checked_event.supplier_request_id
+           OR predecessor.supplier_request_version_id IS DISTINCT FROM checked_event.supplier_request_version_id
+           OR predecessor.supplier_request_version_hash IS DISTINCT FROM checked_event.supplier_request_version_hash
+           OR predecessor.selected_status <> checked_event.selected_status
+           OR predecessor.manifest_hash <> checked_event.manifest_hash
+           OR predecessor.policy_id <> checked_event.policy_id
+           OR predecessor.policy_version <> checked_event.policy_version
+           OR predecessor.policy_hash <> checked_event.policy_hash
+           OR predecessor.selection_fingerprint <> checked_event.selection_fingerprint
+           OR predecessor.candidate_count <> checked_event.candidate_count
+           OR predecessor.comparable_count <> checked_event.comparable_count
+           OR predecessor.completeness <> checked_event.completeness
+           OR predecessor.quarantine_codes <> checked_event.quarantine_codes
+           OR predecessor.selected_proposal_id <> checked_event.selected_proposal_id
+           OR predecessor.selected_proposal_version_id IS DISTINCT FROM checked_event.selected_proposal_version_id
+           OR predecessor.cheapest_proposal_id IS DISTINCT FROM checked_event.cheapest_proposal_id
+           OR predecessor.cheapest_proposal_version_id IS DISTINCT FROM checked_event.cheapest_proposal_version_id
+           OR predecessor.selected_rank IS DISTINCT FROM checked_event.selected_rank
+           OR predecessor.cheapest_rank IS DISTINCT FROM checked_event.cheapest_rank
+           OR predecessor.reason_present <> checked_event.reason_present
+           OR predecessor.reason_normalized_length <> checked_event.reason_normalized_length
+           OR predecessor.reason_digest IS DISTINCT FROM checked_event.reason_digest THEN
+            RAISE EXCEPTION 'procurement award predecessor evidence mismatch' USING ERRCODE = '23514';
         END IF;
 
         IF checked_event.event_type IN ('award_approved', 'award_rejected')

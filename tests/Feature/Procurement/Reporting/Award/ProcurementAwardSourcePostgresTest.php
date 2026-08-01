@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Procurement\Reporting\Award;
 
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardCandidateEvidence;
@@ -127,6 +128,123 @@ final class ProcurementAwardSourcePostgresTest extends TestCase
 
         self::assertSame(2, $selection->manifest->candidateCount);
         self::assertSame(ProcurementAwardCompleteness::NOT_COMPARABLE, $selection->manifest->completeness);
+    }
+
+    public function test_real_direct_owner_sequence_commits_after_selected_proposal_status_changes(): void
+    {
+        $fixture = $this->fixture();
+
+        DB::transaction(function () use ($fixture): void {
+            DB::table('supplier_proposals')
+                ->where('id', $fixture['first']['proposal_id'])
+                ->update(['status' => 'submitted']);
+            $owner = $this->owner();
+            $request = SupplierRequest::query()->findOrFail($fixture['supplier_request']['supplier_request_id']);
+            $decision = SupplierProposalDecision::query()->findOrFail($fixture['decision_id']);
+            $occurredAt = new DateTimeImmutable('2026-08-01T10:00:00+00:00');
+            $prepared = $owner->prepareForSupplierRequest($request, $fixture['first']['proposal_id'], $occurredAt);
+            $owner->selected($prepared, $decision, $occurredAt, $fixture['user_id'], null);
+
+            DB::table('supplier_proposals')
+                ->where('id', $fixture['first']['proposal_id'])
+                ->update(['status' => 'accepted']);
+            $owner->committed(
+                $decision,
+                $decision->winningProposalVersion()->firstOrFail(),
+                PurchaseOrder::query()->findOrFail($fixture['purchase_order_id']),
+                new DateTimeImmutable('2026-08-01T10:01:00+00:00'),
+                $fixture['user_id'],
+            );
+        });
+
+        self::assertSame(['comparison_captured', 'award_committed'], DB::table('procurement_award_evidence_events')
+            ->where('decision_id', $fixture['decision_id'])
+            ->orderBy('event_sequence')
+            ->pluck('event_type')
+            ->all());
+    }
+
+    public function test_real_approval_owner_sequence_commits_the_immutable_selection_after_status_changes(): void
+    {
+        $fixture = $this->fixture();
+
+        DB::transaction(function () use ($fixture): void {
+            DB::table('supplier_proposals')
+                ->where('id', $fixture['first']['proposal_id'])
+                ->update(['status' => 'submitted']);
+            DB::table('supplier_proposal_decisions')
+                ->where('id', $fixture['decision_id'])
+                ->update(['status' => 'approval_required']);
+            $owner = $this->owner();
+            $request = SupplierRequest::query()->findOrFail($fixture['supplier_request']['supplier_request_id']);
+            $decision = SupplierProposalDecision::query()->findOrFail($fixture['decision_id']);
+            $occurredAt = new DateTimeImmutable('2026-08-01T10:00:00+00:00');
+            $prepared = $owner->prepareForSupplierRequest($request, $fixture['first']['proposal_id'], $occurredAt);
+            $owner->selected($prepared, $decision, $occurredAt, $fixture['user_id'], 'Согласовано');
+
+            DB::table('supplier_proposal_decisions')
+                ->where('id', $fixture['decision_id'])
+                ->update(['status' => 'approved']);
+            $decision = SupplierProposalDecision::query()->findOrFail($fixture['decision_id']);
+            $owner->approved($decision, new DateTimeImmutable('2026-08-01T10:01:00+00:00'), $fixture['user_id']);
+            DB::table('supplier_proposals')
+                ->where('id', $fixture['first']['proposal_id'])
+                ->update(['status' => 'accepted']);
+            $owner->committed(
+                $decision,
+                $decision->winningProposalVersion()->firstOrFail(),
+                PurchaseOrder::query()->findOrFail($fixture['purchase_order_id']),
+                new DateTimeImmutable('2026-08-01T10:02:00+00:00'),
+                $fixture['user_id'],
+            );
+        });
+
+        self::assertSame(['comparison_captured', 'award_approved', 'award_committed'], DB::table('procurement_award_evidence_events')
+            ->where('decision_id', $fixture['decision_id'])
+            ->orderBy('event_sequence')
+            ->pluck('event_type')
+            ->all());
+    }
+
+    public function test_owner_mutation_and_evidence_append_rollback_together(): void
+    {
+        $fixture = $this->fixture();
+
+        try {
+            DB::transaction(function () use ($fixture): void {
+                DB::table('supplier_proposal_decisions')
+                    ->where('id', $fixture['decision_id'])
+                    ->update(['status' => 'approval_required']);
+                DB::table('purchase_orders')
+                    ->where('id', $fixture['purchase_order_id'])
+                    ->update(['status' => 'draft']);
+                $owner = $this->owner();
+                $request = SupplierRequest::query()->findOrFail($fixture['supplier_request']['supplier_request_id']);
+                $decision = SupplierProposalDecision::query()->findOrFail($fixture['decision_id']);
+                $occurredAt = new DateTimeImmutable('2026-08-01T10:00:00+00:00');
+                $owner->selected(
+                    $owner->prepareForSupplierRequest($request, $fixture['first']['proposal_id'], $occurredAt),
+                    $decision,
+                    $occurredAt,
+                    $fixture['user_id'],
+                    null,
+                );
+
+                throw new RuntimeException('force rollback after procurement award evidence append');
+            });
+        } catch (RuntimeException $exception) {
+            self::assertSame('force rollback after procurement award evidence append', $exception->getMessage());
+        }
+
+        self::assertSame('selected', DB::table('supplier_proposal_decisions')
+            ->where('id', $fixture['decision_id'])
+            ->value('status'));
+        self::assertSame('sent', DB::table('purchase_orders')
+            ->where('id', $fixture['purchase_order_id'])
+            ->value('status'));
+        self::assertSame(0, DB::table('procurement_award_evidence_events')
+            ->where('decision_id', $fixture['decision_id'])
+            ->count());
     }
 
     public function test_database_rejects_outcome_without_immediate_predecessor(): void
@@ -365,6 +483,15 @@ final class ProcurementAwardSourcePostgresTest extends TestCase
         return new ProcurementAwardEvidenceRecorder(
             $this->store(),
             new LaravelProcurementTransactionBoundary,
+        );
+    }
+
+    private function owner(): ProcurementAwardOwnerEventRecorder
+    {
+        return new ProcurementAwardOwnerEventRecorder(
+            new ProcurementAwardManifestBuilder,
+            $this->recorder(),
+            new EloquentProcurementAwardSelectionSource,
         );
     }
 

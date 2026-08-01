@@ -34,6 +34,11 @@ final class ProcurementAwardMigrationContractTest extends TestCase
             'prior_revision_event.event_sequence',
             'decision.winning_supplier_proposal_version_id IS NOT DISTINCT FROM checked_event.selected_proposal_version_id',
             'proposal.status IS NOT DISTINCT FROM NEW.proposal_status',
+            "event.event_type = 'comparison_captured'",
+            'procurement award outcome candidate predecessor mismatch',
+            'procurement award predecessor evidence mismatch',
+            'predecessor.selection_fingerprint <> checked_event.selection_fingerprint',
+            'predecessor.reason_digest IS DISTINCT FROM checked_event.reason_digest',
             "['event_id', 'proposal_id']",
         ] as $contract) {
             self::assertStringContainsString($contract, $migration);
