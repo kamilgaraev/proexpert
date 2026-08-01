@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Documents\Spreadsheet\SpreadsheetDocumentAdapter as NativeSpreadsheetDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 
 final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
@@ -14,6 +15,7 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
     public function __construct(
         private DocumentSourceManifestStorage $storage,
         private SpreadsheetDocumentExtractor $extractor,
+        private NativeSpreadsheetDocumentAdapter $nativeAdapter = new NativeSpreadsheetDocumentAdapter,
     ) {}
 
     public function supports(EstimateGenerationDocument $document): bool
@@ -40,7 +42,8 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                     $sourceVersion,
                     DocumentUnitType::SpreadsheetSheet,
                     $page->pageNumber,
-                    $page->text,
+                    json_encode($this->nativeAdapter->extract($page), JSON_THROW_ON_ERROR),
+                    'application/vnd.most.spreadsheet-sheet+json',
                 );
                 $units[] = new DocumentUnitData(
                     DocumentUnitType::SpreadsheetSheet,

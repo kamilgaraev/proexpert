@@ -506,7 +506,7 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
             if preview_total_pixels + expected_pixels > args.max_preview_total_pixels:
                 raise SafeFailure("pdf_preview_aggregate_pixels_limit")
             document = pdfium.PdfDocument(args.input)
-            bitmap = document[page_number - 1].render(scale=1)
+            bitmap = document[page_number - 1].render(scale=2)
             image = bitmap.to_pil()
             image.save(output)
             output_bytes = output.stat().st_size

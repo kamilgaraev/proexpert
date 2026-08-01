@@ -72,6 +72,9 @@ class PdfTextLayerExtractor
                 languageCodes: [],
                 rawPayload: [
                     'source' => self::PROVIDER,
+                    'capability' => [
+                        'text_layer' => 'available',
+                    ],
                 ],
             );
         }
@@ -86,6 +89,9 @@ class PdfTextLayerExtractor
             pages: $pageResults,
             rawPayload: [
                 'page_count' => count($pageResults),
+                'capability' => [
+                    'text_layer' => 'available',
+                ],
             ],
             metadata: [
                 'mime_type' => 'application/pdf',

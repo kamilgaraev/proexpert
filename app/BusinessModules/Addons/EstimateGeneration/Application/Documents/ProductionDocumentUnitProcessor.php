@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
@@ -76,6 +77,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'source_kind' => $provenance->sourceKind,
                 'source' => $provenance->toArray(),
                 'vector_geometry' => $payload,
+                ...(new CadDocumentAdapter)->extract($geometry),
                 'provenance' => [
                     'provider' => 'cad_geometry',
                     'runtime_version' => $geometry->runtimeVersion,

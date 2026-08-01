@@ -66,6 +66,27 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             );
         }
 
+        if (($locator['content_type'] ?? null) === 'application/vnd.most.spreadsheet-sheet+json') {
+            $payload = json_decode($content, true, 64, JSON_THROW_ON_ERROR);
+            if (! is_array($payload) || ($payload['schema_version'] ?? null) !== 1
+                || ($payload['source_kind'] ?? null) !== 'spreadsheet'
+                || ! is_string($payload['text'] ?? null)
+                || ! is_array($payload['native_structure'] ?? null)
+                || ($payload['native_structure']['status'] ?? null) !== 'available') {
+                throw new DocumentUnitProcessingException('spreadsheet_native_structure_contract_invalid');
+            }
+
+            return new DocumentUnitOutput(
+                version: hash('sha256', $content),
+                text: $payload['text'],
+                confidence: 1.0,
+                normalizedPayload: $payload,
+                unitType: $context->type,
+                unitIndex: $context->index,
+                sourceVersion: $context->sourceVersion,
+            );
+        }
+
         $correlationId = AiOperationContext::deterministicId(implode('|', [
             'unit', $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion,
             $context->claimToken, $context->unitAttemptCount,

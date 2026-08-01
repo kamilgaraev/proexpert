@@ -51,8 +51,9 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                     ];
                 },
             );
+            $textLayer = $this->textExtractor->extractFile($source->path(), $document->filename);
             $textByPage = [];
-            foreach ($this->textExtractor->extractFile($source->path(), $document->filename)?->pages ?? [] as $page) {
+            foreach ($textLayer?->pages ?? [] as $page) {
                 $textByPage[$page->pageNumber] = $page->text;
             }
             $units = [];
@@ -75,6 +76,11 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                     'source_kind' => DocumentUnitType::PdfPage->sourceKind(),
                     'geometry' => $page->toArray(),
                     'text' => $textByPage[$page->pageNumber] ?? $page->text(),
+                    'sources' => [
+                        'text_layer' => ['status' => isset($textByPage[$page->pageNumber]) ? 'available' : 'unavailable'],
+                        'geometry' => ['status' => 'available'],
+                        'render' => ['status' => 'available', 'detail' => 'high'],
+                    ],
                     'provenance' => [
                         'provider' => $geometry->provider,
                         'model' => $geometry->model,

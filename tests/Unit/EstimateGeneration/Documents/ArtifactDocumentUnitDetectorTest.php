@@ -264,8 +264,12 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
             public function extractFile(EstimateGenerationDocument $document, string $path): OcrRecognitionResult
             {
                 return new OcrRecognitionResult('spreadsheet', 'v1', [
-                    new OcrPageResult(1, 'sheet one'),
-                    new OcrPageResult(2, 'sheet two'),
+                    new OcrPageResult(1, 'sheet one', rawPayload: [
+                        'native_structure' => ['status' => 'available', 'sheet' => 'one', 'headings' => [], 'cells' => []],
+                    ]),
+                    new OcrPageResult(2, 'sheet two', rawPayload: [
+                        'native_structure' => ['status' => 'available', 'sheet' => 'two', 'headings' => [], 'cells' => []],
+                    ]),
                 ]);
             }
         };
