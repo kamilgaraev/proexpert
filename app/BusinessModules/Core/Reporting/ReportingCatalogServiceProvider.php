@@ -10,17 +10,19 @@ use App\BusinessModules\Core\Reporting\Application\Catalog\ImmutableReportDefini
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
+use App\BusinessModules\Core\Reporting\Application\SavedViews\ReportSavedViewVersionHasher;
+use App\BusinessModules\Core\Reporting\Application\SavedViews\StoredReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionCoordinator;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionScheduleCalculator;
-use App\BusinessModules\Core\Reporting\Application\SavedViews\StoredReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\InAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewVersionStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionCursorCodec;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
@@ -40,6 +42,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSavedV
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSubscriptionCursorCodec;
 use App\BusinessModules\Core\Reporting\Infrastructure\Notifications\PersistedInAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewVersionStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionDeliveryStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportWorkspacePreferencesStore;
@@ -78,6 +81,8 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             EloquentReportWorkspacePreferencesStore::class,
         );
         $this->app->singleton(ReportSavedViewStore::class, EloquentReportSavedViewStore::class);
+        $this->app->singleton(ReportSavedViewVersionStore::class, EloquentReportSavedViewVersionStore::class);
+        $this->app->singleton(ReportSavedViewVersionHasher::class);
         $this->app->singleton(
             ReportSavedViewReferenceResolver::class,
             StoredReportSavedViewReferenceResolver::class,

@@ -19,5 +19,5 @@ final class ReportSavedViewRecord extends Model
 
     protected $guarded = [];
 
-    protected $casts = ['organization_id' => 'integer', 'owner_id' => 'integer', 'filters_json' => 'array', 'comparison_json' => 'array', 'sort_json' => 'array', 'columns_json' => 'array', 'is_default' => 'boolean', 'created_at' => 'immutable_datetime', 'updated_at' => 'immutable_datetime', 'deleted_at' => 'immutable_datetime'];
+    protected $casts = ['organization_id' => 'integer', 'owner_id' => 'integer', 'current_revision' => 'integer', 'filters_json' => 'array', 'comparison_json' => 'array', 'sort_json' => 'array', 'columns_json' => 'array', 'is_default' => 'boolean', 'created_at' => 'immutable_datetime', 'updated_at' => 'immutable_datetime', 'deleted_at' => 'immutable_datetime'];
 }
