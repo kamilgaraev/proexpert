@@ -86,6 +86,9 @@ final class ProjectModelContractTest extends TestCase
         $exactBindingMigration = (string) file_get_contents(
             dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php'
         );
+        $correctionScopeMigration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000225_add_project_model_correction_scope_unique.php'
+        );
 
         foreach ([
             'estimate_generation_project_model_entities',
@@ -123,6 +126,7 @@ final class ProjectModelContractTest extends TestCase
             self::assertStringContainsString($required, $source);
         }
         self::assertStringNotContainsString('$table->jsonb(\'evidence\')', $source);
+        self::assertStringNotContainsString('$table->unique([\'entity_id\', \'evidence_id\'], \'eg_project_model_evidence_binding_uq\')', $source);
         self::assertStringNotContainsString('eg_project_model_entities_payload_ck', $source);
 
         foreach ([
@@ -134,9 +138,23 @@ final class ProjectModelContractTest extends TestCase
             'eg_project_model_evidence_correction_scope_fk',
             'eg_project_model_evidence_candidate_subject_ck',
             'eg_project_model_evidence_candidate_invalid',
+            'eg_project_model_evidence_candidate_binding_uq',
+            'COALESCE(assertion_id, 0), COALESCE(correction_id, 0), evidence_id',
+            'WHERE num_nonnulls(assertion_id, correction_id) = 1',
+            'DROP CONSTRAINT IF EXISTS eg_project_model_evidence_binding_uq',
+            'estimate_generation.project_model_evidence_binding_rollback_would_drop_candidate_bindings',
             'CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard()',
         ] as $required) {
             self::assertStringContainsString($required, $exactBindingMigration);
+        }
+
+        foreach ([
+            'public $withinTransaction = false;',
+            'eg_project_model_corrections_scope_uq',
+            'CREATE UNIQUE INDEX CONCURRENTLY eg_project_model_corrections_scope_uq',
+            'DROP INDEX CONCURRENTLY IF EXISTS eg_project_model_corrections_scope_uq',
+        ] as $required) {
+            self::assertStringContainsString($required, $correctionScopeMigration);
         }
 
         $entitiesConstraintSection = substr(

@@ -129,7 +129,6 @@ return new class extends Migration
             $table->string('evidence_source_version', 80);
             $table->unsignedInteger('evidence_invalidation_version');
             $table->timestampTz('created_at')->useCurrent();
-            $table->unique(['entity_id', 'evidence_id'], 'eg_project_model_evidence_binding_uq');
             $table->index(['building_model_id', 'entity_id'], 'eg_project_model_evidence_entity_idx');
             $table->foreign(['building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'], 'eg_project_model_evidence_model_scope_fk')
                 ->references(['id', 'organization_id', 'project_id', 'session_id', 'content_version'])
