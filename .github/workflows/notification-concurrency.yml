@@ -308,6 +308,10 @@ jobs:
           export MOST_R15_CI_EVIDENCE_ARTIFACT="$conformance_artifact"
           php scripts/reporting/build-r15-publication-candidate.php
           php scripts/reporting/build-r15-publication-candidate.php --check
+          test -d build/reports/conformance
+          mkdir -p build/reports/r15-candidate-evidence/build/reports build/reports/r15-candidate-evidence/docs/reports/contracts
+          cp -R build/reports/conformance build/reports/r15-candidate-evidence/build/reports/
+          cp docs/reports/contracts/report-conformance-evidence.schema.json build/reports/r15-candidate-evidence/docs/reports/contracts/
           export MOST_R15_PUBLICATION_FIXTURE_DIR="$GITHUB_WORKSPACE/build/reports/r15-candidate-evidence"
           php vendor/bin/phpunit tests/Unit/Procurement/Reporting/Cycle/ProcurementCycleReleaseCandidateResolverE2ETest.php --fail-on-skipped --no-coverage
 
@@ -669,6 +673,8 @@ jobs:
           test ! -L "$R15_TRUSTED_ROOT/r15-conformance-evidence.json"
           test ! -L "$R15_TRUSTED_ROOT/r15-proof-template.json"
           test ! -L "$R15_TRUSTED_ROOT/r15_release_request.json"
+          test -f "$R15_TRUSTED_ROOT/docs/reports/contracts/report-conformance-evidence.schema.json"
+          test -d "$R15_TRUSTED_ROOT/build/reports/conformance"
           printf 'MOST_R15_RELEASE_TRUSTED_ROOT=%s\n' "$R15_TRUSTED_ROOT" >> "$GITHUB_ENV"
 
       - name: Set up PHP
