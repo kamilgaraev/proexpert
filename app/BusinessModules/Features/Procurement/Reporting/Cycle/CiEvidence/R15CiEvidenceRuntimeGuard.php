@@ -8,10 +8,18 @@ use LogicException;
 
 final class R15CiEvidenceRuntimeGuard
 {
+    public function __construct(private readonly bool $ciComposition = false) {}
+
+    public static function ciComposition(): self
+    {
+        return new self(true);
+    }
+
     public function assertEnabled(): void
     {
         $environment = strtolower((string) (getenv('APP_ENV') ?: ''));
-        if (in_array($environment, ['production', 'prod'], true)
+        if (! $this->ciComposition
+            || in_array($environment, ['production', 'prod'], true)
             || PHP_SAPI !== 'cli'
             || getenv('MOST_R15_CI_EVIDENCE') !== '1'
             || getenv('GITHUB_ACTIONS') !== 'true') {

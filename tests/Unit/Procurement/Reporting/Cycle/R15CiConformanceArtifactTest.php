@@ -55,6 +55,22 @@ final class R15CiConformanceArtifactTest extends TestCase
         }
     }
 
+    public function test_default_container_composition_cannot_enable_ci_evidence(): void
+    {
+        putenv('MOST_R15_CI_EVIDENCE=1');
+        putenv('GITHUB_ACTIONS=true');
+        putenv('APP_ENV=testing');
+        try {
+            $this->expectException(LogicException::class);
+            $this->expectExceptionMessage('r15_ci_evidence_runtime_forbidden');
+            (new R15CiEvidenceRuntimeGuard)->assertEnabled();
+        } finally {
+            putenv('APP_ENV');
+            putenv('GITHUB_ACTIONS');
+            putenv('MOST_R15_CI_EVIDENCE');
+        }
+    }
+
     private function evidence(): ReportDefinitionConformanceEvidence
     {
         $hash = new Sha256Hash(str_repeat('a', 64));
