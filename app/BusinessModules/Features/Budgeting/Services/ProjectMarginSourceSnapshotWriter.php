@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Services;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
 use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginSourceSnapshotRequest;
@@ -16,7 +16,7 @@ final class ProjectMarginSourceSnapshotWriter
     public function __construct(
         private readonly ProjectMarginSourceSnapshotReport $projectMarginReport,
         private readonly ProjectMarginSourceSnapshotMaterializer $materializer,
-        private readonly ReportSourceSnapshotStore $store,
+        private readonly ReportSourceSnapshotStreamingStore $store,
         private readonly BudgetingReportSourceCloseService $closeService,
     ) {}
 
@@ -31,20 +31,19 @@ final class ProjectMarginSourceSnapshotWriter
         }
 
         $report = $this->projectMarginReport->reportForProjectScope($filters, $request->scope->projectIds);
-        $drillsByKey = $this->drills($filters, $request->scope->projectIds, $report);
-        $snapshot = $this->materializer->materialize(
+        $snapshot = $this->materializer->stream(
             $request->snapshotId ?? (string) Str::ulid(),
             $request->scope,
             $filters,
             $report,
-            $drillsByKey,
+            fn (string $drillKey): \Generator => $this->drillItems($filters, $request->scope->projectIds, $drillKey),
             $request->asOf,
             $request->staleAt,
             $close,
             $request->reportQueryIdentity,
         );
 
-        return $this->store->resolveReady($identity, $snapshot);
+        return $this->store->resolveReadyStreamed($identity, $snapshot);
     }
 
     private function normalizeFilters(ProjectMarginSourceSnapshotRequest $request): array
@@ -64,30 +63,11 @@ final class ProjectMarginSourceSnapshotWriter
         return $filters;
     }
 
-    private function drills(array $filters, array $projectIds, array $report): array
+    /** @return \Generator<int, mixed> */
+    private function drillItems(array $filters, array $projectIds, string $drillKey): \Generator
     {
-        $rows = $report['rows'] ?? null;
-        if (! is_array($rows) || ! array_is_list($rows)) {
-            throw new InvalidArgumentException('project_margin_source_snapshot_rows_invalid');
-        }
-
-        $result = [];
-        foreach ($rows as $row) {
-            $drillKey = is_array($row) ? ($row['drill_down_key'] ?? null) : null;
-            if (! is_string($drillKey) || $drillKey === '') {
-                throw new InvalidArgumentException('project_margin_source_snapshot_rows_invalid');
-            }
-
-            $result[$drillKey] = $this->allDrillItems($filters, $projectIds, $drillKey);
-        }
-
-        return $result;
-    }
-
-    private function allDrillItems(array $filters, array $projectIds, string $drillKey): array
-    {
-        $items = [];
         $page = 1;
+        $seen = 0;
         do {
             $drill = $this->projectMarginReport->drillDownForProjectScope([
                 ...$filters,
@@ -100,10 +80,17 @@ final class ProjectMarginSourceSnapshotWriter
             if (! is_array($pageItems) || ! array_is_list($pageItems) || ! is_int($total)) {
                 throw new InvalidArgumentException('project_margin_source_snapshot_drill_invalid');
             }
-            array_push($items, ...$pageItems);
+            if ($pageItems === [] && $seen < $total) {
+                throw new InvalidArgumentException('project_margin_source_snapshot_drill_invalid');
+            }
+            foreach ($pageItems as $item) {
+                $seen++;
+                if ($seen > $total) {
+                    throw new InvalidArgumentException('project_margin_source_snapshot_drill_invalid');
+                }
+                yield $item;
+            }
             $page++;
-        } while (count($items) < $total);
-
-        return $items;
+        } while ($seen < $total);
     }
 }

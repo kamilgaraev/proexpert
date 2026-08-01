@@ -11,6 +11,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotRow;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStreamDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -116,6 +118,59 @@ final class PlanFactSourceSnapshotMaterializer
         );
     }
 
+    /** @param callable(string): iterable<mixed> $drillItemsForKey */
+    public function stream(
+        string $snapshotId,
+        ReportScope $scope,
+        array $filters,
+        array $report,
+        callable $drillItemsForKey,
+        DateTimeImmutable $asOf,
+        ?DateTimeImmutable $staleAt,
+        BudgetingReportSourceClose $close,
+        ?ReportQueryIdentity $reportQueryIdentity = null,
+    ): ReportSourceSnapshotStream {
+        $identity = $this->identity($scope, $filters, $close->closeId, $reportQueryIdentity);
+        $rows = $this->rows($snapshotId, $report['rows'] ?? []);
+        $keysByReference = $this->drillKeysByReference($report['rows'] ?? []);
+        $watermarks = $this->watermarks($report, $rows, $close);
+
+        return new ReportSourceSnapshotStream(
+            $snapshotId,
+            self::SOURCE_KIND,
+            self::REPORT_CODE,
+            self::SCHEMA_VERSION,
+            $scope,
+            $identity->queryHash,
+            $asOf,
+            $watermarks,
+            $asOf,
+            $staleAt,
+            $rows,
+            function () use ($rows, $keysByReference, $drillItemsForKey): \Generator {
+                foreach ($rows as $row) {
+                    $reference = $row->payload['drill']['key'];
+                    $drillKey = $keysByReference[$reference] ?? null;
+                    if (! is_string($drillKey)) {
+                        throw new InvalidArgumentException('plan_fact_source_snapshot_drill_invalid');
+                    }
+
+                    foreach ($drillItemsForKey($drillKey) as $item) {
+                        $payload = $this->redactDrill($item);
+                        yield new ReportSourceSnapshotStreamDrillRow(
+                            $row->rowKey,
+                            self::DRILL_COLUMN_ID,
+                            $payload['source_ref'],
+                            $payload,
+                            $this->hash($payload),
+                        );
+                    }
+                }
+            },
+            $reportQueryIdentity,
+        );
+    }
+
     private function rows(string $snapshotId, mixed $reportRows): array
     {
         if (! is_array($reportRows) || ! array_is_list($reportRows)) {
@@ -184,6 +239,23 @@ final class PlanFactSourceSnapshotMaterializer
         }
 
         return $drillRows;
+    }
+
+    private function drillKeysByReference(mixed $reportRows): array
+    {
+        if (! is_array($reportRows) || ! array_is_list($reportRows)) {
+            throw new InvalidArgumentException('plan_fact_source_snapshot_rows_invalid');
+        }
+
+        $keys = [];
+        foreach ($reportRows as $row) {
+            if (! is_array($row) || ! is_string($row['drill_down_key'] ?? null)) {
+                throw new InvalidArgumentException('plan_fact_source_snapshot_rows_invalid');
+            }
+            $keys[hash('sha256', $row['drill_down_key'])] = $row['drill_down_key'];
+        }
+
+        return $keys;
     }
 
     private function redactRow(array $row): array

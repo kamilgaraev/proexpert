@@ -7,6 +7,7 @@ namespace Tests\Unit\Budgeting;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursorKeyset;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
@@ -25,6 +26,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -371,7 +374,7 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
     }
 }
 
-final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotStore
+final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotStreamingStore
 {
     public ?ReportSourceSnapshotHeader $headerValue = null;
 
@@ -433,6 +436,47 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotSto
         }
 
         return $ready;
+    }
+
+    public function resolveReadyStreamed(ReportSourceSnapshotIdentity $identity, ReportSourceSnapshotStream $snapshot): ReportSourceSnapshotHeader
+    {
+        $ready = $this->findReady($identity);
+        if ($ready !== null) {
+            return $ready;
+        }
+
+        $drills = [];
+        foreach ($snapshot->drillRows() as $row) {
+            $drills[$row->rowKey][$row->columnId][] = $row;
+        }
+        $drillRows = [];
+        foreach ($drills as $rowKey => $columns) {
+            foreach ($columns as $columnId => $items) {
+                usort($items, static fn ($left, $right): int => $left->sortKey <=> $right->sortKey);
+                foreach ($items as $ordinal => $item) {
+                    $drillRows[] = new ReportSourceSnapshotDrillRow(
+                        $snapshot->id,
+                        $rowKey,
+                        $columnId,
+                        $ordinal + 1,
+                        $item->payload,
+                        $item->payloadHash,
+                    );
+                }
+            }
+        }
+        usort($drillRows, static fn (ReportSourceSnapshotDrillRow $left, ReportSourceSnapshotDrillRow $right): int => [$left->rowKey, $left->columnId, $left->ordinal] <=> [$right->rowKey, $right->columnId, $right->ordinal]);
+        $sourceHash = ReportSourceSnapshotIntegrity::materializedSourceHash($snapshot->rows, $drillRows, $snapshot->watermarks);
+        $pending = new Sha256Hash(str_repeat('a', 64));
+        $writing = $snapshot->header($sourceHash, count($drillRows), $pending);
+        $write = new ReportSourceSnapshotWrite(
+            $snapshot->header($sourceHash, count($drillRows), ReportSourceSnapshotIntegrity::hashStream($writing, $snapshot->rows, $drillRows)),
+            $snapshot->rows,
+            $drillRows,
+        );
+        $this->identityValue = $identity;
+
+        return $this->persistReady($write);
     }
 
     public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader

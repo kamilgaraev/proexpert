@@ -11,6 +11,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotRow;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStreamDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -113,6 +115,53 @@ final class ProjectMarginSourceSnapshotMaterializer
                 'scope' => $scope->canonicalIdentity(),
             ]),
             $sourceVersion,
+        );
+    }
+
+    /** @param callable(string): iterable<mixed> $drillItemsForKey */
+    public function stream(
+        string $snapshotId,
+        ReportScope $scope,
+        array $filters,
+        array $report,
+        callable $drillItemsForKey,
+        DateTimeImmutable $asOf,
+        ?DateTimeImmutable $staleAt,
+        BudgetingReportSourceClose $close,
+        ?ReportQueryIdentity $reportQueryIdentity = null,
+    ): ReportSourceSnapshotStream {
+        $identity = $this->identity($scope, $filters, $close->closeId, $reportQueryIdentity);
+        $rows = $this->rows($snapshotId, $report['rows'] ?? []);
+        $watermarks = $this->watermarks($report, $rows, $close);
+
+        return new ReportSourceSnapshotStream(
+            $snapshotId,
+            self::SOURCE_KIND,
+            self::REPORT_CODE,
+            self::SCHEMA_VERSION,
+            $scope,
+            $identity->queryHash,
+            $asOf,
+            $watermarks,
+            $asOf,
+            $staleAt,
+            $rows,
+            function () use ($rows, $drillItemsForKey): \Generator {
+                foreach ($rows as $row) {
+                    $drillKey = $row->payload['drill']['key'];
+                    foreach ($drillItemsForKey($drillKey) as $item) {
+                        $payload = $this->redactDrill($item);
+                        yield new ReportSourceSnapshotStreamDrillRow(
+                            $row->rowKey,
+                            self::DRILL_COLUMN_ID,
+                            $payload['attribution_ref'],
+                            $payload,
+                            $this->hash($payload),
+                        );
+                    }
+                }
+            },
+            $reportQueryIdentity,
         );
     }
 

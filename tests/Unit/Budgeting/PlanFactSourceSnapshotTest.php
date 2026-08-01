@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Budgeting;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
@@ -13,6 +14,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
@@ -103,9 +106,11 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 ];
             }
         };
-        $store = new class implements ReportSourceSnapshotStore
+        $store = new class implements ReportSourceSnapshotStreamingStore
         {
-            public ?ReportSourceSnapshotWrite $write = null;
+            public ?ReportSourceSnapshotStream $stream = null;
+
+            public int $drillRows = 0;
 
             public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
             {
@@ -124,6 +129,16 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 ReportSourceSnapshotWrite $snapshot,
             ): ReportSourceSnapshotHeader {
                 return $this->persistReady($snapshot);
+            }
+
+            public function resolveReadyStreamed(ReportSourceSnapshotIdentity $identity, ReportSourceSnapshotStream $snapshot): ReportSourceSnapshotHeader
+            {
+                $this->stream = $snapshot;
+                foreach ($snapshot->drillRows() as $_) {
+                    $this->drillRows++;
+                }
+
+                return $snapshot->header(new Sha256Hash(str_repeat('a', 64)), $this->drillRows, new Sha256Hash(str_repeat('b', 64)));
             }
 
             public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
@@ -149,7 +164,113 @@ final class PlanFactSourceSnapshotTest extends TestCase
         self::assertSame([[10, 20]], array_map(static fn (array $call): array => $call[1], $report->reportCalls));
         self::assertSame([[10, 20], [10, 20]], array_map(static fn (array $call): array => $call[1], $report->drillCalls));
         self::assertTrue($report->reportCalls[0][0]['_skip_data_mart_meta']);
-        self::assertSame(2, $store->write?->header->rowCount);
+        self::assertCount(2, $store->stream?->rows ?? []);
+    }
+
+    public function test_writer_streams_every_drill_page_to_a_storage_level_writer(): void
+    {
+        $report = new class implements PlanFactSourceSnapshotReport
+        {
+            public function reportForProjectScope(array $input, array $projectIds): array
+            {
+                return [
+                    'filters' => ['budget_version_uuid' => 'budget-1', 'scenario_uuid' => 'scenario-1'],
+                    'period' => ['from' => '2026-01-01', 'to' => '2026-01-31'],
+                    'sources_coverage' => [],
+                    'rows' => [
+                        [
+                            'group' => ['month' => '2026-01', 'project' => 10, 'currency' => 'RUB'],
+                            'currency' => 'RUB',
+                            'plan_amount' => 100.0,
+                            'forecast_amount' => 110.0,
+                            'actual_amount' => 90.0,
+                            'committed_amount' => 5.0,
+                            'variance_amount' => 10.0,
+                            'variance_percent' => 10.0,
+                            'risk_level' => 'medium',
+                            'drill_down_key' => 'only-key',
+                        ],
+                    ],
+                ];
+            }
+
+            public function drillDownForProjectScope(array $input, array $projectIds): array
+            {
+                $page = (int) $input['page'];
+
+                return [
+                    'items' => $page === 1 ? [[
+                        'source_type' => 'payment_transaction',
+                        'source_id' => 101,
+                        'date' => '2026-01-15',
+                        'amount' => 10.0,
+                        'currency' => 'RUB',
+                        'status' => 'completed',
+                        'variance_contribution' => -10.0,
+                    ]] : [[
+                        'source_type' => 'payment_transaction',
+                        'source_id' => 102,
+                        'date' => '2026-01-16',
+                        'amount' => 20.0,
+                        'currency' => 'RUB',
+                        'status' => 'completed',
+                        'variance_contribution' => -20.0,
+                    ]],
+                    'meta' => ['total' => 2],
+                ];
+            }
+        };
+        $store = new class implements ReportSourceSnapshotStreamingStore
+        {
+            public int $streamCalls = 0;
+
+            public int $drillRowCount = 0;
+
+            public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
+            {
+                throw new \LogicException;
+            }
+
+            public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader
+            {
+                return null;
+            }
+
+            public function resolveReady(ReportSourceSnapshotIdentity $identity, ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
+            {
+                return $snapshot->header;
+            }
+
+            public function resolveReadyStreamed(ReportSourceSnapshotIdentity $identity, ReportSourceSnapshotStream $snapshot): ReportSourceSnapshotHeader
+            {
+                $this->streamCalls++;
+                foreach ($snapshot->drillRows() as $_) {
+                    $this->drillRowCount++;
+                }
+
+                return $snapshot->header(new Sha256Hash(str_repeat('a', 64)), $this->drillRowCount, new Sha256Hash(str_repeat('b', 64)));
+            }
+
+            public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
+            {
+                throw new \LogicException;
+            }
+
+            public function page(ReportSourceSnapshotReadRequest $request, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotPage
+            {
+                throw new \LogicException;
+            }
+
+            public function drillPage(ReportSourceSnapshotReadRequest $request, string $rowKey, string $columnId, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotDrillPage
+            {
+                throw new \LogicException;
+            }
+        };
+
+        (new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer, $store, $this->closeService()))->persist($this->request([10]));
+
+        self::assertSame(1, $store->streamCalls);
+        self::assertSame(2, $store->drillRowCount);
     }
 
     public function test_source_hash_changes_when_the_validated_close_identity_changes(): void
@@ -193,9 +314,9 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 throw new \LogicException;
             }
         };
-        $store = new class implements ReportSourceSnapshotStore
+        $store = new class implements ReportSourceSnapshotStreamingStore
         {
-            public ?ReportSourceSnapshotWrite $write = null;
+            public ?ReportSourceSnapshotStream $stream = null;
 
             public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
             {
@@ -214,6 +335,13 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 ReportSourceSnapshotWrite $snapshot,
             ): ReportSourceSnapshotHeader {
                 return $this->persistReady($snapshot);
+            }
+
+            public function resolveReadyStreamed(ReportSourceSnapshotIdentity $identity, ReportSourceSnapshotStream $snapshot): ReportSourceSnapshotHeader
+            {
+                $this->stream = $snapshot;
+
+                return $snapshot->header(new Sha256Hash(str_repeat('a', 64)), 0, new Sha256Hash(str_repeat('b', 64)));
             }
 
             public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
@@ -235,8 +363,7 @@ final class PlanFactSourceSnapshotTest extends TestCase
         (new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer, $store, $this->closeService()))->persist($this->request([]));
 
         self::assertSame([], $report->projectIds);
-        self::assertSame(0, $store->write?->header->rowCount);
-        self::assertSame(0, $store->write?->header->drillRowCount);
+        self::assertCount(0, $store->stream?->rows ?? []);
     }
 
     public function test_writer_rejects_requested_project_outside_scope_and_service_keeps_legacy_entrypoints(): void

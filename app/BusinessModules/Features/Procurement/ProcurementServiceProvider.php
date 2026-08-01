@@ -54,6 +54,12 @@ class ProcurementServiceProvider extends ServiceProvider
             \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore::class,
             \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSourceSnapshotStore::class,
         );
+        $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore::class,
+            static fn ($app): \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore => $app->make(
+                \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore::class,
+            ),
+        );
 
         $this->app->singleton(
             Reporting\Cycle\Contracts\ProcurementCycleSourceReader::class,

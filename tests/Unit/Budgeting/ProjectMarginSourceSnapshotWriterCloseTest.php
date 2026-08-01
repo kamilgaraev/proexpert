@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Budgeting;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
@@ -13,6 +14,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
@@ -55,8 +58,8 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
         (new ProjectMarginSourceSnapshotWriter($report, new ProjectMarginSourceSnapshotMaterializer, $store, $this->closeService($this->close())))->persist($this->request());
 
         self::assertSame(1, $report->calls);
-        self::assertSame('01JZZZZZZZZZZZZZZZZZZZZZZZ', $store->write?->header->watermarks['close_id']);
-        self::assertSame('actuals:1', $store->write?->header->watermarks['source_watermarks'][0]['watermark']);
+        self::assertSame('01JZZZZZZZZZZZZZZZZZZZZZZZ', $store->stream?->watermarks['close_id']);
+        self::assertSame('actuals:1', $store->stream?->watermarks['source_watermarks'][0]['watermark']);
     }
 
     public function test_writer_rejects_expired_restated_and_wrong_organization_closes_before_live_report_calls(): void
@@ -153,11 +156,11 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
         });
     }
 
-    private function snapshotStore(): ReportSourceSnapshotStore
+    private function snapshotStore(): ReportSourceSnapshotStreamingStore
     {
-        return new class implements ReportSourceSnapshotStore
+        return new class implements ReportSourceSnapshotStreamingStore
         {
-            public ?ReportSourceSnapshotWrite $write = null;
+            public ?ReportSourceSnapshotStream $stream = null;
 
             public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
             {
@@ -176,6 +179,13 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
                 ReportSourceSnapshotWrite $snapshot,
             ): ReportSourceSnapshotHeader {
                 return $this->persistReady($snapshot);
+            }
+
+            public function resolveReadyStreamed(ReportSourceSnapshotIdentity $identity, ReportSourceSnapshotStream $snapshot): ReportSourceSnapshotHeader
+            {
+                $this->stream = $snapshot;
+
+                return $snapshot->header(new Sha256Hash(str_repeat('a', 64)), 0, new Sha256Hash(str_repeat('b', 64)));
             }
 
             public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader

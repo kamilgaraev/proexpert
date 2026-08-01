@@ -52,32 +52,71 @@ final class ReportSourceSnapshotIntegrity
 
     public static function hash(ReportSourceSnapshotHeader $header, array $rows, array $drillRows): Sha256Hash
     {
-        return new Sha256Hash(hash('sha256', CanonicalJson::encode([
-            'header' => [
-                'as_of' => $header->asOf->format(DATE_ATOM),
-                'organization_id' => $header->scope->organizationId,
-                'query_hash' => $header->queryHash->value,
-                'report_query_identity' => $header->reportQueryIdentity,
-                'report_query_hash' => $header->reportQueryHash?->value,
-                'report_code' => $header->reportCode,
-                'schema_version' => $header->schemaVersion,
-                'scope' => $header->scopeIdentity(),
-                'materialized_source_hash' => $header->materializedSourceHash->value,
-                'source_kind' => $header->sourceKind,
-                'stale_at' => $header->staleAt?->format(DATE_ATOM),
-                'watermarks' => $header->watermarks,
-            ],
-            'rows' => array_map(static fn (ReportSourceSnapshotRow $row): array => [
-                'ordinal' => $row->ordinal,
-                'payload_hash' => $row->payloadHash->value,
-                'row_key' => $row->rowKey,
-            ], $rows),
-            'drill_rows' => array_map(static fn (ReportSourceSnapshotDrillRow $row): array => [
-                'column_id' => $row->columnId,
-                'ordinal' => $row->ordinal,
-                'payload_hash' => $row->payloadHash->value,
-                'row_key' => $row->rowKey,
-            ], $drillRows),
-        ])));
+        return self::hashStream($header, $rows, $drillRows);
+    }
+
+    /** @param iterable<ReportSourceSnapshotRow> $rows @param iterable<ReportSourceSnapshotDrillRow> $drillRows */
+    public static function hashStream(ReportSourceSnapshotHeader $header, iterable $rows, iterable $drillRows): Sha256Hash
+    {
+        $context = hash_init('sha256');
+        hash_update($context, '{"drill_rows":[');
+        self::writeItems($context, $drillRows, static fn (ReportSourceSnapshotDrillRow $row): string => CanonicalJson::encode([
+            'column_id' => $row->columnId,
+            'ordinal' => $row->ordinal,
+            'payload_hash' => $row->payloadHash->value,
+            'row_key' => $row->rowKey,
+        ]));
+        hash_update($context, '],"header":'.CanonicalJson::encode(self::headerPayload($header)).',"rows":[');
+        self::writeItems($context, $rows, static fn (ReportSourceSnapshotRow $row): string => CanonicalJson::encode([
+            'ordinal' => $row->ordinal,
+            'payload_hash' => $row->payloadHash->value,
+            'row_key' => $row->rowKey,
+        ]));
+        hash_update($context, ']}');
+
+        return new Sha256Hash(hash_final($context));
+    }
+
+    /** @param iterable<ReportSourceSnapshotRow> $rows @param iterable<ReportSourceSnapshotDrillRow> $drillRows */
+    public static function materializedSourceHash(iterable $rows, iterable $drillRows, array $watermarks): Sha256Hash
+    {
+        $context = hash_init('sha256');
+        hash_update($context, '{"drill_rows":[');
+        self::writeItems($context, $drillRows, static fn (ReportSourceSnapshotDrillRow $row): string => CanonicalJson::encode($row->payload));
+        hash_update($context, '],"rows":[');
+        self::writeItems($context, $rows, static fn (ReportSourceSnapshotRow $row): string => CanonicalJson::encode($row->payload));
+        hash_update($context, '],"watermarks":'.CanonicalJson::encode($watermarks).'}');
+
+        return new Sha256Hash(hash_final($context));
+    }
+
+    private static function headerPayload(ReportSourceSnapshotHeader $header): array
+    {
+        return [
+            'as_of' => $header->asOf->format(DATE_ATOM),
+            'organization_id' => $header->scope->organizationId,
+            'query_hash' => $header->queryHash->value,
+            'report_query_identity' => $header->reportQueryIdentity,
+            'report_query_hash' => $header->reportQueryHash?->value,
+            'report_code' => $header->reportCode,
+            'schema_version' => $header->schemaVersion,
+            'scope' => $header->scopeIdentity(),
+            'materialized_source_hash' => $header->materializedSourceHash->value,
+            'source_kind' => $header->sourceKind,
+            'stale_at' => $header->staleAt?->format(DATE_ATOM),
+            'watermarks' => $header->watermarks,
+        ];
+    }
+
+    private static function writeItems(\HashContext $context, iterable $items, callable $encode): void
+    {
+        $first = true;
+        foreach ($items as $item) {
+            if (! $first) {
+                hash_update($context, ',');
+            }
+            hash_update($context, $encode($item));
+            $first = false;
+        }
     }
 }
