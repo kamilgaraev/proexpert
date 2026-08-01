@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessPeriodIdentity;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Enums\PayrollReadinessReason;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Services\PayrollReadinessOwnerSnapshotRecorder;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Storage\FileService;
+use DateTimeImmutable;
+use DateTimeZone;
 use DomainException;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -19,6 +24,7 @@ final class WorkforceCorporateService
     public function __construct(
         private readonly FileService $fileService,
         private readonly WorkforceProService $proService,
+        private readonly PayrollReadinessOwnerSnapshotRecorder $payrollReadinessRecorder,
     ) {
     }
 
@@ -76,45 +82,104 @@ final class WorkforceCorporateService
                 return (array) $period;
             }
 
-            if ($period->status !== 'validated') {
-                throw new DomainException(trans_message('workforce.errors.payroll_period_not_validated'));
-            }
-
-            $this->assertSourceRows($organizationId, $periodId);
+            $evaluatedAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
             $this->lockPayrollSnapshotRows($organizationId, $period);
             $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
-            $this->assertProductionSourceActual($organizationId, $period);
+            $ownerSourceHash = $this->payrollSnapshotHash($organizationId, $period);
+            $identity = PayrollReadinessPeriodIdentity::fromRecord($organizationId, $period);
+
+            if ($period->status !== 'validated') {
+                $this->payrollReadinessRecorder->recordBlocked(
+                    $identity,
+                    $userId,
+                    $evaluatedAt,
+                    $ownerSourceHash,
+                    PayrollReadinessReason::PERIOD_NOT_VALIDATED,
+                );
+
+                return ['failure_message_key' => 'workforce.errors.payroll_period_not_validated'];
+            }
+
+            if (! $this->hasSourceRows($organizationId, $periodId)) {
+                $this->payrollReadinessRecorder->recordBlocked(
+                    $identity,
+                    $userId,
+                    $evaluatedAt,
+                    $ownerSourceHash,
+                    PayrollReadinessReason::SOURCE_EMPTY,
+                );
+
+                return ['failure_message_key' => 'workforce.errors.payroll_source_empty'];
+            }
+
+            if (! $this->isProductionSourceActual($organizationId, $period)) {
+                $this->payrollReadinessRecorder->recordBlocked(
+                    $identity,
+                    $userId,
+                    $evaluatedAt,
+                    $ownerSourceHash,
+                    PayrollReadinessReason::SOURCE_CHANGED,
+                );
+
+                return ['failure_message_key' => 'workforce.errors.payroll_source_changed'];
+            }
+
             $this->proService->validatePayrollPeriod($organizationId, $periodId);
             $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
             if ($period->status !== 'validated') {
-                return ['blocking_issues' => true];
+                $this->payrollReadinessRecorder->recordBlocked(
+                    $identity,
+                    $userId,
+                    $evaluatedAt,
+                    $ownerSourceHash,
+                    PayrollReadinessReason::VALIDATION_BLOCKERS,
+                );
+
+                return ['failure_message_key' => 'workforce.errors.payroll_period_has_blocking_issues'];
             }
 
             $this->refreshAccountingIssues($organizationId, $periodId);
 
             if ($this->hasBlockingIssues($organizationId, $periodId)) {
-                return ['blocking_issues' => true];
+                $this->payrollReadinessRecorder->recordBlocked(
+                    $identity,
+                    $userId,
+                    $evaluatedAt,
+                    $ownerSourceHash,
+                    PayrollReadinessReason::ACCOUNTING_BLOCKERS,
+                );
+
+                return ['failure_message_key' => 'workforce.errors.payroll_period_has_blocking_issues'];
             }
 
             $sourceHash = $this->payrollSnapshotHash($organizationId, $period);
+            $lockedAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
 
             DB::table('workforce_payroll_periods')
                 ->where('organization_id', $organizationId)
                 ->where('id', $periodId)
                 ->update([
                     'status' => 'locked',
-                    'locked_at' => now(),
+                    'locked_at' => $lockedAt,
                     'locked_by_user_id' => $userId,
                     'source_hash' => $sourceHash,
-                    'updated_at' => now(),
+                    'updated_at' => $lockedAt,
                 ]);
 
-            return (array) DB::table('workforce_payroll_periods')->where('organization_id', $organizationId)->where('id', $periodId)->first();
+            $lockedPeriod = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+            $this->payrollReadinessRecorder->recordLocked(
+                PayrollReadinessPeriodIdentity::fromRecord($organizationId, $lockedPeriod),
+                $userId,
+                $lockedAt,
+                $sourceHash,
+            );
+
+            return (array) $lockedPeriod;
         });
 
-        if (isset($result['blocking_issues'])) {
-            throw new DomainException(trans_message('workforce.errors.payroll_period_has_blocking_issues'));
+        if (isset($result['failure_message_key'])) {
+            throw new DomainException(trans_message((string) $result['failure_message_key']));
         }
 
         return $result;
@@ -770,6 +835,13 @@ final class WorkforceCorporateService
 
     private function assertProductionSourceActual(int $organizationId, object $period): void
     {
+        if (! $this->isProductionSourceActual($organizationId, $period)) {
+            throw new DomainException(trans_message('workforce.errors.payroll_source_changed'));
+        }
+    }
+
+    private function isProductionSourceActual(int $organizationId, object $period): bool
+    {
         $sourceQuery = DB::table('workforce_payroll_source_rows')
             ->where('organization_id', $organizationId)
             ->where('payroll_period_id', $period->id)
@@ -786,10 +858,8 @@ final class WorkforceCorporateService
             ]);
         $productionQuery = $this->productionSourceQuery($organizationId, $period);
 
-        if ($this->hashRows($sourceQuery, fn (object $row): array => $this->canonicalSourceRow($row))
-            !== $this->hashRows($productionQuery, fn (object $row): array => $this->canonicalSourceRow($row))) {
-            throw new DomainException(trans_message('workforce.errors.payroll_source_changed'));
-        }
+        return $this->hashRows($sourceQuery, fn (object $row): array => $this->canonicalSourceRow($row))
+            === $this->hashRows($productionQuery, fn (object $row): array => $this->canonicalSourceRow($row));
     }
 
     private function payrollSnapshotHash(int $organizationId, object $period): string
@@ -989,9 +1059,17 @@ final class WorkforceCorporateService
 
     private function assertSourceRows(int $organizationId, int $periodId): void
     {
-        if (!DB::table('workforce_payroll_source_rows')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->exists()) {
+        if (! $this->hasSourceRows($organizationId, $periodId)) {
             throw new DomainException(trans_message('workforce.errors.payroll_source_empty'));
         }
+    }
+
+    private function hasSourceRows(int $organizationId, int $periodId): bool
+    {
+        return DB::table('workforce_payroll_source_rows')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->exists();
     }
 
     private function assertMappingScope(int $organizationId, array $payload): void
