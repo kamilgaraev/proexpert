@@ -1,0 +1,57 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\WorkforceManagement\Reporting\PayrollReadiness;
+
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessPolicyDefinition;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Enums\PayrollReadinessReason;
+use PHPUnit\Framework\TestCase;
+
+final class PayrollReadinessPolicyDefinitionTest extends TestCase
+{
+    public function test_v1_policy_has_stable_closed_contract_and_hash(): void
+    {
+        $policy = PayrollReadinessPolicyDefinition::v1();
+
+        self::assertSame('payroll-readiness-policy.v1', $policy->version);
+        self::assertSame('UTC', $policy->timezone);
+        self::assertSame('none', $policy->calendarMode);
+        self::assertSame([
+            'period_validated',
+            'source_present',
+            'source_actual',
+            'validation_clear',
+            'accounting_clear',
+        ], $policy->checkOrder);
+        self::assertSame([
+            'employee_id',
+            'employee_name',
+            'hours',
+            'amount',
+            'message',
+            'personnel_number',
+            'salary_amount',
+        ], $policy->redactedFields);
+        self::assertSame('source_present', $policy->reasonEvidence['source_empty']['blocked_check']);
+        self::assertSame('required', $policy->reasonEvidence['validation_blockers']['blocking_issues']);
+        self::assertNull($policy->reasonEvidence['locked']['blocked_check']);
+        self::assertSame([
+            'max_blocker_codes' => 64,
+            'blocker_code_pattern' => '^[a-z0-9_]{1,120}$',
+        ], $policy->canonical()['evidence_limits']);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $policy->hash());
+        self::assertSame($policy->hash(), PayrollReadinessPolicyDefinition::v1()->hash());
+    }
+
+    public function test_v1_policy_accepts_only_declared_owner_outcomes(): void
+    {
+        $policy = PayrollReadinessPolicyDefinition::v1();
+
+        foreach (PayrollReadinessReason::cases() as $reason) {
+            self::assertTrue($policy->allows($reason), $reason->value);
+        }
+
+        self::assertFalse($policy->allowsCode('unknown_runtime_reason'));
+    }
+}

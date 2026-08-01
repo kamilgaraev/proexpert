@@ -6,7 +6,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
-use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceEmployeeService;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use App\Models\Organization;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
@@ -19,9 +19,10 @@ use Illuminate\Support\Facades\DB;
 
 final class WorkforceProService
 {
-    public function __construct(private readonly WorkforceEmployeeService $employeeService)
-    {
-    }
+    public function __construct(
+        private readonly WorkforceEmployeeService $employeeService,
+        private readonly WorkforceCapacityOwnerMutationBridge $capacityCapture,
+    ) {}
 
     public function paginateList(string $table, int $organizationId, int $perPage, ?string $search = null): LengthAwarePaginator
     {
@@ -45,8 +46,18 @@ final class WorkforceProService
                 'created_at' => now(),
                 'updated_at' => now(),
             ]));
+            $record = DB::table($table)->where('id', $id)->first();
+            if ($this->capacityCapture->supports($table)) {
+                $this->capacityCapture->afterMutation(
+                    $table,
+                    $organizationId,
+                    null,
+                    (array) $record,
+                    (string) $record->workforce_capacity_revision,
+                );
+            }
 
-            return $this->decorateRecord($table, $organizationId, DB::table($table)->where('id', $id)->first());
+            return $this->decorateRecord($table, $organizationId, $record);
         });
     }
 
@@ -54,91 +65,117 @@ final class WorkforceProService
     {
         return DB::transaction(function () use ($table, $organizationId, $id, $payload): array {
             $this->lockOrganization($organizationId);
-            $this->assertRecord($table, $organizationId, $id);
+            $current = $this->assertRecord($table, $organizationId, $id);
 
             if (($payload['is_active'] ?? null) === false && in_array($table, ['workforce_departments', 'workforce_positions'], true)) {
                 $this->assertNoActiveAssignmentsForStructure($table, $organizationId, $id);
             }
 
-            DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update(array_merge($this->normalizeJsonPayload($payload), [
+            $changes = array_merge($this->normalizeJsonPayload($payload), [
                 'updated_at' => now(),
-            ]));
+            ]);
+            if ($this->capacityCapture->supports($table)) {
+                $changes['workforce_capacity_revision'] = DB::raw('workforce_capacity_revision + 1');
+            }
+            DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update($changes);
+            $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
+            if ($this->capacityCapture->supports($table)) {
+                $this->capacityCapture->afterMutation(
+                    $table,
+                    $organizationId,
+                    (array) $current,
+                    (array) $record,
+                    (string) $record->workforce_capacity_revision,
+                );
+            }
 
-            return $this->decorateRecord($table, $organizationId, DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first());
+            return $this->decorateRecord($table, $organizationId, $record);
         });
     }
 
     public function storeStaffUnit(int $organizationId, array $payload): array
     {
-        $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        return DB::transaction(function () use ($organizationId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+            $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
 
-        return $this->store('workforce_staff_units', $organizationId, $payload);
+            return $this->store('workforce_staff_units', $organizationId, $payload);
+        });
     }
 
     public function updateStaffUnit(int $organizationId, int $staffUnitId, array $payload): array
     {
-        $current = $this->assertRecord('workforce_staff_units', $organizationId, $staffUnitId);
+        return DB::transaction(function () use ($organizationId, $staffUnitId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $current = $this->assertRecord('workforce_staff_units', $organizationId, $staffUnitId);
 
-        if (($payload['is_active'] ?? null) === false) {
-            $this->assertNoActiveAssignmentsForStaffUnit($organizationId, $staffUnitId);
-        }
+            if (($payload['is_active'] ?? null) === false) {
+                $this->assertNoActiveAssignmentsForStaffUnit($organizationId, $staffUnitId);
+            }
 
-        if (array_key_exists('department_id', $payload)) {
-            $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        }
+            if (array_key_exists('department_id', $payload)) {
+                $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+            }
 
-        if (array_key_exists('position_id', $payload)) {
-            $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
-        }
+            if (array_key_exists('position_id', $payload)) {
+                $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+            }
 
-        $effectiveValidTo = $payload['valid_to'] ?? $current->valid_to;
+            $effectiveValidTo = $payload['valid_to'] ?? $current->valid_to;
 
-        if ($effectiveValidTo !== null && $this->hasActiveAssignmentAfterDate($organizationId, $staffUnitId, (string) $effectiveValidTo)) {
-            throw new DomainException(trans_message('workforce.errors.structure_has_active_assignments'));
-        }
+            if ($effectiveValidTo !== null && $this->hasActiveAssignmentAfterDate($organizationId, $staffUnitId, (string) $effectiveValidTo)) {
+                throw new DomainException(trans_message('workforce.errors.structure_has_active_assignments'));
+            }
 
-        return $this->update('workforce_staff_units', $organizationId, $staffUnitId, $payload);
+            return $this->update('workforce_staff_units', $organizationId, $staffUnitId, $payload);
+        });
     }
 
     public function storeAssignment(int $organizationId, array $payload, ?int $assignmentId = null): array
     {
-        $this->assertActiveEmployee($organizationId, (int) $payload['employee_id']);
-        $staffUnit = $this->assertActiveRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
-        $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        return DB::transaction(function () use ($organizationId, $payload, $assignmentId): array {
+            $this->lockOrganization($organizationId);
+            $this->assertActiveEmployee($organizationId, (int) $payload['employee_id']);
+            $staffUnit = $this->assertActiveRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
+            $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+            $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
 
-        if ((int) ($payload['department_id'] ?? 0) !== (int) $staffUnit->department_id || (int) ($payload['position_id'] ?? 0) !== (int) $staffUnit->position_id) {
-            throw new DomainException(trans_message('workforce.errors.staff_unit_structure_mismatch'));
-        }
+            if ((int) ($payload['department_id'] ?? 0) !== (int) $staffUnit->department_id || (int) ($payload['position_id'] ?? 0) !== (int) $staffUnit->position_id) {
+                throw new DomainException(trans_message('workforce.errors.staff_unit_structure_mismatch'));
+            }
 
-        if (!empty($payload['work_schedule_id'])) {
-            $this->assertActiveRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
-        }
+            if (! empty($payload['work_schedule_id'])) {
+                $this->assertActiveRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
+            }
 
-        if (!empty($payload['project_id'])) {
-            $this->assertProject($organizationId, (int) $payload['project_id']);
-        }
+            if (! empty($payload['project_id'])) {
+                $this->assertProject($organizationId, (int) $payload['project_id']);
+            }
 
-        if ($this->hasOverlappingAssignment($organizationId, (int) $payload['employee_id'], $payload['valid_from'], $payload['valid_to'] ?? null, $assignmentId)) {
-            throw new DomainException(trans_message('workforce.errors.assignment_overlap'));
-        }
+            if ($this->hasOverlappingAssignment($organizationId, (int) $payload['employee_id'], $payload['valid_from'], $payload['valid_to'] ?? null, $assignmentId)) {
+                throw new DomainException(trans_message('workforce.errors.assignment_overlap'));
+            }
 
-        $this->assertAssignmentWithinStaffUnitPeriod($staffUnit, (string) $payload['valid_from'], $payload['valid_to'] ?? null);
-        $this->assertStaffUnitCapacity($organizationId, (int) $payload['staff_unit_id'], $payload['valid_from'], $payload['valid_to'] ?? null, (float) ($payload['rate'] ?? 1), $assignmentId);
+            $this->assertAssignmentWithinStaffUnitPeriod($staffUnit, (string) $payload['valid_from'], $payload['valid_to'] ?? null);
+            $this->assertStaffUnitCapacity($organizationId, (int) $payload['staff_unit_id'], $payload['valid_from'], $payload['valid_to'] ?? null, (float) ($payload['rate'] ?? 1), $assignmentId);
 
-        return $assignmentId === null
-            ? $this->store('workforce_employee_assignments', $organizationId, $payload)
-            : $this->update('workforce_employee_assignments', $organizationId, $assignmentId, $payload);
+            return $assignmentId === null
+                ? $this->store('workforce_employee_assignments', $organizationId, $payload)
+                : $this->update('workforce_employee_assignments', $organizationId, $assignmentId, $payload);
+        });
     }
 
     public function storeScheduleDay(int $organizationId, int $scheduleId, array $payload): array
     {
-        $this->assertRecord('workforce_work_schedules', $organizationId, $scheduleId);
+        return DB::transaction(function () use ($organizationId, $scheduleId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertRecord('workforce_work_schedules', $organizationId, $scheduleId);
 
-        return $this->store('workforce_work_schedule_days', $organizationId, array_merge($payload, [
-            'work_schedule_id' => $scheduleId,
-        ]));
+            return $this->store('workforce_work_schedule_days', $organizationId, array_merge($payload, [
+                'work_schedule_id' => $scheduleId,
+            ]));
+        });
     }
 
     public function scheduleCalendar(int $organizationId, string $dateFrom, string $dateTo, ?int $projectId = null): array
@@ -197,7 +234,7 @@ final class WorkforceProService
                 ->whereIn('work_schedule_id', $scheduleIds)
                 ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
                 ->get()
-                ->keyBy(fn (object $record): string => $record->work_schedule_id . ':' . $record->work_date);
+                ->keyBy(fn (object $record): string => $record->work_schedule_id.':'.$record->work_date);
 
         $employeeIds = $assignments
             ->pluck('employee_id')
@@ -242,50 +279,56 @@ final class WorkforceProService
 
     public function storeAbsence(int $organizationId, array $payload): array
     {
-        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
-        $absenceType = DB::table('workforce_absence_types')
-            ->where('organization_id', $organizationId)
-            ->where('code', $payload['absence_type_code'] ?? 'vacation')
-            ->first();
+        return DB::transaction(function () use ($organizationId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+            $absenceType = DB::table('workforce_absence_types')
+                ->where('organization_id', $organizationId)
+                ->where('code', $payload['absence_type_code'] ?? 'vacation')
+                ->first();
 
-        if (!$absenceType) {
-            $absenceTypeCode = $payload['absence_type_code'] ?? 'vacation';
-            $absenceTypeId = DB::table('workforce_absence_types')->insertGetId([
-                'organization_id' => $organizationId,
-                'code' => $absenceTypeCode,
-                'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.' . $absenceTypeCode),
-                'affects_payroll' => true,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        } else {
-            $absenceTypeId = $absenceType->id;
-        }
+            if (! $absenceType) {
+                $absenceTypeCode = $payload['absence_type_code'] ?? 'vacation';
+                $absenceTypeId = DB::table('workforce_absence_types')->insertGetId([
+                    'organization_id' => $organizationId,
+                    'code' => $absenceTypeCode,
+                    'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.'.$absenceTypeCode),
+                    'affects_payroll' => true,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            } else {
+                $absenceTypeId = $absenceType->id;
+            }
 
-        unset($payload['absence_type_code'], $payload['absence_type_name']);
+            unset($payload['absence_type_code'], $payload['absence_type_name']);
 
-        return $this->store('workforce_absences', $organizationId, array_merge($payload, [
-            'absence_type_id' => $absenceTypeId,
-            'status' => 'draft',
-        ]));
+            return $this->store('workforce_absences', $organizationId, array_merge($payload, [
+                'absence_type_id' => $absenceTypeId,
+                'status' => 'draft',
+            ]));
+        });
     }
 
     public function storeBusinessTrip(int $organizationId, array $payload): array
     {
-        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+        return DB::transaction(function () use ($organizationId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertEmployee($organizationId, (int) $payload['employee_id']);
 
-        if (!empty($payload['project_id'])) {
-            $this->assertProject($organizationId, (int) $payload['project_id']);
-        }
+            if (! empty($payload['project_id'])) {
+                $this->assertProject($organizationId, (int) $payload['project_id']);
+            }
 
-        return $this->store('workforce_business_trips', $organizationId, array_merge($payload, [
-            'status' => 'draft',
-        ]));
+            return $this->store('workforce_business_trips', $organizationId, array_merge($payload, [
+                'status' => 'draft',
+            ]));
+        });
     }
 
     public function storeOrder(int $organizationId, array $payload): array
     {
-        if (!empty($payload['employee_id'])) {
+        if (! empty($payload['employee_id'])) {
             $this->assertEmployee($organizationId, (int) $payload['employee_id']);
         }
 
@@ -342,55 +385,67 @@ final class WorkforceProService
 
     public function approveAbsence(int $organizationId, int $absenceId): array
     {
-        $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
-        $this->assertDraftStatus($absence);
-        $this->assertActiveEmployee($organizationId, (int) $absence->employee_id);
+        return DB::transaction(function () use ($organizationId, $absenceId): array {
+            $this->lockOrganization($organizationId);
+            $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
+            $this->assertDraftStatus($absence);
+            $this->assertActiveEmployee($organizationId, (int) $absence->employee_id);
 
-        if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $absence->employee_id, (string) $absence->start_date, (string) $absence->end_date, $absenceId)) {
-            throw new DomainException(trans_message('workforce.errors.absence_overlap'));
-        }
+            if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $absence->employee_id, (string) $absence->start_date, (string) $absence->end_date, $absenceId)) {
+                throw new DomainException(trans_message('workforce.errors.absence_overlap'));
+            }
 
-        return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'approved']);
+            return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'approved']);
+        });
     }
 
     public function cancelAbsence(int $organizationId, int $absenceId): array
     {
-        $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
+        return DB::transaction(function () use ($organizationId, $absenceId): array {
+            $this->lockOrganization($organizationId);
+            $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
 
-        if ($absence->status === 'cancelled') {
-            return (array) $absence;
-        }
+            if ($absence->status === 'cancelled') {
+                return (array) $absence;
+            }
 
-        return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'cancelled']);
+            return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'cancelled']);
+        });
     }
 
     public function approveBusinessTrip(int $organizationId, int $tripId): array
     {
-        $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
-        $this->assertDraftStatus($trip);
-        $this->assertActiveEmployee($organizationId, (int) $trip->employee_id);
+        return DB::transaction(function () use ($organizationId, $tripId): array {
+            $this->lockOrganization($organizationId);
+            $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
+            $this->assertDraftStatus($trip);
+            $this->assertActiveEmployee($organizationId, (int) $trip->employee_id);
 
-        if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $trip->employee_id, (string) $trip->start_date, (string) $trip->end_date)) {
-            throw new DomainException(trans_message('workforce.errors.business_trip_absence_overlap'));
-        }
+            if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $trip->employee_id, (string) $trip->start_date, (string) $trip->end_date)) {
+                throw new DomainException(trans_message('workforce.errors.business_trip_absence_overlap'));
+            }
 
-        return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'approved']);
+            return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'approved']);
+        });
     }
 
     public function cancelBusinessTrip(int $organizationId, int $tripId): array
     {
-        $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
+        return DB::transaction(function () use ($organizationId, $tripId): array {
+            $this->lockOrganization($organizationId);
+            $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
 
-        if ($trip->status === 'cancelled') {
-            return (array) $trip;
-        }
+            if ($trip->status === 'cancelled') {
+                return (array) $trip;
+            }
 
-        return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'cancelled']);
+            return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'cancelled']);
+        });
     }
 
     public function storePayrollPeriod(int $organizationId, int $userId, array $payload): array
     {
-        if (!empty($payload['project_id'])) {
+        if (! empty($payload['project_id'])) {
             $this->assertProject($organizationId, (int) $payload['project_id']);
         }
 
@@ -568,7 +623,7 @@ final class WorkforceProService
                             ->first(fn (object $candidate): bool => $candidate->valid_from <= $row->work_date
                                 && ($candidate->valid_to === null || $candidate->valid_to >= $row->work_date));
 
-                        if (!$assignment) {
+                        if (! $assignment) {
                             $issues[] = $this->validationIssueRow(
                                 $organizationId,
                                 $periodId,
@@ -576,6 +631,7 @@ final class WorkforceProService
                                 trans_message('workforce.validation.missing_assignment'),
                                 $row
                             );
+
                             continue;
                         }
 
@@ -593,9 +649,9 @@ final class WorkforceProService
                             $allowsWork = $schedule
                                 && (bool) $schedule->is_active
                                 && (float) $schedule->hours_per_day > 0
-                                && (!$day || ($day->day_type === 'work' && (float) $day->planned_hours > 0));
+                                && (! $day || ($day->day_type === 'work' && (float) $day->planned_hours > 0));
 
-                            if (!$allowsWork) {
+                            if (! $allowsWork) {
                                 $issues[] = $this->validationIssueRow(
                                     $organizationId,
                                     $periodId,
@@ -632,7 +688,7 @@ final class WorkforceProService
                 ->where('source.payroll_period_id', $periodId)
                 ->selectRaw(
                     'source.work_order_line_id, source.work_date, MIN(source.id) as id, '
-                    . 'MIN(source.employee_id) as employee_id, MIN(source.project_id) as project_id, SUM(source.hours) as hours'
+                    .'MIN(source.employee_id) as employee_id, MIN(source.project_id) as project_id, SUM(source.hours) as hours'
                 )
                 ->groupBy('source.work_order_line_id', 'source.work_date');
             $outputAggregates = DB::table('production_labor_output_entries as output')
@@ -666,6 +722,7 @@ final class WorkforceProService
                                 trans_message('workforce.validation.missing_output'),
                                 $source
                             );
+
                             continue;
                         }
 
@@ -720,8 +777,8 @@ final class WorkforceProService
                 ->where('organization_id', $organizationId)
                 ->where('payroll_period_id', $periodId)
                 ->selectRaw(
-                    "COUNT(*) as issues_count, "
-                    . "COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
+                    'COUNT(*) as issues_count, '
+                    ."COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
                 )
                 ->first();
             $blockingCount = (int) ($summary->blocking_count ?? 0);
@@ -864,8 +921,8 @@ final class WorkforceProService
             ->where('organization_id', $organizationId)
             ->where('payroll_period_id', $periodId)
             ->selectRaw(
-                "COUNT(*) as issues_count, "
-                . "COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
+                'COUNT(*) as issues_count, '
+                ."COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
             )
             ->first();
 
@@ -922,7 +979,7 @@ final class WorkforceProService
                 $statementId = DB::table('workforce_payroll_statements')->insertGetId([
                     'organization_id' => $organizationId,
                     'payroll_period_id' => $periodId,
-                    'statement_number' => 'PAY-' . $periodId . '-' . now()->format('YmdHis'),
+                    'statement_number' => 'PAY-'.$periodId.'-'.now()->format('YmdHis'),
                     'status' => 'prepared',
                     'created_by_user_id' => $userId,
                     'created_at' => now(),
@@ -940,7 +997,7 @@ final class WorkforceProService
             $grossAmount = 0.0;
 
             $sourceRows
-                ->groupBy(fn (object $row): string => $row->employee_id . ':' . ($row->project_id ?? 'all'))
+                ->groupBy(fn (object $row): string => $row->employee_id.':'.($row->project_id ?? 'all'))
                 ->each(function (Collection $rows) use ($organizationId, $periodId, $statementId, &$totalHours, &$grossAmount): void {
                     $first = $rows->first();
                     $hours = (float) $rows->sum(fn (object $row): float => (float) $row->hours);
@@ -1061,7 +1118,7 @@ final class WorkforceProService
             ];
         }
 
-        $scheduleDay = $scheduleDays->get($assignment->work_schedule_id . ':' . $date);
+        $scheduleDay = $scheduleDays->get($assignment->work_schedule_id.':'.$date);
 
         if ($scheduleDay !== null && $scheduleDay->day_type !== 'work') {
             return [
@@ -1098,7 +1155,7 @@ final class WorkforceProService
     {
         $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
 
-        if (!$record) {
+        if (! $record) {
             throw new DomainException(trans_message('workforce.errors.record_not_found'));
         }
 
@@ -1118,7 +1175,7 @@ final class WorkforceProService
 
     private function assertEmployee(int $organizationId, int $employeeId): void
     {
-        if (!WorkforceEmployee::query()->where('organization_id', $organizationId)->whereKey($employeeId)->exists()) {
+        if (! WorkforceEmployee::query()->where('organization_id', $organizationId)->whereKey($employeeId)->exists()) {
             throw new DomainException(trans_message('workforce.errors.employee_not_found'));
         }
     }
@@ -1130,7 +1187,7 @@ final class WorkforceProService
             ->whereKey($employeeId)
             ->first();
 
-        if (!$employee) {
+        if (! $employee) {
             throw new DomainException(trans_message('workforce.errors.employee_not_found'));
         }
 
@@ -1141,7 +1198,7 @@ final class WorkforceProService
 
     private function assertProject(int $organizationId, int $projectId): void
     {
-        if (!Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
+        if (! Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
             throw new DomainException(trans_message('workforce.errors.project_not_found'));
         }
     }
@@ -1275,7 +1332,7 @@ final class WorkforceProService
             ->where('is_active', true)
             ->first();
 
-        if (!$schedule || (float) $schedule->hours_per_day <= 0) {
+        if (! $schedule || (float) $schedule->hours_per_day <= 0) {
             return false;
         }
 
@@ -1285,7 +1342,7 @@ final class WorkforceProService
             ->whereDate('work_date', $date)
             ->first();
 
-        if (!$day) {
+        if (! $day) {
             return true;
         }
 
@@ -1299,8 +1356,7 @@ final class WorkforceProService
         string $message,
         object $row,
         string $entityType = 'payroll_source_row'
-    ): array
-    {
+    ): array {
         return [
             'organization_id' => $organizationId,
             'payroll_period_id' => $periodId,
@@ -1463,7 +1519,7 @@ final class WorkforceProService
             ->whereKey($employeeId)
             ->first(['last_name', 'first_name', 'middle_name']);
 
-        if (!$employee) {
+        if (! $employee) {
             return null;
         }
 

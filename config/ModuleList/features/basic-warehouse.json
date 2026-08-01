@@ -30,6 +30,7 @@
     "warehouse.transfers",
     "warehouse.inventory",
     "warehouse.reports",
+    "warehouse.reports.export",
     "warehouse.advanced.view",
     "warehouse.advanced.multiple_warehouses",
     "warehouse.advanced.zones",

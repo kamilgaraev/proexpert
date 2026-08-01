@@ -13,10 +13,14 @@ use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\ProcurementApprovalPolicy;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardOwnerEventWriter;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
+use DateTimeImmutable;
+use DateTimeInterface;
 use Illuminate\Validation\ValidationException;
+use LogicException;
 
 use function trans_message;
 
@@ -35,7 +39,9 @@ class ProcurementApprovalService
         private readonly ProcurementApprovalPolicyService $policyService,
         private readonly ProcurementDutySeparationService $dutySeparationService,
         private readonly AuthorizationService $authorizationService,
-        private readonly SupplierProposalService $proposalService
+        private readonly SupplierProposalService $proposalService,
+        private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
+        private readonly ProcurementAwardOwnerEventWriter $awardOwnerRecorder,
     ) {}
 
     public function evaluateForDecision(
@@ -212,80 +218,114 @@ class ProcurementApprovalService
 
     public function approve(ProcurementApproval $approval, int $actorId, ?string $comment = null): ProcurementApproval
     {
-        return DB::transaction(function () use ($approval, $actorId, $comment): ProcurementApproval {
-            $lockedApproval = ProcurementApproval::query()
-                ->whereKey($approval->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+        return $this->ownerWorkflowRuntime->within(function () use ($approval, $actorId, $comment): ProcurementApproval {
+            $context = $this->resolveApprovedOwnerState($approval, $actorId, $comment);
+            $lockedApproval = $context['approval'];
+            $decision = $context['decision'];
 
-            $decision = $this->lockDecisionForApproval($lockedApproval);
-            $this->ensurePending($lockedApproval);
-            $this->ensureWinningProposalIsActual($decision);
-            $policy = $this->policyService->resolveForOrganization((int) $lockedApproval->organization_id);
-            $this->ensurePolicyPermission($policy, $actorId, (int) $lockedApproval->organization_id);
-            $this->dutySeparationService->ensureCanResolve(
-                $lockedApproval,
-                $decision,
-                $policy,
-                $actorId
-            );
-
-            $lockedApproval->update([
-                'status' => ProcurementApprovalStatusEnum::APPROVED,
-                'approved_by' => $actorId,
-                'rejected_by' => null,
-                'resolved_at' => now(),
-                'comment' => $comment,
-            ]);
-
-            $blockingApprovalsExist = ProcurementApproval::query()
-                ->where('organization_id', $lockedApproval->organization_id)
-                ->where('approvable_type', $lockedApproval->approvable_type)
-                ->where('approvable_id', $lockedApproval->approvable_id)
-                ->whereIn('status', [
-                    ProcurementApprovalStatusEnum::PENDING->value,
-                    ProcurementApprovalStatusEnum::REJECTED->value,
-                ])
-                ->exists();
-
-            if (! $blockingApprovalsExist) {
-                $decision->update([
-                    'status' => SupplierProposalDecisionEnum::APPROVED,
-                ]);
-
-                $this->acceptApprovedWinningProposal($decision, $actorId);
+            if (! $context['blocking_approvals_exist']) {
+                $this->markProposalDecisionApproved($decision);
+                $resolvedAt = $this->persistedApprovalResolutionAt($lockedApproval);
+                $this->awardOwnerRecorder->approved($decision, $resolvedAt, $actorId);
+                $this->acceptApprovedWinningProposal(
+                    $decision,
+                    $actorId,
+                    $resolvedAt,
+                );
             }
 
-            $decision->loadMissing('winningProposal');
-            $snapshot = is_array($decision->winningProposal?->supplier_snapshot)
-                ? $decision->winningProposal->supplier_snapshot
-                : [];
-
-            $this->auditService->record(
-                ProcurementAuditEventTypeEnum::PROCUREMENT_APPROVAL_APPROVED->value,
-                $decision,
-                (int) $decision->organization_id,
-                $actorId,
-                $decision->winningProposal?->supplier_party_id,
-                [
-                    'approval_id' => $lockedApproval->id,
-                    'reason_code' => $lockedApproval->reason_code,
-                    'status' => ProcurementApprovalStatusEnum::APPROVED->value,
-                    'decision_id' => $decision->id,
-                    'decision_status' => $decision->status->value,
-                    'selected_supplier_proposal_id' => $decision->winning_supplier_proposal_id,
-                    'supplier_name' => $snapshot['display_name'] ?? null,
-                    'comment' => $comment,
-                ]
-            );
-
-            return $lockedApproval->fresh(['requestedBy', 'approvedBy', 'rejectedBy']);
+            return $this->finishApprovedOwnerState($lockedApproval, $decision, $actorId, $comment);
         });
+    }
+
+    protected function resolveApprovedOwnerState(
+        ProcurementApproval $approval,
+        int $actorId,
+        ?string $comment,
+    ): array {
+        $lockedApproval = ProcurementApproval::query()
+            ->whereKey($approval->id)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $decision = $this->lockDecisionForApproval($lockedApproval);
+        $this->ensurePending($lockedApproval);
+        $this->ensureWinningProposalIsActual($decision);
+        $policy = $this->policyService->resolveForOrganization((int) $lockedApproval->organization_id);
+        $this->ensurePolicyPermission($policy, $actorId, (int) $lockedApproval->organization_id);
+        $this->dutySeparationService->ensureCanResolve(
+            $lockedApproval,
+            $decision,
+            $policy,
+            $actorId
+        );
+
+        $resolvedAt = $this->ownerWorkflowRuntime->occurredAt();
+        $lockedApproval->update([
+            'status' => ProcurementApprovalStatusEnum::APPROVED,
+            'approved_by' => $actorId,
+            'rejected_by' => null,
+            'resolved_at' => $resolvedAt,
+            'comment' => $comment,
+        ]);
+
+        $blockingApprovalsExist = ProcurementApproval::query()
+            ->where('organization_id', $lockedApproval->organization_id)
+            ->where('approvable_type', $lockedApproval->approvable_type)
+            ->where('approvable_id', $lockedApproval->approvable_id)
+            ->whereIn('status', [
+                ProcurementApprovalStatusEnum::PENDING->value,
+                ProcurementApprovalStatusEnum::REJECTED->value,
+            ])
+            ->exists();
+
+        return [
+            'approval' => $lockedApproval,
+            'decision' => $decision,
+            'blocking_approvals_exist' => $blockingApprovalsExist,
+        ];
+    }
+
+    protected function markProposalDecisionApproved(SupplierProposalDecision $decision): void
+    {
+        $decision->update(['status' => SupplierProposalDecisionEnum::APPROVED]);
+    }
+
+    protected function finishApprovedOwnerState(
+        ProcurementApproval $lockedApproval,
+        SupplierProposalDecision $decision,
+        int $actorId,
+        ?string $comment,
+    ): ProcurementApproval {
+        $decision->loadMissing('winningProposal');
+        $snapshot = is_array($decision->winningProposal?->supplier_snapshot)
+            ? $decision->winningProposal->supplier_snapshot
+            : [];
+
+        $this->auditService->record(
+            ProcurementAuditEventTypeEnum::PROCUREMENT_APPROVAL_APPROVED->value,
+            $decision,
+            (int) $decision->organization_id,
+            $actorId,
+            $decision->winningProposal?->supplier_party_id,
+            [
+                'approval_id' => $lockedApproval->id,
+                'reason_code' => $lockedApproval->reason_code,
+                'status' => ProcurementApprovalStatusEnum::APPROVED->value,
+                'decision_id' => $decision->id,
+                'decision_status' => $decision->status->value,
+                'selected_supplier_proposal_id' => $decision->winning_supplier_proposal_id,
+                'supplier_name' => $snapshot['display_name'] ?? null,
+                'comment' => $comment,
+            ]
+        );
+
+        return $lockedApproval->fresh(['requestedBy', 'approvedBy', 'rejectedBy']);
     }
 
     public function reject(ProcurementApproval $approval, int $actorId, ?string $comment = null): ProcurementApproval
     {
-        return DB::transaction(function () use ($approval, $actorId, $comment): ProcurementApproval {
+        return $this->ownerWorkflowRuntime->within(function () use ($approval, $actorId, $comment): ProcurementApproval {
             $lockedApproval = ProcurementApproval::query()
                 ->whereKey($approval->id)
                 ->lockForUpdate()
@@ -303,17 +343,19 @@ class ProcurementApprovalService
                 $actorId
             );
 
+            $resolvedAt = $this->ownerWorkflowRuntime->occurredAt();
             $lockedApproval->update([
                 'status' => ProcurementApprovalStatusEnum::REJECTED,
                 'approved_by' => null,
                 'rejected_by' => $actorId,
-                'resolved_at' => now(),
+                'resolved_at' => $resolvedAt,
                 'comment' => $comment,
             ]);
 
             $decision->update([
                 'status' => SupplierProposalDecisionEnum::REJECTED,
             ]);
+            $this->awardOwnerRecorder->rejected($decision, $resolvedAt, $actorId);
 
             $decision->loadMissing('winningProposal');
             $snapshot = is_array($decision->winningProposal?->supplier_snapshot)
@@ -412,8 +454,11 @@ class ProcurementApprovalService
         }
     }
 
-    private function acceptApprovedWinningProposal(SupplierProposalDecision $decision, int $actorId): void
-    {
+    protected function acceptApprovedWinningProposal(
+        SupplierProposalDecision $decision,
+        int $actorId,
+        DateTimeImmutable $resolvedAt,
+    ): void {
         $decision->loadMissing('winningProposal');
         $proposal = $decision->winningProposal;
 
@@ -425,7 +470,17 @@ class ProcurementApprovalService
             return;
         }
 
-        $this->proposalService->accept($proposal, $actorId);
+        $this->proposalService->accept($proposal, $actorId, $resolvedAt);
+    }
+
+    protected function persistedApprovalResolutionAt(ProcurementApproval $approval): DateTimeImmutable
+    {
+        $resolvedAt = $approval->resolved_at;
+        if (! $resolvedAt instanceof DateTimeInterface) {
+            throw new LogicException('procurement_approval_resolved_at_required');
+        }
+
+        return DateTimeImmutable::createFromInterface($resolvedAt);
     }
 
     private function expiredWinningProposalBlocker(SupplierProposalDecision $decision): ?array

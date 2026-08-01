@@ -5,14 +5,23 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Contracts\PayrollReadinessSnapshotStore;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessPolicyDefinition;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessSnapshot;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Enums\PayrollReadinessReason;
+use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceCorporateService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
+use RuntimeException;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -34,6 +43,14 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_has_blocking_issues'));
+        $this->assertDatabaseHas('workforce_payroll_readiness_snapshots', [
+            'organization_id' => $context->organization->id,
+            'payroll_period_id' => $periodId,
+            'snapshot_kind' => 'pre_lock_blocked',
+            'reason_code' => 'accounting_blockers',
+        ]);
+        $this->assertReadinessReason($periodId, PayrollReadinessReason::ACCOUNTING_BLOCKERS);
+        $this->assertReadinessChronology($periodId, 'missing_accounting_mapping');
 
         $issues = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues");
@@ -62,6 +79,15 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
             ->assertOk()
             ->assertJsonPath('data.status', 'locked');
+        $lockedPeriod = (array) DB::table('workforce_payroll_periods')->find($periodId);
+        $this->assertDatabaseHas('workforce_payroll_readiness_snapshots', [
+            'organization_id' => $context->organization->id,
+            'payroll_period_id' => $periodId,
+            'snapshot_kind' => 'lock_succeeded',
+            'actor_user_id' => $context->user->id,
+            'locked_source_hash' => $lockedPeriod['source_hash'],
+            'evaluated_at' => $lockedPeriod['locked_at'],
+        ]);
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
@@ -204,6 +230,129 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->assertJsonPath('data.0.rows.0.gross_amount', '4000.00');
     }
 
+    public function test_public_owner_records_period_not_validated_reason(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess('web_admin');
+        $periodId = $this->draftPeriod($context, (int) $project->id);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_not_validated'));
+
+        $this->assertReadinessReason($periodId, PayrollReadinessReason::PERIOD_NOT_VALIDATED);
+    }
+
+    public function test_public_owner_records_source_empty_reason(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess('web_admin');
+        $periodId = $this->draftPeriod($context, (int) $project->id);
+        DB::table('workforce_payroll_periods')->where('id', $periodId)->update([
+            'status' => 'validated',
+            'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_source_empty'));
+
+        $snapshot = $this->assertReadinessReason($periodId, PayrollReadinessReason::SOURCE_EMPTY);
+        self::assertSame(0, (int) $snapshot->source_row_count);
+    }
+
+    public function test_public_owner_records_source_changed_reason(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = $this->employee($context, 'EMP-R22-SOURCE-CHANGED');
+        $this->allowAccess('web_admin');
+        $periodId = $this->preparedValidatedPeriod($context, (int) $project->id, (int) $employee->id);
+        DB::table('workforce_payroll_source_rows')
+            ->where('payroll_period_id', $periodId)
+            ->update(['hours' => 7, 'updated_at' => now()]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_source_changed'));
+
+        $this->assertReadinessReason($periodId, PayrollReadinessReason::SOURCE_CHANGED);
+    }
+
+    public function test_public_owner_records_validation_blockers_after_issue_capture(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = $this->employee($context, 'EMP-R22-VALIDATION');
+        $this->allowAccess('web_admin');
+        $periodId = $this->preparedValidatedPeriod($context, (int) $project->id, (int) $employee->id);
+        DB::table('workforce_employee_assignments')
+            ->where('organization_id', $context->organization->id)
+            ->where('employee_id', $employee->id)
+            ->update(['status' => 'inactive', 'updated_at' => now()]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_has_blocking_issues'));
+
+        $snapshot = $this->assertReadinessReason($periodId, PayrollReadinessReason::VALIDATION_BLOCKERS);
+        self::assertGreaterThan(0, (int) $snapshot->blocker_count);
+        $this->assertReadinessChronology($periodId, 'missing_assignment');
+    }
+
+    public function test_public_owner_lock_rolls_back_when_readiness_store_fails(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = $this->employee($context, 'EMP-R22-ROLLBACK');
+        $this->allowAccess('web_admin');
+        $periodId = $this->preparedValidatedPeriod($context, $project->id, $employee->id);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/accounting-mappings', [
+                'scope_type' => 'organization',
+                'accounting_account' => '20.03',
+            ])
+            ->assertCreated();
+
+        $this->app->instance(PayrollReadinessSnapshotStore::class, new FailingPayrollReadinessSnapshotStore);
+
+        try {
+            $this->app->make(WorkforceCorporateService::class)->lockPayrollPeriod(
+                (int) $context->organization->id,
+                $periodId,
+                (int) $context->user->id,
+            );
+            self::fail('Readiness persistence failure must abort the public owner workflow.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('payroll_readiness_store_failure_sentinel', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('workforce_payroll_periods', [
+            'id' => $periodId,
+            'organization_id' => $context->organization->id,
+            'status' => 'validated',
+            'locked_at' => null,
+            'locked_by_user_id' => null,
+            'source_hash' => null,
+        ]);
+        $this->assertDatabaseMissing('workforce_payroll_readiness_snapshots', [
+            'payroll_period_id' => $periodId,
+            'snapshot_kind' => 'lock_succeeded',
+        ]);
+    }
+
     private function preparedValidatedPeriod(AdminApiTestContext $context, int $projectId, int $employeeId): int
     {
         [$departmentId, $positionId, $staffUnitId, $scheduleId] = $this->createStructure($context);
@@ -244,6 +393,70 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->assertJsonPath('data.blocking_count', 0);
 
         return $periodId;
+    }
+
+    private function draftPeriod(AdminApiTestContext $context, int $projectId): int
+    {
+        $period = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods', [
+                'period_start' => '2026-05-01',
+                'period_end' => '2026-05-31',
+                'project_id' => $projectId,
+            ]);
+        $period->assertCreated();
+
+        return (int) $period->json('data.id');
+    }
+
+    private function assertReadinessReason(int $periodId, PayrollReadinessReason $reason): object
+    {
+        $snapshot = DB::table('workforce_payroll_readiness_snapshots')
+            ->where('payroll_period_id', $periodId)
+            ->latest('id')
+            ->first();
+        self::assertNotNull($snapshot);
+        self::assertSame($reason->value, $snapshot->reason_code);
+        self::assertNotNull($snapshot->sealed_at);
+        self::assertSame(
+            PayrollReadinessPolicyDefinition::v1()->checkStates($reason),
+            DB::table('workforce_payroll_readiness_snapshot_items')
+                ->where('payroll_readiness_snapshot_id', $snapshot->id)
+                ->where('source_type', 'readiness_check')
+                ->orderBy('position')
+                ->pluck('evidence_status', 'evidence_code')
+                ->all(),
+        );
+
+        return $snapshot;
+    }
+
+    private function assertReadinessChronology(int $periodId, string $issueCode): void
+    {
+        $snapshot = DB::table('workforce_payroll_readiness_snapshots')
+            ->where('payroll_period_id', $periodId)
+            ->latest('id')
+            ->first();
+        self::assertNotNull($snapshot);
+        $issueCreatedAt = DB::table('workforce_payroll_validation_issues')
+            ->where('payroll_period_id', $periodId)
+            ->where('issue_code', $issueCode)
+            ->value('created_at');
+        self::assertNotNull($issueCreatedAt);
+        $firstItemCreatedAt = DB::table('workforce_payroll_readiness_snapshot_items')
+            ->where('payroll_readiness_snapshot_id', $snapshot->id)
+            ->min('created_at');
+        self::assertNotNull($firstItemCreatedAt);
+        $utc = new DateTimeZone('UTC');
+        $issueTime = new DateTimeImmutable((string) $issueCreatedAt, $utc);
+        $evaluatedTime = new DateTimeImmutable((string) $snapshot->evaluated_at, $utc);
+        $snapshotCreatedTime = new DateTimeImmutable((string) $snapshot->created_at, $utc);
+        $itemCreatedTime = new DateTimeImmutable((string) $firstItemCreatedAt, $utc);
+        $sealedTime = new DateTimeImmutable((string) $snapshot->sealed_at, $utc);
+
+        self::assertTrue($issueTime <= $evaluatedTime);
+        self::assertTrue($evaluatedTime <= $snapshotCreatedTime);
+        self::assertTrue($snapshotCreatedTime <= $itemCreatedTime);
+        self::assertTrue($itemCreatedTime <= $sealedTime);
     }
 
     private function employee(AdminApiTestContext $context, string $personnelNumber): WorkforceEmployee
@@ -365,5 +578,13 @@ final class WorkforceCorporateWorkflowTest extends TestCase
                 }
             );
         });
+    }
+}
+
+final class FailingPayrollReadinessSnapshotStore implements PayrollReadinessSnapshotStore
+{
+    public function append(PayrollReadinessSnapshot $snapshot, iterable $items): void
+    {
+        throw new RuntimeException('payroll_readiness_store_failure_sentinel');
     }
 }

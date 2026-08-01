@@ -1,0 +1,10 @@
+{
+    "contract_version": "1.0.0",
+    "phase": "platform",
+    "manifest_sha256": "b6b44eac45e211acda9465c1d29f569403eddc1af9cf72d45c4da8f663263b07",
+    "resource_sha256": "3e926aeb949b9214f1c666e5af2ce3d64a0898771d7dc724fd9e0e8e17c0777b",
+    "permission_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "translation_sha256": "1ba5d49242c3b002147fd53fe84aad2b831aac0e92b7339da7f23158583f821e",
+    "group_order_sha256": "a995c3ccd619861334986c834cf0e169f73331e566391a8adab8181f0cb568e1",
+    "published_count": 0
+}

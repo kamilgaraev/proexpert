@@ -27,6 +27,7 @@
     "safety-management.violations.resolve",
     "safety-management.prescriptions.approve",
     "safety-management.reports.export",
+    "safety-management.medical.view",
     "safety-management.settings.manage"
   ],
   "features": [

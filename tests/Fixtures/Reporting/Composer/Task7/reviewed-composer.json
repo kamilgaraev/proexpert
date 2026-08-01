@@ -1,0 +1,16 @@
+{
+    "name": "most/reports-test",
+    "require": {
+        "php": "^8.2",
+        "vendor/runtime": "^1.0",
+        "opis/json-schema": "^2.6"
+    },
+    "require-dev": {
+        "vendor/tester": "^2.0"
+    },
+    "config": {
+        "platform": {
+            "php": "8.2.29"
+        }
+    }
+}

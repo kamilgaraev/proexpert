@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDimensions;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDrillDownKey;
@@ -32,7 +33,7 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use function trans_message;
 
-final class ProjectMarginReportService
+final class ProjectMarginReportService implements ProjectMarginSourceSnapshotReport
 {
     private const QUALITY_PARTIAL = 'partial';
 
@@ -45,7 +46,17 @@ final class ProjectMarginReportService
 
     public function report(array $input, ?User $user = null): array
     {
-        $context = $this->resolveContext($input);
+        return $this->reportWithProjectScope($input, null, $user);
+    }
+
+    public function reportForProjectScope(array $input, array $projectIds, ?User $user = null): array
+    {
+        return $this->reportWithProjectScope($input, $this->normalizeProjectScopeIds($projectIds), $user);
+    }
+
+    private function reportWithProjectScope(array $input, ?array $projectIds, ?User $user = null): array
+    {
+        $context = $this->resolveContext($input, $projectIds);
         /** @var ProjectMarginReportFilters $filters */
         $filters = $context['filters'];
         $aggregateRows = $this->aggregateRows($filters);
@@ -91,7 +102,17 @@ final class ProjectMarginReportService
 
     public function drillDown(array $input, ?User $user = null): array
     {
-        $context = $this->resolveContext($input);
+        return $this->drillDownWithProjectScope($input, null, $user);
+    }
+
+    public function drillDownForProjectScope(array $input, array $projectIds, ?User $user = null): array
+    {
+        return $this->drillDownWithProjectScope($input, $this->normalizeProjectScopeIds($projectIds), $user);
+    }
+
+    private function drillDownWithProjectScope(array $input, ?array $projectIds, ?User $user = null): array
+    {
+        $context = $this->resolveContext($input, $projectIds);
         /** @var ProjectMarginReportFilters $filters */
         $filters = $context['filters'];
         try {
@@ -149,7 +170,7 @@ final class ProjectMarginReportService
         ];
     }
 
-    private function resolveContext(array $input): array
+    private function resolveContext(array $input, ?array $projectScopeIds = null): array
     {
         $organizationId = (int) ($input['organization_id'] ?? 0);
         if ($organizationId <= 0) {
@@ -194,6 +215,7 @@ final class ProjectMarginReportService
                 scenarioId: $scenario instanceof BudgetScenario ? (int) $scenario->id : null,
                 scenarioUuid: $scenario instanceof BudgetScenario ? (string) $scenario->uuid : null,
                 projectId: $projectId,
+                projectIds: $projectScopeIds,
                 contractId: $contractId,
                 responsibilityCenterId: $responsibilityCenterId,
                 responsibilityCenterUuid: $responsibilityCenterUuid,
@@ -338,6 +360,23 @@ final class ProjectMarginReportService
         }
 
         return $projectId;
+    }
+
+    private function normalizeProjectScopeIds(array $projectIds): array
+    {
+        $normalized = [];
+        foreach ($projectIds as $projectId) {
+            if (!is_int($projectId) || $projectId < 1 || isset($normalized[$projectId])) {
+                throw new InvalidArgumentException('project_margin_project_scope_invalid');
+            }
+
+            $normalized[$projectId] = $projectId;
+        }
+
+        $normalized = array_values($normalized);
+        sort($normalized, SORT_NUMERIC);
+
+        return $normalized;
     }
 
     private function resolveContractFilter(int $organizationId, ?int $projectId, mixed $value): ?int
@@ -868,13 +907,18 @@ final class ProjectMarginReportService
 
     private function applyNormalizedFilters(QueryBuilder $query, ProjectMarginReportFilters $filters): void
     {
-        $query
-            ->when($filters->projectId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('project_id', $filters->projectId))
+        $query->when($filters->projectId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('project_id', $filters->projectId))
             ->when($filters->contractId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('contract_id', $filters->contractId))
             ->when($filters->counterpartyId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('counterparty_id', $filters->counterpartyId))
             ->when($filters->budgetArticleId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('budget_article_id', $filters->budgetArticleId))
             ->when($filters->responsibilityCenterId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('responsibility_center_id', $filters->responsibilityCenterId))
             ->when($filters->currency !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('currency', $filters->currency));
+
+        if ($filters->projectIds === []) {
+            $query->whereRaw('1 = 0');
+        } elseif ($filters->projectIds !== null) {
+            $query->whereIn('project_id', $filters->projectIds);
+        }
     }
 
     private function applyDrillDownDimensions(QueryBuilder $query, ProjectMarginDrillDownKey $key): void

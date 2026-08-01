@@ -1,0 +1,69 @@
+{
+  "artifact_id": "plan_1a_command_ledger",
+  "schema_version": "1.0.0",
+  "status": "passed",
+  "verification_mode": "local_fixed_commands",
+  "producer_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "executed_at": "2026-07-26T00:00:00Z",
+  "task_4e": {
+    "subject": "feat[reports]: типизировать ресурсы и текущую авторизацию",
+    "parent_commit_sha": "1934f947a44aa5221b5aa4cbd8c03963f5f1c005",
+    "lineage": ["Task 4a exact53", "Task 4b exact39", "Task 4a2 exact16", "Task 4c exact15", "Task 4d exact6", "Task 4e exact78"],
+    "manifest_count": 78,
+    "typed_resource_contract": "passed",
+    "typed_decision_contract": "passed",
+    "queue_authorization": "uncached_repeatable_read_passed",
+    "prohibitions": "passed",
+    "migration_cutover": "static_contract_passed_not_executed_locally",
+    "resource_registry": "passed",
+    "authorization_matrices": {
+      "organization_scope": ["test_inactive_actor_is_denied", "test_deleted_actor_is_denied", "test_inactive_organization_membership_is_denied", "test_inactive_anchor_organization_is_denied", "test_deleted_anchor_organization_is_denied", "test_holding_scope_contains_anchor_and_active_direct_child", "test_detached_child_is_not_inherited", "test_child_of_foreign_holding_is_not_inherited", "test_grandchild_is_not_inherited", "test_inactive_and_deleted_children_are_not_inherited", "test_child_access_is_inherited_only_through_current_holding_parent"],
+      "project_scope": ["test_all_project_mode_includes_every_accessible_active_project", "test_assigned_project_mode_includes_only_active_assignments", "test_inactive_project_assignment_is_excluded", "test_archived_project_is_excluded", "test_owner_and_active_participant_projects_are_included", "test_foreign_project_is_excluded", "test_exact_selected_project_subset_is_preserved", "test_newly_accessible_unrelated_project_does_not_widen_exact_scope"],
+      "current_abac": ["test_closed_abac_behavior_matrix::current organization role", "test_closed_abac_behavior_matrix::revoked assignment", "test_closed_abac_behavior_matrix::expired assignment", "test_closed_abac_behavior_matrix::inactive assignment", "test_closed_abac_behavior_matrix::system permission removed", "test_closed_abac_behavior_matrix::custom permission removed", "test_closed_abac_behavior_matrix::inactive condition ignored", "test_closed_abac_behavior_matrix::valid time condition", "test_closed_abac_behavior_matrix::expired time condition", "test_closed_abac_behavior_matrix::fresh project count condition", "test_closed_abac_behavior_matrix::request-only condition fails closed", "test_closed_abac_behavior_matrix::malformed condition fails closed", "test_closed_abac_behavior_matrix::missing required project fact", "test_closed_abac_behavior_matrix::singular project role", "test_closed_abac_behavior_matrix::project parent organization mismatch", "test_closed_abac_behavior_matrix::one bad assignment does not mask a valid assignment"],
+      "typed_resources": ["test_empty_registry_accepts_empty_scope", "test_exact_adapter_and_decision_identity_are_accepted", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::non-adapter", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::invalid kind", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::duplicate exact kind", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::all wildcard", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::generic wildcard", "test_unknown_resource_kind_is_normalized_to_scope_forbidden", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::actor id", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::organization id", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::project id", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::kind", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::resource id", "test_first_actor_decision_cannot_be_replayed_for_second_actor", "test_handler_exceptions_are_normalized_to_scope_forbidden::contract exception", "test_handler_exceptions_are_normalized_to_scope_forbidden::runtime exception", "test_explicit_denial_is_normalized_to_scope_forbidden"],
+      "repeatable_read_races": ["test_membership_revocation_after_snapshot_affects_only_next_authorization", "test_project_assignment_revocation_after_snapshot_affects_only_next_authorization", "test_holding_child_reparent_after_snapshot_affects_only_next_authorization", "test_resource_transfer_after_snapshot_cannot_mix_with_new_permission_facts", "test_assignment_revocation_is_snapshot_consistent_and_next_invocation_denies", "test_condition_revocation_is_snapshot_consistent_and_uncached_next_invocation_denies", "test_custom_permission_definition_revocation_is_snapshot_consistent_and_next_invocation_denies", "test_system_role_change_is_snapshot_consistent_and_next_invocation_denies"]
+    },
+    "ownership_audit": {"task_4e": 78, "task_5": 30, "union": 108, "overlap": 0, "unowned": 0, "extra": 0}
+  },
+  "execution_phase": {
+    "name": "POST_TASK_4J_PRE_TASK_5",
+    "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "task_4e_commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
+    "task_4f_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "task_4g_commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "task_4h_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "task_4i_commit_sha": "1111111111111111111111111111111111111111",
+    "task_4j_commit_sha": "2222222222222222222222222222222222222222",
+    "task_5_commit_sha": null,
+    "task_5_state": "pending",
+    "dispatch_allowlist": [
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php"
+    ],
+    "committed_tree_projection_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "commands": [
+    {
+      "command_id": "plan1a_contract_tests",
+      "command": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Access/ReportingPermissionTranslationTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Http/ReportFormRequestContractTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php tests/Architecture/Reporting/ReportPortSignatureTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Architecture/Reporting/ReportingRouteSnapshotTest.php tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Execution/CurrentReportAuthorizationTargetTest.php tests/Unit/Reporting/Access/ReportAuthorizationSubjectTest.php tests/Unit/Reporting/Access/ReportHttpAuthorizationOrchestratorTest.php tests/Unit/Reporting/Access/LaravelReportHttpAuthorizationTargetResolverTest.php tests/Unit/Reporting/Access/ReportScopedResourceAuthorizerContractTest.php tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php tests/Unit/Reporting/Access/CurrentReportPermissionDecisionTest.php tests/Unit/Reporting/Access/ReportScopedResourceAccessDecisionTest.php tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 504,
+      "assertions": 5074,
+      "skipped": 0,
+      "executed_at": "2026-07-26T00:00:00Z"
+    },
+    {
+      "command_id": "plan1a_static_analysis",
+      "command": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpstan analyse app/BusinessModules/Core/Reporting app/Domain/Authorization/Services/AuthorizationService.php scripts/reporting/verify-task-7-composer.php scripts/reporting/run-plan-1a-gates.php scripts/reporting/build-plan-1a-evidence.php tests/Support/Reporting tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php --no-progress",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 0,
+      "assertions": 0,
+      "skipped": 0,
+      "executed_at": "2026-07-26T00:00:00Z"
+    }
+  ]
+}

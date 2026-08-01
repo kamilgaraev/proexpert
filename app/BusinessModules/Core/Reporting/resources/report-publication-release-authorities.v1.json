@@ -1,0 +1,1 @@
+{"most-ci":{"reports-release-2026-01":{"environment":"report-publication-release","event_name":"push","job":"report-publication-release-artifact","public_key_base64":"oULTr/a8b47HM/p1orGHDKiBSXJ56xzvhHsIBGDJMF0=","ref":"refs/heads/main","repository":"kamilgaraev/proexpert","workflow_ref":".github/workflows/notification-concurrency.yml@refs/heads/main"}}}

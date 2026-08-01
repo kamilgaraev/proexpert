@@ -42,6 +42,7 @@
     "workforce.exports.approve",
     "workforce.settings.manage",
     "workforce.audit.view",
+    "workforce.reports.export",
     "production-labor.view",
     "production-labor.create",
     "production-labor.edit",

@@ -206,8 +206,6 @@
   $ref: './reports.yaml#/~1reports~1material-usage'
 /reports/work-completion:
   $ref: './reports.yaml#/~1reports~1work-completion'
-/reports/foreman-activity:
-  $ref: './reports.yaml#/~1reports~1foreman-activity'
 /reports/project-status-summary:
   $ref: './reports.yaml#/~1reports~1project-status-summary'
 /reports/official-material-usage:

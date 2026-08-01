@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement;
 
-use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\ServiceProvider;
 
 /**
  * Service Provider для модуля "Управление закупками"
@@ -50,6 +50,57 @@ class ProcurementServiceProvider extends ServiceProvider
      */
     protected function registerServices(): void
     {
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementCycleSourceReader::class,
+            Reporting\Cycle\Services\EloquentProcurementCycleSourceReader::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementCycleSourceSnapshotWriter::class,
+            Reporting\Cycle\Services\CanonicalProcurementCycleSourceSnapshotWriter::class,
+        );
+
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleFormula::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleSourceSnapshotMaterializer::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReportAdapter::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReadinessProbe::class);
+        $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReportBindingFactory::class);
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementProcessEventStore::class,
+            Reporting\Cycle\Services\EloquentProcurementProcessEventStore::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementTransactionBoundary::class,
+            Reporting\Cycle\Services\LaravelProcurementTransactionBoundary::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime::class,
+            Reporting\Cycle\Services\LaravelProcurementOwnerWorkflowRuntime::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementCycleSourceState::class,
+            Reporting\Cycle\Services\EloquentProcurementCycleSourceState::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Award\Contracts\ProcurementAwardEvidenceStore::class,
+            Reporting\Award\Services\EloquentProcurementAwardEvidenceStore::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Award\Contracts\ProcurementAwardSelectionSource::class,
+            Reporting\Award\Services\EloquentProcurementAwardSelectionSource::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Award\Contracts\ProcurementAwardOwnerEventWriter::class,
+            Reporting\Award\Services\ProcurementAwardOwnerEventRecorder::class,
+        );
+
         // Основные сервисы модуля
         $this->app->singleton(
             Services\PurchaseRequestService::class
@@ -113,7 +164,7 @@ class ProcurementServiceProvider extends ServiceProvider
      */
     protected function loadMigrations(): void
     {
-        $migrationsPath = __DIR__ . '/migrations';
+        $migrationsPath = __DIR__.'/migrations';
 
         if (is_dir($migrationsPath)) {
             $this->loadMigrationsFrom($migrationsPath);
@@ -125,13 +176,13 @@ class ProcurementServiceProvider extends ServiceProvider
      */
     protected function loadRoutes(): void
     {
-        $routesPath = __DIR__ . '/routes.php';
+        $routesPath = __DIR__.'/routes.php';
 
         if (file_exists($routesPath)) {
             require $routesPath;
         }
 
-        $mobileRoutesPath = __DIR__ . '/routes-mobile.php';
+        $mobileRoutesPath = __DIR__.'/routes-mobile.php';
 
         if (file_exists($mobileRoutesPath)) {
             require $mobileRoutesPath;
@@ -179,17 +230,17 @@ class ProcurementServiceProvider extends ServiceProvider
             Events\PurchaseRequestCreated::class,
             [Listeners\SendProcurementNotifications::class, 'handleRequestCreated']
         );
-        
+
         Event::listen(
             Events\PurchaseRequestApproved::class,
             [Listeners\SendProcurementNotifications::class, 'handleRequestApproved']
         );
-        
+
         Event::listen(
             Events\PurchaseOrderSent::class,
             [Listeners\SendProcurementNotifications::class, 'handleOrderSent']
         );
-        
+
         Event::listen(
             Events\MaterialReceivedFromSupplier::class,
             [Listeners\SendProcurementNotifications::class, 'handleMaterialsReceived']

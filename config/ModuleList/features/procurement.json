@@ -52,6 +52,7 @@
     "procurement.contracts.create",
     "procurement.contracts.edit",
     "procurement.dashboard.view",
+    "procurement.reports.export",
     "procurement.statistics.view",
     "procurement.settings.view",
     "procurement.settings.manage"
@@ -104,4 +105,3 @@
   
   "documentation_url": "/docs/modules/procurement"
 }
-

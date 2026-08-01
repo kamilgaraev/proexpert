@@ -13,7 +13,7 @@ use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceSignoff;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackageDocument;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
-use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Storage\FileService;
@@ -34,18 +34,19 @@ final class HandoverAcceptanceService
         'handoverPackage.documents',
     ];
 
-    public function __construct(private readonly FileService $fileService)
-    {
-    }
+    public function __construct(
+        private readonly FileService $fileService,
+        private readonly QualityDefectService $qualityDefects,
+    ) {}
 
     public function listScopes(int $organizationId, array $filters = []): Collection
     {
         return AcceptanceScope::query()
             ->where('organization_id', $organizationId)
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['planned_from']), fn ($query) => $query->whereDate('planned_acceptance_date', '>=', (string) $filters['planned_from']))
-            ->when(!empty($filters['planned_to']), fn ($query) => $query->whereDate('planned_acceptance_date', '<=', (string) $filters['planned_to']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['planned_from']), fn ($query) => $query->whereDate('planned_acceptance_date', '>=', (string) $filters['planned_from']))
+            ->when(! empty($filters['planned_to']), fn ($query) => $query->whereDate('planned_acceptance_date', '<=', (string) $filters['planned_to']))
             ->with(self::SCOPE_RELATIONS)
             ->orderByDesc('id')
             ->get();
@@ -61,7 +62,7 @@ final class HandoverAcceptanceService
         }
 
         $level = $parent ? ((int) $parent->level) + 1 : 0;
-        $path = trim(($parent?->path ? $parent->path . ' / ' : '') . (string) $data['name']);
+        $path = trim(($parent?->path ? $parent->path.' / ' : '').(string) $data['name']);
 
         return ProjectLocation::query()->create([
             'organization_id' => $organizationId,
@@ -152,25 +153,25 @@ final class HandoverAcceptanceService
             $qualityDefect = null;
 
             if ($data['create_quality_defect'] === true) {
-                $qualityDefect = QualityDefect::query()->create([
-                    'organization_id' => $session->organization_id,
-                    'project_id' => $session->project_id,
-                    'created_by' => $userId,
-                    'defect_number' => 'HA-' . $session->id . '-' . now()->format('His'),
-                    'title' => $data['title'],
-                    'description' => $data['description'] ?? null,
-                    'severity' => $data['severity'],
-                    'status' => 'open',
-                    'location_name' => $scope->location?->path,
-                    'inspection_required' => (bool) $data['quality_defect_inspection_required'],
-                    'metadata' => [
-                        'source' => [
-                            'type' => 'acceptance_finding',
-                            'acceptance_scope_id' => (int) $scope->id,
-                            'acceptance_session_id' => (int) $session->id,
+                $qualityDefect = $this->qualityDefects->create(
+                    (int) $session->organization_id,
+                    $userId,
+                    [
+                        'project_id' => $session->project_id,
+                        'title' => $data['title'],
+                        'description' => $data['description'] ?? null,
+                        'severity' => $data['severity'],
+                        'location_name' => $scope->location?->path,
+                        'inspection_required' => (bool) $data['quality_defect_inspection_required'],
+                        'metadata' => [
+                            'source' => [
+                                'type' => 'acceptance_finding',
+                                'acceptance_scope_id' => (int) $scope->id,
+                                'acceptance_session_id' => (int) $session->id,
+                            ],
                         ],
                     ],
-                ]);
+                );
             }
 
             $finding = AcceptanceFinding::query()->create([
@@ -303,7 +304,7 @@ final class HandoverAcceptanceService
         $package = $document->package()->firstOrFail();
         $organization = Organization::query()->find((int) $package->organization_id);
 
-        if (!$organization instanceof Organization) {
+        if (! $organization instanceof Organization) {
             throw new DomainException(trans_message('handover_acceptance.errors.organization_not_found'));
         }
 
@@ -418,7 +419,7 @@ final class HandoverAcceptanceService
 
     private function assertStatus(AcceptanceScope $scope, array $allowed): void
     {
-        if (!in_array($scope->status, $allowed, true)) {
+        if (! in_array($scope->status, $allowed, true)) {
             throw new DomainException(trans_message('handover_acceptance.errors.invalid_status'));
         }
     }
@@ -437,11 +438,13 @@ final class HandoverAcceptanceService
 
         if ($items->contains(fn (AcceptanceChecklistItem $item): bool => $item->status === 'rejected')) {
             $checklist->update(['status' => 'findings_open']);
+
             return;
         }
 
         if ($items->isNotEmpty() && $items->every(fn (AcceptanceChecklistItem $item): bool => $item->status === 'accepted')) {
             $checklist->update(['status' => 'completed']);
+
             return;
         }
 

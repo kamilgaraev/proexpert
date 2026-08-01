@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use App\Models\Organization;
 use App\Models\User;
 use DomainException;
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 final class WorkforceEmployeeService
 {
+    public function __construct(private readonly WorkforceCapacityOwnerMutationBridge $capacityCapture) {}
+
     public function paginate(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
         return WorkforceEmployee::query()
@@ -50,6 +53,10 @@ final class WorkforceEmployeeService
 
     public function update(int $organizationId, int $employeeId, array $payload): WorkforceEmployee
     {
+        if (array_key_exists('employment_status', $payload) || array_key_exists('dismissal_date', $payload)) {
+            throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
+        }
+
         return DB::transaction(function () use ($organizationId, $employeeId, $payload): WorkforceEmployee {
             $this->lockOrganization($organizationId);
             $employee = $this->find($organizationId, $employeeId);
@@ -63,16 +70,17 @@ final class WorkforceEmployeeService
 
     public function dismiss(int $organizationId, int $employeeId, ?string $dismissalDate = null): WorkforceEmployee
     {
-        $employee = $this->find($organizationId, $employeeId);
-        $date = $dismissalDate ?? now()->toDateString();
-
-        if ($employee->hire_date !== null && Carbon::parse($date)->lt(Carbon::parse($employee->hire_date))) {
-            throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
-        }
-
-        DB::transaction(function () use ($employee, $organizationId, $date): void {
+        return DB::transaction(function () use ($organizationId, $employeeId, $dismissalDate): WorkforceEmployee {
             $this->lockOrganization($organizationId);
+            $employee = $this->find($organizationId, $employeeId);
+            $date = $dismissalDate ?? now()->toDateString();
+
+            if ($employee->hire_date !== null && Carbon::parse($date)->lt(Carbon::parse($employee->hire_date))) {
+                throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
+            }
+
             $this->assertDismissalDoesNotChangeLockedPayrollSource($organizationId, (int) $employee->id, $date);
+            $captureDraft = $this->capacityCapture->beginDismissal($organizationId, (int) $employee->id, $date);
             $employee->update([
                 'employment_status' => 'dismissed',
                 'dismissal_date' => $date,
@@ -90,9 +98,19 @@ final class WorkforceEmployeeService
                     'valid_to' => $date,
                     'updated_at' => now(),
                 ]);
-        });
+            DB::table('workforce_employee_assignments')
+                ->where('organization_id', $organizationId)
+                ->where('employee_id', $employee->id)
+                ->where('status', 'active')
+                ->whereDate('valid_from', '>', $date)
+                ->update([
+                    'status' => 'cancelled',
+                    'updated_at' => now(),
+                ]);
+            $this->capacityCapture->finishDismissal($captureDraft);
 
-        return $employee->refresh()->load('user:id,name,email,current_organization_id');
+            return $employee->refresh()->load('user:id,name,email,current_organization_id');
+        });
     }
 
     private function lockOrganization(int $organizationId): void
@@ -110,7 +128,7 @@ final class WorkforceEmployeeService
             ->where('organization_id', $organizationId)
             ->find($employeeId);
 
-        if (!$employee) {
+        if (! $employee) {
             throw new DomainException(trans_message('workforce.errors.employee_not_found'));
         }
 
@@ -190,7 +208,7 @@ final class WorkforceEmployeeService
             ->where('current_organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('workforce.errors.user_not_found'));
         }
     }

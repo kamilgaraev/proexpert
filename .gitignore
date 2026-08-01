@@ -47,6 +47,8 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 
 # Markdown documentation file
 *.md
+!docs/superpowers/plans/2026-07-26-reports-plan-1b-execution-exports.md
+!docs/superpowers/plans/2026-07-26-reports-plan-1c-catalog-workspace-quality.md
 !README.md
 !CHANGELOG.md
 !pherp-98-wip-forecast-to-complete-model.md
@@ -67,3 +69,18 @@ rr
 rr.exe
 .rr
 .worktrees/
+/build/reports/task-7-composer-evidence.json
+/build/reports/plan-1a-route-snapshot.json
+/build/reports/plan-1a-command-ledger.json
+/build/reports/plan-1a-ci-authorization.json
+/build/reports/plan-1a-ci-malformed.json
+/build/reports/plan-1a-completion.json
+/build/reports/plan-1b-completion.json
+/build/reports/plan-1c-platform-completion.json
+/build/reports/gates/
+/build/reports/conformance/
+/build/reports/report-catalog-activation-inputs.json
+/build/reports/report-catalog-activation.json
+/build/reports/report-release-gate-bundle.json
+/build/reports/report-release-evidence.json
+/build/reports/report-cleanup-evidence.json

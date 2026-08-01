@@ -1,0 +1,13 @@
+{
+    "status": "task_7_composer_contract_passed",
+    "baseline_commit_sha": "{{BASELINE_COMMIT}}",
+    "reviewed_commit_sha": "{{REVIEWED_COMMIT}}",
+    "composer_json_before_sha256": "{{COMPOSER_JSON_BEFORE_SHA256}}",
+    "composer_lock_before_sha256": "{{COMPOSER_LOCK_BEFORE_SHA256}}",
+    "composer_json_after_sha256": "{{COMPOSER_JSON_AFTER_SHA256}}",
+    "composer_lock_after_sha256": "{{COMPOSER_LOCK_AFTER_SHA256}}",
+    "root_constraint": "^2.6",
+    "locked_opis_version": "2.6.0",
+    "added_packages": ["opis/json-schema", "opis/string", "opis/uri"],
+    "content_hash": "{{CONTENT_HASH}}"
+}

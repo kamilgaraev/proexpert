@@ -71,15 +71,6 @@ interface UserRepositoryInterface extends BaseRepositoryInterface // Новое 
     ): LengthAwarePaginator;
 
     /**
-     * Получить данные по активности прорабов (из логов).
-     *
-     * @param int $organizationId
-     * @param array $filters (project_id, user_id, date_from, date_to)
-     * @return Collection
-     */
-    public function getForemanActivity(int $organizationId, array $filters = []): Collection;
-
-    /**
      * Найти пользователей с одной из указанных ролей в организации.
      *
      * @param int $organizationId
@@ -88,21 +79,4 @@ interface UserRepositoryInterface extends BaseRepositoryInterface // Новое 
      */
     public function findByRolesInOrganization(int $organizationId, array $roleSlugs): Collection;
 
-    /**
-     * Получить детальные данные по использованию материалов прорабами.
-     *
-     * @param int $organizationId
-     * @param array $filters
-     * @return Collection
-     */
-    public function getForemanMaterialLogs(int $organizationId, array $filters = []): Collection;
-
-    /**
-     * Получить детальные данные по выполненным работам прорабов.
-     *
-     * @param int $organizationId
-     * @param array $filters
-     * @return Collection
-     */
-    public function getForemanCompletedWorks(int $organizationId, array $filters = []): Collection;
 }

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:report-candidate-validation:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_id", "candidate_manifest", "items", "schema_version", "status"],
+  "properties": {
+    "artifact_id": {"const": "report_candidate_validation"},
+    "candidate_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codes", "path", "sha256"],
+      "properties": {
+        "codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/code"}
+        },
+        "path": {"const": "tests/Fixtures/Reporting/Publication/candidate.valid.yaml"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "definition_hash", "failure_codes", "passed"],
+        "properties": {
+          "code": {"$ref": "#/$defs/code"},
+          "definition_hash": {"$ref": "#/$defs/sha256"},
+          "failure_codes": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {"type": "string"}
+          },
+          "passed": {"const": true}
+        }
+      }
+    },
+    "schema_version": {"const": "1.0.0"},
+    "status": {"const": "passed"}
+  },
+  "$defs": {
+    "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

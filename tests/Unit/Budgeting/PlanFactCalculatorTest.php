@@ -94,6 +94,7 @@ final class PlanFactCalculatorTest extends TestCase
             scenarioId: 3,
             scenarioUuid: 'scenario-uuid',
             projectId: null,
+            projectIds: null,
             responsibilityCenterId: null,
             responsibilityCenterUuid: null,
             budgetArticleId: null,

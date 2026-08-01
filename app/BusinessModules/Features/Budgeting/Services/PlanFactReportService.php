@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Budgeting\DTOs\PlanFactDrillDownKey;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactDrillDownResult;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactSourceAggregate;
+use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
 use App\BusinessModules\Features\Budgeting\Models\BudgetScenario;
@@ -29,7 +30,7 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use function trans_message;
 
-final class PlanFactReportService
+final class PlanFactReportService implements PlanFactSourceSnapshotReport
 {
     private const ACTIVE_COMMITMENT_STATUSES = [
         PaymentDocumentStatus::SUBMITTED,
@@ -47,7 +48,17 @@ final class PlanFactReportService
 
     public function report(array $input): array
     {
-        $context = $this->resolveContext($input);
+        return $this->reportWithProjectScope($input, null);
+    }
+
+    public function reportForProjectScope(array $input, array $projectIds): array
+    {
+        return $this->reportWithProjectScope($input, $this->normalizeProjectScopeIds($projectIds));
+    }
+
+    private function reportWithProjectScope(array $input, ?array $projectIds): array
+    {
+        $context = $this->resolveContext($input, $projectIds);
         /** @var PlanFactReportFilters $filters */
         $filters = $context['filters'];
 
@@ -105,7 +116,17 @@ final class PlanFactReportService
 
     public function drillDown(array $input): array
     {
-        $context = $this->resolveContext($input);
+        return $this->drillDownWithProjectScope($input, null);
+    }
+
+    public function drillDownForProjectScope(array $input, array $projectIds): array
+    {
+        return $this->drillDownWithProjectScope($input, $this->normalizeProjectScopeIds($projectIds));
+    }
+
+    private function drillDownWithProjectScope(array $input, ?array $projectIds): array
+    {
+        $context = $this->resolveContext($input, $projectIds);
         /** @var PlanFactReportFilters $filters */
         $filters = $context['filters'];
         $key = PlanFactDrillDownKey::decode((string) $input['drill_down_key']);
@@ -147,7 +168,7 @@ final class PlanFactReportService
         ))->toArray();
     }
 
-    private function resolveContext(array $input): array
+    private function resolveContext(array $input, ?array $projectIds = null): array
     {
         $organizationId = (int) ($input['organization_id'] ?? 0);
         if ($organizationId <= 0) {
@@ -195,6 +216,7 @@ final class PlanFactReportService
                 scenarioId: (int) $scenario->id,
                 scenarioUuid: (string) $scenario->uuid,
                 projectId: $projectId,
+                projectIds: $projectIds,
                 responsibilityCenterId: $responsibilityCenterId,
                 responsibilityCenterUuid: $responsibilityCenterUuid,
                 budgetArticleId: $budgetArticleId,
@@ -408,6 +430,23 @@ final class PlanFactReportService
         }
 
         return array_values(array_unique($normalized));
+    }
+
+    private function normalizeProjectScopeIds(array $projectIds): array
+    {
+        $normalized = [];
+        foreach ($projectIds as $projectId) {
+            if (!is_int($projectId) || $projectId < 1 || isset($normalized[$projectId])) {
+                throw new InvalidArgumentException('plan_fact_project_scope_invalid');
+            }
+
+            $normalized[$projectId] = $projectId;
+        }
+
+        $normalized = array_values($normalized);
+        sort($normalized, SORT_NUMERIC);
+
+        return $normalized;
     }
 
     private function nullableCurrency(mixed $value): ?string
@@ -627,6 +666,8 @@ final class PlanFactReportService
             ->when($filters->budgetArticleId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('budget_lines.budget_article_id', $filters->budgetArticleId))
             ->when($filters->responsibilityCenterId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where('budget_lines.responsibility_center_id', $filters->responsibilityCenterId))
             ->when($filters->currency !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->whereRaw("{$currencyExpression} = ?", [$filters->currency]));
+
+        $this->applyProjectScope($query, $filters->projectIds, 'budget_lines.project_id');
     }
 
     private function applyOperationalFilters(
@@ -644,6 +685,23 @@ final class PlanFactReportService
             ->when($filters->budgetArticleId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where($budgetArticleColumn, $filters->budgetArticleId))
             ->when($filters->responsibilityCenterId !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->where($responsibilityCenterColumn, $filters->responsibilityCenterId))
             ->when($filters->currency !== null, fn (QueryBuilder $builder): QueryBuilder => $builder->whereRaw("{$currencyExpression} = ?", [$filters->currency]));
+
+        $this->applyProjectScope($query, $filters->projectIds, $projectExpression);
+    }
+
+    private function applyProjectScope(QueryBuilder $query, ?array $projectIds, string $projectExpression): void
+    {
+        if ($projectIds === null) {
+            return;
+        }
+
+        if ($projectIds === []) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $query->whereIn(DB::raw($projectExpression), $projectIds);
     }
 
     private function dimensionsForAggregates(PlanFactReportFilters $filters, array $aggregates): PlanFactDimensions
@@ -1134,6 +1192,8 @@ final class PlanFactReportService
             $query->whereRaw("UPPER(COALESCE(NULLIF(payment_transactions.currency, ''), payment_documents.currency, 'RUB')) = ?", [$filters->currency]);
         }
 
+        $this->applyProjectScope($query, $filters->projectIds, 'COALESCE(payment_transactions.project_id, payment_documents.project_id)');
+
         return (int) $query->count();
     }
 
@@ -1157,17 +1217,22 @@ final class PlanFactReportService
             $query->whereRaw("UPPER(COALESCE(NULLIF(currency, ''), 'RUB')) = ?", [$filters->currency]);
         }
 
+        $this->applyProjectScope($query, $filters->projectIds, 'payment_documents.project_id');
+
         return (int) $query->count();
     }
 
     private function paymentSchedulesCount(PlanFactReportFilters $filters): int
     {
-        return (int) DB::table('payment_schedules')
+        $query = DB::table('payment_schedules')
             ->join('payment_documents', 'payment_schedules.payment_document_id', '=', 'payment_documents.id')
             ->where('payment_documents.organization_id', $filters->organizationId)
             ->where('payment_schedules.status', 'pending')
-            ->whereBetween('payment_schedules.due_date', [$filters->periodStart, $filters->periodEnd])
-            ->count();
+            ->whereBetween('payment_schedules.due_date', [$filters->periodStart, $filters->periodEnd]);
+
+        $this->applyProjectScope($query, $filters->projectIds, 'payment_documents.project_id');
+
+        return (int) $query->count();
     }
 
     private function versionToArray(BudgetVersion $version): array

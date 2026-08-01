@@ -42,6 +42,7 @@ final readonly class PlanFactReportFilters
         public int $scenarioId,
         public string $scenarioUuid,
         public ?int $projectId,
+        public ?array $projectIds,
         public ?int $responsibilityCenterId,
         public ?string $responsibilityCenterUuid,
         public ?int $budgetArticleId,

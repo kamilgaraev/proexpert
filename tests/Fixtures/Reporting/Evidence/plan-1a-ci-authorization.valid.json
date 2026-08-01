@@ -1,0 +1,376 @@
+{
+  "artifact_id": "plan_1a_ci_authorization",
+  "schema_version": "1.0.0",
+  "status": "passed",
+  "verification_mode": "hermetic_http",
+  "producer_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "executed_at": "2026-07-26T00:00:00Z",
+  "matrix": "authorization",
+  "counts": {
+    "cases": 22,
+    "passed": 22,
+    "allowed_cases": 7,
+    "denied_cases": 15,
+    "http_requests": 28,
+    "assertions": 132
+  },
+  "cases": [
+    {
+      "case_id": "unauthenticated_catalog_denied",
+      "status": 401,
+      "request_count": 1,
+      "response_statuses": [
+        401
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "non_admin_catalog_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "module_disabled_catalog_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "missing_global_permission_catalog_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "view_actor_catalog_allowed",
+      "status": 200,
+      "request_count": 1,
+      "response_statuses": [
+        200
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 1,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "view_actor_run_status_allowed",
+      "status": 200,
+      "request_count": 1,
+      "response_statuses": [
+        200
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 1,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "view_actor_rows_allowed",
+      "status": 200,
+      "request_count": 1,
+      "response_statuses": [
+        200
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 1,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "view_actor_run_create_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "view_actor_export_create_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "view_actor_download_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "runner_run_create_allowed",
+      "status": 201,
+      "request_count": 1,
+      "response_statuses": [
+        201
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 1,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "runner_run_retry_allowed",
+      "status": 202,
+      "request_count": 1,
+      "response_statuses": [
+        202
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 1,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "runner_run_cancel_allowed",
+      "status": 200,
+      "request_count": 1,
+      "response_statuses": [
+        200
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 1,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "runner_export_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "exporter_export_allowed",
+      "status": 201,
+      "request_count": 1,
+      "response_statuses": [
+        201
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 1,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "exporter_download_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "downloader_revoked_definition_denied",
+      "status": 403,
+      "request_count": 1,
+      "response_statuses": [
+        403
+      ],
+      "response_codes": [
+        "REPORT_SCOPE_FORBIDDEN"
+      ],
+      "action_calls": 0,
+      "actor_loads": 1,
+      "assertions": 6
+    },
+    {
+      "case_id": "manage_does_not_expand_operational_permissions",
+      "status": 403,
+      "request_count": 3,
+      "response_statuses": [
+        403,
+        403,
+        403
+      ],
+      "response_codes": [
+        null,
+        null,
+        null
+      ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "foreign_and_nonexistent_filter_indistinguishable",
+      "status": 422,
+      "request_count": 2,
+      "response_statuses": [
+        422,
+        422
+      ],
+      "response_codes": [
+        "REPORT_FILTER_VALUE_NOT_FOUND",
+        "REPORT_FILTER_VALUE_NOT_FOUND"
+      ],
+      "action_calls": 2,
+      "actor_loads": 2,
+      "assertions": 6
+    },
+    {
+      "case_id": "foreign_and_nonexistent_source_indistinguishable",
+      "status": 422,
+      "request_count": 2,
+      "response_statuses": [
+        422,
+        422
+      ],
+      "response_codes": [
+        "REPORT_FILTER_VALUE_NOT_FOUND",
+        "REPORT_FILTER_VALUE_NOT_FOUND"
+      ],
+      "action_calls": 2,
+      "actor_loads": 2,
+      "assertions": 6
+    },
+    {
+      "case_id": "blocked_actor_denied_after_context_reload",
+      "status": 403,
+      "request_count": 2,
+      "response_statuses": [
+        200,
+        403
+      ],
+      "response_codes": [
+        null,
+        "REPORT_SCOPE_FORBIDDEN"
+      ],
+      "action_calls": 1,
+      "actor_loads": 2,
+      "assertions": 6
+    },
+    {
+      "case_id": "deleted_actor_denied_after_context_reload",
+      "status": 403,
+      "request_count": 2,
+      "response_statuses": [
+        200,
+        403
+      ],
+      "response_codes": [
+        null,
+        "REPORT_SCOPE_FORBIDDEN"
+      ],
+      "action_calls": 1,
+      "actor_loads": 2,
+      "assertions": 6
+    }
+  ],
+  "source_files": {
+    "app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Application/Access/ReportActorLoader.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Application/Access/ReportExecutionContextFactory.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Application/Errors/ReportErrorResponseFactory.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Application/Input/ReportFilterReferenceResolver.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportCatalogController.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportDrillDownController.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRowsController.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Middleware/RenderReportErrors.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDownloadLinkRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDrillDownRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportExportRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportRunRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportCatalogRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportRowsRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportExportRouteRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportFormRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRouteRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRunRouteRequest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/routes.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/Domain/Authorization/Http/Middleware/AuthorizeMiddleware.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/Domain/Authorization/Http/Middleware/InterfaceMiddleware.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/Http/Middleware/JwtMiddleware.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/Http/Middleware/SetOrganizationContext.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/Modules/Middleware/ModuleAccessMiddleware.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/Support/Routing/AdminRouteStack.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bootstrap/app.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bootstrap/providers.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "routes/api.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tests/Feature/Api/V1/Admin/Reporting/ReportingAuthorizationMatrixTest.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tests/Support/Reporting/FakeReportingActions.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tests/Support/Reporting/HermeticReportingHttpHarness.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}

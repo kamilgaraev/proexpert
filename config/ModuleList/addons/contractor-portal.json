@@ -34,6 +34,7 @@
     "contractor_marketplace.profile.view",
     "contractor_marketplace.profile.edit",
     "contractor_marketplace.profile.publish",
+    "contractor_marketplace.reports.export",
     "contractor_marketplace.offers.view",
     "contractor_marketplace.offers.create",
     "contractor_marketplace.offers.cancel",

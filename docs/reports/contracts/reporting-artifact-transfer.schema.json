@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:reporting-artifact-transfer:v1",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/activation" },
+    { "$ref": "#/$defs/adminEvidence" },
+    { "$ref": "#/$defs/release" }
+  ],
+  "$defs": {
+    "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "schema_version", "kind", "status", "source_path", "destination_path", "schema_path", "source_sha256", "destination_sha256", "schema_sha256", "transfer_schema_sha256", "release_sha", "source_commit_sha", "activation_commit_sha", "generated_at"],
+      "properties": {
+        "artifact_id": { "type": "string" },
+        "schema_version": { "const": "1.0.0" },
+        "kind": { "enum": ["activation", "admin-evidence", "release"] },
+        "status": { "const": "artifact_transferred" },
+        "source_path": { "type": "string", "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9_.\\-/]+$" },
+        "destination_path": { "type": "string", "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9_.\\-/]+$" },
+        "schema_path": { "type": "string", "pattern": "^docs/reports/contracts/[A-Za-z0-9_.-]+\\.schema\\.json$" },
+        "source_sha256": { "$ref": "#/$defs/sha256" },
+        "destination_sha256": { "$ref": "#/$defs/sha256" },
+        "schema_sha256": { "$ref": "#/$defs/sha256" },
+        "transfer_schema_sha256": { "$ref": "#/$defs/sha256" },
+        "release_sha": { "$ref": "#/$defs/sha1" },
+        "source_commit_sha": { "$ref": "#/$defs/sha1" },
+        "activation_commit_sha": { "$ref": "#/$defs/sha1" },
+        "admin_evidence_commit_sha": { "$ref": "#/$defs/sha1" },
+        "generated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "activation": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        { "properties": { "artifact_id": { "const": "report_catalog_activation_transfer" }, "kind": { "const": "activation" }, "source_path": { "const": "build/reports/report-catalog-activation.json" }, "destination_path": { "const": "build/reports/intake/report-catalog-activation.json" }, "schema_path": { "const": "docs/reports/contracts/report-catalog-activation.schema.json" } } },
+        { "not": { "required": ["admin_evidence_commit_sha"] } }
+      ]
+    },
+    "adminEvidence": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        { "required": ["admin_evidence_commit_sha"], "properties": { "artifact_id": { "const": "plan4_admin_evidence_transfer" }, "kind": { "const": "admin-evidence" }, "source_path": { "const": "docs/reports/admin-evidence.json" }, "destination_path": { "const": "build/reports/intake/plan-4-admin-evidence.json" }, "schema_path": { "const": "docs/reports/contracts/report-admin-evidence.schema.json" } } }
+      ]
+    },
+    "release": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        { "required": ["admin_evidence_commit_sha"], "properties": { "artifact_id": { "const": "report_release_evidence_transfer" }, "kind": { "const": "release" }, "source_path": { "const": "build/reports/report-release-evidence.json" }, "destination_path": { "const": "build/reports/intake/report-release-evidence.json" }, "schema_path": { "const": "docs/reports/contracts/report-quality-evidence.schema.json" } } }
+      ]
+    }
+  }
+}

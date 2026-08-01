@@ -1,0 +1,100 @@
+name: Workforce Capacity PostgreSQL Contract
+
+on:
+  pull_request:
+    paths:
+      - 'app/BusinessModules/Features/WorkforceManagement/Reporting/Capacity/**'
+      - 'app/BusinessModules/Features/WorkforceManagement/migrations/2026_08_01_000030_create_workforce_capacity_source.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Http/Controllers/WorkforceEmployeeController.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceEmployeeService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceProService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/WorkforceManagementServiceProvider.php'
+      - 'tests/Feature/WorkforceManagement/Reporting/Capacity/**'
+      - 'tests/Support/Reporting/PostgresProcessRaceHarness.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/workforce-capacity-postgres-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/BusinessModules/Features/WorkforceManagement/Reporting/Capacity/**'
+      - 'app/BusinessModules/Features/WorkforceManagement/migrations/2026_08_01_000030_create_workforce_capacity_source.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Http/Controllers/WorkforceEmployeeController.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceEmployeeService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceProService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/WorkforceManagementServiceProvider.php'
+      - 'tests/Feature/WorkforceManagement/Reporting/Capacity/**'
+      - 'tests/Support/Reporting/PostgresProcessRaceHarness.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/workforce-capacity-postgres-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  workforce-capacity-postgres-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: most_workforce_capacity_testing
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d most_workforce_capacity_testing"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      APP_DEBUG: false
+      CI: true
+      DB_CONNECTION: pgsql
+      DB_URL: ''
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: most_workforce_capacity_testing
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      MAIL_MAILER: array
+      WORKFORCE_CAPACITY_POSTGRES_TESTS: 1
+    steps:
+      - name: Checkout exact workflow SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, pcntl, pdo_pgsql, pgsql, posix
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Verify exact checkout and PostgreSQL prerequisites
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          php -r "if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) { fwrite(STDERR, \"pdo_pgsql is unavailable\\n\"); exit(1); }"
+          test -f tests/Feature/WorkforceManagement/Reporting/Capacity/WorkforceCapacitySourcePostgresTest.php
+
+      - name: Prepare isolated PostgreSQL schema
+        run: php artisan migrate:fresh --force
+
+      - name: Run workforce-capacity PostgreSQL contract
+        run: >-
+          php vendor/bin/phpunit tests/Feature/WorkforceManagement/Reporting/Capacity/WorkforceCapacitySourcePostgresTest.php
+          --group=postgresql
+          --fail-on-skipped

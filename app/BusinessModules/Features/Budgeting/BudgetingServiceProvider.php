@@ -4,14 +4,22 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Features\Budgeting\Console\Commands\RecalculateEpmDataMartSnapshotsCommand;
+use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
+use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
+use App\BusinessModules\Features\Budgeting\Infrastructure\Persistence\EloquentBudgetingReportSourceCloseStore;
+use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportValidator;
+use App\BusinessModules\Features\Budgeting\Services\BudgetingReportSourceCloseService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetLineService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodClosureService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodReopenService;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactReportBindingFactory;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\Budgeting\Services\BudgetVersionService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastReadService;
@@ -20,11 +28,15 @@ use App\BusinessModules\Features\Budgeting\Services\CashGapOpeningBalanceService
 use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterService;
 use App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregator;
-use App\BusinessModules\Features\Budgeting\Services\EpmDataMartHealthService;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartFreshnessService;
+use App\BusinessModules\Features\Budgeting\Services\EpmDataMartHealthService;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartPayloadProjector;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationCoordinator;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationService;
+use App\BusinessModules\Features\Budgeting\Services\PlanFactReportService;
+use App\BusinessModules\Features\Budgeting\Services\PlanFactReportSourceSnapshotAdapter;
+use App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotMaterializer;
+use App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotWriter;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardService;
 use Illuminate\Support\ServiceProvider;
@@ -33,6 +45,15 @@ final class BudgetingServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->bind(BudgetingReportSourceCloseStore::class, EloquentBudgetingReportSourceCloseStore::class);
+        $this->app->singleton(BudgetingReportSourceCloseService::class);
+        $this->app->bind(PlanFactSourceSnapshotReport::class, PlanFactReportService::class);
+        $this->app->singleton(PlanFactSourceSnapshotMaterializer::class);
+        $this->app->singleton(PlanFactSourceSnapshotWriter::class);
+        $this->app->singleton(PlanFactReportSourceSnapshotAdapter::class);
+        $this->app->singleton(BudgetPlanFactCandidateContract::class);
+        $this->app->singleton(BudgetPlanFactReportBindingFactory::class);
+        $this->app->singleton(BudgetPlanFactPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(BudgetCatalogService::class);
         $this->app->singleton(BudgetVersionService::class);
         $this->app->singleton(BudgetLineService::class);
@@ -59,7 +80,15 @@ final class BudgetingServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->loadMigrationsFrom(__DIR__ . '/migrations');
+        $this->app->afterResolving(
+            ReportDefinitionBindingAssembler::class,
+            function (ReportDefinitionBindingAssembler $assembler): void {
+                $this->app
+                    ->make(BudgetPlanFactPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+            },
+        );
+        $this->loadMigrationsFrom(__DIR__.'/migrations');
 
         if ($this->app->runningInConsole()) {
             $this->commands([
@@ -67,7 +96,7 @@ final class BudgetingServiceProvider extends ServiceProvider
             ]);
         }
 
-        $routesPath = __DIR__ . '/routes.php';
+        $routesPath = __DIR__.'/routes.php';
         if (is_file($routesPath)) {
             require $routesPath;
         }

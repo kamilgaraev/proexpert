@@ -1,0 +1,83 @@
+{
+  "plan": "1a",
+  "status": "passed",
+  "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "contract_lock_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "resource_schema_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "route_snapshot_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "commands": [
+    {
+      "command_id": "plan1a_contract_tests",
+      "command": "pinned phpunit aggregate",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 504,
+      "assertions": 5074,
+      "skipped": 0,
+      "executed_at": "2026-07-26T00:00:00Z"
+    },
+    {
+      "command_id": "plan1a_static_analysis",
+      "command": "pinned phpstan analyse",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 0,
+      "assertions": 0,
+      "skipped": 0,
+      "executed_at": "2026-07-26T00:00:00Z"
+    }
+  ],
+  "ci_http_matrices": {
+    "authorization": {
+      "status": "passed",
+      "verification_mode": "hermetic_http",
+      "cases": 22,
+      "passed": 22,
+      "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "malformed_requests": {
+      "status": "passed",
+      "verification_mode": "hermetic_http",
+      "cases": 20,
+      "passed": 20,
+      "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "task_4e": {
+    "subject": "feat[reports]: типизировать ресурсы и текущую авторизацию",
+    "parent_commit_sha": "1934f947a44aa5221b5aa4cbd8c03963f5f1c005",
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "lineage": ["Task 4a exact53", "Task 4b exact39", "Task 4a2 exact16", "Task 4c exact15", "Task 4d exact6", "Task 4e exact78"],
+    "manifest_count": 78,
+    "authorization_matrices": {
+      "organization_scope": ["test_inactive_actor_is_denied", "test_deleted_actor_is_denied", "test_inactive_organization_membership_is_denied", "test_inactive_anchor_organization_is_denied", "test_deleted_anchor_organization_is_denied", "test_holding_scope_contains_anchor_and_active_direct_child", "test_detached_child_is_not_inherited", "test_child_of_foreign_holding_is_not_inherited", "test_grandchild_is_not_inherited", "test_inactive_and_deleted_children_are_not_inherited", "test_child_access_is_inherited_only_through_current_holding_parent"],
+      "project_scope": ["test_all_project_mode_includes_every_accessible_active_project", "test_assigned_project_mode_includes_only_active_assignments", "test_inactive_project_assignment_is_excluded", "test_archived_project_is_excluded", "test_owner_and_active_participant_projects_are_included", "test_foreign_project_is_excluded", "test_exact_selected_project_subset_is_preserved", "test_newly_accessible_unrelated_project_does_not_widen_exact_scope"],
+      "current_abac": ["test_closed_abac_behavior_matrix::current organization role", "test_closed_abac_behavior_matrix::revoked assignment", "test_closed_abac_behavior_matrix::expired assignment", "test_closed_abac_behavior_matrix::inactive assignment", "test_closed_abac_behavior_matrix::system permission removed", "test_closed_abac_behavior_matrix::custom permission removed", "test_closed_abac_behavior_matrix::inactive condition ignored", "test_closed_abac_behavior_matrix::valid time condition", "test_closed_abac_behavior_matrix::expired time condition", "test_closed_abac_behavior_matrix::fresh project count condition", "test_closed_abac_behavior_matrix::request-only condition fails closed", "test_closed_abac_behavior_matrix::malformed condition fails closed", "test_closed_abac_behavior_matrix::missing required project fact", "test_closed_abac_behavior_matrix::singular project role", "test_closed_abac_behavior_matrix::project parent organization mismatch", "test_closed_abac_behavior_matrix::one bad assignment does not mask a valid assignment"],
+      "typed_resources": ["test_empty_registry_accepts_empty_scope", "test_exact_adapter_and_decision_identity_are_accepted", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::non-adapter", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::invalid kind", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::duplicate exact kind", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::all wildcard", "test_invalid_duplicate_and_wildcard_adapters_are_rejected::generic wildcard", "test_unknown_resource_kind_is_normalized_to_scope_forbidden", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::actor id", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::organization id", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::project id", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::kind", "test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::resource id", "test_first_actor_decision_cannot_be_replayed_for_second_actor", "test_handler_exceptions_are_normalized_to_scope_forbidden::contract exception", "test_handler_exceptions_are_normalized_to_scope_forbidden::runtime exception", "test_explicit_denial_is_normalized_to_scope_forbidden"],
+      "repeatable_read_races": ["test_membership_revocation_after_snapshot_affects_only_next_authorization", "test_project_assignment_revocation_after_snapshot_affects_only_next_authorization", "test_holding_child_reparent_after_snapshot_affects_only_next_authorization", "test_resource_transfer_after_snapshot_cannot_mix_with_new_permission_facts", "test_assignment_revocation_is_snapshot_consistent_and_next_invocation_denies", "test_condition_revocation_is_snapshot_consistent_and_uncached_next_invocation_denies", "test_custom_permission_definition_revocation_is_snapshot_consistent_and_next_invocation_denies", "test_system_role_change_is_snapshot_consistent_and_next_invocation_denies"]
+    },
+    "ownership_audit": {"task_4e": 78, "task_5": 30, "union": 108, "overlap": 0, "unowned": 0, "extra": 0},
+    "migration_cutover": "static_contract_passed_not_executed_locally",
+    "untyped_compatibility_absent": true,
+    "request_global_authority_absent": true
+  },
+  "execution_phase": {
+    "name": "POST_TASK_4J_PRE_TASK_5",
+    "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "task_4e_commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
+    "task_4f_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "task_4g_commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "task_4h_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "task_4i_commit_sha": "1111111111111111111111111111111111111111",
+    "task_4j_commit_sha": "2222222222222222222222222222222222222222",
+    "task_5_commit_sha": null,
+    "task_5_state": "pending",
+    "dispatch_allowlist": [
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php"
+    ],
+    "committed_tree_projection_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  }
+}

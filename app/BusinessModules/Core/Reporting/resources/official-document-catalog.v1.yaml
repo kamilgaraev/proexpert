@@ -1,0 +1,9 @@
+catalog: official-document-catalog.v1
+contract_version: 1.0.0
+definitions:
+  - code: official_material_usage_m29
+    title_key: reports.official.official_material_usage_m29
+    renderer_version: 1.0.0
+    publication_readiness: blocked
+    legal_retention_policy: unassigned
+    seal_requires: [opening_balance, receipts, actual_consumption, approved_normative_consumption, closing_balance, source_refs, versioned_coefficients]

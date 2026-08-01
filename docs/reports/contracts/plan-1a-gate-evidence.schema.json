@@ -1,0 +1,2334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:plan-1a-gate-evidence:v1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/route"
+    },
+    {
+      "$ref": "#/$defs/ledgerExact"
+    },
+    {
+      "$ref": "#/$defs/authorization"
+    },
+    {
+      "$ref": "#/$defs/malformed"
+    }
+  ],
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "taskFourEEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "parent_commit_sha",
+        "lineage",
+        "manifest_count",
+        "typed_resource_contract",
+        "typed_decision_contract",
+        "queue_authorization",
+        "prohibitions",
+        "migration_cutover",
+        "resource_registry",
+        "authorization_matrices",
+        "ownership_audit"
+      ],
+      "properties": {
+        "subject": {"const": "feat[reports]: типизировать ресурсы и текущую авторизацию"},
+        "parent_commit_sha": {"const": "1934f947a44aa5221b5aa4cbd8c03963f5f1c005"},
+        "lineage": {
+          "const": ["Task 4a exact53", "Task 4b exact39", "Task 4a2 exact16", "Task 4c exact15", "Task 4d exact6", "Task 4e exact78"]
+        },
+        "manifest_count": {"const": 78},
+        "typed_resource_contract": {"const": "passed"},
+        "typed_decision_contract": {"const": "passed"},
+        "queue_authorization": {"const": "uncached_repeatable_read_passed"},
+        "prohibitions": {"const": "passed"},
+        "migration_cutover": {"const": "static_contract_passed_not_executed_locally"},
+        "resource_registry": {"const": "passed"},
+        "authorization_matrices": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["organization_scope", "project_scope", "current_abac", "typed_resources", "repeatable_read_races"],
+          "properties": {
+            "organization_scope": {"$ref": "#/$defs/organizationMatrix"},
+            "project_scope": {"$ref": "#/$defs/projectMatrix"},
+            "current_abac": {"$ref": "#/$defs/abacMatrix"},
+            "typed_resources": {"$ref": "#/$defs/resourceMatrix"},
+            "repeatable_read_races": {"$ref": "#/$defs/raceMatrix"}
+          }
+        },
+        "ownership_audit": {"$ref": "#/$defs/ownershipAudit"}
+      }
+    },
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "organizationMatrix": {"type": "array", "minItems": 11, "maxItems": 11, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "projectMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "abacMatrix": {"type": "array", "minItems": 16, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "resourceMatrix": {"type": "array", "minItems": 17, "maxItems": 17, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "raceMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "ownershipAudit": {"type": "object", "additionalProperties": false, "required": ["task_4e", "task_5", "union", "overlap", "unowned", "extra"], "properties": {"task_4e": {"const": 78}, "task_5": {"const": 30}, "union": {"const": 108}, "overlap": {"const": 0}, "unowned": {"const": 0}, "extra": {"const": 0}}},
+    "executionPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "head_commit_sha", "task_4e_commit_sha", "task_4f_commit_sha", "task_4g_commit_sha", "task_4h_commit_sha", "task_4i_commit_sha", "task_4j_commit_sha", "task_5_commit_sha", "task_5_state", "dispatch_allowlist", "committed_tree_projection_sha256"],
+      "properties": {
+        "name": {"enum": ["POST_TASK_4J_PRE_TASK_5", "POST_TASK_5"]},
+        "head_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4e_commit_sha": {"const": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d"},
+        "task_4f_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4g_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4h_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4i_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4j_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_5_commit_sha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"},
+        "task_5_state": {"enum": ["pending", "present"]},
+        "dispatch_allowlist": {"type": "array", "minItems": 4, "maxItems": 5, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "committed_tree_projection_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "oneOf": [
+        {"properties": {"name": {"const": "POST_TASK_4J_PRE_TASK_5"}, "task_5_commit_sha": {"type": "null"}, "task_5_state": {"const": "pending"}, "dispatch_allowlist": {"const": [
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php"
+        ]}}},
+        {"properties": {"name": {"const": "POST_TASK_5"}, "task_5_commit_sha": {"$ref": "#/$defs/sha1"}, "task_5_state": {"const": "present"}, "dispatch_allowlist": {"const": [
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php",
+          "app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php"
+        ]}}}
+      ]
+    },
+    "routeItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "methods",
+        "uri",
+        "middleware"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "GET",
+              "HEAD",
+              "POST"
+            ]
+          }
+        },
+        "uri": {
+          "type": "string"
+        },
+        "middleware": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "caseItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "status",
+        "request_count",
+        "response_statuses",
+        "response_codes",
+        "action_calls",
+        "actor_loads",
+        "assertions"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer"
+        },
+        "request_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "response_statuses": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "response_codes": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "action_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actor_loads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "assertions": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "routeSources": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 6,
+      "maxProperties": 6,
+      "properties": {
+        "app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/routes.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/Support/Routing/AdminRouteStack.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bootstrap/app.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bootstrap/providers.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "routes/api.php": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "matrixSources": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 35,
+      "maxProperties": 35,
+      "required": [
+        "app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php",
+        "app/BusinessModules/Core/Reporting/Application/Access/ReportActorLoader.php",
+        "app/BusinessModules/Core/Reporting/Application/Access/ReportExecutionContextFactory.php",
+        "app/BusinessModules/Core/Reporting/Application/Errors/ReportErrorResponseFactory.php",
+        "app/BusinessModules/Core/Reporting/Application/Input/ReportFilterReferenceResolver.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportCatalogController.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportDrillDownController.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRowsController.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Middleware/RenderReportErrors.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDownloadLinkRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDrillDownRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportExportRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportRunRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportCatalogRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportRowsRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportExportRouteRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportFormRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRouteRequest.php",
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRunRouteRequest.php",
+        "app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php",
+        "app/BusinessModules/Core/Reporting/routes.php",
+        "app/Domain/Authorization/Http/Middleware/AuthorizeMiddleware.php",
+        "app/Domain/Authorization/Http/Middleware/InterfaceMiddleware.php",
+        "app/Http/Middleware/JwtMiddleware.php",
+        "app/Http/Middleware/SetOrganizationContext.php",
+        "app/Modules/Middleware/ModuleAccessMiddleware.php",
+        "app/Support/Routing/AdminRouteStack.php",
+        "bootstrap/app.php",
+        "bootstrap/providers.php",
+        "routes/api.php",
+        "tests/Support/Reporting/FakeReportingActions.php",
+        "tests/Support/Reporting/HermeticReportingHttpHarness.php"
+      ],
+      "properties": {
+        "app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Application/Access/ReportActorLoader.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Application/Access/ReportExecutionContextFactory.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Application/Errors/ReportErrorResponseFactory.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Application/Input/ReportFilterReferenceResolver.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportCatalogController.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportDrillDownController.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRowsController.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Middleware/RenderReportErrors.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDownloadLinkRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDrillDownRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportExportRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportRunRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportCatalogRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportRowsRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportExportRouteRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportFormRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRouteRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRunRouteRequest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/BusinessModules/Core/Reporting/routes.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/Domain/Authorization/Http/Middleware/AuthorizeMiddleware.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/Domain/Authorization/Http/Middleware/InterfaceMiddleware.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/Http/Middleware/JwtMiddleware.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/Http/Middleware/SetOrganizationContext.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/Modules/Middleware/ModuleAccessMiddleware.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app/Support/Routing/AdminRouteStack.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bootstrap/app.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bootstrap/providers.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "routes/api.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tests/Feature/Api/V1/Admin/Reporting/ReportingAuthorizationMatrixTest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tests/Support/Reporting/FakeReportingActions.php": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tests/Support/Reporting/HermeticReportingHttpHarness.php": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "schema_version",
+        "status",
+        "verification_mode",
+        "producer_commit_sha",
+        "executed_at",
+        "counts",
+        "topology",
+        "routes",
+        "legacy_uris",
+        "source_files"
+      ],
+      "properties": {
+        "artifact_id": {
+          "const": "plan_1a_route_snapshot"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "status": {
+          "const": "passed"
+        },
+        "verification_mode": {
+          "const": "production_topology_snapshot"
+        },
+        "producer_commit_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "executed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "core_routes",
+            "legacy_routes",
+            "provider_registrations"
+          ],
+          "properties": {
+            "core_routes": {
+              "const": 12
+            },
+            "legacy_routes": {
+              "const": 0
+            },
+            "provider_registrations": {
+              "const": 1
+            }
+          }
+        },
+        "topology": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "global_middleware",
+            "api_middleware"
+          ],
+          "properties": {
+            "global_middleware": {
+              "$ref": "#/$defs/stringList"
+            },
+            "api_middleware": {
+              "$ref": "#/$defs/stringList"
+            }
+          }
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 12,
+          "maxItems": 12,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.catalog"
+                    },
+                    "methods": {
+                      "const": [
+                        "GET",
+                        "HEAD"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/catalog"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.exports.cancel"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/exports/{exportId}/cancel"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view",
+                        "authorize:reports.export"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.exports.download-link"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/exports/{exportId}/download-link"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view",
+                        "authorize:reports.export",
+                        "authorize:reports.download"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.exports.retry"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/exports/{exportId}/retry"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view",
+                        "authorize:reports.export"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.exports.show"
+                    },
+                    "methods": {
+                      "const": [
+                        "GET",
+                        "HEAD"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/exports/{exportId}"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.exports.store"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/runs/{runId}/exports"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view",
+                        "authorize:reports.export"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.runs.cancel"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/runs/{runId}/cancel"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view",
+                        "authorize:reports.run"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.runs.drill-down"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/runs/{runId}/drill-down"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.runs.retry"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/runs/{runId}/retry"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view",
+                        "authorize:reports.run"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.runs.rows"
+                    },
+                    "methods": {
+                      "const": [
+                        "GET",
+                        "HEAD"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/runs/{runId}/rows"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.runs.show"
+                    },
+                    "methods": {
+                      "const": [
+                        "GET",
+                        "HEAD"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/runs/{runId}"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/routeItem"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "admin.reports.runs.store"
+                    },
+                    "methods": {
+                      "const": [
+                        "POST"
+                      ]
+                    },
+                    "uri": {
+                      "const": "api/v1/admin/reports/{reportCode}/runs"
+                    },
+                    "middleware": {
+                      "const": [
+                        "api",
+                        "admin.response",
+                        "auth:api_admin",
+                        "auth.jwt:api_admin",
+                        "organization.context",
+                        "authorize:admin.access",
+                        "interface:admin",
+                        "module.access:reports",
+                        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+                        "authorize:reports.view",
+                        "authorize:reports.run"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false
+        },
+        "legacy_uris": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "api/v1/admin/reports/check-basic-availability"
+            },
+            {
+              "const": "api/v1/admin/reports/check-advanced-availability"
+            },
+            {
+              "const": "api/v1/admin/reports/check-availability"
+            },
+            {
+              "const": "api/v1/admin/reports/material-usage"
+            },
+            {
+              "const": "api/v1/admin/reports/work-completion"
+            },
+            {
+              "const": "api/v1/admin/reports/project-status-summary"
+            },
+            {
+              "const": "api/v1/admin/reports/contract-payments"
+            },
+            {
+              "const": "api/v1/admin/reports/act-reports"
+            },
+            {
+              "const": "api/v1/admin/reports/contractor-settlements"
+            },
+            {
+              "const": "api/v1/admin/reports/warehouse-stock"
+            },
+            {
+              "const": "api/v1/admin/reports/material-movements"
+            },
+            {
+              "const": "api/v1/admin/reports/time-tracking"
+            },
+            {
+              "const": "api/v1/admin/reports/project-profitability"
+            },
+            {
+              "const": "api/v1/admin/reports/project-timelines"
+            },
+            {
+              "const": "api/v1/admin/reports/contractor-summary"
+            },
+            {
+              "const": "api/v1/admin/reports/contractor-detail"
+            },
+            {
+              "const": "api/v1/admin/reports/contractor-detail/{contractorId}"
+            },
+            {
+              "const": "api/v1/admin/reports/foreman-activity"
+            },
+            {
+              "const": "api/v1/admin/reports/official-material-usage"
+            }
+          ],
+          "items": false
+        },
+        "source_files": {
+          "$ref": "#/$defs/routeSources"
+        }
+      }
+    },
+    "ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "schema_version",
+        "status",
+        "verification_mode",
+        "producer_commit_sha",
+        "executed_at",
+        "commands",
+        "task_4e",
+        "execution_phase"
+      ],
+      "properties": {
+        "artifact_id": {
+          "const": "plan_1a_command_ledger"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "status": {
+          "const": "passed"
+        },
+        "verification_mode": {
+          "const": "local_fixed_commands"
+        },
+        "producer_commit_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "executed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "task_4e": {
+          "$ref": "#/$defs/taskFourEEvidence"
+        },
+        "execution_phase": {
+          "$ref": "#/$defs/executionPhase"
+        },
+        "commands": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "command_id",
+                "command",
+                "status",
+                "exit_code",
+                "tests",
+                "assertions",
+                "skipped",
+                "executed_at"
+              ],
+              "properties": {
+                "command_id": {
+                  "const": "plan1a_contract_tests"
+                },
+                "command": {
+                  "type": "string",
+                  "pattern": " phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest\\\\.php .*tests/Architecture/Reporting/PlanOneAScopeBoundaryTest\\\\.php$"
+                },
+                "status": {
+                  "const": "passed"
+                },
+                "exit_code": {
+                  "const": 0
+                },
+                "tests": {
+                  "const": 504
+                },
+                "assertions": {
+                  "const": 5074
+                },
+                "skipped": {
+                  "const": 0
+                },
+                "executed_at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "command_id",
+                "command",
+                "status",
+                "exit_code",
+                "tests",
+                "assertions",
+                "skipped",
+                "executed_at"
+              ],
+              "properties": {
+                "command_id": {
+                  "const": "plan1a_static_analysis"
+                },
+                "command": {
+                  "type": "string",
+                  "pattern": " phpstan analyse app/BusinessModules/Core/Reporting .*tests/Architecture/Reporting/PlanOneAScopeBoundaryTest\\\\.php --no-progress$"
+                },
+                "status": {
+                  "const": "passed"
+                },
+                "exit_code": {
+                  "const": 0
+                },
+                "tests": {
+                  "const": 0
+                },
+                "assertions": {
+                  "const": 0
+                },
+                "skipped": {
+                  "const": 0
+                },
+                "executed_at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            }
+          ],
+          "items": false
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "schema_version",
+        "status",
+        "verification_mode",
+        "producer_commit_sha",
+        "executed_at",
+        "matrix",
+        "counts",
+        "cases",
+        "source_files"
+      ],
+      "properties": {
+        "artifact_id": {
+          "const": "plan_1a_ci_authorization"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "status": {
+          "const": "passed"
+        },
+        "verification_mode": {
+          "const": "hermetic_http"
+        },
+        "producer_commit_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "executed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "matrix": {
+          "const": "authorization"
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cases",
+            "passed",
+            "allowed_cases",
+            "denied_cases",
+            "http_requests",
+            "assertions"
+          ],
+          "properties": {
+            "cases": {
+              "const": 22
+            },
+            "passed": {
+              "const": 22
+            },
+            "allowed_cases": {
+              "const": 7
+            },
+            "denied_cases": {
+              "const": 15
+            },
+            "http_requests": {
+              "const": 28
+            },
+            "assertions": {
+              "const": 132
+            }
+          }
+        },
+        "cases": {
+          "$ref": "#/$defs/authorizationCases"
+        },
+        "source_files": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/matrixSources"
+            },
+            {
+              "required": [
+                "tests/Feature/Api/V1/Admin/Reporting/ReportingAuthorizationMatrixTest.php"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "malformed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "schema_version",
+        "status",
+        "verification_mode",
+        "producer_commit_sha",
+        "executed_at",
+        "matrix",
+        "counts",
+        "cases",
+        "source_files"
+      ],
+      "properties": {
+        "artifact_id": {
+          "const": "plan_1a_ci_malformed"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "status": {
+          "const": "passed"
+        },
+        "verification_mode": {
+          "const": "hermetic_http"
+        },
+        "producer_commit_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "executed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "matrix": {
+          "const": "malformed_requests"
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cases",
+            "passed",
+            "validation_cases",
+            "legacy_absence_cases",
+            "legacy_uri_count",
+            "http_requests",
+            "assertions"
+          ],
+          "properties": {
+            "cases": {
+              "const": 20
+            },
+            "passed": {
+              "const": 20
+            },
+            "validation_cases": {
+              "const": 19
+            },
+            "legacy_absence_cases": {
+              "const": 1
+            },
+            "legacy_uri_count": {
+              "const": 19
+            },
+            "http_requests": {
+              "const": 38
+            },
+            "assertions": {
+              "const": 120
+            }
+          }
+        },
+        "cases": {
+          "$ref": "#/$defs/malformedCases"
+        },
+        "source_files": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/matrixSources"
+            },
+            {
+              "required": [
+                "tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "authorizationCases": {
+      "type": "array",
+      "minItems": 22,
+      "maxItems": 22,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authUnauthenticated"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "unauthenticated_catalog_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "non_admin_catalog_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "module_disabled_catalog_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "missing_global_permission_catalog_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authAllowedCatalog"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "view_actor_catalog_allowed"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authAllowedCatalog"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "view_actor_run_status_allowed"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authAllowedCatalog"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "view_actor_rows_allowed"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "view_actor_run_create_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "view_actor_export_create_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "view_actor_download_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authRunCreated"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "runner_run_create_allowed"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authRunRetried"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "runner_run_retry_allowed"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authAllowedRunner"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "runner_run_cancel_allowed"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "runner_export_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authExportCreated"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "exporter_export_allowed"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDenied"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "exporter_download_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authDownloaderRevoked"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "downloader_revoked_definition_denied"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "$ref": "#/$defs/authTripleDenied"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/authFilterNotFound"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "foreign_and_nonexistent_filter_indistinguishable"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "$ref": "#/$defs/authSourceNotFound"
+        },
+        {
+          "$ref": "#/$defs/authReloadForbiddenBlocked"
+        },
+        {
+          "$ref": "#/$defs/authReloadForbiddenDeleted"
+        }
+      ],
+      "items": false
+    },
+    "authDenied": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": 403
+            },
+            "request_count": {
+              "const": 1
+            },
+            "response_statuses": {
+              "const": [
+                403
+              ]
+            },
+            "response_codes": {
+              "const": [
+                null
+              ]
+            },
+            "action_calls": {
+              "const": 0
+            },
+            "actor_loads": {
+              "const": 0
+            },
+            "assertions": {
+              "const": 6
+            }
+          }
+        }
+      ]
+    },
+    "authAllowedCatalog": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": 200
+            },
+            "request_count": {
+              "const": 1
+            },
+            "response_statuses": {
+              "const": [
+                200
+              ]
+            },
+            "response_codes": {
+              "const": [
+                null
+              ]
+            },
+            "action_calls": {
+              "const": 1
+            },
+            "actor_loads": {
+              "const": 1
+            },
+            "assertions": {
+              "const": 6
+            }
+          }
+        }
+      ]
+    },
+    "authAllowedRunner": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": 200
+            },
+            "request_count": {
+              "const": 1
+            },
+            "response_statuses": {
+              "const": [
+                200
+              ]
+            },
+            "response_codes": {
+              "const": [
+                null
+              ]
+            },
+            "action_calls": {
+              "const": 1
+            },
+            "actor_loads": {
+              "const": 1
+            },
+            "assertions": {
+              "const": 6
+            }
+          }
+        }
+      ]
+    },
+    "authTripleDenied": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "case_id": {
+              "const": "manage_does_not_expand_operational_permissions"
+            },
+            "status": {
+              "const": 403
+            },
+            "request_count": {
+              "const": 3
+            },
+            "response_statuses": {
+              "const": [
+                403,
+                403,
+                403
+              ]
+            },
+            "response_codes": {
+              "const": [
+                null,
+                null,
+                null
+              ]
+            },
+            "action_calls": {
+              "const": 0
+            },
+            "actor_loads": {
+              "const": 0
+            },
+            "assertions": {
+              "const": 6
+            }
+          }
+        }
+      ]
+    },
+    "authDoubleDeniedFilter": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": 403
+            },
+            "request_count": {
+              "const": 2
+            },
+            "response_statuses": {
+              "const": [
+                403,
+                403
+              ]
+            },
+            "response_codes": {
+              "const": [
+                null,
+                null
+              ]
+            },
+            "action_calls": {
+              "const": 0
+            },
+            "actor_loads": {
+              "const": 0
+            },
+            "assertions": {
+              "const": 6
+            }
+          }
+        }
+      ]
+    },
+    "authDoubleDeniedSource": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/authDoubleDeniedFilter"
+        },
+        {
+          "properties": {
+            "case_id": {
+              "const": "foreign_and_nonexistent_source_indistinguishable"
+            }
+          }
+        }
+      ]
+    },
+    "authDoubleDeniedBlocked": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/authDoubleDeniedFilter"
+        },
+        {
+          "properties": {
+            "case_id": {
+              "const": "blocked_actor_denied_after_context_reload"
+            }
+          }
+        }
+      ]
+    },
+    "authDoubleDeniedDeleted": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/authDoubleDeniedFilter"
+        },
+        {
+          "properties": {
+            "case_id": {
+              "const": "deleted_actor_denied_after_context_reload"
+            }
+          }
+        }
+      ],
+      "items": false
+    },
+    "malformedCases": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_run_show_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_run_rows_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_run_drill_down_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_run_retry_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "missing_run_retry_idempotency_key"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_run_retry_idempotency_key"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_run_cancel_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_create_run_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_show_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_retry_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "missing_export_retry_idempotency_key"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_retry_idempotency_key"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_cancel_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_download_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "missing_run_as_of"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "rows_limit_101"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "missing_drill_down_token"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_format"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedValidation"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "unexpected_download_body"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "$ref": "#/$defs/malformedLegacy"
+        }
+      ],
+      "items": false
+    },
+    "malformedValidation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": 422
+            },
+            "request_count": {
+              "const": 1
+            },
+            "response_statuses": {
+              "const": [
+                422
+              ]
+            },
+            "response_codes": {
+              "const": [
+                "REPORT_REQUEST_INVALID"
+              ]
+            },
+            "action_calls": {
+              "const": 0
+            },
+            "actor_loads": {
+              "const": 0
+            },
+            "assertions": {
+              "const": 6
+            }
+          }
+        }
+      ],
+      "items": false
+    },
+    "malformedLegacy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "case_id": {
+              "const": "legacy_routes_absent"
+            },
+            "status": {
+              "const": 404
+            },
+            "request_count": {
+              "const": 19
+            },
+            "response_statuses": {
+              "const": [
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404,
+                404
+              ]
+            },
+            "response_codes": {
+              "const": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+              ]
+            },
+            "action_calls": {
+              "const": 0
+            },
+            "actor_loads": {
+              "const": 0
+            },
+            "assertions": {
+              "const": 6
+            }
+          }
+        }
+      ]
+    },
+    "malformedIdempotencyKey": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "status": {"const": 422},
+            "request_count": {"const": 1},
+            "response_statuses": {"const": [422]},
+            "response_codes": {"const": ["REPORT_IDEMPOTENCY_KEY_INVALID"]},
+            "action_calls": {"const": 0},
+            "actor_loads": {"const": 0},
+            "assertions": {"const": 6}
+          }
+        }
+      ]
+    },
+    "ledgerExact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "schema_version",
+        "status",
+        "verification_mode",
+        "producer_commit_sha",
+        "executed_at",
+        "commands",
+        "task_4e",
+        "execution_phase"
+      ],
+      "properties": {
+        "artifact_id": {
+          "const": "plan_1a_command_ledger"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "status": {
+          "const": "passed"
+        },
+        "verification_mode": {
+          "const": "local_fixed_commands"
+        },
+        "producer_commit_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "executed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "task_4e": {
+          "$ref": "#/$defs/taskFourEEvidence"
+        },
+        "execution_phase": {
+          "$ref": "#/$defs/executionPhase"
+        },
+        "commands": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "command_id",
+                "command",
+                "status",
+                "exit_code",
+                "tests",
+                "assertions",
+                "skipped",
+                "executed_at"
+              ],
+              "properties": {
+                "command_id": {
+                  "const": "plan1a_contract_tests"
+                },
+                "command": {
+                  "type": "string",
+                  "const": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Access/ReportingPermissionTranslationTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Http/ReportFormRequestContractTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php tests/Architecture/Reporting/ReportPortSignatureTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Architecture/Reporting/ReportingRouteSnapshotTest.php tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Execution/CurrentReportAuthorizationTargetTest.php tests/Unit/Reporting/Access/ReportAuthorizationSubjectTest.php tests/Unit/Reporting/Access/ReportHttpAuthorizationOrchestratorTest.php tests/Unit/Reporting/Access/LaravelReportHttpAuthorizationTargetResolverTest.php tests/Unit/Reporting/Access/ReportScopedResourceAuthorizerContractTest.php tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php tests/Unit/Reporting/Access/CurrentReportPermissionDecisionTest.php tests/Unit/Reporting/Access/ReportScopedResourceAccessDecisionTest.php tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php"
+                },
+                "status": {
+                  "const": "passed"
+                },
+                "exit_code": {
+                  "const": 0
+                },
+                "tests": {
+                  "const": 504
+                },
+                "assertions": {
+                  "const": 5074
+                },
+                "skipped": {
+                  "const": 0
+                },
+                "executed_at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "command_id",
+                "command",
+                "status",
+                "exit_code",
+                "tests",
+                "assertions",
+                "skipped",
+                "executed_at"
+              ],
+              "properties": {
+                "command_id": {
+                  "const": "plan1a_static_analysis"
+                },
+                "command": {
+                  "type": "string",
+                  "const": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpstan analyse app/BusinessModules/Core/Reporting app/Domain/Authorization/Services/AuthorizationService.php scripts/reporting/verify-task-7-composer.php scripts/reporting/run-plan-1a-gates.php scripts/reporting/build-plan-1a-evidence.php tests/Support/Reporting tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php --no-progress"
+                },
+                "status": {
+                  "const": "passed"
+                },
+                "exit_code": {
+                  "const": 0
+                },
+                "tests": {
+                  "const": 0
+                },
+                "assertions": {
+                  "const": 0
+                },
+                "skipped": {
+                  "const": 0
+                },
+                "executed_at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            }
+          ],
+          "items": false
+        }
+      }
+    }
+    ,"authUnauthenticated": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"status": {"const": 401}, "request_count": {"const": 1}, "response_statuses": {"const": [401]}, "response_codes": {"const": [null]}, "action_calls": {"const": 0}, "actor_loads": {"const": 0}, "assertions": {"const": 6}}}]}
+    ,"authRunCreated": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"status": {"const": 201}, "request_count": {"const": 1}, "response_statuses": {"const": [201]}, "response_codes": {"const": [null]}, "action_calls": {"const": 1}, "actor_loads": {"const": 1}, "assertions": {"const": 6}}}]}
+    ,"authRunRetried": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"status": {"const": 202}, "request_count": {"const": 1}, "response_statuses": {"const": [202]}, "response_codes": {"const": [null]}, "action_calls": {"const": 1}, "actor_loads": {"const": 1}, "assertions": {"const": 6}}}]}
+    ,"authExportCreated": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"status": {"const": 201}, "request_count": {"const": 1}, "response_statuses": {"const": [201]}, "response_codes": {"const": [null]}, "action_calls": {"const": 1}, "actor_loads": {"const": 1}, "assertions": {"const": 6}}}]}
+    ,"authDownloaderRevoked": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"status": {"const": 403}, "request_count": {"const": 1}, "response_statuses": {"const": [403]}, "response_codes": {"const": ["REPORT_SCOPE_FORBIDDEN"]}, "action_calls": {"const": 0}, "actor_loads": {"const": 1}, "assertions": {"const": 6}}}]}
+    ,"authFilterNotFound": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"status": {"const": 422}, "request_count": {"const": 2}, "response_statuses": {"const": [422, 422]}, "response_codes": {"const": ["REPORT_FILTER_VALUE_NOT_FOUND", "REPORT_FILTER_VALUE_NOT_FOUND"]}, "action_calls": {"const": 2}, "actor_loads": {"const": 2}, "assertions": {"const": 6}}}]}
+    ,"authSourceNotFound": {"allOf": [{"$ref": "#/$defs/authFilterNotFound"}, {"properties": {"case_id": {"const": "foreign_and_nonexistent_source_indistinguishable"}}}]}
+    ,"authReloadForbiddenBlocked": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"case_id": {"const": "blocked_actor_denied_after_context_reload"}, "status": {"const": 403}, "request_count": {"const": 2}, "response_statuses": {"const": [200, 403]}, "response_codes": {"const": [null, "REPORT_SCOPE_FORBIDDEN"]}, "action_calls": {"const": 1}, "actor_loads": {"const": 2}, "assertions": {"const": 6}}}]}
+    ,"authReloadForbiddenDeleted": {"allOf": [{"$ref": "#/$defs/caseItem"}, {"properties": {"case_id": {"const": "deleted_actor_denied_after_context_reload"}, "status": {"const": 403}, "request_count": {"const": 2}, "response_statuses": {"const": [200, 403]}, "response_codes": {"const": [null, "REPORT_SCOPE_FORBIDDEN"]}, "action_calls": {"const": 1}, "actor_loads": {"const": 2}, "assertions": {"const": 6}}}]}
+  }
+}

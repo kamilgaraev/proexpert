@@ -1,0 +1,31 @@
+catalog: management-catalog.v1
+contract_version: 1.0.0
+definitions:
+  - &row {code: official_material_usage_m29, title_key: reports.catalog.official_material_usage_m29, catalog_group: portfolio, category: portfolio, grain: project_currency_as_of, wave: 1, filters: [], columns: [], sorts: [], formats: [], versions: {contract: 1.0.0, formula: 0.0.0, source_schema: 0.0.0, renderer: 1.0.0}, semantic_fingerprints: {formula: 0000000000000000000000000000000000000000000000000000000000000000, source: 0000000000000000000000000000000000000000000000000000000000000000}, permissions: {view: [budgeting.portfolio_dashboard.view], export: [budgeting.portfolio_dashboard.export], sensitive: [], audit: []}, readiness: {source: partial, formula: ready, delivery: not_implemented, publication: draft}, capabilities: {supports_subscriptions: false, reproducible_scheduled_snapshot: false}}
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row
+  - *row

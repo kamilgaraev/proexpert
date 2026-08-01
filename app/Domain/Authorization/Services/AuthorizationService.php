@@ -1,14 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Domain\Authorization\Services;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\Models\User;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Collection;
+use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Http\Request;
 
 use function trans_message;
 
@@ -80,6 +85,19 @@ class AuthorizationService
         } finally {
             unset($callStack[$callKey]);
         }
+    }
+
+    public function canInContext(
+        User $user,
+        string $permission,
+        AuthorizationDecisionContext $context,
+    ): bool {
+        return $this->evaluatePermission(
+            $user,
+            $permission,
+            $context->toAuthorizationArray(),
+            '',
+        );
     }
 
     /**
@@ -355,6 +373,21 @@ class AuthorizationService
      */
     protected function checkPermission(User $user, string $permission, ?array $context = null): bool
     {
+        return $this->evaluatePermission(
+            $user,
+            $permission,
+            $context,
+            $this->requestUserAgent(),
+        );
+    }
+
+    private function evaluatePermission(
+        User $user,
+        string $permission,
+        ?array $context,
+        string $userAgent,
+    ): bool
+    {
         // Если контекст не передан, но есть модульное право - определяем контекст организации автоматически
         if (!$context && $user->current_organization_id) {
             // Проверяем, является ли право модульным (содержит точку)
@@ -374,7 +407,6 @@ class AuthorizationService
         $roles = $this->getUserRoles($user, $authContext);
         
         if ($roles->isEmpty()) {
-            $userAgent = request()->userAgent() ?? '';
             if (!str_contains($userAgent, 'Prometheus')) {
                 $this->logging->security('auth.no_roles_found', [
                     'user_id' => $user->id,
@@ -385,7 +417,6 @@ class AuthorizationService
             return false;
         }
 
-        $userAgent = request()->userAgent() ?? '';
         if (!str_contains($userAgent, 'Prometheus')) {
             $userRoles = $roles->pluck('role_slug')->toArray();
             $this->logging->security('auth.checking_permission', [
@@ -573,6 +604,18 @@ class AuthorizationService
         }
         
         return true;
+    }
+
+    private function requestUserAgent(): string
+    {
+        $container = Container::getInstance();
+        if (!$container->bound('request')) {
+            return '';
+        }
+
+        $request = $container->make('request');
+
+        return $request instanceof Request ? ($request->userAgent() ?? '') : '';
     }
 
     /**

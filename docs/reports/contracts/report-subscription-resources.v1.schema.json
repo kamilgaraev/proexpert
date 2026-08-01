@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:subscription-resources:v1",
+  "oneOf": [
+    {"$ref": "#/$defs/subscription_envelope"},
+    {"$ref": "#/$defs/delivery_envelope"},
+    {"$ref": "#/$defs/page_envelope"}
+  ],
+  "$defs": {
+    "ulid": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "subscription_envelope": {"type": "object", "additionalProperties": false, "required": ["success", "message", "data"], "properties": {"success": {"const": true}, "message": {"type": ["string", "null"]}, "data": {"$ref": "#/$defs/subscription"}}},
+    "delivery_envelope": {"type": "object", "additionalProperties": false, "required": ["success", "message", "data"], "properties": {"success": {"const": true}, "message": {"type": ["string", "null"]}, "data": {"$ref": "#/$defs/delivery"}}},
+    "page_envelope": {"type": "object", "additionalProperties": false, "required": ["success", "message", "data"], "properties": {"success": {"const": true}, "message": {"type": ["string", "null"]}, "data": {"$ref": "#/$defs/page"}}},
+    "subscription": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "saved_view_id", "report_code", "frequency", "weekday", "day_of_month", "local_time", "timezone", "period_policy", "format", "channel", "status", "disabled_reason", "consecutive_failures", "next_run_at", "created_at", "updated_at"],
+      "properties": {
+        "id": {"$ref": "#/$defs/ulid"},
+        "saved_view_id": {"$ref": "#/$defs/ulid"},
+        "report_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+        "frequency": {"enum": ["daily", "weekly", "monthly"]},
+        "weekday": {"type": ["integer", "null"], "minimum": 1, "maximum": 7},
+        "day_of_month": {"type": ["integer", "null"], "minimum": 1, "maximum": 31},
+        "local_time": {"type": "string", "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"},
+        "timezone": {"type": "string", "minLength": 1},
+        "period_policy": {"type": "object", "minProperties": 1},
+        "format": {"enum": ["csv", "xlsx", "pdf"]},
+        "channel": {"const": "in_app"},
+        "status": {"enum": ["active", "paused", "disabled", "deleted"]},
+        "disabled_reason": {"type": ["string", "null"]},
+        "consecutive_failures": {"type": "integer", "minimum": 0},
+        "next_run_at": {"type": ["string", "null"], "format": "date-time"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "updated_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "subscription_id", "trigger", "scheduled_for", "run_id", "export_id", "attempt", "status", "safe_error_code", "created_at", "updated_at", "expires_at"],
+      "properties": {
+        "id": {"$ref": "#/$defs/ulid"},
+        "subscription_id": {"$ref": "#/$defs/ulid"},
+        "trigger": {"enum": ["calendar", "manual"]},
+        "scheduled_for": {"$ref": "#/$defs/timestamp"},
+        "run_id": {"anyOf": [{"$ref": "#/$defs/ulid"}, {"type": "null"}]},
+        "export_id": {"anyOf": [{"$ref": "#/$defs/ulid"}, {"type": "null"}]},
+        "attempt": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["scheduled", "building_run", "building_export", "ready", "notified", "failed", "expired"]},
+        "safe_error_code": {"type": ["string", "null"]},
+        "created_at": {"type": ["string", "null"], "format": "date-time"},
+        "updated_at": {"type": ["string", "null"], "format": "date-time"},
+        "expires_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "meta"],
+      "properties": {
+        "items": {"type": "array", "items": {"$ref": "#/$defs/subscription"}},
+        "meta": {"$ref": "#/$defs/page_meta"}
+      }
+    },
+    "page_meta": {"type": "object", "additionalProperties": false, "required": ["limit", "next_cursor", "has_more"], "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}, "next_cursor": {"type": ["string", "null"]}, "has_more": {"type": "boolean"}}}
+  }
+}

@@ -1,0 +1,48 @@
+{
+    "schema_version":  "1.0.0",
+    "plan_id":  "1c",
+    "status":  "platform_passed",
+    "repository_commit":  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "generated_at":  "2026-07-31T00:00:00Z",
+    "plan_1c_lock_sha256":  "f83eb611d1a2dd700647e9d84c7838a144a71c80ac7775f987de33f79ff2b364",
+    "plan_1a_completion_sha256":  "8a8f1b26e3d209559cbc58bf73fc40d7633532011c52e38795b5bf9592633071",
+    "plan_1a_artifact_hashes":  {
+                                    "contract_lock":  "e67d46186e1d6a1bb2cdd9fea749eaeef67a4fd8c136cdb5d6f60b451120d522",
+                                    "resource_schema":  "76b00f7c9ca87951f4490c143f7bcbe5d9bbbc1fb7f25ed30b74a2c2d100dfa2",
+                                    "route_snapshot":  "e2ac0252380db38b81e0049fd6d4c88eab2447d0fdefcda308178e5bab41f675",
+                                    "ci_authorization":  "e4027944cd551daf0797774921f0c928f37e5e9435485423bbc20334480926a2",
+                                    "ci_malformed":  "a9c19f1ecffa64ed96c91a38e4c7e029da2ead65b5e742af0dcf5eb355895411"
+                                },
+    "plan_1b_completion_sha256":  "76bd3638ee390a832c1ca788887d48cead11903fa04c49a3205b94e1bad3d31f",
+    "plan_1b_gate_hashes":  {
+                                "plan1a_handoff":  "621daaa0dc056e7f4fa4b7853c6b21b5674c554af330f4bc611707f502e6bf9c",
+                                "ownership_boundary":  "1577d912bc56fe5b1a182babb91d73950121adbd6ef6c5babab9a7619bcbf7e9",
+                                "run_state_machine":  "c4734ad51c0cea994ef71dd2f527e307ae605af8c8cb6d3ec6430961e15863db",
+                                "run_idempotency":  "5b30b2ea8577bb182172c65516029de7f5f250b3b1c3e39a22bfe3b7f8c90c70",
+                                "snapshot_identity":  "b6a5f23a8b341c3d01dbe01735318b7027e7c72d20e5722054f10f68b233baed",
+                                "rows_cursor_drill_parity":  "9e0ed00d511b6da446804227172b949b1dee6be26cbaf82b9e8919f2aadad7d1",
+                                "row_stream_shape":  "95886e480e4bcf1fdc193abbf61ac7cd51a965bab2c31566128e8fcd9a68e283",
+                                "export_state_machine":  "d64ea3b94fbf391c4fa2286f42af14d61bd26db87db05fa998fbe9e965e3d7eb",
+                                "export_idempotency":  "2bb7ff82f2dae610093a4c979d52b16ded5d84bc601f8fb66c3614bf85ffad55",
+                                "renderer_parity":  "2d5949307f76de37de0be9d49f764447c4847d0347a942f8bdaf41e8f37ffec9",
+                                "pdf_renderer_budget":  "d43a63e1d08e05038bf17a222f7842c58245d693b0babe7f9ec8d45de6f64dcb",
+                                "streaming_budget":  "7464ad2a53fe894a466c48b318672faf426a5152e3ceaabc7fe3af9225c85de7",
+                                "file_service_call_graph":  "a7e751a4c23e338686b56664de280809e528d226b02f3015e49b5e4be2080997",
+                                "s3_version_race":  "7a996f93bea4caf721089236cc7a8a1dd25faaa88501de3c43142d2f49dc44ab",
+                                "audit_fail_closed":  "86504ce262ca87faeee609cf45b35c15364a225789cc2a7b3413e2302e0c196d",
+                                "retention_exact_version":  "ce0889cc7a3058989be193a7b45d03d407c7d79d60b23b6ab18b0f810889004b",
+                                "action_bindings":  "c473eaf3ca82764e9cd49ffc4df3772707f0810dec4cad0517cb0834254183c2",
+                                "error_retryability":  "aece88607ade16939a958bae606db6e3eef2f5ccea17b9df6b60d8a7c9e47f9b",
+                                "run_export_observability":  "8619a9f4250d1ce7369b9953ec40eef42a9cc4a6a928c9b83b12dd13e9117448",
+                                "static_analysis":  "5ce7cb0e0d7d59e50afbc41f230f11d46939aa53152062766362e76c9a9e8beb"
+                            },
+    "plan_1b_plan_sha256":  "58f865ed19b1f040057a37b72dfc52a1822a2925416a1fea3ecc30ee50d4c626",
+    "plan_1b_document_sha256":  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "plan_1c_document_sha256":  "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "prerequisite_bundle_sha256":  "dc8f692d02adbad08c76326c3ff9eb368483fb5e540240be8d5dfc1b9c85a10c",
+    "published_count":  0,
+    "binding_count":  0,
+    "unresolved_risks":  [
+
+                         ]
+}

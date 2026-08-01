@@ -17,6 +17,8 @@
     "customer.approvals.manage",
     "customer.conversations.view",
     "customer.finance.view",
+    "customer.sla_report.view",
+    "customer.sla_report.export",
     "customer.issues.view",
     "customer.issues.manage",
     "customer.notifications.view",

@@ -22,6 +22,9 @@ class PurchaseOrderItem extends Model
 
     protected $fillable = [
         'purchase_order_id',
+        'purchase_request_line_id',
+        'supplier_request_line_id',
+        'supplier_proposal_line_id',
         'material_id',
         'material_name',
         'quantity',
@@ -49,6 +52,21 @@ class PurchaseOrderItem extends Model
     public function purchaseOrder(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    public function purchaseRequestLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseRequestLine::class);
+    }
+
+    public function supplierRequestLine(): BelongsTo
+    {
+        return $this->belongsTo(SupplierRequestLine::class);
+    }
+
+    public function supplierProposalLine(): BelongsTo
+    {
+        return $this->belongsTo(SupplierProposalLine::class);
     }
 
     /**
@@ -92,4 +110,3 @@ class PurchaseOrderItem extends Model
         });
     }
 }
-

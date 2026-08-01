@@ -66,10 +66,18 @@ class InterfaceMiddleware
             ], 403);
         }
 
-        // Добавляем информацию об интерфейсе в запрос для дальнейшего использования
-        $request->merge(['current_interface' => $interface]);
+        $clientSuppliedCurrentInterface = $request->request->has('current_interface')
+            || $request->query->has('current_interface');
+        $provenance = InterfaceRequestProvenance::enter($request, $clientSuppliedCurrentInterface);
 
-        return $next($request);
+        try {
+            // Добавляем информацию об интерфейсе в запрос для дальнейшего использования
+            $request->merge(['current_interface' => $interface]);
+
+            return $next($request);
+        } finally {
+            InterfaceRequestProvenance::leave($request, $provenance);
+        }
     }
 
     /**

@@ -29,8 +29,9 @@
     ],
     "reports": [
       "reports.view",
+      "reports.run",
       "reports.export",
-      "reports.official_reports"
+      "reports.download"
     ],
     "finance": [
       "finance.*"

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:r15-publication-request:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_paths", "code", "commit_sha", "proof_sha256", "request_id", "schema_version"],
+  "properties": {
+    "artifact_paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_manifest", "conformance_evidence", "proof_template"],
+      "properties": {
+        "candidate_manifest": {"const": "r15-candidate-manifest.json"},
+        "conformance_evidence": {"const": "r15-conformance-evidence.json"},
+        "proof_template": {"const": "r15-proof-template.json"}
+      }
+    },
+    "code": {"const": "procurement_cycle"},
+    "commit_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "proof_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "request_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+    "schema_version": {"const": "1.0.0"}
+  }
+}
