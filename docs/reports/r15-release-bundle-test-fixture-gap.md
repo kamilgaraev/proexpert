@@ -1,12 +1,13 @@
 # R15: positive resolver fixture pipeline
 
-Положительный тест `ProcurementCycleReleaseCandidateResolver` пока не может
-использовать существующий `R15CiConformanceEvidenceGenerator`: генератор
-создаёт только conformance artifact и запускается только в CI composition.
-`R15CiRuntimeFixtureFactory` возвращает runtime DTO и не является источником
-полного release bundle.
+Положительный тест `ProcurementCycleReleaseCandidateResolver` пока не подключён
+к существующему pipeline: `build-r15-publication-candidate.php` уже собирает
+четыре canonical-документа, а `R15CiConformanceEvidenceGenerator` отдельно
+создаёт conformance artifact только в CI composition. `R15CiRuntimeFixtureFactory`
+возвращает runtime DTO и не является источником полного release bundle.
 
-Для закрытия этого тестового пробела нужен отдельный builder (владение:
+Для закрытия тестового пробела нужно переиспользовать существующий builder и
+сделать его fixture-output источником resolver E2E (владение:
 Reporting/Procurement):
 
 1. построить `candidate_definition` через `ReportDefinitionBuilder` и записать
@@ -23,5 +24,6 @@ Reporting/Procurement):
    тестами изменить один байт conformance, удалить request и изменить commit;
    каждый сценарий обязан завершаться `r15_release_candidate_untrusted`.
 
-До появления этого builder hand-crafted fixture не считается положительным
-доказательством: текущий legacy fixture намеренно проверяется как rejected.
+До подключения output builder-а hand-crafted legacy fixture не считается
+положительным доказательством; текущие unit-тесты проверяют его rejection и
+missing-file negative, но не acceptance полного bundle.
