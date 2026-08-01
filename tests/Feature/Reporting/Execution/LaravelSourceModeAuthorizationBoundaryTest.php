@@ -46,6 +46,21 @@ final class LaravelSourceModeAuthorizationBoundaryTest extends TestCase
 
     protected function beforeRefreshingDatabase(): void
     {
+        if (getenv('REPORT_SOURCE_MODE_AUTHORIZATION_POSTGRES_TESTS') !== '1') {
+            $this->markTestSkipped(
+                'Set REPORT_SOURCE_MODE_AUTHORIZATION_POSTGRES_TESTS=1 to run isolated source-mode authorization tests.',
+            );
+        }
+
+        if (config('database.default') !== 'pgsql') {
+            $this->markTestSkipped('Requires an explicitly configured isolated PostgreSQL database.');
+        }
+
+        $database = config('database.connections.pgsql.database');
+        if (! is_string($database) || preg_match('/_(?:test|testing)$/D', $database) !== 1) {
+            $this->markTestSkipped('PostgreSQL database name must end with _test or _testing.');
+        }
+
         self::assertSame('pgsql', DB::connection()->getDriverName());
     }
 
