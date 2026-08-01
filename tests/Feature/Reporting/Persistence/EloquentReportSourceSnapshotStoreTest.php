@@ -290,6 +290,15 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
         ];
         $drillRows = [new ReportSourceSnapshotDrillRow($id, 'project:1', 'amount', 1, ['document_id' => 11], $this->hash(['document_id' => 11]))];
         $scope = (new ReportExecutionContextBuilder)->build()->scope;
+        $reportQueryIdentity = [
+            'as_of' => '2026-07-31T00:00:00.000000Z',
+            'comparison' => [],
+            'definition_hash' => str_repeat('a', 64),
+            'filters' => [],
+            'locale' => 'ru',
+            'scope' => $scope->canonicalIdentity(),
+        ];
+        $reportQueryHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($reportQueryIdentity)));
         $header = new ReportSourceSnapshotHeader(
             $id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]),
             new DateTimeImmutable('2026-07-31T00:00:00+00:00'),
@@ -297,6 +306,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
             ['portfolio_version' => 3],
             new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'),
             ReportSourceSnapshotStatus::WRITING, 2, 1, $this->hash(['placeholder' => 1]), null, null,
+            $reportQueryIdentity, $reportQueryHash,
         );
         $header = new ReportSourceSnapshotHeader(
             $id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]),
@@ -305,6 +315,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
             ['portfolio_version' => 3],
             new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'),
             ReportSourceSnapshotStatus::WRITING, 2, 1, ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows), null, null,
+            $header->reportQueryIdentity, $header->reportQueryHash,
         );
 
         return new ReportSourceSnapshotWrite($header, $rows, $drillRows);
@@ -328,9 +339,12 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
             'scope_identity' => json_encode($header->scopeIdentity(), JSON_THROW_ON_ERROR),
             'scope_identity_hash' => null,
             'query_hash' => $header->queryHash->value,
+            'report_query_identity' => json_encode($header->reportQueryIdentity, JSON_THROW_ON_ERROR),
+            'report_query_hash' => $header->reportQueryHash?->value,
             'source_version' => null,
             'as_of' => $header->asOf,
             'source_hash' => $header->sourceHash->value,
+            'materialized_source_hash' => $header->materializedSourceHash->value,
             'watermarks' => json_encode($header->watermarks, JSON_THROW_ON_ERROR),
             'generated_at' => $header->generatedAt,
             'stale_at' => $header->staleAt,

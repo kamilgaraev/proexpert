@@ -16,7 +16,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
-use DateTimeZone;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
@@ -77,10 +76,12 @@ final class ReportSourceSnapshotContractTest extends TestCase
             new ReportSourceSnapshotRow($id, 2, 'project:2', ['amount' => 200], $this->hash(['amount' => 200])),
         ];
         $drillRows = [new ReportSourceSnapshotDrillRow($id, 'project:1', 'amount', 1, ['document_id' => 11], $this->hash(['document_id' => 11]))];
-        $scope = (new ReportExecutionContextBuilder())->build()->scope;
-        $header = new ReportSourceSnapshotHeader($id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3], new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'), ReportSourceSnapshotStatus::WRITING, 2, 1, $this->hash(['placeholder' => 1]), null, null);
+        $scope = (new ReportExecutionContextBuilder)->build()->scope;
+        $identity = [];
+        $identityHash = $this->hash($identity);
+        $header = new ReportSourceSnapshotHeader($id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3], new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'), ReportSourceSnapshotStatus::WRITING, 2, 1, $this->hash(['placeholder' => 1]), null, null, $identity, $identityHash);
         $hash = ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows);
-        $header = new ReportSourceSnapshotHeader($id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3], new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'), ReportSourceSnapshotStatus::WRITING, 2, 1, $hash, null, null);
+        $header = new ReportSourceSnapshotHeader($id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3], new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'), ReportSourceSnapshotStatus::WRITING, 2, 1, $hash, null, null, $header->reportQueryIdentity, $header->reportQueryHash);
 
         return new ReportSourceSnapshotWrite($header, $rows, $drillRows);
     }
@@ -89,12 +90,12 @@ final class ReportSourceSnapshotContractTest extends TestCase
     {
         $header = $write->header;
 
-        return new ReportSourceSnapshotHeader($header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope, $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt, $header->staleAt, ReportSourceSnapshotStatus::READY, $header->rowCount, $header->drillRowCount, $header->snapshotHash, new DateTimeImmutable('2026-07-31T00:00:01+00:00'), null);
+        return new ReportSourceSnapshotHeader($header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope, $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt, $header->staleAt, ReportSourceSnapshotStatus::READY, $header->rowCount, $header->drillRowCount, $header->snapshotHash, new DateTimeImmutable('2026-07-31T00:00:01+00:00'), null, $header->reportQueryIdentity, $header->reportQueryHash);
     }
 
     private function request(string $snapshotId): ReportSourceSnapshotReadRequest
     {
-        return new ReportSourceSnapshotReadRequest((new ReportExecutionContextBuilder())->build(), $snapshotId, 'portfolio.source', 'project_margin', '1', $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:30:00+00:00'));
+        return new ReportSourceSnapshotReadRequest((new ReportExecutionContextBuilder)->build(), $snapshotId, 'portfolio.source', 'project_margin', '1', $this->hash(['query' => 1]), new DateTimeImmutable('2026-07-31T00:30:00+00:00'));
     }
 
     private function hash(array $value): Sha256Hash
