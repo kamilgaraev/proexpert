@@ -11,5 +11,5 @@ interface ReportSavedViewVersionStore
 {
     public function append(CreateReportSavedViewVersionData $data): ReportSavedViewVersion;
 
-    public function find(string $savedViewId, int $revision): ?ReportSavedViewVersion;
+    public function find(int $organizationId, string $savedViewId, int $revision): ?ReportSavedViewVersion;
 }

@@ -5,12 +5,10 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\SavedViews;
 
 use App\BusinessModules\Core\Reporting\Application\SavedViews\ReportSavedViewVersionHasher;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewVersionStore;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewVersion;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewVersionContent;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewVersionStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSavedViewVersionRecord;
@@ -20,6 +18,7 @@ use Illuminate\Foundation\Application;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use Tests\Support\Reporting\SavedViewVersionDefinitionRegistry;
 
 final class ReportSavedViewVersionTest extends TestCase
 {
@@ -39,11 +38,12 @@ final class ReportSavedViewVersionTest extends TestCase
             $content,
             new Sha256Hash(hash('sha256', $content->canonicalBytes())),
             new Sha256Hash(str_repeat('b', 64)),
-            new DateTimeImmutable('2026-08-01T10:00:00.000000Z'),
+            new DateTimeImmutable('2026-08-01T10:00:00.123456Z'),
         );
 
         self::assertSame(7, $version->revision);
-        self::assertSame($content, $version->content);
+        self::assertSame(1, $version->content->schemaVersion);
+        self::assertSame('123456', $version->createdAt->format('u'));
         self::assertSame(str_repeat('b', 64), $version->reportDefinitionHash->value);
     }
 
@@ -73,19 +73,13 @@ final class ReportSavedViewVersionTest extends TestCase
 
     public function test_duplicate_columns_are_rejected(): void
     {
+        $content = $this->content()->toArray();
+        $content['columns'] = ['request_number', 'request_number'];
+
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('report_saved_view_version_content_invalid');
 
-        new ReportSavedViewVersionContent(
-            'procurement_cycle',
-            'v1',
-            'Цикл закупки',
-            'private',
-            new ReportFilterSet([]),
-            [],
-            new ReportWindowSort('request_number', ReportSortDirection::ASC),
-            ['request_number', 'request_number'],
-        );
+        ReportSavedViewVersionContent::fromArray($content);
     }
 
     public function test_noncanonical_content_value_is_rejected(): void
@@ -93,8 +87,9 @@ final class ReportSavedViewVersionTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         ReportSavedViewVersionContent::fromArray([
+            'schema_version' => 1,
             'report_code' => 'procurement_cycle',
-            'contract_version' => 'v1',
+            'contract_version' => 'v7',
             'name' => 'Цикл закупки',
             'visibility' => 'private',
             'filters' => [],
@@ -104,7 +99,7 @@ final class ReportSavedViewVersionTest extends TestCase
         ]);
     }
 
-    public function test_version_store_contract_exposes_only_append_and_exact_find(): void
+    public function test_version_store_read_is_tenant_scoped(): void
     {
         $methods = (new ReflectionClass(ReportSavedViewVersionStore::class))->getMethods();
         $signatures = [];
@@ -117,7 +112,7 @@ final class ReportSavedViewVersionTest extends TestCase
 
         self::assertSame([
             'append' => ['data'],
-            'find' => ['savedViewId', 'revision'],
+            'find' => ['organizationId', 'savedViewId', 'revision'],
         ], $signatures);
     }
 
@@ -126,6 +121,7 @@ final class ReportSavedViewVersionTest extends TestCase
         $record = new ReportSavedViewVersionRecord;
         $app = new Application(dirname(__DIR__, 4));
         (new ReportingCatalogServiceProvider($app))->register();
+        $app->instance(ReportDefinitionRegistry::class, $this->registry());
 
         self::assertSame('report_saved_view_versions', $record->getTable());
         self::assertFalse($record->usesTimestamps());
@@ -160,21 +156,31 @@ final class ReportSavedViewVersionTest extends TestCase
             $content,
             new Sha256Hash($contentHash ?? hash('sha256', $content->canonicalBytes())),
             new Sha256Hash(str_repeat('b', 64)),
-            new DateTimeImmutable('2026-08-01T10:00:00.000000Z'),
+            new DateTimeImmutable('2026-08-01T10:00:00.123456Z'),
         );
     }
 
     private function content(): ReportSavedViewVersionContent
     {
-        return new ReportSavedViewVersionContent(
-            'procurement_cycle',
-            'v1',
-            'Цикл закупки',
-            'private',
-            new ReportFilterSet(['project_id' => 7]),
-            [],
-            new ReportWindowSort('request_number', ReportSortDirection::ASC),
-            ['request_number'],
+        return ReportSavedViewVersionContent::fromArray([
+            'schema_version' => 1,
+            'report_code' => 'procurement_cycle',
+            'contract_version' => 'v7',
+            'name' => 'Цикл закупки',
+            'visibility' => 'private',
+            'filters' => ['project_id' => 7],
+            'comparison' => [],
+            'sort' => ['field' => 'request_number', 'direction' => 'asc'],
+            'columns' => ['request_number'],
+        ]);
+    }
+
+    private function registry(): SavedViewVersionDefinitionRegistry
+    {
+        return new SavedViewVersionDefinitionRegistry(
+            (new \Tests\Support\Reporting\ReportDefinitionBuilder)
+                ->code('procurement_cycle')
+                ->published(),
         );
     }
 }

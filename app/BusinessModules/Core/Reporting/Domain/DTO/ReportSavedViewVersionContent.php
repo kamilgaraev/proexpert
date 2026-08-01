@@ -7,33 +7,54 @@ namespace App\BusinessModules\Core\Reporting\Domain\DTO;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
-use JsonException;
 
 final readonly class ReportSavedViewVersionContent
 {
+    public const SCHEMA_VERSION = 1;
+
+    public int $schemaVersion;
+
+    public string $name;
+
+    public string $visibility;
+
+    public ReportFilterSet $filters;
+
     public array $comparison;
 
-    public function __construct(
+    public ReportWindowSort $sort;
+
+    public array $columns;
+
+    private function __construct(
         public string $reportCode,
         public string $contractVersion,
-        public string $name,
-        public string $visibility,
-        public ReportFilterSet $filters,
-        array $comparison,
-        public ReportWindowSort $sort,
-        public array $columns,
+        ReportSavedViewVersionPresentation $presentation,
     ) {
         if (preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $reportCode) !== 1
             || trim($contractVersion) === ''
-            || mb_strlen($contractVersion) > 32
-            || trim($name) === ''
-            || mb_strlen($name) > 120
-            || ! in_array($visibility, ['private', 'organization'], true)
-            || ! self::validColumns($columns)) {
+            || mb_strlen($contractVersion) > 32) {
             throw new InvalidArgumentException('report_saved_view_version_content_invalid');
         }
 
-        $this->comparison = self::canonicalArray($comparison);
+        $this->schemaVersion = self::SCHEMA_VERSION;
+        $this->name = $presentation->name;
+        $this->visibility = $presentation->visibility;
+        $this->filters = $presentation->filters;
+        $this->comparison = $presentation->comparison;
+        $this->sort = $presentation->sort;
+        $this->columns = $presentation->columns;
+    }
+
+    public static function fromPublishedDefinition(
+        PublishedReportDefinition $definition,
+        ReportSavedViewVersionPresentation $presentation,
+    ): self {
+        return new self(
+            $definition->code,
+            $definition->payload()->contractVersion,
+            $presentation,
+        );
     }
 
     public static function fromArray(array $content): self
@@ -47,9 +68,11 @@ final readonly class ReportSavedViewVersionContent
             'filters',
             'name',
             'report_code',
+            'schema_version',
             'sort',
             'visibility',
         ]
+            || ! is_int($content['schema_version'])
             || ! is_string($content['report_code'])
             || ! is_string($content['contract_version'])
             || ! is_string($content['name'])
@@ -59,6 +82,10 @@ final readonly class ReportSavedViewVersionContent
             || ! is_array($content['sort'])
             || ! is_array($content['columns'])) {
             throw new InvalidArgumentException('report_saved_view_version_content_invalid');
+        }
+
+        if ($content['schema_version'] !== self::SCHEMA_VERSION) {
+            throw new InvalidArgumentException('report_saved_view_version_schema_unsupported');
         }
 
         $sortKeys = array_keys($content['sort']);
@@ -77,18 +104,21 @@ final readonly class ReportSavedViewVersionContent
         return new self(
             $content['report_code'],
             $content['contract_version'],
-            $content['name'],
-            $content['visibility'],
-            new ReportFilterSet($content['filters']),
-            $content['comparison'],
-            new ReportWindowSort($content['sort']['field'], $direction),
-            $content['columns'],
+            new ReportSavedViewVersionPresentation(
+                $content['name'],
+                $content['visibility'],
+                new ReportFilterSet($content['filters']),
+                $content['comparison'],
+                new ReportWindowSort($content['sort']['field'], $direction),
+                $content['columns'],
+            ),
         );
     }
 
     public function toArray(): array
     {
         return [
+            'schema_version' => $this->schemaVersion,
             'report_code' => $this->reportCode,
             'contract_version' => $this->contractVersion,
             'name' => $this->name,
@@ -106,39 +136,5 @@ final readonly class ReportSavedViewVersionContent
     public function canonicalBytes(): string
     {
         return CanonicalJson::encode($this->toArray());
-    }
-
-    private static function canonicalArray(array $value): array
-    {
-        try {
-            $canonical = json_decode(CanonicalJson::encode($value), true, 512, JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            throw new InvalidArgumentException('report_saved_view_version_content_invalid', 0, $exception);
-        }
-
-        if (! is_array($canonical)) {
-            throw new InvalidArgumentException('report_saved_view_version_content_invalid');
-        }
-
-        return $canonical;
-    }
-
-    private static function validColumns(array $columns): bool
-    {
-        if (! array_is_list($columns) || $columns === []) {
-            return false;
-        }
-
-        $seen = [];
-        foreach ($columns as $column) {
-            if (! is_string($column)
-                || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $column) !== 1
-                || isset($seen[$column])) {
-                return false;
-            }
-            $seen[$column] = true;
-        }
-
-        return true;
     }
 }

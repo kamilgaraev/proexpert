@@ -22,6 +22,7 @@ final class ReportSavedViewVersionRecord extends Model
         'organization_id' => 'integer',
         'owner_id' => 'integer',
         'revision' => 'integer',
+        'presentation_schema_version' => 'integer',
         'content_json' => 'array',
         'created_at' => 'immutable_datetime',
     ];

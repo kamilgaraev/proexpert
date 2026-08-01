@@ -34,10 +34,11 @@ final class EloquentReportSavedViewVersionStore implements ReportSavedViewVersio
             'revision' => $data->revision,
             'report_code' => $data->content->reportCode,
             'contract_version' => $data->content->contractVersion,
+            'presentation_schema_version' => $data->content->schemaVersion,
             'content_json' => $data->content->canonicalBytes(),
             'content_hash' => $data->contentHash->value,
             'report_definition_hash' => $data->reportDefinitionHash->value,
-            'created_at' => $createdAt,
+            'created_at' => $createdAt->format('Y-m-d H:i:s.uP'),
         ]);
 
         return new ReportSavedViewVersion(
@@ -53,9 +54,10 @@ final class EloquentReportSavedViewVersionStore implements ReportSavedViewVersio
         );
     }
 
-    public function find(string $savedViewId, int $revision): ?ReportSavedViewVersion
+    public function find(int $organizationId, string $savedViewId, int $revision): ?ReportSavedViewVersion
     {
         $record = ReportSavedViewVersionRecord::query()
+            ->where('organization_id', $organizationId)
             ->where('saved_view_id', $savedViewId)
             ->where('revision', $revision)
             ->first();
@@ -74,7 +76,8 @@ final class EloquentReportSavedViewVersionStore implements ReportSavedViewVersio
             }
 
             $content = ReportSavedViewVersionContent::fromArray($record->content_json);
-            if (! hash_equals($content->reportCode, (string) $record->report_code)
+            if ($content->schemaVersion !== (int) $record->presentation_schema_version
+                || ! hash_equals($content->reportCode, (string) $record->report_code)
                 || ! hash_equals($content->contractVersion, (string) $record->contract_version)) {
                 throw new InvalidArgumentException('report_saved_view_version_binding_mismatch');
             }
