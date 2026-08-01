@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support\Budgeting;
 
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportCursorRow;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunk;
@@ -27,6 +28,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportDefinitionSnapshotDecoder;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use DateTimeImmutable;
@@ -36,7 +38,7 @@ use Tests\Support\Reporting\ReportDefinitionBuilder;
 final class BudgetPlanFactExportEvidenceFixture
 {
     /** @return array{0: ReportRunExportSource, 1: \App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition, 2: list<ReportRowChunk>} */
-    public static function sealedSource(string $rendererVersion = 'budget-plan-fact-renderer-v1', bool $tamperDefinitionHash = false): array
+    public static function sealedSource(string $rendererVersion = 'budget-plan-fact-renderer-v1', bool $tamperDefinitionHash = false, bool $tamperSignature = false, bool $tamperPayload = false, bool $revokedKey = false): array
     {
         $contract = new BudgetPlanFactCandidateContract;
         $contract->assertRuntimeMatches();
@@ -71,6 +73,17 @@ final class BudgetPlanFactExportEvidenceFixture
         );
         $sourceHash = $write->header->snapshotHash;
         $generatedAt = $write->header->generatedAt;
+        $pair = sodium_crypto_sign_seed_keypair(hash('sha256', 'budget-plan-fact-export-evidence-key', true));
+        $public = sodium_crypto_sign_publickey($pair);
+        $private = sodium_crypto_sign_secretkey($pair);
+        $keyId = 'budget-plan-fact-evidence-key';
+        $provisionalSeal = new ReportSnapshotSeal(
+            $keyId,
+            'ed25519-sha256',
+            $sourceHash,
+            rtrim(strtr(base64_encode(str_repeat("\0", 64)), '+/', '-_'), '='),
+            $generatedAt,
+        );
         $snapshot = new ReportSnapshotRef(
             $write->header->sourceKind,
             $write->header->id,
@@ -82,15 +95,15 @@ final class BudgetPlanFactExportEvidenceFixture
             null,
             ['report_query_hash' => $query->queryHash->value],
             ReportSnapshotClassification::OFFICIAL,
-            new ReportSnapshotSeal(
-                'budget-plan-fact-evidence-key',
-                'ed25519-sha256',
-                new Sha256Hash(hash('sha256', 'budget-plan-fact-export-evidence-seal')),
-                rtrim(strtr(base64_encode(str_repeat("\0", 64)), '+/', '-_'), '='),
-                $generatedAt,
-            ),
+            $provisionalSeal,
             $write->header->sourceHash,
         );
+        $signature = sodium_crypto_sign_detached((new ReportSnapshotSealVerificationInput($provisionalSeal, $snapshot->id, $snapshot->kind, $snapshot->classification, $snapshot->generatedAt, $sourceHash))->signedBytes(), $private);
+        if ($tamperSignature) {
+            $signature[0] = chr(ord($signature[0]) ^ 1);
+        }
+        $seal = new ReportSnapshotSeal($keyId, 'ed25519-sha256', $tamperPayload ? new Sha256Hash(str_repeat('a', 64)) : $sourceHash, rtrim(strtr(base64_encode($signature), '+/', '-_'), '='), $generatedAt);
+        $snapshot = new ReportSnapshotRef($write->header->sourceKind, $write->header->id, $scope, $definitionHash, $contract->formulaVersion, $sourceHash, $generatedAt, null, ['report_query_hash' => $query->queryHash->value], ReportSnapshotClassification::OFFICIAL, $seal, $write->header->sourceHash);
         $rows = array_map(
             static fn ($row): array => ['row_key' => $row->rowKey, ...$row->payload],
             $write->rows,
@@ -115,7 +128,9 @@ final class BudgetPlanFactExportEvidenceFixture
         if ($tamperDefinitionHash) {
             $record->definition_snapshot_hash = str_repeat('f', 64);
         }
-        $source = (new ReportRunHydrator)->exportSource(
+        $source = (new ReportRunHydrator(new TrustedReportSnapshotSealVerifier([
+            $keyId => ['public_key' => rtrim(strtr(base64_encode($public), '+/', '-_'), '='), 'revoked' => $revokedKey],
+        ])))->exportSource(
             $record,
             1000,
         );
