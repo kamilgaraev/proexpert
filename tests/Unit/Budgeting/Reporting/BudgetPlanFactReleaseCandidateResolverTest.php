@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Budgeting\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationDeliveryContractHasher;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -90,7 +93,7 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
         $conformance = $this->document(BudgetPlanFactReleaseCandidateLayout::CONFORMANCE_EVIDENCE);
         $this->write(BudgetPlanFactReleaseCandidateLayout::CONFORMANCE_EVIDENCE, $conformance);
 
-        $proof = $this->proof($candidate, $conformance['digest']);
+        $proof = $this->proof($candidate, $conformance);
         $this->write(BudgetPlanFactReleaseCandidateLayout::PROOF_TEMPLATE, $proof);
         $this->write(
             BudgetPlanFactReleaseCandidateLayout::REQUEST_FILE,
@@ -108,7 +111,7 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
         $candidate = $this->document(BudgetPlanFactReleaseCandidateLayout::CANDIDATE_MANIFEST);
         $conformance = $this->document(BudgetPlanFactReleaseCandidateLayout::CONFORMANCE_EVIDENCE);
         $conformance['digest'] = str_repeat('c', 64);
-        $proof = $this->proof($candidate, $conformance['digest']);
+        $proof = $this->proof($candidate, $conformance);
 
         $this->write(BudgetPlanFactReleaseCandidateLayout::CONFORMANCE_EVIDENCE, $conformance);
         $this->write(BudgetPlanFactReleaseCandidateLayout::PROOF_TEMPLATE, $proof);
@@ -121,6 +124,63 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
         $this->expectExceptionMessage('budget_plan_fact_release_candidate_untrusted');
 
         (new BudgetPlanFactReleaseCandidateResolver)->resolve($this->directory, $this->commitSha());
+    }
+
+    public function test_rejects_self_consistent_proof_semantic_forges(): void
+    {
+        $forges = [
+            'source rows' => static function (array &$proof): void {
+                $proof['source']['rows_sha256'] = str_repeat('1', 64);
+            },
+            'formula totals' => static function (array &$proof): void {
+                $proof['formula']['totals_sha256'] = str_repeat('2', 64);
+            },
+            'components' => static function (array &$proof): void {
+                $proof['components'][0]['sha256'] = str_repeat('3', 64);
+            },
+            'assertions' => static function (array &$proof): void {
+                $proof['source']['assertion_codes'] = ['source.forged.passed'];
+            },
+            'delivery renderer' => static function (array &$proof): void {
+                $proof['export_contracts'][0]['renderer_sha256'] = str_repeat('4', 64);
+            },
+            'delivery assertions' => static function (array &$proof): void {
+                $proof['export_contracts'][0]['assertion_codes'] = [
+                    'export.csv.fixture.passed',
+                    'export.csv.provenance.passed',
+                    'export.csv.redaction.passed',
+                    'export.csv.schema.passed',
+                    'export.csv.zed.passed',
+                ];
+            },
+            'required checks' => static function (array &$proof): void {
+                $proof['ci']['required_checks'] = array_values(array_filter(
+                    $proof['ci']['required_checks'],
+                    static fn (string $check): bool => $check !== 'postgresql_contract',
+                ));
+            },
+        ];
+
+        foreach ($forges as $name => $forge) {
+            $candidate = $this->document(BudgetPlanFactReleaseCandidateLayout::CANDIDATE_MANIFEST);
+            $conformance = $this->document(BudgetPlanFactReleaseCandidateLayout::CONFORMANCE_EVIDENCE);
+            $proof = $this->document(BudgetPlanFactReleaseCandidateLayout::PROOF_TEMPLATE);
+            $forge($proof);
+            $this->write(BudgetPlanFactReleaseCandidateLayout::PROOF_TEMPLATE, $proof);
+            $this->write(
+                BudgetPlanFactReleaseCandidateLayout::REQUEST_FILE,
+                BudgetPlanFactReleaseCandidateLayout::request($this->commitSha(), ReportPublicationProof::fromArray($proof)->digest()->value),
+            );
+
+            try {
+                (new BudgetPlanFactReleaseCandidateResolver)->resolve($this->directory, $this->commitSha());
+                self::fail("{$name} forge was accepted");
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('budget_plan_fact_release_candidate_untrusted', $exception->getMessage());
+            }
+
+            $this->writeDocuments();
+        }
     }
 
     private function writeDocuments(): void
@@ -152,10 +212,7 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
             'assertion_count' => 2,
             'code' => BudgetPlanFactCandidateContract::CODE,
             'commit_sha' => $commit,
-            'component_class_hashes' => [
-                ['class' => PlanFactCalculator::class, 'sha256' => BudgetPlanFactCandidateContract::FORMULA_HASH],
-                ['class' => PlanFactSourceSnapshotMaterializer::class, 'sha256' => BudgetPlanFactCandidateContract::SOURCE_HASH],
-            ],
+            'component_class_hashes' => $this->componentHashes(),
             'contract_version' => '1.0.0',
             'definition_hash' => $candidate['candidate_definition_sha256'],
             'digest' => '',
@@ -167,7 +224,7 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
             'status' => 'passed',
         ];
         $conformance['digest'] = $this->conformanceDigest($conformance);
-        $proof = $this->proof($candidate, $conformance['digest']);
+        $proof = $this->proof($candidate, $conformance);
         $request = BudgetPlanFactReleaseCandidateLayout::request($commit, ReportPublicationProof::fromArray($proof)->digest()->value);
 
         $this->write(BudgetPlanFactReleaseCandidateLayout::CANDIDATE_MANIFEST, $candidate);
@@ -204,34 +261,24 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
     }
 
     /** @param array<string, mixed> $candidate */
-    private function proof(array $candidate, string $conformanceDigest): array
+    private function proof(array $candidate, array $conformance): array
     {
-        $export = static fn (string $format, string $renderer): array => [
-            'format' => $format,
-            'schema_sha256' => str_repeat($format === 'csv' ? '1' : '2', 64),
-            'fixture_sha256' => str_repeat('b', 64),
-            'renderer_class' => $renderer,
-            'renderer_contract_sha256' => str_repeat($format === 'csv' ? '3' : '4', 64),
-            'renderer_sha256' => str_repeat($format === 'csv' ? '5' : '6', 64),
-            'assertion_codes' => ['export.'.$format.'.renderer.passed'],
-        ];
-
         return [
             'binding_sha256' => str_repeat('7', 64),
             'candidate_definition_sha256' => $candidate['candidate_definition_sha256'],
             'candidate_manifest_sha256' => hash('sha256', CanonicalJson::encode($candidate)),
             'ci' => ['commit_sha' => $this->commitSha(), 'completed_at_utc' => '2026-08-01T00:00:00.000000Z', 'required_checks' => ['binding_contract', 'drill_down_contract', 'export_csv_contract', 'export_xlsx_contract', 'formula_contract', 'postgresql_contract', 'rbac_contract', 'source_contract'], 'run_id' => 'ci-1', 'suite_sha256' => str_repeat('8', 64)],
             'code' => BudgetPlanFactCandidateContract::CODE,
-            'components' => [['class' => CsvReportExportRenderer::class, 'sha256' => str_repeat('9', 64)], ['class' => XlsxReportExportRenderer::class, 'sha256' => str_repeat('a', 64)]],
-            'conformance_evidence_sha256' => $conformanceDigest,
+            'components' => $conformance['component_class_hashes'],
+            'conformance_evidence_sha256' => $conformance['digest'],
             'contract_version' => '1.0.0',
-            'drill_down_contract' => ['assertion_codes' => ['drill_down.schema.passed'], 'schema_sha256' => str_repeat('b', 64)],
-            'export_contracts' => [$export('csv', CsvReportExportRenderer::class), $export('xlsx', XlsxReportExportRenderer::class)],
+            'drill_down_contract' => ['assertion_codes' => ['drill_down.schema.passed'], 'schema_sha256' => ReportPublicationAdmissionRequirements::profileCatalog()->forCode(BudgetPlanFactCandidateContract::CODE)->drillDownSchemaHash],
+            'export_contracts' => $this->deliveryContracts($candidate, $conformance),
             'fixture_sha256' => str_repeat('b', 64),
             'formula' => ['assertion_codes' => ['formula.plan_fact.passed'], 'formula_version' => BudgetPlanFactCandidateContract::FORMULA_VERSION, 'totals_sha256' => str_repeat('a', 64)],
             'permissions' => ['audit' => [], 'download' => ['budgeting.plan_fact.export'], 'export' => ['budgeting.plan_fact.export'], 'run' => ['budgeting.plan_fact.view'], 'sensitive' => [], 'view' => ['budgeting.plan_fact.view']],
             'release' => ['approver_identity' => 'bot@most', 'created_at_utc' => '2026-08-01T00:00:00.000000Z', 'git_sha' => $this->commitSha()],
-            'semantic_fingerprints' => ['formula' => BudgetPlanFactCandidateContract::FORMULA_HASH, 'source' => BudgetPlanFactCandidateContract::SOURCE_HASH],
+            'semantic_fingerprints' => $this->fingerprints($candidate, $conformance),
             'source' => ['assertion_codes' => ['source.plan_fact.passed'], 'row_count' => 1, 'rows_sha256' => str_repeat('e', 64), 'snapshot_id' => BudgetPlanFactCandidateFixture::closeId(), 'snapshot_kind' => 'budget.plan_fact.close', 'source_sha256' => BudgetPlanFactCandidateContract::SOURCE_HASH],
             'versions' => ['contract' => '1.0.0', 'formula' => BudgetPlanFactCandidateContract::FORMULA_VERSION, 'renderer' => '1.0.0', 'source_schema' => BudgetPlanFactCandidateFixture::contract()->sourceSchemaVersion],
         ];
@@ -266,5 +313,84 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
         unset($document['digest']);
 
         return hash('sha256', CanonicalJson::encode($document));
+    }
+
+    /** @return list<array{class: class-string, sha256: string}> */
+    private function componentHashes(): array
+    {
+        $classes = [
+            CsvReportExportRenderer::class,
+            XlsxReportExportRenderer::class,
+            PlanFactCalculator::class,
+            PlanFactSourceSnapshotMaterializer::class,
+        ];
+        sort($classes, SORT_STRING);
+
+        return array_map(
+            static fn (string $class): array => [
+                'class' => $class,
+                'sha256' => hash_file('sha256', (string) (new \ReflectionClass($class))->getFileName()),
+            ],
+            $classes,
+        );
+    }
+
+    /** @param array<string, mixed> $candidate @param array<string, mixed> $conformance */
+    private function fingerprints(array $candidate, array $conformance): array
+    {
+        $formula = hash('sha256', CanonicalJson::encode([
+            'component_class_hashes' => $conformance['component_class_hashes'],
+            'totals_hash' => $conformance['formula']['totals_hash'],
+        ]));
+        $source = hash('sha256', CanonicalJson::encode([
+            'filters' => $candidate['candidate_definition']['filters'],
+            'grain' => null,
+            'source_hash' => $conformance['source']['source_hash'],
+        ]));
+
+        return ['formula' => $formula, 'source' => $source];
+    }
+
+    /** @param array<string, mixed> $candidate @param array<string, mixed> $conformance */
+    private function deliveryContracts(array $candidate, array $conformance): array
+    {
+        $components = [];
+        foreach ($conformance['component_class_hashes'] as $component) {
+            $components[$component['class']] = $component['sha256'];
+        }
+        $profile = ReportPublicationAdmissionRequirements::profileCatalog()->forCode(BudgetPlanFactCandidateContract::CODE);
+        $contracts = [];
+        foreach ($profile->exports as $format => $contract) {
+            $renderer = $contract['renderer_class'];
+            $assertions = [
+                "export.{$format}.fixture.passed",
+                "export.{$format}.provenance.passed",
+                "export.{$format}.redaction.passed",
+                "export.{$format}.renderer.passed",
+                "export.{$format}.schema.passed",
+            ];
+            $rendererHash = new Sha256Hash($components[$renderer]);
+            $schemaHash = new Sha256Hash($contract['schema_sha256']);
+            $fixtureHash = new Sha256Hash($conformance['fixture_hash']);
+            $contracts[] = [
+                'format' => $format,
+                'schema_sha256' => $schemaHash->value,
+                'fixture_sha256' => $fixtureHash->value,
+                'renderer_class' => $renderer,
+                'renderer_contract_sha256' => (new ReportPublicationDeliveryContractHasher)->hash(
+                    $format,
+                    $renderer,
+                    $rendererHash,
+                    $candidate['candidate_definition']['versions']['renderer'],
+                    $schemaHash,
+                    $fixtureHash,
+                    $assertions,
+                )->value,
+                'renderer_sha256' => $rendererHash->value,
+                'assertion_codes' => $assertions,
+            ];
+        }
+
+        return $contracts;
     }
 }

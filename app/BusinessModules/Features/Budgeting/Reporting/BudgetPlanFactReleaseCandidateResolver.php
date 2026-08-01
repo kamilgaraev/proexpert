@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionSemanticFingerprint;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationDeliveryContractHasher;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFormulaConformanceEvidence;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
@@ -97,6 +100,7 @@ final class BudgetPlanFactReleaseCandidateResolver
             || ($conformance['formula']['formula_version'] ?? null) !== BudgetPlanFactCandidateContract::FORMULA_VERSION
             || ($conformance['source']['source_hash'] ?? null) !== BudgetPlanFactCandidateContract::SOURCE_HASH
             || ($conformance['source']['snapshot_id'] ?? null) !== $candidate['source_close_id']
+            || ! $this->proofMatchesEvidenceAndCandidate($candidate, $conformanceEvidence, $publicationProof)
             || $publicationProof->payload()['code'] !== BudgetPlanFactCandidateContract::CODE
             || $publicationProof->payload()['release']['git_sha'] !== $commitSha
             || $publicationProof->payload()['candidate_definition_sha256'] !== $candidate['candidate_definition_sha256']
@@ -113,6 +117,154 @@ final class BudgetPlanFactReleaseCandidateResolver
         }
 
         return $documents;
+    }
+
+    /** @param array<string, mixed> $candidate */
+    private function proofMatchesEvidenceAndCandidate(
+        array $candidate,
+        ReportDefinitionConformanceEvidence $evidence,
+        ReportPublicationProof $proof,
+    ): bool {
+        $payload = $proof->payload();
+        $definition = $candidate['candidate_definition'] ?? null;
+        if (! is_array($definition) || array_is_list($definition)) {
+            return false;
+        }
+
+        $components = $evidence->canonicalPayload()['component_class_hashes'];
+        $source = [
+            'snapshot_kind' => $evidence->source->snapshotKind,
+            'snapshot_id' => $evidence->source->snapshotId,
+            'source_sha256' => $evidence->source->sourceHash->value,
+            'rows_sha256' => $evidence->source->rowsHash->value,
+            'row_count' => $evidence->source->rowCount,
+            'assertion_codes' => $evidence->source->assertionCodes,
+        ];
+        $formula = [
+            'formula_version' => $evidence->formula->formulaVersion,
+            'totals_sha256' => $evidence->formula->totalsHash->value,
+            'assertion_codes' => $evidence->formula->assertionCodes,
+        ];
+        $fingerprints = new ReportDefinitionSemanticFingerprint;
+        $expectedFingerprints = [
+            'source' => $fingerprints->source($definition, $evidence),
+            'formula' => $fingerprints->formula($evidence),
+        ];
+        $versions = $definition['versions'] ?? null;
+        $permissions = $definition['permissions'] ?? null;
+
+        return $payload['fixture_sha256'] === $evidence->fixtureHash->value
+            && $this->sameCanonicalMap($payload['source'], $source)
+            && $this->sameCanonicalMap($payload['formula'], $formula)
+            && $payload['components'] === $components
+            && $this->sameCanonicalMap($payload['semantic_fingerprints'], $expectedFingerprints)
+            && is_array($versions)
+            && ! array_is_list($versions)
+            && $payload['contract_version'] === ($versions['contract'] ?? null)
+            && $this->sameCanonicalMap($payload['versions'], [
+                'source_schema' => $versions['source_schema'] ?? null,
+                'formula' => $versions['formula'] ?? null,
+                'contract' => $versions['contract'] ?? null,
+                'renderer' => $versions['renderer'] ?? null,
+            ])
+            && is_array($permissions)
+            && ! array_is_list($permissions)
+            && $this->sameCanonicalMap($payload['permissions'], [
+                'view' => $permissions['view'] ?? null,
+                'run' => $permissions['view'] ?? null,
+                'export' => $permissions['export'] ?? null,
+                'download' => $permissions['export'] ?? null,
+                'sensitive' => $permissions['sensitive'] ?? null,
+                'audit' => $permissions['audit'] ?? null,
+            ])
+            && $this->hasRequiredChecks($payload)
+            && $this->hasDeliveryContracts($definition, $evidence, $payload);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function hasRequiredChecks(array $payload): bool
+    {
+        try {
+            $profile = ReportPublicationAdmissionRequirements::profileCatalog()
+                ->forCode(BudgetPlanFactCandidateContract::CODE);
+
+            return $payload['ci']['required_checks'] === $profile->requiredChecks;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** @param array<string, mixed> $definition @param array<string, mixed> $payload */
+    private function hasDeliveryContracts(
+        array $definition,
+        ReportDefinitionConformanceEvidence $evidence,
+        array $payload,
+    ): bool {
+        try {
+            $profile = ReportPublicationAdmissionRequirements::profileCatalog()
+                ->forCode(BudgetPlanFactCandidateContract::CODE);
+            $exports = $payload['export_contracts'];
+            if (! is_array($exports) || ! array_is_list($exports)
+                || array_column($exports, 'format') !== array_keys($profile->exports)
+                || ! $this->sameCanonicalMap($payload['drill_down_contract'], [
+                    'schema_sha256' => $profile->drillDownSchemaHash,
+                    'assertion_codes' => ['drill_down.schema.passed'],
+                ])) {
+                return false;
+            }
+            $rendererVersion = $definition['versions']['renderer'] ?? null;
+            if (! is_string($rendererVersion)) {
+                return false;
+            }
+            foreach ($exports as $contract) {
+                $format = $contract['format'] ?? null;
+                $expected = is_string($format) ? ($profile->exports[$format] ?? null) : null;
+                $rendererClass = is_array($expected) ? ($expected['renderer_class'] ?? null) : null;
+                $rendererHash = is_string($rendererClass)
+                    ? ($evidence->componentClassHashes[$rendererClass] ?? null)
+                    : null;
+                $assertions = is_string($format) ? [
+                    "export.{$format}.fixture.passed",
+                    "export.{$format}.provenance.passed",
+                    "export.{$format}.redaction.passed",
+                    "export.{$format}.renderer.passed",
+                    "export.{$format}.schema.passed",
+                ] : [];
+                if (! is_array($contract)
+                    || ! is_array($expected)
+                    || ! is_string($rendererClass)
+                    || ! $rendererHash instanceof Sha256Hash
+                    || $contract['assertion_codes'] !== $assertions
+                    || $contract['renderer_class'] !== $rendererClass
+                    || $contract['schema_sha256'] !== $expected['schema_sha256']
+                    || $contract['fixture_sha256'] !== $evidence->fixtureHash->value
+                    || $contract['renderer_sha256'] !== $rendererHash->value
+                    || ! hash_equals(
+                        (new ReportPublicationDeliveryContractHasher)->hash(
+                            $format,
+                            $rendererClass,
+                            $rendererHash,
+                            $rendererVersion,
+                            new Sha256Hash($contract['schema_sha256']),
+                            $evidence->fixtureHash,
+                            $assertions,
+                        )->value,
+                        $contract['renderer_contract_sha256'],
+                    )) {
+                    return false;
+                }
+            }
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** @param array<string, mixed> $left @param array<string, mixed> $right */
+    private function sameCanonicalMap(array $left, array $right): bool
+    {
+        return hash_equals(CanonicalJson::encode($left), CanonicalJson::encode($right));
     }
 
     /** @param array<string, mixed> $document */
