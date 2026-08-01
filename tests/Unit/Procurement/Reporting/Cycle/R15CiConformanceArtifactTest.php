@@ -39,6 +39,22 @@ final class R15CiConformanceArtifactTest extends TestCase
         (new R15CiEvidenceRuntimeGuard)->assertEnabled();
     }
 
+    public function test_ci_runtime_guard_rejects_production_composition_even_when_ci_flag_is_set(): void
+    {
+        putenv('MOST_R15_CI_EVIDENCE=1');
+        putenv('GITHUB_ACTIONS=true');
+        putenv('APP_ENV=production');
+        try {
+            $this->expectException(LogicException::class);
+            $this->expectExceptionMessage('r15_ci_evidence_runtime_forbidden');
+            (new R15CiEvidenceRuntimeGuard)->assertEnabled();
+        } finally {
+            putenv('APP_ENV');
+            putenv('GITHUB_ACTIONS');
+            putenv('MOST_R15_CI_EVIDENCE');
+        }
+    }
+
     private function evidence(): ReportDefinitionConformanceEvidence
     {
         $hash = new Sha256Hash(str_repeat('a', 64));
