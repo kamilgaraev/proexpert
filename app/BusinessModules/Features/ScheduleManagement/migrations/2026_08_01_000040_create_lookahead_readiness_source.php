@@ -190,7 +190,7 @@ return new class extends Migration
         });
 
         Schema::create('lookahead_readiness_events', function (Blueprint $table): void {
-            $table->uuid('event_id')->primary();
+            $table->uuid('event_id');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('project_id');
             $table->unsignedBigInteger('schedule_id');
@@ -210,6 +210,7 @@ return new class extends Migration
             $table->char('schedule_revision_hash', 64);
             $table->timestampTz('created_at');
 
+            $table->primary('event_id', 'lookahead_readiness_events_pk');
             $table->unique(['organization_id', 'idempotency_key'], 'lookahead_event_idempotency_unique');
             $table->index(['organization_id', 'project_id', 'schedule_id', 'occurred_at', 'event_id'], 'lookahead_event_cursor_idx');
             $table->index(['commitment_task_id', 'occurred_at', 'event_id'], 'lookahead_event_task_cursor_idx');
