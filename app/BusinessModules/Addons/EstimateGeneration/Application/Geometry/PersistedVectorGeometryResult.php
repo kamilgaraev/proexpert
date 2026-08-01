@@ -11,5 +11,7 @@ final readonly class PersistedVectorGeometryResult
     public function __construct(
         public NormalizedBuildingModelData $model,
         public GeometryReviewedSource $sourceConfirmationContext,
+        /** @var array<string, mixed> */
+        public array $sourceConfirmation,
     ) {}
 }

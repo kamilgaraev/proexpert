@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometrySourceConfirmationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use JsonException;
 
 final readonly class GeometryReviewPayloadService implements GeometryReviewPayloadReader
@@ -100,20 +100,16 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
             return ['payload' => null, 'reason' => 'source_evidence_unavailable'];
         }
         try {
-            $metadata = is_array($row->metadata ?? null)
-                ? $row->metadata
-                : json_decode((string) ($row->metadata ?? ''), true, 64, JSON_THROW_ON_ERROR);
-            if (! is_array($metadata) || array_keys($metadata) !== ['vector_geometry'] || ! is_array($metadata['vector_geometry'])) {
-                return ['payload' => null, 'reason' => 'vector_capture_unavailable'];
-            }
-            $vector = VectorGeometryData::fromArray($metadata['vector_geometry']);
-        } catch (JsonException|\InvalidArgumentException) {
+            $normalizedPayload = is_array($row->normalized_payload ?? null)
+                ? $row->normalized_payload
+                : json_decode((string) ($row->normalized_payload ?? ''), true, 64, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
             return ['payload' => null, 'reason' => 'vector_capture_invalid'];
         }
-        if (! hash_equals($sourceVersion, $vector->sourceFingerprint)) {
-            return ['payload' => null, 'reason' => 'source_not_current'];
+        if (! is_array($normalizedPayload)) {
+            return ['payload' => null, 'reason' => 'vector_capture_invalid'];
         }
-        $payload = $this->sourceConfirmation->make($vector);
+        $payload = $this->sourceConfirmation->makeFromNormalizedPayload($normalizedPayload, $sourceVersion);
 
         return $payload === null
             ? ['payload' => null, 'reason' => 'semantic_confirmation_unavailable']

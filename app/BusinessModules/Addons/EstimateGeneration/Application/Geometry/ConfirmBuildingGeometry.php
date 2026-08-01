@@ -56,13 +56,14 @@ final class ConfirmBuildingGeometry
             $evidenceId = $this->reserveEvidenceId();
             $normalizedSource = $command->sourceConfirmation === null ? null : $this->sourceAssembler->handle($command, $evidenceId);
             $normalized = $normalizedSource?->model ?? $this->mutator->mutate($head->model, $command, $evidenceId);
+            $serverSourceConfirmation = $normalizedSource?->sourceConfirmation;
             $newInputVersion = 'sha256:'.hash('sha256', $command->expectedInputVersion.'|'.$normalized->contentVersion().'|'.($command->expectedStateVersion + 1));
             $sourceEvidenceIds = array_values(array_map('intval', $head->model['evidence_ids'] ?? []));
             $evidenceValue = [
                 'source_class' => 'user_geometry_confirmation', 'actor_id' => $command->actorId,
                 'reviewer_ref' => 'user:'.$command->actorId, 'confirmed_at' => now()->toIso8601String(),
                 'operations' => $command->operations, 'scale' => $command->scale,
-                'source_confirmation' => $command->sourceConfirmation,
+                'source_confirmation' => $serverSourceConfirmation,
                 'source_evidence_ids' => $sourceEvidenceIds,
                 'previous_state_version' => $command->expectedStateVersion, 'new_state_version' => $command->expectedStateVersion + 1,
                 'previous_model_version' => $command->expectedModelVersion, 'new_model_version' => $normalized->contentVersion(),
@@ -98,7 +99,7 @@ final class ConfirmBuildingGeometry
                     'source_class' => 'user_geometry_confirmation', 'reviewer_ref' => 'user:'.$command->actorId,
                     'confirmed_at' => now(),
                     'semantic_payload' => json_encode([
-                        ...$command->sourceConfirmation,
+                        ...$serverSourceConfirmation,
                         'source_confirmation_context' => $normalizedSource->sourceConfirmationContext->toArray(),
                     ], JSON_THROW_ON_ERROR),
                     'created_at' => now(), 'updated_at' => now(),

@@ -7,7 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Geometry;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewDataSource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadService;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewSourcePresenter;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometrySourceConfirmationFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometrySourceConfirmationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\Services\Storage\FileService;
@@ -92,16 +92,18 @@ final class GeometryReviewPayloadServiceTest extends TestCase
     }
 
     #[Test]
-    public function it_clears_semantic_confirmation_when_the_capture_is_stale_or_evidence_is_incomplete(): void
+    public function it_marks_stale_or_missing_semantic_confirmation_inputs_unavailable(): void
     {
         $stale = $this->vectorRow();
         $stale->page_source_version = 'sha256:'.str_repeat('c', 64);
         $missingEvidence = $this->vectorRow();
         $missingEvidence->source_evidence_count = 0;
         $missingEvidence->source_evidence_id = null;
-        $source = new FakeGeometryReviewDataSource(2, [$stale, $missingEvidence]);
+        $missingCapture = $this->vectorRow();
+        $missingCapture->normalized_payload = [];
+        $source = new FakeGeometryReviewDataSource(3, [$stale, $missingEvidence, $missingCapture]);
         $files = Mockery::mock(FileService::class);
-        $files->expects('temporaryUrl')->twice()->andReturn('https://storage.example/plan.png');
+        $files->expects('temporaryUrl')->times(3)->andReturn('https://storage.example/plan.png');
         $service = new GeometryReviewPayloadService($source, new GeometryReviewSourcePresenter($files), new GeometrySourceConfirmationFactory);
 
         $payload = $service->handle($this->session());
@@ -110,6 +112,22 @@ final class GeometryReviewPayloadServiceTest extends TestCase
         self::assertSame('source_not_current', $payload['sources'][0]['source_confirmation_unavailable_reason']);
         self::assertNull($payload['sources'][1]['source_confirmation']);
         self::assertSame('source_evidence_unavailable', $payload['sources'][1]['source_confirmation_unavailable_reason']);
+        self::assertNull($payload['sources'][2]['source_confirmation']);
+        self::assertSame('semantic_confirmation_unavailable', $payload['sources'][2]['source_confirmation_unavailable_reason']);
+    }
+
+    #[Test]
+    public function it_marks_the_production_pdf_geometry_artifact_unavailable_without_claiming_a_vector_capture(): void
+    {
+        $source = new FakeGeometryReviewDataSource(1, [$this->pdfGeometryRow()]);
+        $files = Mockery::mock(FileService::class);
+        $files->expects('temporaryUrl')->once()->andReturn('https://storage.example/plan.png');
+        $service = new GeometryReviewPayloadService($source, new GeometryReviewSourcePresenter($files), new GeometrySourceConfirmationFactory);
+
+        $payload = $service->handle($this->session());
+
+        self::assertNull($payload['sources'][0]['source_confirmation']);
+        self::assertSame('semantic_confirmation_unavailable', $payload['sources'][0]['source_confirmation_unavailable_reason']);
     }
 
     private function session(): EstimateGenerationSession
@@ -150,6 +168,22 @@ final class GeometryReviewPayloadServiceTest extends TestCase
     {
         $row = $this->row(1);
         $row->source_version = 'sha256:'.str_repeat('b', 64);
+        $row->unit_type = 'cad_drawing';
+        $row->document_source_version = $row->source_version;
+        $row->unit_source_version = $row->source_version;
+        $row->page_source_version = $row->source_version;
+        $row->unit_status = 'completed';
+        $row->source_evidence_id = 91;
+        $row->source_evidence_count = 1;
+        $row->normalized_payload = ['vector_geometry' => $this->vectorGeometry()];
+
+        return $row;
+    }
+
+    private function pdfGeometryRow(): object
+    {
+        $row = $this->row(1);
+        $row->source_version = 'sha256:'.str_repeat('b', 64);
         $row->unit_type = 'pdf_page';
         $row->document_source_version = $row->source_version;
         $row->unit_source_version = $row->source_version;
@@ -157,7 +191,22 @@ final class GeometryReviewPayloadServiceTest extends TestCase
         $row->unit_status = 'completed';
         $row->source_evidence_id = 91;
         $row->source_evidence_count = 1;
-        $row->metadata = json_encode(['vector_geometry' => $this->vectorGeometry()], JSON_THROW_ON_ERROR);
+        $row->normalized_payload = [
+            'schema_version' => 1,
+            'source_kind' => 'pdf_page',
+            'pdf_geometry' => [
+                'schema_version' => 1,
+                'geometry' => [
+                    'page_number' => 1,
+                    'width' => 595,
+                    'height' => 842,
+                    'rotation' => 0,
+                    'vector_elements' => [
+                        ['kind' => 'line', 'geometry' => ['points' => [[0, 0], [400, 0]]]],
+                    ],
+                ],
+            ],
+        ];
 
         return $row;
     }

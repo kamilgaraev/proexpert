@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryC
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryDependencyInvalidator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryRegenerationIntent;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometrySourceConfirmationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
@@ -160,7 +161,11 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         try {
             $preview = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\AssemblePersistedVectorGeometry::class)
                 ->handle($this->sourceCommand($fixture));
-            self::assertSame('room-1', $preview->model->floors[0]->rooms[0]->key);
+            $roomKey = array_values(array_filter(
+                $this->sourceConfirmation()['elements'],
+                static fn (array $element): bool => $element['type'] === 'room',
+            ))[0]['key'];
+            self::assertSame($roomKey, $preview->model->floors[0]->rooms[0]->key);
             $payloadTypes = DB::select("SELECT attname, format_type(atttypid, atttypmod) AS type FROM pg_attribute WHERE attrelid = 'estimate_generation_sessions'::regclass AND attname IN ('input_payload','analysis_payload','draft_payload','problem_flags')");
             self::assertSame(['jsonb'], array_values(array_unique(array_column($payloadTypes, 'type'))));
             $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
@@ -168,7 +173,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                 ->postJson($url, $this->sourcePayload($fixture));
             self::assertSame(200, $response->status(), json_encode($response->json(), JSON_UNESCAPED_UNICODE));
             $response->assertOk()->assertJsonPath('data.building_model.scale_status', 'confirmed')
-                ->assertJsonPath('data.building_model.floors.0.rooms.0.key', 'room-1');
+                ->assertJsonPath('data.building_model.floors.0.rooms.0.key', $roomKey);
             $newModelId = DB::table('estimate_generation_building_models')->where('session_id', $fixture['session']->id)->max('id');
             self::assertTrue(DB::table('estimate_generation_building_model_evidence')->where('building_model_id', $newModelId)
                 ->where('evidence_id', $sourceEvidenceId)->exists());
@@ -267,6 +272,15 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
         $before = $this->counts($fixture);
         try {
+            $subset = $this->sourcePayload($fixture);
+            $subset['source_confirmation']['elements'] = array_values(array_filter(
+                $subset['source_confirmation']['elements'],
+                static fn (array $element): bool => ($element['boundary_handle'] ?? null) !== 'R2'
+                    && ($element['segment_handles'][0] ?? null) !== 'W2',
+            ));
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
+                ->postJson($url, $subset)->assertUnprocessable();
+            self::assertSame($before, $this->counts($fixture));
             $typedInvalid = $this->sourcePayload($fixture);
             $typedInvalid['source_confirmation']['scale_evidence'][0]['real_world_value'] = '4000';
             $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
@@ -763,10 +777,10 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             'started_at' => now(), 'completed_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
         $documentSourceVersion = 'sha256:'.str_repeat('d', 64);
         $documentId = DB::table('estimate_generation_documents')->insertGetId(['session_id' => $session->id, 'organization_id' => $organization->id,
-            'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'geometry.pdf', 'status' => 'ready',
+            'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'geometry.dxf', 'status' => 'ready',
             'source_version' => $documentSourceVersion, 'created_at' => now(), 'updated_at' => now()]);
         $unitId = DB::table('estimate_generation_processing_units')->insertGetId(['organization_id' => $organization->id, 'project_id' => $project->id,
-            'session_id' => $session->id, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1,
+            'session_id' => $session->id, 'document_id' => $documentId, 'unit_type' => 'cad_drawing', 'unit_index' => 1,
             'source_version' => $documentSourceVersion, 'status' => 'pending', 'locator' => '{}', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
         $pageId = DB::table('estimate_generation_document_pages')->insertGetId([
             'document_id' => $documentId, 'organization_id' => $organization->id, 'project_id' => $project->id,
@@ -797,7 +811,12 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $payload = $this->vectorPayload();
         DB::table('estimate_generation_processing_units')->where('id', $fixture['unit_id'])->update([
             'status' => 'completed', 'output_version' => $fixture['documentSourceVersion'], 'output_count' => 1,
-            'completed_at' => now(), 'metadata' => json_encode(['vector_geometry' => $payload], JSON_THROW_ON_ERROR),
+            'completed_at' => now(),
+            'metadata' => '{}',
+            'updated_at' => now(),
+        ]);
+        DB::table('estimate_generation_document_pages')->where('id', $fixture['page_id'])->update([
+            'normalized_payload' => json_encode(['vector_geometry' => $payload], JSON_THROW_ON_ERROR),
             'updated_at' => now(),
         ]);
         $evidence = (new EloquentEvidenceRepository(DB::connection()))->insertOrGet(new EvidenceData(
@@ -841,23 +860,23 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     private function sourceConfirmation(): array
     {
         $vector = VectorGeometryData::fromArray($this->vectorPayload());
+        $confirmation = (new GeometrySourceConfirmationFactory)->make($vector);
+        self::assertIsArray($confirmation);
 
-        return ['schema_version' => 1, 'source_fingerprint' => $vector->sourceFingerprint,
-            'geometry_payload_sha256' => $vector->payloadSha256(),
-            'scale_evidence' => [['role' => 'measured_segment', 'entity_handle' => 'W1', 'point_indexes' => [0, 1],
-                'real_world_value' => 4000, 'unit' => 'mm']],
-            'elements' => [['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'R1'],
-                ['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['W1']]]];
+        return $confirmation;
     }
 
     private function vectorPayload(): array
     {
         return ['schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;ezdxf:1.4.4',
-            'source_fingerprint' => 'sha256:'.str_repeat('9', 64), 'source_unit' => 'mm', 'unit_status' => 'confirmed',
+            'source_fingerprint' => 'sha256:'.str_repeat('d', 64), 'source_unit' => 'mm', 'unit_status' => 'confirmed',
             'bounds' => [0, 0, 4000, 3000], 'layers' => [['name' => 'A', 'visible' => true]], 'blocks' => [],
             'entities' => [['handle' => 'R1', 'type' => 'lwpolyline', 'layer' => 'A',
                 'points' => [[0, 0], [4000, 0], [4000, 3000], [0, 3000]], 'closed' => true],
-                ['handle' => 'W1', 'type' => 'line', 'layer' => 'A', 'points' => [[0, 0], [4000, 0]]]],
+                ['handle' => 'R2', 'type' => 'lwpolyline', 'layer' => 'A',
+                'points' => [[5000, 0], [9000, 0], [9000, 3000], [5000, 3000]], 'closed' => true],
+                ['handle' => 'W1', 'type' => 'line', 'layer' => 'A', 'points' => [[0, 0], [4000, 0]]],
+                ['handle' => 'W2', 'type' => 'line', 'layer' => 'A', 'points' => [[5000, 0], [9000, 0]]]],
             'texts' => [], 'dimensions' => [], 'pages' => [], 'scale_candidates' => [], 'warnings' => []];
     }
 
@@ -874,7 +893,8 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
 
         return ['models' => DB::table('estimate_generation_building_models')->where('session_id', $sessionId)->count(),
             'evidence' => DB::table('estimate_generation_evidence')->where('session_id', $sessionId)->count(),
-            'outbox' => DB::table('estimate_generation_geometry_regeneration_outbox')->where('session_id', $sessionId)->count()];
+            'outbox' => DB::table('estimate_generation_geometry_regeneration_outbox')->where('session_id', $sessionId)->count(),
+            'confirmations' => DB::table('estimate_generation_geometry_confirmations')->where('session_id', $sessionId)->count()];
     }
 
     private function insertPackage(array $fixture, string $key, ?string $inputVersion, array $metadata): int

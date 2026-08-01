@@ -19,6 +19,7 @@ final readonly class AssemblePersistedVectorGeometry
         private DatabaseManager $database,
         private GeometryBuildingModelInputMapper $mapper,
         private BuildingModelAssembler $assembler,
+        private GeometrySourceConfirmationFactory $sourceConfirmation,
     ) {}
 
     public function handle(GeometryConfirmationCommand $command, ?int $confirmationEvidenceId = null): PersistedVectorGeometryResult
@@ -44,7 +45,7 @@ final readonly class AssemblePersistedVectorGeometry
             ->where('id', $reviewedSource->pageId)->where('document_id', (int) $document->id)
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
             ->where('session_id', $command->sessionId)
-            ->lockForUpdate()->first(['id', 'processing_unit_id', 'source_version']);
+            ->lockForUpdate()->first(['id', 'processing_unit_id', 'source_version', 'normalized_payload']);
         if ($page === null || ! is_numeric($page->processing_unit_id) || (int) $page->processing_unit_id < 1
             || ! is_string($page->source_version)
             || ! hash_equals($document->source_version, $page->source_version)) {
@@ -55,21 +56,27 @@ final readonly class AssemblePersistedVectorGeometry
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
             ->where('session_id', $command->sessionId)->where('document_id', (int) $document->id)
             ->where('status', 'completed')->whereIn('unit_type', ['pdf_page', 'cad_drawing'])
-            ->lockForUpdate()->first(['id', 'document_id', 'metadata', 'source_version']);
+            ->lockForUpdate()->first(['id', 'document_id', 'source_version']);
         if ($unit === null || ! is_string($unit->source_version)
             || ! hash_equals($document->source_version, $unit->source_version)) {
             throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
         }
-        if (! is_string($unit->metadata)) {
-            throw new InvalidArgumentException('Confirmed geometry source was not found.');
-        }
         try {
-            $value = json_decode($unit->metadata, true, 64, JSON_THROW_ON_ERROR);
+            $value = is_array($page->normalized_payload)
+                ? $page->normalized_payload
+                : json_decode((string) $page->normalized_payload, true, 64, JSON_THROW_ON_ERROR);
         } catch (JsonException) {
             throw new InvalidArgumentException('Confirmed geometry source is invalid.');
         }
-        if (! is_array($value) || array_keys($value) !== ['vector_geometry']) {
-            throw new InvalidArgumentException('Confirmed geometry source contract is invalid.');
+        if (! is_array($value)) {
+            throw new InvalidArgumentException('Confirmed geometry source is invalid.');
+        }
+        $canonicalConfirmation = $this->sourceConfirmation->makeFromNormalizedPayload($value, $document->source_version);
+        if ($canonicalConfirmation === null) {
+            throw new InvalidArgumentException('geometry_confirmation_source_unavailable');
+        }
+        if (! hash_equals($this->canonicalJson($canonicalConfirmation), $this->canonicalJson($command->sourceConfirmation))) {
+            throw new InvalidArgumentException('geometry_confirmation_not_canonical');
         }
         $evidenceRows = $this->database->table('estimate_generation_evidence')
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
@@ -103,6 +110,26 @@ final readonly class AssemblePersistedVectorGeometry
         return new PersistedVectorGeometryResult(
             $result->model,
             new GeometryReviewedSource((int) $document->id, (int) $page->id, $document->source_version),
+            $canonicalConfirmation,
         );
+    }
+
+    /** @param array<string, mixed> $value */
+    private function canonicalJson(array $value): string
+    {
+        return json_encode($this->canonicalize($value), JSON_THROW_ON_ERROR);
+    }
+
+    private function canonicalize(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        if (array_is_list($value)) {
+            return array_map($this->canonicalize(...), $value);
+        }
+        ksort($value, SORT_STRING);
+
+        return array_map($this->canonicalize(...), $value);
     }
 }

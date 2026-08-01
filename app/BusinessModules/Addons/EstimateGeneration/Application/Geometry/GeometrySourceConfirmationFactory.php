@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
+namespace App\BusinessModules\Addons\EstimateGeneration\Application\Geometry;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
@@ -10,6 +10,27 @@ use InvalidArgumentException;
 
 final readonly class GeometrySourceConfirmationFactory
 {
+    /** @param array<string, mixed> $payload @return array<string, mixed>|null */
+    public function makeFromNormalizedPayload(array $payload, string $sourceVersion): ?array
+    {
+        $vectorPayload = $payload['vector_geometry'] ?? null;
+        if (! is_array($vectorPayload)) {
+            return null;
+        }
+
+        try {
+            $vector = VectorGeometryData::fromArray($vectorPayload);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+
+        if (! hash_equals($sourceVersion, $vector->sourceFingerprint)) {
+            return null;
+        }
+
+        return $this->make($vector);
+    }
+
     /** @return array<string, mixed>|null */
     public function make(VectorGeometryData $vector): ?array
     {
