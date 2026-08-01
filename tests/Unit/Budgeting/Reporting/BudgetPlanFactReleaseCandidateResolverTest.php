@@ -159,6 +159,9 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
                     static fn (string $check): bool => $check !== 'postgresql_contract',
                 ));
             },
+            'ci commit' => static function (array &$proof): void {
+                $proof['ci']['commit_sha'] = str_repeat('b', 40);
+            },
         ];
 
         foreach ($forges as $name => $forge) {
