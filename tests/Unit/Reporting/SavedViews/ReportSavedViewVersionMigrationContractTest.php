@@ -30,6 +30,13 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString("((content_json ->> 'report_code') = report_code) IS TRUE", $source);
         self::assertStringContainsString("(jsonb_typeof(content_json -> 'contract_version') = 'string') IS TRUE", $source);
         self::assertStringContainsString("((content_json ->> 'contract_version') = contract_version) IS TRUE", $source);
+        self::assertStringContainsString("btrim(contract_version, ' ' || chr(9) || chr(10) || chr(13) || chr(11)) <> ''", $source);
+        self::assertStringContainsString("btrim(content_json ->> 'name', ' ' || chr(9) || chr(10) || chr(13) || chr(11)) <> ''", $source);
+        self::assertStringContainsString("(content_json -> 'sort' ->> 'field') ~ '^[a-z][a-z0-9_]{0,63}$'", $source);
+        self::assertStringContainsString('report_saved_view_version_columns_are_valid', $source);
+        self::assertStringContainsString("jsonb_typeof(column_value) <> 'string'", $source);
+        self::assertStringContainsString("count(DISTINCT column_value #>> '{}')", $source);
+        self::assertStringContainsString('DROP FUNCTION IF EXISTS report_saved_view_version_columns_are_valid(jsonb)', $source);
     }
 
     public function test_postgres_gate_is_opt_in_before_any_connection_and_covers_real_persistence(): void
@@ -49,6 +56,13 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString('test_restore_can_append_a_previously_seen_content_hash', $source);
         self::assertStringContainsString('test_append_and_find_preserve_microseconds', $source);
         self::assertStringContainsString('test_invalid_content_binding_is_rejected_before_it_can_be_frozen', $source);
+        self::assertStringContainsString("yield 'empty sort field'", $source);
+        self::assertStringContainsString("yield 'non-string column'", $source);
+        self::assertStringContainsString("yield 'duplicate columns'", $source);
+        self::assertStringContainsString("yield 'tab-only name'", $source);
+        self::assertStringContainsString("yield 'newline-only contract version'", $source);
+        self::assertStringContainsString("yield 'extra top-level key'", $source);
+        self::assertStringContainsString("yield 'non-container filters'", $source);
     }
 
     public function test_existing_postgres_workflow_executes_the_saved_view_version_gate_fail_closed(): void

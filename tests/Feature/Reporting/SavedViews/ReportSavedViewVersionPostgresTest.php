@@ -139,11 +139,17 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
     }
 
     #[DataProvider('invalidContentBindings')]
-    public function test_invalid_content_binding_is_rejected_before_it_can_be_frozen(string $contentJson): void
-    {
+    public function test_invalid_content_binding_is_rejected_before_it_can_be_frozen(
+        string $contentJson,
+        string $contractVersion = 'v7',
+    ): void {
         $savedViewId = $this->insertHead(10, 20);
 
-        $exception = $this->captureQueryException(static function () use ($savedViewId, $contentJson): void {
+        $exception = $this->captureQueryException(static function () use (
+            $savedViewId,
+            $contentJson,
+            $contractVersion,
+        ): void {
             DB::table('report_saved_view_versions')->insert([
                 'id' => (string) Str::ulid(),
                 'saved_view_id' => $savedViewId,
@@ -151,7 +157,7 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
                 'owner_id' => 20,
                 'revision' => 1,
                 'report_code' => 'procurement_cycle',
-                'contract_version' => 'v7',
+                'contract_version' => $contractVersion,
                 'presentation_schema_version' => 1,
                 'content_json' => $contentJson,
                 'content_hash' => str_repeat('a', 64),
@@ -169,22 +175,100 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
 
     public static function invalidContentBindings(): iterable
     {
-        $validTail = '"name":"A","visibility":"private","filters":{},"comparison":{},'
-            .'"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]';
+        $valid = [
+            'schema_version' => 1,
+            'report_code' => 'procurement_cycle',
+            'contract_version' => 'v7',
+            'name' => 'A',
+            'visibility' => 'private',
+            'filters' => [],
+            'comparison' => [],
+            'sort' => ['field' => 'request_number', 'direction' => 'asc'],
+            'columns' => ['request_number'],
+        ];
 
         yield 'JSON null' => ['null'];
-        yield 'missing schema version' => ['{"report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
-        yield 'null schema version' => ['{"schema_version":null,"report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
-        yield 'string schema version' => ['{"schema_version":"1","report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
-        yield 'mismatched schema version' => ['{"schema_version":2,"report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
-        yield 'missing report code' => ['{"schema_version":1,"contract_version":"v7",'.$validTail.'}'];
-        yield 'null report code' => ['{"schema_version":1,"report_code":null,"contract_version":"v7",'.$validTail.'}'];
-        yield 'non-string report code' => ['{"schema_version":1,"report_code":7,"contract_version":"v7",'.$validTail.'}'];
-        yield 'mismatched report code' => ['{"schema_version":1,"report_code":"other_report","contract_version":"v7",'.$validTail.'}'];
-        yield 'missing contract version' => ['{"schema_version":1,"report_code":"procurement_cycle",'.$validTail.'}'];
-        yield 'null contract version' => ['{"schema_version":1,"report_code":"procurement_cycle","contract_version":null,'.$validTail.'}'];
-        yield 'non-string contract version' => ['{"schema_version":1,"report_code":"procurement_cycle","contract_version":7,'.$validTail.'}'];
-        yield 'mismatched contract version' => ['{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v8",'.$validTail.'}'];
+
+        $content = $valid;
+        unset($content['schema_version']);
+        yield 'missing schema version' => [self::encodeContent($content)];
+        yield 'null schema version' => [self::encodeContent([...$valid, 'schema_version' => null])];
+        yield 'string schema version' => [self::encodeContent([...$valid, 'schema_version' => '1'])];
+        yield 'mismatched schema version' => [self::encodeContent([...$valid, 'schema_version' => 2])];
+
+        $content = $valid;
+        unset($content['report_code']);
+        yield 'missing report code' => [self::encodeContent($content)];
+        yield 'null report code' => [self::encodeContent([...$valid, 'report_code' => null])];
+        yield 'non-string report code' => [self::encodeContent([...$valid, 'report_code' => 7])];
+        yield 'mismatched report code' => [self::encodeContent([...$valid, 'report_code' => 'other_report'])];
+
+        $content = $valid;
+        unset($content['contract_version']);
+        yield 'missing contract version' => [self::encodeContent($content)];
+        yield 'null contract version' => [self::encodeContent([...$valid, 'contract_version' => null])];
+        yield 'non-string contract version' => [self::encodeContent([...$valid, 'contract_version' => 7])];
+        yield 'mismatched contract version' => [self::encodeContent([...$valid, 'contract_version' => 'v8'])];
+        yield 'tab-only contract version' => [self::encodeContent([...$valid, 'contract_version' => "\t"]), "\t"];
+        yield 'newline-only contract version' => [self::encodeContent([...$valid, 'contract_version' => "\n"]), "\n"];
+        yield 'carriage-return-only contract version' => [self::encodeContent([...$valid, 'contract_version' => "\r"]), "\r"];
+        yield 'vertical-tab-only contract version' => [self::encodeContent([...$valid, 'contract_version' => "\v"]), "\v"];
+
+        yield 'extra top-level key' => [self::encodeContent([...$valid, 'unexpected' => true])];
+        yield 'null name' => [self::encodeContent([...$valid, 'name' => null])];
+        yield 'tab-only name' => [self::encodeContent([...$valid, 'name' => "\t"])];
+        yield 'newline-only name' => [self::encodeContent([...$valid, 'name' => "\n"])];
+        yield 'carriage-return-only name' => [self::encodeContent([...$valid, 'name' => "\r"])];
+        yield 'vertical-tab-only name' => [self::encodeContent([...$valid, 'name' => "\v"])];
+        yield 'oversized name' => [self::encodeContent([...$valid, 'name' => str_repeat('a', 121)])];
+        yield 'non-string visibility' => [self::encodeContent([...$valid, 'visibility' => 7])];
+        yield 'unsupported visibility' => [self::encodeContent([...$valid, 'visibility' => 'public'])];
+        yield 'non-container filters' => [self::encodeContent([...$valid, 'filters' => 'invalid'])];
+        yield 'non-container comparison' => [self::encodeContent([...$valid, 'comparison' => 'invalid'])];
+        yield 'non-object sort' => [self::encodeContent([...$valid, 'sort' => []])];
+        yield 'sort missing field' => [self::encodeContent([...$valid, 'sort' => ['direction' => 'asc']])];
+        yield 'sort has extra key' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => 'request_number',
+            'direction' => 'asc',
+            'unexpected' => true,
+        ]])];
+        yield 'empty sort field' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => '',
+            'direction' => 'asc',
+        ]])];
+        yield 'invalid sort field identifier' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => 'RequestNumber',
+            'direction' => 'asc',
+        ]])];
+        yield 'oversized sort field identifier' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => 'a'.str_repeat('b', 64),
+            'direction' => 'asc',
+        ]])];
+        yield 'non-string sort direction' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => 'request_number',
+            'direction' => 1,
+        ]])];
+        yield 'unsupported sort direction' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => 'request_number',
+            'direction' => 'sideways',
+        ]])];
+        yield 'null columns' => [self::encodeContent([...$valid, 'columns' => null])];
+        yield 'empty columns' => [self::encodeContent([...$valid, 'columns' => []])];
+        yield 'non-string column' => [self::encodeContent([...$valid, 'columns' => [null]])];
+        yield 'duplicate columns' => [self::encodeContent([
+            ...$valid,
+            'columns' => ['request_number', 'request_number'],
+        ])];
+        yield 'invalid column identifier' => [self::encodeContent([...$valid, 'columns' => ['RequestNumber']])];
+        yield 'oversized column identifier' => [self::encodeContent([
+            ...$valid,
+            'columns' => ['a'.str_repeat('b', 64)],
+        ])];
+    }
+
+    private static function encodeContent(array $content): string
+    {
+        return json_encode($content, JSON_THROW_ON_ERROR);
     }
 
     private function insertHead(int $organizationId, int $ownerId): string
