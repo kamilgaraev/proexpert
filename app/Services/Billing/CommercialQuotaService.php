@@ -49,7 +49,7 @@ class CommercialQuotaService
                 ? Organization::query()->where('parent_organization_id', $organizationId)->count()
                 : 0,
             'ai_requests_month' => 0,
-            'ai_estimates_month' => 0,
+            'ai_estimates_month' => $this->confirmedAiEstimateReservations($organizationId),
             'document_pages_month' => 0,
             'exports_month' => 0,
             'commercial_proposals_month' => 0,
@@ -469,6 +469,19 @@ class CommercialQuotaService
             ->where('organization_user.is_active', true)
             ->where('users.is_active', true)
             ->whereNull('users.deleted_at')
+            ->count();
+    }
+
+    private function confirmedAiEstimateReservations(int $organizationId): int
+    {
+        if (! Schema::hasTable('estimate_generation_ai_estimate_quota_reservations')) {
+            return 0;
+        }
+
+        return DB::table('estimate_generation_ai_estimate_quota_reservations')
+            ->where('organization_id', $organizationId)
+            ->where('monthly_period', now()->startOfMonth()->toDateString())
+            ->where('status', 'confirmed')
             ->count();
     }
 

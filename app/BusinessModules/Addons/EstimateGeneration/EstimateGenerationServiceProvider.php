@@ -36,6 +36,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryC
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryRegenerationIntentStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\NoopGeometryConfirmationFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EloquentRetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
@@ -182,6 +183,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandDocu
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandObjectStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
@@ -225,6 +227,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPre
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\Services\Billing\CommercialQuotaService;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\RateLimiter;
@@ -494,6 +497,15 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelStore::class, \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore::class);
         $this->app->singleton(EvidenceSourceReplacementInvalidator::class, EvidenceDocumentSourceReplacementInvalidator::class);
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
+        $this->app->singleton(AiEstimateQuotaService::class, fn ($app) => new AiEstimateQuotaService(
+            $app->make('db')->connection(),
+            $app->make(CommercialQuotaService::class),
+        ));
+        $this->app->singleton(AdvanceEstimateGeneration::class, fn ($app) => new AdvanceEstimateGeneration(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow::class),
+            $app->make(AiEstimateQuotaService::class),
+            $app->make('db')->connection(),
+        ));
         $this->app->singleton(OcrClientInterface::class, static fn ($app): TimewebVisionOcrClient => new TimewebVisionOcrClient(
             $app->make(AiUsageStore::class),
             $app->make(EffectiveSettingsResolver::class),

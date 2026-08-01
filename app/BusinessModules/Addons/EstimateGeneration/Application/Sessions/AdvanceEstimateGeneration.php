@@ -8,10 +8,23 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
+use Illuminate\Database\Connection;
 
 final class AdvanceEstimateGeneration
 {
-    public function __construct(private EstimateGenerationWorkflow $workflow) {}
+    private ?AiEstimateQuotaService $aiEstimateQuota;
+
+    private ?Connection $database;
+
+    public function __construct(
+        private EstimateGenerationWorkflow $workflow,
+        ?AiEstimateQuotaService $aiEstimateQuota = null,
+        ?Connection $database = null,
+    ) {
+        $this->aiEstimateQuota = $aiEstimateQuota;
+        $this->database = $database;
+    }
 
     /** @param array<string, mixed> $attributes */
     public function documentsStarted(EstimateGenerationSession $session, array $attributes = []): EstimateGenerationSession
@@ -67,6 +80,21 @@ final class AdvanceEstimateGeneration
             return $session;
         }
 
+        if ($this->aiEstimateQuota === null || $this->database === null) {
+            return $this->transitionToGeneration($session, $attemptId, $inputPayloadChanges);
+        }
+
+        return $this->database->transaction(function () use ($session, $attemptId, $inputPayloadChanges): EstimateGenerationSession {
+            $this->aiEstimateQuota->reserve($session);
+            return $this->transitionToGeneration($session, $attemptId, $inputPayloadChanges);
+        }, 3);
+    }
+
+    private function transitionToGeneration(
+        EstimateGenerationSession $session,
+        string $attemptId,
+        array $inputPayloadChanges,
+    ): EstimateGenerationSession {
         $inputPayload = [
             ...($session->input_payload ?? []),
             ...$inputPayloadChanges,

@@ -24,6 +24,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimate
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RebuildEstimateGenerationSectionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Exceptions\Billing\CommercialQuotaExceededException;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -106,6 +107,8 @@ final class EstimateGenerationActionController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (CommercialQuotaExceededException) {
+            return AdminResponse::error(trans_message('estimate_generation.ai_estimate_quota_exceeded'), 429);
         } catch (\InvalidArgumentException) {
             return AdminResponse::error(trans_message('estimate_generation.price_source_invalid'), 422);
         } catch (\Throwable $e) {
