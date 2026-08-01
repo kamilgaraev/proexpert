@@ -272,6 +272,11 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
                 ->postJson($url, $typedInvalid)->assertUnprocessable();
             self::assertSame($before, $this->counts($fixture));
+            $staleSource = $this->sourcePayload($fixture);
+            $staleSource['source_confirmation_context']['source_version'] = 'sha256:'.str_repeat('f', 64);
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
+                ->postJson($url, $staleSource)->assertConflict();
+            self::assertSame($before, $this->counts($fixture));
             $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
                 ->postJson($url, [...$this->sourcePayload($fixture), 'input_version' => 'sha256:'.str_repeat('f', 64)])->assertConflict();
             self::assertSame($before, $this->counts($fixture));
@@ -762,6 +767,11 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $unitId = DB::table('estimate_generation_processing_units')->insertGetId(['organization_id' => $organization->id, 'project_id' => $project->id,
             'session_id' => $session->id, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1,
             'source_version' => $inputVersion, 'status' => 'pending', 'locator' => '{}', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
+        $pageId = DB::table('estimate_generation_document_pages')->insertGetId([
+            'document_id' => $documentId, 'organization_id' => $organization->id, 'project_id' => $project->id,
+            'session_id' => $session->id, 'processing_unit_id' => $unitId, 'source_version' => $inputVersion,
+            'page_number' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
         $estimateId = DB::table('estimates')->insertGetId(['organization_id' => $organization->id, 'project_id' => $project->id,
             'number' => 'GEOMETRY-SENTINEL-'.\Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(8)), 'name' => 'Контрольная смета',
             'estimate_date' => now()->toDateString(), 'total_amount' => 123.45, 'created_at' => now(), 'updated_at' => now()]);
@@ -771,7 +781,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             'estimate_id' => $estimateId, 'estimate_sentinel' => ['name' => 'Контрольная смета', 'total_amount' => '123.45'],
             'source_evidence_id' => $evidence->id, 'derived_root_id' => $derivedRoot->id, 'derived_child_id' => $derivedChild->id,
             'package_id' => $packageId, 'package_item_id' => $packageItemId, 'other_package_id' => $otherPackageId,
-            'checkpoint_id' => $checkpointId, 'document_id' => $documentId, 'unit_id' => $unitId,
+            'checkpoint_id' => $checkpointId, 'document_id' => $documentId, 'unit_id' => $unitId, 'page_id' => $pageId,
         ];
     }
 
@@ -802,14 +812,24 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     private function sourcePayload(array $fixture): array
     {
         return ['state_version' => 1, 'model_version' => $fixture['model_version'], 'input_version' => $fixture['inputVersion'],
-            'operations' => [], 'source_confirmation' => $this->sourceConfirmation()];
+            'operations' => [], 'source_confirmation' => $this->sourceConfirmation(),
+            'source_confirmation_context' => $this->sourceConfirmationContext($fixture)];
     }
 
     private function sourceCommand(array $fixture): GeometryConfirmationCommand
     {
         return new GeometryConfirmationCommand((int) $fixture['organization']->id, (int) $fixture['project']->id,
             (int) $fixture['session']->id, (int) $fixture['user']->id, 1, $fixture['model_version'],
-            $fixture['inputVersion'], null, [], $this->sourceConfirmation());
+            $fixture['inputVersion'], null, [], $this->sourceConfirmation(), $this->sourceConfirmationContext($fixture));
+    }
+
+    private function sourceConfirmationContext(array $fixture): array
+    {
+        return [
+            'document_id' => $fixture['document_id'],
+            'page_id' => $fixture['page_id'],
+            'source_version' => $fixture['inputVersion'],
+        ];
     }
 
     private function sourceConfirmation(): array

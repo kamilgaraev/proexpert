@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAss
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
@@ -26,12 +27,40 @@ final readonly class AssemblePersistedVectorGeometry
         if ($command->sourceConfirmation === null) {
             throw new InvalidArgumentException('Geometry source confirmation is required.');
         }
+        if ($command->sourceConfirmationContext === null) {
+            throw new InvalidArgumentException('Geometry reviewed source confirmation is required.');
+        }
         $confirmation = GeometryConfirmationData::fromArray($command->sourceConfirmation);
+        $reviewedSource = $command->sourceConfirmationContext;
+        $document = $this->database->table('estimate_generation_documents')
+            ->where('id', $reviewedSource->documentId)
+            ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
+            ->where('session_id', $command->sessionId)->where('status', '<>', 'ignored')
+            ->lockForUpdate()->first(['source_version']);
+        if ($document === null || ! is_string($document->source_version)
+            || ! hash_equals($command->expectedInputVersion, $reviewedSource->sourceVersion)
+            || ! hash_equals($document->source_version, $reviewedSource->sourceVersion)) {
+            throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
+        }
         $rows = $this->database->table('estimate_generation_processing_units')
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
             ->where('session_id', $command->sessionId)->where('source_version', $command->expectedInputVersion)
+            ->where('document_id', $reviewedSource->documentId)
             ->where('status', 'completed')->whereIn('unit_type', ['pdf_page', 'cad_drawing'])
-            ->limit(2)->get(['id', 'document_id', 'metadata']);
+            ->whereExists(function ($query) use ($command, $reviewedSource): void {
+                $query->selectRaw('1')->from('estimate_generation_document_pages')
+                    ->whereColumn('processing_unit_id', 'estimate_generation_processing_units.id')
+                    ->where('id', $reviewedSource->pageId)
+                    ->where('document_id', $reviewedSource->documentId)
+                    ->where('organization_id', $command->organizationId)
+                    ->where('project_id', $command->projectId)
+                    ->where('session_id', $command->sessionId)
+                    ->where('source_version', $reviewedSource->sourceVersion);
+            })
+            ->lockForUpdate()->limit(2)->get(['id', 'document_id', 'metadata']);
+        if ($rows->count() === 0) {
+            throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
+        }
         if ($rows->count() !== 1 || ! is_string($rows[0]->metadata)) {
             throw new InvalidArgumentException('Confirmed geometry source was not found.');
         }

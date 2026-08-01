@@ -34,6 +34,10 @@ final class ConfirmEstimateGenerationGeometryRequest extends FormRequest
             'operations.*.path' => ['required', 'string', 'max:256'],
             'operations.*.value' => ['present'],
             'source_confirmation' => ['nullable', 'array'],
+            'source_confirmation_context' => ['required_with:source_confirmation', 'array:document_id,page_id,source_version'],
+            'source_confirmation_context.document_id' => ['required_with:source_confirmation', 'integer', 'min:1'],
+            'source_confirmation_context.page_id' => ['required_with:source_confirmation', 'integer', 'min:1'],
+            'source_confirmation_context.source_version' => ['required_with:source_confirmation', 'string', 'regex:/^sha256:[a-f0-9]{64}$/'],
         ];
     }
 

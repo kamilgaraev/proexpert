@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\AssembleP
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationCommand;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Collection;
@@ -34,7 +35,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
 
         $model = $service->handle(new GeometryConfirmationCommand(
             11, 22, 33, 44, 5, 'sha256:'.str_repeat('c', 64), 'sha256:'.str_repeat('b', 64),
-            null, [], $confirmation,
+            null, [], $confirmation, $this->reviewedSource(),
         ), 92);
 
         self::assertSame('confirmed', $model->scaleStatus);
@@ -46,27 +47,82 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
     {
         $vector = VectorGeometryData::fromArray($this->vectorPayload());
         $command = new GeometryConfirmationCommand(11, 22, 33, 44, 5, 'sha256:'.str_repeat('c', 64),
-            'sha256:'.str_repeat('b', 64), null, [], $this->confirmation($vector));
+            'sha256:'.str_repeat('b', 64), null, [], $this->confirmation($vector), $this->reviewedSource());
         foreach ([[], [(object) ['id' => 1, 'value' => '{}'], (object) ['id' => 2, 'value' => '{}']]] as $rows) {
             try {
                 $this->service($rows)->handle($command);
                 self::fail('Missing or ambiguous capture must be rejected.');
+            } catch (StaleEstimateGenerationState $exception) {
+                self::assertSame([], $rows);
             } catch (InvalidArgumentException $exception) {
+                self::assertNotSame([], $rows);
                 self::assertSame('Confirmed geometry source was not found.', $exception->getMessage());
             }
         }
     }
 
+    public function test_source_confirmation_rejects_a_source_context_that_does_not_match_the_reviewed_capture(): void
+    {
+        $vectorPayload = $this->vectorPayload();
+        $vector = VectorGeometryData::fromArray($vectorPayload);
+        $documents = Mockery::mock();
+        $documents->shouldReceive('where')->once()->with('id', 72)->andReturnSelf();
+        $documents->shouldReceive('where')->once()->with('organization_id', 11)->andReturnSelf();
+        $documents->shouldReceive('where')->once()->with('project_id', 22)->andReturnSelf();
+        $documents->shouldReceive('where')->once()->with('session_id', 33)->andReturnSelf();
+        $documents->shouldReceive('where')->once()->with('status', '<>', 'ignored')->andReturnSelf();
+        $documents->shouldReceive('lockForUpdate')->once()->andReturnSelf();
+        $documents->shouldReceive('first')->once()->with(['source_version'])->andReturn((object) [
+            'source_version' => 'sha256:'.str_repeat('b', 64),
+        ]);
+        $database = Mockery::mock(DatabaseManager::class);
+        $database->shouldReceive('table')->once()->with('estimate_generation_documents')->andReturn($documents);
+        $service = new AssemblePersistedVectorGeometry($database, new GeometryBuildingModelInputMapper, new BuildingModelAssembler);
+
+        $this->expectException(InvalidArgumentException::class);
+        $service->handle(new GeometryConfirmationCommand(
+            11, 22, 33, 44, 5, 'sha256:'.str_repeat('c', 64), 'sha256:'.str_repeat('b', 64),
+            null, [], $this->confirmation($vector), [
+                'document_id' => 72,
+                'page_id' => 91,
+                'source_version' => 'sha256:'.str_repeat('f', 64),
+            ],
+        ));
+    }
+
     private function service(array $rows): AssemblePersistedVectorGeometry
     {
+        $documents = Mockery::mock();
+        foreach ([['id', 71], ['organization_id', 11], ['project_id', 22], ['session_id', 33], ['status', '<>', 'ignored']] as $where) {
+            $documents->shouldReceive('where')->once()->with(...$where)->andReturnSelf();
+        }
+        $documents->shouldReceive('lockForUpdate')->once()->andReturnSelf();
+        $documents->shouldReceive('first')->once()->with(['source_version'])->andReturn((object) [
+            'source_version' => 'sha256:'.str_repeat('b', 64),
+        ]);
         $query = Mockery::mock();
         foreach ([['organization_id', 11], ['project_id', 22], ['session_id', 33], ['source_version', 'sha256:'.str_repeat('b', 64)], ['status', 'completed']] as $where) {
             $query->shouldReceive('where')->once()->with(...$where)->andReturnSelf();
         }
+        $query->shouldReceive('where')->once()->with('document_id', 71)->andReturnSelf();
         $query->shouldReceive('whereIn')->once()->with('unit_type', ['pdf_page', 'cad_drawing'])->andReturnSelf();
+        $pages = Mockery::mock();
+        $pages->shouldReceive('selectRaw')->once()->with('1')->andReturnSelf();
+        $pages->shouldReceive('from')->once()->with('estimate_generation_document_pages')->andReturnSelf();
+        $pages->shouldReceive('whereColumn')->once()->with('processing_unit_id', 'estimate_generation_processing_units.id')->andReturnSelf();
+        foreach ([['id', 91], ['document_id', 71], ['organization_id', 11], ['project_id', 22], ['session_id', 33], ['source_version', 'sha256:'.str_repeat('b', 64)]] as $where) {
+            $pages->shouldReceive('where')->once()->with(...$where)->andReturnSelf();
+        }
+        $query->shouldReceive('whereExists')->once()->andReturnUsing(function (callable $callback) use ($pages, $query): mixed {
+            $callback($pages);
+
+            return $query;
+        });
+        $query->shouldReceive('lockForUpdate')->once()->andReturnSelf();
         $query->shouldReceive('limit')->once()->with(2)->andReturnSelf();
         $query->shouldReceive('get')->once()->with(['id', 'document_id', 'metadata'])->andReturn(new Collection($rows));
         $database = Mockery::mock(DatabaseManager::class);
+        $database->shouldReceive('table')->once()->with('estimate_generation_documents')->andReturn($documents);
         $database->shouldReceive('table')->once()->with('estimate_generation_processing_units')->andReturn($query);
         if (count($rows) === 1) {
             $evidence = Mockery::mock();
@@ -104,5 +160,14 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
                 ['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'R1'],
                 ['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['W1']],
             ]];
+    }
+
+    private function reviewedSource(): array
+    {
+        return [
+            'document_id' => 71,
+            'page_id' => 91,
+            'source_version' => 'sha256:'.str_repeat('b', 64),
+        ];
     }
 }
