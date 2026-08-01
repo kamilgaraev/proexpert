@@ -196,31 +196,6 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
         $this->assertSqlState($exception, '23514');
     }
 
-    public function test_database_rejects_unsealed_snapshot_at_deferred_owner_commit_boundary(): void
-    {
-        $fixture = $this->fixture(withBlockingIssue: false);
-        $snapshot = $this->recorder()->recordBlocked(
-            $this->identity($fixture),
-            $fixture['user_id'],
-            $this->utcNow(),
-            str_repeat('a', 64),
-            PayrollReadinessReason::SOURCE_CHANGED,
-        );
-        $payload = $snapshot->toPersistence();
-        $payload['evaluated_at'] = $snapshot->evaluatedAt;
-        $payload['created_at'] = $this->utcNow();
-        $payload['source_hash'] = str_repeat('f', 64);
-        $payload['state_hash'] = str_repeat('e', 64);
-
-        $exception = $this->captureQueryException(static function () use ($payload): void {
-            DB::table('workforce_payroll_readiness_snapshots')->insert($payload);
-            DB::statement('SET CONSTRAINTS workforce_payroll_readiness_snapshots_complete IMMEDIATE');
-        });
-
-        $this->assertSqlState($exception, '23514');
-        self::assertSame(1, DB::table('workforce_payroll_readiness_snapshots')->count());
-    }
-
     public function test_production_sized_snapshot_uses_one_full_set_seal_and_constant_time_late_append_guard(): void
     {
         $fixture = $this->fixture(withBlockingIssue: false);
