@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration\BuildingModel;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelAssertion;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEntity;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceBinding;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelRelation;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
@@ -15,36 +16,54 @@ use PHPUnit\Framework\TestCase;
 final class ProjectModelContractTest extends TestCase
 {
     #[Test]
-    public function it_defines_canonical_entities_for_every_project_model_input_kind(): void
+    public function it_defines_versioned_entities_for_every_project_model_input_kind(): void
     {
-        foreach (['room', 'wall', 'opening', 'dimension', 'table', 'structural_element', 'quantity'] as $kind) {
+        foreach ($this->validPayloads() as $kind => $payload) {
             $entity = new ProjectModelEntity(
+                buildingModelId: 10,
                 organizationId: 1,
                 projectId: 2,
                 sessionId: 3,
-                sourceVersion: 'sha256:'.str_repeat('a', 64),
+                sourceVersion: $this->sourceVersion(),
                 stableKey: 'floor-1-'.$kind,
                 kind: $kind,
-                payload: ['kind' => $kind],
-                evidence: ['document:17:page:1'],
+                payload: $payload,
             );
 
             self::assertSame($kind, $entity->kind);
             self::assertSame('floor-1-'.$kind, $entity->stableKey);
+            self::assertSame(10, $entity->buildingModelId);
         }
     }
 
     #[Test]
-    public function it_keeps_assertions_relations_and_corrections_in_the_same_versioned_scope(): void
+    public function it_rejects_incomplete_payloads_for_every_entity_kind(): void
     {
-        $sourceVersion = 'sha256:'.str_repeat('b', 64);
-        $assertion = new ProjectModelAssertion(1, 2, 3, $sourceVersion, 'assertion:room-1:area', 'room-1', 'area', ['value' => 12.5, 'unit' => 'm2'], ['document:17:page:1'], 0.95);
-        $relation = new ProjectModelRelation(1, 2, 3, $sourceVersion, 'relation:opening-1:hosted_by:wall-1', 'opening-1', 'wall-1', 'hosted_by', ['offset_m' => 1.2]);
-        $correction = new ProjectModelCorrection(1, 2, 3, $sourceVersion, 'correction:room-1:area:1', 'assertion:room-1:area', 'manual', ['value' => 13.0, 'unit' => 'm2'], 'Проверено по рабочему чертежу', 42);
+        foreach ($this->validPayloads() as $kind => $payload) {
+            unset($payload[array_key_first(array_diff(array_keys($payload), ['kind', 'key']))]);
+
+            try {
+                new ProjectModelEntity(10, 1, 2, 3, $this->sourceVersion(), 'floor-1-'.$kind, $kind, $payload);
+                self::fail("{$kind} payload without its required domain field was accepted.");
+            } catch (InvalidArgumentException) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    #[Test]
+    public function it_keeps_assertions_relations_corrections_and_evidence_bindings_in_the_same_building_model_version(): void
+    {
+        $sourceVersion = $this->sourceVersion();
+        $assertion = new ProjectModelAssertion(10, 1, 2, 3, $sourceVersion, 'assertion:room-1:area', 'room-1', 'area', ['value' => 12.5, 'unit' => 'm2'], 0.95);
+        $relation = new ProjectModelRelation(10, 1, 2, 3, $sourceVersion, 'relation:opening-1:hosted_by:wall-1', 'opening-1', 'wall-1', 'hosted_by', ['offset_m' => 1.2]);
+        $correction = new ProjectModelCorrection(10, 1, 2, 3, $sourceVersion, 'correction:room-1:area:1', 'assertion:room-1:area', 'manual', ['value' => 13.0, 'unit' => 'm2'], 'Проверено по рабочему чертежу', 42);
+        $binding = new ProjectModelEvidenceBinding(10, 1, 2, 3, $sourceVersion, 'room-1', 17, 'sha256:'.str_repeat('c', 64), 0);
 
         self::assertSame($sourceVersion, $assertion->sourceVersion);
         self::assertSame('hosted_by', $relation->relationType);
         self::assertSame('assertion:room-1:area', $correction->assertionStableKey);
+        self::assertSame(17, $binding->evidenceId);
     }
 
     #[Test]
@@ -52,11 +71,11 @@ final class ProjectModelContractTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new ProjectModelEntity(1, 2, 3, 'draft', 'Room 1', 'room', ['kind' => 'room'], ['document:17:page:1']);
+        new ProjectModelEntity(10, 1, 2, 3, 'draft', 'Room 1', 'room', ['kind' => 'room', 'key' => 'Room 1', 'area_m2' => 12]);
     }
 
     #[Test]
-    public function migration_persists_scoped_jsonb_audit_records_with_integrity_guards(): void
+    public function migration_uses_the_building_model_as_the_single_versioned_source_and_binds_auditable_evidence(): void
     {
         $source = (string) file_get_contents(
             dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php'
@@ -67,22 +86,48 @@ final class ProjectModelContractTest extends TestCase
             'estimate_generation_project_model_assertions',
             'estimate_generation_project_model_relations',
             'estimate_generation_project_model_corrections',
-            'organization_id', 'project_id', 'session_id', 'source_version', 'stable_key',
-            "'room', 'wall', 'opening', 'dimension', 'table', 'structural_element', 'quantity'",
-            'jsonb', 'eg_project_model_entities_scope_key_uq',
-            'eg_project_model_assertions_scope_key_uq',
-            'eg_project_model_relations_scope_key_uq',
-            'eg_project_model_corrections_scope_key_uq',
-            'eg_project_model_entity_append_guard',
-            'eg_project_model_assertion_append_guard',
-            'eg_project_model_relation_append_guard',
-            'eg_project_model_correction_append_guard',
-            'source_version ~ \'^sha256:[a-f0-9]{64}$\'',
-            'jsonb_typeof(payload) = \'object\'',
+            'estimate_generation_project_model_evidence_bindings',
+            "['id', 'organization_id', 'project_id', 'session_id', 'content_version']",
+            "['building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version']",
+            'eg_building_models_projection_scope_uq',
+            'eg_building_model_evidence_projection_scope_uq',
+            'eg_project_model_evidence_provenance_fk',
+            'evidence_source_version',
+            'evidence_invalidation_version',
+            'eg_project_model_evidence_binding_guard',
+            'estimate_generation.project_model_evidence_snapshot_invalid',
             'estimate_generation.project_model_update_forbidden',
             'estimate_generation.project_model_delete_forbidden',
+            "WHEN 'room' THEN",
+            "WHEN 'wall' THEN",
+            "WHEN 'opening' THEN",
+            "WHEN 'dimension' THEN",
+            "WHEN 'table' THEN",
+            "WHEN 'structural_element' THEN",
+            "WHEN 'quantity' THEN",
+            "Schema::dropIfExists('estimate_generation_project_model_evidence_bindings')",
+            "DROP FUNCTION IF EXISTS eg_project_model_append_guard()",
         ] as $required) {
             self::assertStringContainsString($required, $source);
         }
+        self::assertStringNotContainsString('$table->jsonb(\'evidence\')', $source);
+    }
+
+    private function sourceVersion(): string
+    {
+        return 'sha256:'.str_repeat('b', 64);
+    }
+
+    private function validPayloads(): array
+    {
+        return [
+            'room' => ['kind' => 'room', 'key' => 'floor-1-room', 'polygon' => [[0, 0], [1, 0], [1, 1]]],
+            'wall' => ['kind' => 'wall', 'key' => 'floor-1-wall', 'start' => [0, 0], 'end' => [1, 0]],
+            'opening' => ['kind' => 'opening', 'key' => 'floor-1-opening', 'wall_key' => 'floor-1-wall', 'type' => 'door', 'width_m' => 0.9, 'height_m' => 2.1],
+            'dimension' => ['kind' => 'dimension', 'key' => 'floor-1-dimension', 'value' => 2.5, 'unit' => 'm'],
+            'table' => ['kind' => 'table', 'key' => 'floor-1-table', 'columns' => ['name'], 'rows' => [['name' => 'Кухня']]],
+            'structural_element' => ['kind' => 'structural_element', 'key' => 'floor-1-structural_element', 'type' => 'beam', 'length_m' => 4.2],
+            'quantity' => ['kind' => 'quantity', 'key' => 'floor-1-quantity', 'value' => 12, 'unit' => 'pcs'],
+        ];
     }
 }

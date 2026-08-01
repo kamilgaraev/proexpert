@@ -9,6 +9,7 @@ use InvalidArgumentException;
 final readonly class ProjectModelCorrection
 {
     public function __construct(
+        public int $buildingModelId,
         public int $organizationId,
         public int $projectId,
         public int $sessionId,
@@ -20,6 +21,9 @@ final readonly class ProjectModelCorrection
         public string $reason,
         public int $actorId,
     ) {
+        if ($buildingModelId < 1) {
+            throw new InvalidArgumentException('Project model correction building model identifier must be positive.');
+        }
         ProjectModelEntity::assertScope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelEntity::assertStableKey($stableKey, 'Correction');
         ProjectModelEntity::assertStableKey($assertionStableKey, 'Correction assertion');

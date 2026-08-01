@@ -9,6 +9,7 @@ use InvalidArgumentException;
 final readonly class ProjectModelRelation
 {
     public function __construct(
+        public int $buildingModelId,
         public int $organizationId,
         public int $projectId,
         public int $sessionId,
@@ -19,6 +20,9 @@ final readonly class ProjectModelRelation
         public string $relationType,
         public array $payload,
     ) {
+        if ($buildingModelId < 1) {
+            throw new InvalidArgumentException('Project model relation building model identifier must be positive.');
+        }
         ProjectModelEntity::assertScope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelEntity::assertStableKey($stableKey, 'Relation');
         ProjectModelEntity::assertStableKey($fromEntityStableKey, 'Relation source entity');

@@ -9,6 +9,7 @@ use InvalidArgumentException;
 final readonly class ProjectModelAssertion
 {
     public function __construct(
+        public int $buildingModelId,
         public int $organizationId,
         public int $projectId,
         public int $sessionId,
@@ -17,9 +18,11 @@ final readonly class ProjectModelAssertion
         public string $entityStableKey,
         public string $assertionType,
         public array $payload,
-        public array $evidence,
         public float $confidence,
     ) {
+        if ($buildingModelId < 1) {
+            throw new InvalidArgumentException('Project model assertion building model identifier must be positive.');
+        }
         ProjectModelEntity::assertScope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelEntity::assertStableKey($stableKey, 'Assertion');
         ProjectModelEntity::assertStableKey($entityStableKey, 'Assertion entity');
@@ -27,7 +30,6 @@ final readonly class ProjectModelAssertion
             throw new InvalidArgumentException('Project model assertion type is invalid.');
         }
         ProjectModelEntity::assertObject($payload, 'Assertion payload');
-        ProjectModelEntity::assertReferenceList($evidence, 'Assertion evidence', true);
         ProjectModelEntity::assertConfidence($confidence);
     }
 }
