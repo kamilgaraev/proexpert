@@ -48,6 +48,8 @@ return new class extends Migration
             $$;
             SQL);
 
+        DB::statement('SET ROLE most_report_publication_owner');
+
         Schema::create('report_publications', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->string('code', 64);
@@ -1088,8 +1090,16 @@ return new class extends Migration
             GRANT EXECUTE ON FUNCTION report_publication_mark_outbox_delivered(text, timestamptz)
                 TO most_report_publication_outbox_worker;
 
+            SQL);
+
+        DB::statement('RESET ROLE');
+        DB::unprepared(<<<'SQL'
             REVOKE CREATE ON SCHEMA public FROM most_report_publication_owner;
-            REVOKE most_report_publication_owner FROM CURRENT_USER;
+            DO $$
+            BEGIN
+                EXECUTE format('REVOKE most_report_publication_owner FROM %I', current_user);
+            END;
+            $$;
             SQL);
     }
 

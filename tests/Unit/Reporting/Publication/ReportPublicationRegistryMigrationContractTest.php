@@ -93,6 +93,8 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
             'REVOKE CREATE ON SCHEMA public FROM most_report_publication_owner',
             $source,
         );
+        self::assertStringContainsString("DB::statement('SET ROLE most_report_publication_owner')", $source);
+        self::assertStringContainsString("DB::statement('RESET ROLE')", $source);
         self::assertStringContainsString('DROP FUNCTION IF EXISTS report_publication_require_event()', $source);
         self::assertStringNotContainsString('superseded', $source);
 
