@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
-use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
@@ -18,11 +18,10 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementAwardTimeResolver;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementAwardTimeResolver;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use DateTimeImmutable;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -152,50 +151,50 @@ class SupplierProposalService
 
         $stage = 'create_proposal';
         $proposal = SupplierProposal::query()->create([
-                    'organization_id' => $supplierRequest->organization_id,
-                    'supplier_request_id' => $supplierRequest->id,
-                    'supplier_request_version_id' => $supplierRequestVersion->id,
-                    'supplier_id' => $supplierRequest->supplier_id,
-                    'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
-                    'supplier_party_id' => $supplierRequest->supplier_party_id,
-                    'supplier_snapshot' => $supplierRequest->supplier_snapshot ?? [],
-                    'proposal_number' => $this->generateProposalNumber(),
-                    'proposal_date' => $data['proposal_date'] ?? now(),
-                    'status' => SupplierProposalStatusEnum::SUBMITTED,
-                    'subtotal_amount' => $amounts['subtotal_amount'],
-                    'delivery_amount' => $amounts['delivery_amount'],
-                    'vat_amount' => $amounts['vat_amount'],
-                    'total_amount' => $amounts['total_amount'],
-                    'currency' => $data['currency'] ?? 'RUB',
-                    'vat_mode' => $data['vat_mode'] ?? SupplierProposalVatModeEnum::INCLUDED->value,
-                    'vat_rate' => $data['vat_rate'] ?? null,
-                    'valid_until' => $data['valid_until'] ?? null,
-                    'delivery_due_date' => $data['delivery_due_date'] ?? null,
-                    'lead_time_days' => $data['lead_time_days'] ?? null,
-                    'payment_terms' => $data['payment_terms'] ?? null,
-                    'delivery_terms' => $data['delivery_terms'] ?? null,
-                    'warranty_terms' => $data['warranty_terms'] ?? null,
-                    'items' => $data['items'] ?? null,
-                    'notes' => $data['notes'] ?? null,
-                    'metadata' => $data['metadata'] ?? null,
-                ]);
+            'organization_id' => $supplierRequest->organization_id,
+            'supplier_request_id' => $supplierRequest->id,
+            'supplier_request_version_id' => $supplierRequestVersion->id,
+            'supplier_id' => $supplierRequest->supplier_id,
+            'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
+            'supplier_party_id' => $supplierRequest->supplier_party_id,
+            'supplier_snapshot' => $supplierRequest->supplier_snapshot ?? [],
+            'proposal_number' => $this->generateProposalNumber(),
+            'proposal_date' => $data['proposal_date'] ?? now(),
+            'status' => SupplierProposalStatusEnum::SUBMITTED,
+            'subtotal_amount' => $amounts['subtotal_amount'],
+            'delivery_amount' => $amounts['delivery_amount'],
+            'vat_amount' => $amounts['vat_amount'],
+            'total_amount' => $amounts['total_amount'],
+            'currency' => $data['currency'] ?? 'RUB',
+            'vat_mode' => $data['vat_mode'] ?? SupplierProposalVatModeEnum::INCLUDED->value,
+            'vat_rate' => $data['vat_rate'] ?? null,
+            'valid_until' => $data['valid_until'] ?? null,
+            'delivery_due_date' => $data['delivery_due_date'] ?? null,
+            'lead_time_days' => $data['lead_time_days'] ?? null,
+            'payment_terms' => $data['payment_terms'] ?? null,
+            'delivery_terms' => $data['delivery_terms'] ?? null,
+            'warranty_terms' => $data['warranty_terms'] ?? null,
+            'items' => $data['items'] ?? null,
+            'notes' => $data['notes'] ?? null,
+            'metadata' => $data['metadata'] ?? null,
+        ]);
 
         foreach ($data['items'] ?? [] as $item) {
-                    $quantity = (float) $item['quantity'];
-                    $unitPrice = (float) $item['unit_price'];
+            $quantity = (float) $item['quantity'];
+            $unitPrice = (float) $item['unit_price'];
 
-                    $proposal->lines()->create([
-                        'supplier_request_line_id' => $item['supplier_request_line_id'] ?? null,
-                        'material_id' => $this->resolveLineMaterialId($supplierRequest, $item['supplier_request_line_id'] ?? null),
-                        'name' => $item['name'],
-                        'quantity' => $quantity,
-                        'unit' => $item['unit'],
-                        'unit_price' => $unitPrice,
-                        'total_amount' => $item['total_amount'] ?? round($quantity * $unitPrice, 2),
-                        'comment' => $item['comment'] ?? null,
-                        'metadata' => $item['metadata'] ?? null,
-                    ]);
-                }
+            $proposal->lines()->create([
+                'supplier_request_line_id' => $item['supplier_request_line_id'] ?? null,
+                'material_id' => $this->resolveLineMaterialId($supplierRequest, $item['supplier_request_line_id'] ?? null),
+                'name' => $item['name'],
+                'quantity' => $quantity,
+                'unit' => $item['unit'],
+                'unit_price' => $unitPrice,
+                'total_amount' => $item['total_amount'] ?? round($quantity * $unitPrice, 2),
+                'comment' => $item['comment'] ?? null,
+                'metadata' => $item['metadata'] ?? null,
+            ]);
+        }
 
         $stage = 'record_intake';
         $proposal->load(['supplierParty', 'lines']);
@@ -239,35 +238,35 @@ class SupplierProposalService
         $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
         $stage = 'record_audit';
         $this->auditService->record(
-                    ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_CREATED->value,
-                    $proposal,
-                    (int) $proposal->organization_id,
-                    $actorId,
-                    $proposal->supplier_party_id,
-                    [
-                        'proposal_number' => $proposal->proposal_number,
-                        'status' => $proposal->status->value,
-                        'supplier_request_number' => $supplierRequest->request_number,
-                        'supplier_request_version_id' => $supplierRequestVersion->id,
-                        'supplier_request_version_number' => $supplierRequestVersion->version_number,
-                        'supplier_name' => $this->supplierName($proposal, $snapshot),
-                        'supplier_snapshot' => $snapshot,
-                        'total_amount' => (float) $proposal->total_amount,
-                        'currency' => $proposal->currency,
-                        'valid_until' => $proposal->valid_until?->format('Y-m-d'),
-                        'lines_count' => count($data['items'] ?? []),
-                    ]
+            ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_CREATED->value,
+            $proposal,
+            (int) $proposal->organization_id,
+            $actorId,
+            $proposal->supplier_party_id,
+            [
+                'proposal_number' => $proposal->proposal_number,
+                'status' => $proposal->status->value,
+                'supplier_request_number' => $supplierRequest->request_number,
+                'supplier_request_version_id' => $supplierRequestVersion->id,
+                'supplier_request_version_number' => $supplierRequestVersion->version_number,
+                'supplier_name' => $this->supplierName($proposal, $snapshot),
+                'supplier_snapshot' => $snapshot,
+                'total_amount' => (float) $proposal->total_amount,
+                'currency' => $proposal->currency,
+                'valid_until' => $proposal->valid_until?->format('Y-m-d'),
+                'lines_count' => count($data['items'] ?? []),
+            ]
         );
 
         return $proposal->fresh([
-                    'supplier',
-                    'externalSupplierContact',
-                    'supplierParty',
-                    'supplierRequest',
-                    'supplierRequestVersion',
-                    'lines',
-                    'intake',
-                    'currentVersion',
+            'supplier',
+            'externalSupplierContact',
+            'supplierParty',
+            'supplierRequest',
+            'supplierRequestVersion',
+            'lines',
+            'intake',
+            'currentVersion',
         ]);
     }
 
@@ -278,247 +277,289 @@ class SupplierProposalService
         Throwable $exception,
     ): void {
         Log::error('procurement.supplier_proposals.create_from_request.error', [
-                'stage' => $stage,
-                'supplier_request_id' => $supplierRequest->id,
-                'organization_id' => $supplierRequest->organization_id,
-                'supplier_party_id' => $supplierRequest->supplier_party_id,
-                'has_registered_supplier' => $supplierRequest->supplier_id !== null,
-                'has_external_supplier' => $supplierRequest->external_supplier_contact_id !== null,
-                'items_count' => count($data['items'] ?? []),
-                'exception_class' => $exception::class,
-                'exception_file' => $exception->getFile(),
-                'exception_line' => $exception->getLine(),
+            'stage' => $stage,
+            'supplier_request_id' => $supplierRequest->id,
+            'organization_id' => $supplierRequest->organization_id,
+            'supplier_party_id' => $supplierRequest->supplier_party_id,
+            'has_registered_supplier' => $supplierRequest->supplier_id !== null,
+            'has_external_supplier' => $supplierRequest->external_supplier_contact_id !== null,
+            'items_count' => count($data['items'] ?? []),
+            'exception_class' => $exception::class,
+            'exception_file' => $exception->getFile(),
+            'exception_line' => $exception->getLine(),
         ]);
     }
 
-    public function accept(SupplierProposal $proposal, ?int $actorId = null): SupplierProposal
-    {
-        return $this->ownerWorkflowRuntime->within(fn (): SupplierProposal => $this->acceptProposalOwnerWorkflow(
-            $proposal,
-            $actorId,
-            function (
-                SupplierProposalDecision $decision,
-                SupplierProposalVersion $version,
-                PurchaseOrder $order,
-                DateTimeImmutable $occurredAt,
-            ) use ($actorId): void {
-                $this->recordAwardDecidedCycleEvent(
-                    $decision,
-                    $version,
-                    $order,
-                    $actorId,
-                    $occurredAt,
-                );
-            },
-        ));
+    public function accept(
+        SupplierProposal $proposal,
+        ?int $actorId = null,
+        ?DateTimeImmutable $approvedResolutionAt = null,
+    ): SupplierProposal {
+        return $this->ownerWorkflowRuntime->within(
+            fn (): SupplierProposal => $this->acceptProposalOwnerWorkflow(
+                $proposal,
+                $actorId,
+                $approvedResolutionAt,
+                function (
+                    SupplierProposalDecision $decision,
+                    SupplierProposalVersion $version,
+                    PurchaseOrder $order,
+                    DateTimeImmutable $occurredAt,
+                ) use ($actorId): void {
+                    $this->recordAwardDecidedCycleEvent(
+                        $decision,
+                        $version,
+                        $order,
+                        $actorId,
+                        $occurredAt,
+                    );
+                },
+            ),
+        );
     }
 
     protected function acceptProposalOwnerWorkflow(
         SupplierProposal $proposal,
         ?int $actorId,
+        ?DateTimeImmutable $approvedResolutionAt,
         callable $onAccepted,
-    ): SupplierProposal
-    {
-        $acceptedProposal = DB::transaction(function () use ($proposal, $actorId, $onAccepted): SupplierProposal {
-            $lockedProposal = SupplierProposal::query()
-                ->whereKey($proposal->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+    ): SupplierProposal {
+        $lockedProposal = $this->lockSupplierProposalForAcceptance($proposal);
 
-            if (! $lockedProposal->canBeAccepted()) {
-                throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
-            }
-
-            $this->lifecycleService->assertCanAcceptProposal($lockedProposal);
-
-            if ($lockedProposal->supplier_request_id === null) {
-                throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
-            }
-
-            SupplierRequest::query()
-                ->whereKey($lockedProposal->supplier_request_id)
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            $decision = SupplierProposalDecision::query()
-                ->where('organization_id', $lockedProposal->organization_id)
-                ->where('supplier_request_id', $lockedProposal->supplier_request_id)
-                ->lockForUpdate()
-                ->first();
-
-            if (
-                $decision === null
-                || $decision->winning_supplier_proposal_id !== $lockedProposal->id
-            ) {
-                throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
-            }
-
-            if ($decision->status === SupplierProposalDecisionEnum::APPROVAL_REQUIRED) {
-                throw new \DomainException(trans_message('procurement.proposal_decisions.approval_required'));
-            }
-
-            if ($decision->status === SupplierProposalDecisionEnum::REJECTED) {
-                throw new \DomainException(trans_message('procurement.proposal_decisions.rejected_decision_cannot_be_accepted'));
-            }
-
-            if (! in_array($decision->status, [
-                SupplierProposalDecisionEnum::SELECTED,
-                SupplierProposalDecisionEnum::APPROVED,
-            ], true)) {
-                throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
-            }
-
-            $acceptedVersion = $lockedProposal->versions()
-                ->whereKey($decision->winning_supplier_proposal_version_id)
-                ->lockForUpdate()
-                ->first();
-
-            if ($acceptedVersion === null) {
-                throw ValidationException::withMessages([
-                    'proposal_id' => [trans_message('procurement_enterprise.proposals.version_required')],
-                ]);
-            }
-
-            $existingOrder = PurchaseOrder::query()
-                ->where('organization_id', $lockedProposal->organization_id)
-                ->where(function ($query) use ($lockedProposal): void {
-                    $query->where('accepted_supplier_proposal_id', $lockedProposal->id)
-                        ->orWhereHas('acceptedSupplierProposal', function ($proposalQuery) use ($lockedProposal): void {
-                            $proposalQuery
-                                ->where('organization_id', $lockedProposal->organization_id)
-                                ->where('supplier_request_id', $lockedProposal->supplier_request_id);
-                        });
-                })
-                ->lockForUpdate()
-                ->first();
-
-            if ($existingOrder !== null) {
-                throw ValidationException::withMessages([
-                    'proposal_id' => [trans_message('procurement.proposals.purchase_order_already_exists')],
-                ]);
-            }
-
-            $lockedProposal->load([
-                'supplierRequest.purchaseRequest',
-                'lines.supplierRequestLine.purchaseRequestLine.purchaseRequest',
-            ]);
-
-            $acceptedAt = now('UTC');
-            $decisionOccurredAt = $this->decisionOccurredAt($decision);
-
-            $lockedProposal->update([
-                'status' => SupplierProposalStatusEnum::ACCEPTED,
-            ]);
-
-            $acceptedSnapshot = is_array($acceptedVersion->commercial_snapshot)
-                ? $acceptedVersion->commercial_snapshot
-                : [];
-
-            $order = PurchaseOrder::query()->create([
-                'organization_id' => $lockedProposal->organization_id,
-                'purchase_request_id' => $lockedProposal->supplierRequest?->purchase_request_id,
-                'accepted_supplier_proposal_id' => $lockedProposal->id,
-                'accepted_supplier_proposal_version_id' => $acceptedVersion->id,
-                'supplier_id' => $lockedProposal->supplier_id,
-                'external_supplier_contact_id' => $lockedProposal->external_supplier_contact_id,
-                'supplier_party_id' => $lockedProposal->supplier_party_id,
-                'supplier_snapshot' => $lockedProposal->supplier_snapshot ?? [],
-                'order_number' => $this->generateOrderNumber(),
-                'order_date' => $acceptedAt,
-                'status' => PurchaseOrderStatusEnum::CONFIRMED,
-                'total_amount' => $this->snapshotFloat($acceptedSnapshot, 'total_amount', (float) $lockedProposal->total_amount),
-                'currency' => (string) ($acceptedSnapshot['currency'] ?? $lockedProposal->currency),
-                'pricing_source' => 'accepted_supplier_proposal',
-                'delivery_date' => $acceptedSnapshot['delivery_due_date'] ?? $lockedProposal->supplierRequest?->purchaseRequest?->needed_by,
-                'confirmed_at' => $acceptedAt,
-                'notes' => $lockedProposal->notes,
-                'metadata' => [
-                    'accepted_supplier_proposal_id' => $lockedProposal->id,
-                    'accepted_supplier_proposal_version_id' => $acceptedVersion->id,
-                    'supplier_request_id' => $lockedProposal->supplier_request_id,
-                    'commercial_snapshot' => $acceptedVersion->commercial_snapshot,
-                ],
-            ]);
-
-            foreach ($this->orderLinesFromVersion($acceptedVersion->commercial_snapshot, $lockedProposal) as $line) {
-                $lineage = $this->orderLineLineage($line, $lockedProposal);
-
-                $order->items()->create([
-                    'purchase_request_line_id' => $lineage['purchase_request_line_id'],
-                    'supplier_request_line_id' => $lineage['supplier_request_line_id'],
-                    'supplier_proposal_line_id' => $lineage['supplier_proposal_line_id'],
-                    'material_id' => $line['material_id'],
-                    'material_name' => $line['name'],
-                    'quantity' => $line['quantity'],
-                    'unit' => $line['unit'],
-                    'unit_price' => $line['unit_price'],
-                    'total_price' => $line['total_amount'],
-                    'notes' => $line['comment'],
-                    'metadata' => [
-                        'supplier_proposal_line_id' => $line['supplier_proposal_line_id'],
-                        'supplier_request_line_id' => $line['supplier_request_line_id'],
-                        'supplier_proposal_version_id' => $acceptedVersion->id,
-                    ],
-                ]);
-            }
-
-            $lockedProposal->update([
-                'purchase_order_id' => $order->id,
-            ]);
-
-            $selectedParty = $this->supplierPartyService->markSelected($lockedProposal->supplier_party_id);
-
-            if ($selectedParty !== null) {
-                $selectedSnapshot = $this->supplierPartyService->snapshotForDocument($selectedParty);
-                $lockedProposal->update(['supplier_snapshot' => $selectedSnapshot]);
-                $order->update(['supplier_snapshot' => $selectedSnapshot]);
-            }
-
-            $onAccepted(
-                $decision,
-                $acceptedVersion,
-                $order,
-                $decisionOccurredAt,
-            );
-
-            $snapshot = is_array($lockedProposal->supplier_snapshot) ? $lockedProposal->supplier_snapshot : [];
-
-            $this->auditService->record(
-                ProcurementAuditEventTypeEnum::PURCHASE_ORDER_CREATED->value,
-                $order,
-                (int) $order->organization_id,
-                $actorId,
-                $order->supplier_party_id,
-                [
-                    'order_number' => $order->order_number,
-                    'status' => $order->status->value,
-                    'accepted_supplier_proposal_number' => $lockedProposal->proposal_number,
-                    'supplier_request_number' => $lockedProposal->supplierRequest?->request_number,
-                    'supplier_name' => $this->supplierName($lockedProposal, $snapshot),
-                    'supplier_snapshot' => $snapshot,
-                    'total_amount' => (float) $order->total_amount,
-                    'currency' => $order->currency,
-                    'items_count' => $lockedProposal->lines->count(),
-                    'pricing_source' => $order->pricing_source,
-                ]
-            );
-
-            return $lockedProposal;
-        });
-
-        if ($acceptedProposal->purchase_order_id !== null) {
-            $purchaseOrderId = (int) $acceptedProposal->purchase_order_id;
-
-            DB::afterCommit(static function () use ($purchaseOrderId): void {
-                $purchaseOrder = PurchaseOrder::query()->find($purchaseOrderId);
-
-                if ($purchaseOrder instanceof PurchaseOrder) {
-                    event(new PurchaseOrderCreated($purchaseOrder));
-                }
-            });
+        if (! $lockedProposal->canBeAccepted()) {
+            throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
         }
 
-        return $acceptedProposal->fresh([
+        $this->assertProposalCanBeAccepted($lockedProposal);
+
+        if ($lockedProposal->supplier_request_id === null) {
+            throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
+        }
+
+        $this->lockSupplierRequestForAcceptance((int) $lockedProposal->supplier_request_id);
+        $decision = $this->lockSupplierProposalDecisionForAcceptance($lockedProposal);
+
+        if ($decision === null || $decision->winning_supplier_proposal_id !== $lockedProposal->id) {
+            throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
+        }
+
+        if ($decision->status === SupplierProposalDecisionEnum::APPROVAL_REQUIRED) {
+            throw new \DomainException(trans_message('procurement.proposal_decisions.approval_required'));
+        }
+
+        if ($decision->status === SupplierProposalDecisionEnum::REJECTED) {
+            throw new \DomainException(trans_message('procurement.proposal_decisions.rejected_decision_cannot_be_accepted'));
+        }
+
+        if (! in_array($decision->status, [
+            SupplierProposalDecisionEnum::SELECTED,
+            SupplierProposalDecisionEnum::APPROVED,
+        ], true)) {
+            throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
+        }
+
+        $acceptedVersion = $this->lockAcceptedSupplierProposalVersion($lockedProposal, $decision);
+
+        if ($acceptedVersion === null) {
+            throw ValidationException::withMessages([
+                'proposal_id' => [trans_message('procurement_enterprise.proposals.version_required')],
+            ]);
+        }
+
+        if ($this->lockExistingPurchaseOrderForAcceptance($lockedProposal) !== null) {
+            throw ValidationException::withMessages([
+                'proposal_id' => [trans_message('procurement.proposals.purchase_order_already_exists')],
+            ]);
+        }
+
+        $this->loadSupplierProposalForAcceptance($lockedProposal);
+        $acceptedAt = $this->ownerWorkflowRuntime->occurredAt();
+        $decisionOccurredAt = $approvedResolutionAt ?? $this->decisionOccurredAt($decision);
+        $order = $this->persistAcceptedSupplierProposal($lockedProposal, $acceptedVersion, $acceptedAt);
+        $this->markAcceptedSupplierParty($lockedProposal, $order);
+
+        $onAccepted($decision, $acceptedVersion, $order, $decisionOccurredAt);
+        $this->recordAcceptedSupplierProposalAudit($lockedProposal, $order, $actorId);
+        $this->dispatchAcceptedPurchaseOrderAfterCommit($order);
+
+        return $this->freshAcceptedSupplierProposal($lockedProposal);
+    }
+
+    protected function lockSupplierProposalForAcceptance(SupplierProposal $proposal): SupplierProposal
+    {
+        return SupplierProposal::query()->whereKey($proposal->id)->lockForUpdate()->firstOrFail();
+    }
+
+    protected function assertProposalCanBeAccepted(SupplierProposal $proposal): void
+    {
+        $this->lifecycleService->assertCanAcceptProposal($proposal);
+    }
+
+    protected function lockSupplierRequestForAcceptance(int $supplierRequestId): void
+    {
+        SupplierRequest::query()->whereKey($supplierRequestId)->lockForUpdate()->firstOrFail();
+    }
+
+    protected function lockSupplierProposalDecisionForAcceptance(
+        SupplierProposal $proposal,
+    ): ?SupplierProposalDecision {
+        return SupplierProposalDecision::query()
+            ->where('organization_id', $proposal->organization_id)
+            ->where('supplier_request_id', $proposal->supplier_request_id)
+            ->lockForUpdate()
+            ->first();
+    }
+
+    protected function lockAcceptedSupplierProposalVersion(
+        SupplierProposal $proposal,
+        SupplierProposalDecision $decision,
+    ): ?SupplierProposalVersion {
+        return $proposal->versions()
+            ->whereKey($decision->winning_supplier_proposal_version_id)
+            ->lockForUpdate()
+            ->first();
+    }
+
+    protected function lockExistingPurchaseOrderForAcceptance(SupplierProposal $proposal): ?PurchaseOrder
+    {
+        return PurchaseOrder::query()
+            ->where('organization_id', $proposal->organization_id)
+            ->where(function ($query) use ($proposal): void {
+                $query->where('accepted_supplier_proposal_id', $proposal->id)
+                    ->orWhereHas('acceptedSupplierProposal', function ($proposalQuery) use ($proposal): void {
+                        $proposalQuery
+                            ->where('organization_id', $proposal->organization_id)
+                            ->where('supplier_request_id', $proposal->supplier_request_id);
+                    });
+            })
+            ->lockForUpdate()
+            ->first();
+    }
+
+    protected function loadSupplierProposalForAcceptance(SupplierProposal $proposal): void
+    {
+        $proposal->load([
+            'supplierRequest.purchaseRequest',
+            'lines.supplierRequestLine.purchaseRequestLine.purchaseRequest',
+        ]);
+    }
+
+    protected function persistAcceptedSupplierProposal(
+        SupplierProposal $proposal,
+        SupplierProposalVersion $acceptedVersion,
+        DateTimeImmutable $acceptedAt,
+    ): PurchaseOrder {
+        $proposal->update(['status' => SupplierProposalStatusEnum::ACCEPTED]);
+        $acceptedSnapshot = is_array($acceptedVersion->commercial_snapshot)
+            ? $acceptedVersion->commercial_snapshot
+            : [];
+        $order = PurchaseOrder::query()->create([
+            'organization_id' => $proposal->organization_id,
+            'purchase_request_id' => $proposal->supplierRequest?->purchase_request_id,
+            'accepted_supplier_proposal_id' => $proposal->id,
+            'accepted_supplier_proposal_version_id' => $acceptedVersion->id,
+            'supplier_id' => $proposal->supplier_id,
+            'external_supplier_contact_id' => $proposal->external_supplier_contact_id,
+            'supplier_party_id' => $proposal->supplier_party_id,
+            'supplier_snapshot' => $proposal->supplier_snapshot ?? [],
+            'order_number' => $this->generateOrderNumber(),
+            'order_date' => $acceptedAt,
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => $this->snapshotFloat($acceptedSnapshot, 'total_amount', (float) $proposal->total_amount),
+            'currency' => (string) ($acceptedSnapshot['currency'] ?? $proposal->currency),
+            'pricing_source' => 'accepted_supplier_proposal',
+            'delivery_date' => $acceptedSnapshot['delivery_due_date'] ?? $proposal->supplierRequest?->purchaseRequest?->needed_by,
+            'confirmed_at' => $acceptedAt,
+            'notes' => $proposal->notes,
+            'metadata' => [
+                'accepted_supplier_proposal_id' => $proposal->id,
+                'accepted_supplier_proposal_version_id' => $acceptedVersion->id,
+                'supplier_request_id' => $proposal->supplier_request_id,
+                'commercial_snapshot' => $acceptedVersion->commercial_snapshot,
+            ],
+        ]);
+
+        foreach ($this->orderLinesFromVersion($acceptedVersion->commercial_snapshot, $proposal) as $line) {
+            $lineage = $this->orderLineLineage($line, $proposal);
+
+            $order->items()->create([
+                'purchase_request_line_id' => $lineage['purchase_request_line_id'],
+                'supplier_request_line_id' => $lineage['supplier_request_line_id'],
+                'supplier_proposal_line_id' => $lineage['supplier_proposal_line_id'],
+                'material_id' => $line['material_id'],
+                'material_name' => $line['name'],
+                'quantity' => $line['quantity'],
+                'unit' => $line['unit'],
+                'unit_price' => $line['unit_price'],
+                'total_price' => $line['total_amount'],
+                'notes' => $line['comment'],
+                'metadata' => [
+                    'supplier_proposal_line_id' => $line['supplier_proposal_line_id'],
+                    'supplier_request_line_id' => $line['supplier_request_line_id'],
+                    'supplier_proposal_version_id' => $acceptedVersion->id,
+                ],
+            ]);
+        }
+
+        $proposal->update(['purchase_order_id' => $order->id]);
+
+        return $order;
+    }
+
+    protected function markAcceptedSupplierParty(SupplierProposal $proposal, PurchaseOrder $order): void
+    {
+        $selectedParty = $this->supplierPartyService->markSelected($proposal->supplier_party_id);
+
+        if ($selectedParty !== null) {
+            $selectedSnapshot = $this->supplierPartyService->snapshotForDocument($selectedParty);
+            $proposal->update(['supplier_snapshot' => $selectedSnapshot]);
+            $order->update(['supplier_snapshot' => $selectedSnapshot]);
+        }
+    }
+
+    protected function recordAcceptedSupplierProposalAudit(
+        SupplierProposal $proposal,
+        PurchaseOrder $order,
+        ?int $actorId,
+    ): void {
+        $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
+
+        $this->auditService->record(
+            ProcurementAuditEventTypeEnum::PURCHASE_ORDER_CREATED->value,
+            $order,
+            (int) $order->organization_id,
+            $actorId,
+            $order->supplier_party_id,
+            [
+                'order_number' => $order->order_number,
+                'status' => $order->status->value,
+                'accepted_supplier_proposal_number' => $proposal->proposal_number,
+                'supplier_request_number' => $proposal->supplierRequest?->request_number,
+                'supplier_name' => $this->supplierName($proposal, $snapshot),
+                'supplier_snapshot' => $snapshot,
+                'total_amount' => (float) $order->total_amount,
+                'currency' => $order->currency,
+                'items_count' => $proposal->lines->count(),
+                'pricing_source' => $order->pricing_source,
+            ],
+        );
+    }
+
+    protected function dispatchAcceptedPurchaseOrderAfterCommit(PurchaseOrder $order): void
+    {
+        $purchaseOrderId = (int) $order->id;
+        $this->ownerWorkflowRuntime->afterCommit(static function () use ($purchaseOrderId): void {
+            $purchaseOrder = PurchaseOrder::query()->find($purchaseOrderId);
+
+            if ($purchaseOrder instanceof PurchaseOrder) {
+                event(new PurchaseOrderCreated($purchaseOrder));
+            }
+        });
+    }
+
+    protected function freshAcceptedSupplierProposal(SupplierProposal $proposal): SupplierProposal
+    {
+        return $proposal->fresh([
             'supplier',
             'externalSupplierContact',
             'supplierParty',

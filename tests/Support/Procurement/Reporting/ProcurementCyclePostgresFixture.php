@@ -97,6 +97,7 @@ final class ProcurementCyclePostgresFixture
                 $policyB,
                 $now,
             );
+            $directOrder = $this->directOrderChain($namespace, $chainA, $now);
             $noProject = $this->requestLine(
                 $namespace,
                 'no-project',
@@ -173,6 +174,7 @@ final class ProcurementCyclePostgresFixture
                 'a' => $chainA,
                 'a2' => $chainA2,
                 'b' => $chainB,
+                'direct_order' => $directOrder,
                 'no_project' => $noProject,
                 'crossed_proposal_party_id' => $crossedProposalPartyId,
                 'crossed_order_party_id' => $crossedOrderPartyId,
@@ -550,6 +552,56 @@ final class ProcurementCyclePostgresFixture
             'site_request_id' => $siteRequestId,
             'purchase_request_id' => $requestId,
             'purchase_request_line_id' => $lineId,
+        ];
+    }
+
+    private function directOrderChain(string $namespace, array $base, string $now): array
+    {
+        $orderId = (int) $this->connection->table('purchase_orders')->insertGetId([
+            'organization_id' => $base['organization_id'],
+            'purchase_request_id' => $base['purchase_request_id'],
+            'accepted_supplier_proposal_id' => null,
+            'accepted_supplier_proposal_version_id' => null,
+            'supplier_id' => $base['supplier_id'],
+            'supplier_party_id' => $base['supplier_party_id'],
+            'supplier_snapshot' => json_encode(['id' => $base['supplier_party_id']], JSON_THROW_ON_ERROR),
+            'order_number' => "PO-{$namespace}-direct",
+            'order_date' => '2026-08-01',
+            'status' => 'sent',
+            'total_amount' => 10,
+            'currency' => 'RUB',
+            'pricing_source' => 'manual',
+            'sent_at' => '2026-08-01',
+            'sent_at_exact' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $orderItemId = (int) $this->connection->table('purchase_order_items')->insertGetId([
+            'purchase_order_id' => $orderId,
+            'purchase_request_line_id' => $base['purchase_request_line_id'],
+            'supplier_request_line_id' => null,
+            'supplier_proposal_line_id' => null,
+            'material_name' => 'Direct ordered material',
+            'quantity' => 1,
+            'unit' => 'pcs',
+            'unit_price' => 10,
+            'total_price' => 10,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        return [
+            ...$base,
+            'supplier_request_id' => null,
+            'supplier_request_line_id' => null,
+            'supplier_proposal_id' => null,
+            'supplier_proposal_line_id' => null,
+            'supplier_proposal_version_id' => null,
+            'supplier_proposal_decision_id' => null,
+            'purchase_order_id' => $orderId,
+            'purchase_order_item_id' => $orderItemId,
+            'purchase_receipt_id' => null,
+            'purchase_receipt_line_id' => null,
         ];
     }
 }

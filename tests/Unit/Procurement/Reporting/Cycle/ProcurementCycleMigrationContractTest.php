@@ -38,6 +38,7 @@ final class ProcurementCycleMigrationContractTest extends TestCase
             "jsonb_typeof(dimension_snapshot->'gap_codes') IS NOT DISTINCT FROM 'array'",
             "dimension_snapshot->>'quality_status' = 'PARTIAL'",
             "jsonb_array_length(dimension_snapshot->'gap_codes') > 0",
+            "dimension_snapshot->'gap_codes' @> '[\"missing_request_created_event\", \"missing_project_lineage\", \"missing_policy_version\"]'::jsonb) IS NOT TRUE",
         ] as $invariant) {
             self::assertStringContainsString($invariant, $migration);
         }
@@ -65,12 +66,25 @@ final class ProcurementCycleMigrationContractTest extends TestCase
             'winning_supplier_proposal_version_id = NEW.supplier_proposal_version_id',
             'accepted_supplier_proposal_id IS NOT DISTINCT FROM NEW.supplier_proposal_id',
             'accepted_supplier_proposal_version_id IS NOT DISTINCT FROM NEW.supplier_proposal_version_id',
+            'procurement_process_event_supplier_proposal_pair_check',
+            '(NEW.supplier_proposal_id IS NULL) <> (NEW.supplier_proposal_version_id IS NULL)',
             'supplier_proposal_lines.supplier_proposal_id = NEW.supplier_proposal_id',
             'supplier_proposal_lines.supplier_request_line_id = NEW.supplier_request_line_id',
             'AND organization_id = NEW.organization_id',
         ] as $invariant) {
             self::assertStringContainsString($invariant, $migration);
         }
+    }
+
+    public function test_ci_fails_when_postgresql_contract_suite_is_skipped(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 5).'/.github/workflows/notification-concurrency.yml');
+        self::assertIsString($workflow);
+
+        $command = 'php artisan test tests/Feature/Procurement/Reporting/Cycle/'
+            .'ProcurementCycleSourcePostgresTest.php';
+        self::assertStringContainsString($command, $workflow);
+        self::assertStringContainsString('--group=postgresql --fail-on-skipped', $workflow);
     }
 
     private function migration(): string

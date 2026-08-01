@@ -320,6 +320,16 @@ final class ProcurementProcessTransitionTest extends TestCase
                 'supplierProposalId' => 70,
                 'purchaseOrderId' => 80,
             ]],
+            'proposal requires immutable version without order' => [[
+                'supplierRequestId' => 60,
+                'supplierPartyId' => 65,
+                'supplierProposalId' => 70,
+            ]],
+            'proposal version requires proposal' => [[
+                'supplierRequestId' => 60,
+                'supplierPartyId' => 65,
+                'supplierProposalVersionId' => 71,
+            ]],
         ];
     }
 

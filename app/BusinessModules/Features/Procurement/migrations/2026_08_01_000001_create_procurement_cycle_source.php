@@ -181,6 +181,8 @@ CHECK (
 ),
 ADD CONSTRAINT procurement_process_event_hash_check
 CHECK (payload_hash ~ '^[a-f0-9]{64}$'),
+ADD CONSTRAINT procurement_process_event_supplier_proposal_pair_check
+CHECK ((supplier_proposal_id IS NULL) = (supplier_proposal_version_id IS NULL)),
 ADD CONSTRAINT procurement_process_event_policy_pins_check
 CHECK (
     (policy_version_id IS NULL AND policy_hash IS NULL AND calendar_version IS NULL AND calendar_hash IS NULL)
@@ -306,7 +308,8 @@ BEGIN
            OR NEW.calendar_version IS NOT NULL
            OR NEW.calendar_hash IS NOT NULL
            OR NEW.dimension_snapshot->>'quality_status' IS DISTINCT FROM 'PARTIAL'
-           OR NOT (NEW.dimension_snapshot->'gap_codes' @> '["missing_request_created_event", "missing_project_lineage", "missing_policy_version"]'::jsonb)
+           OR jsonb_typeof(NEW.dimension_snapshot->'gap_codes') IS DISTINCT FROM 'array'
+           OR (NEW.dimension_snapshot->'gap_codes' @> '["missing_request_created_event", "missing_project_lineage", "missing_policy_version"]'::jsonb) IS NOT TRUE
            OR (NEW.dimension_snapshot - ARRAY[
                'schema_version',
                'organization_id',
@@ -325,6 +328,10 @@ BEGIN
         OR NEW.purchase_order_id IS NOT NULL)
        AND NEW.supplier_party_id IS NULL THEN
         RAISE EXCEPTION 'procurement process supplier party required' USING ERRCODE = '23514';
+    END IF;
+
+    IF (NEW.supplier_proposal_id IS NULL) <> (NEW.supplier_proposal_version_id IS NULL) THEN
+        RAISE EXCEPTION 'procurement process supplier proposal version pair required' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.supplier_request_id IS NOT NULL AND NOT EXISTS (

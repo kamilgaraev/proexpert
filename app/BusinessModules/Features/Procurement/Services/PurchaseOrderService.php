@@ -10,12 +10,11 @@ use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDelivery
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\DTOs\Contract\ContractDossierCreationResult;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
-use App\Models\Contract;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Models\Supplier;
 use App\Models\User;
 use DateTimeImmutable;
@@ -147,63 +146,82 @@ class PurchaseOrderService
 
     protected function sendToSupplierOwnerWorkflow(PurchaseOrder $order, callable $onSent): PurchaseOrder
     {
-        DB::beginTransaction();
+        $order = $this->lockPurchaseOrderForSend($order);
+        $this->assertPurchaseOrderCanBeSent($order);
+        $sentAt = $this->ownerWorkflowRuntime->occurredAt();
+        $actorId = $this->currentPurchaseOrderActorId();
 
-        try {
-            $order = PurchaseOrder::query()
-                ->with('supplier')
-                ->whereKey($order->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $this->persistPurchaseOrderSent($order, $actorId, $sentAt);
+        $onSent($order, $actorId, $sentAt);
+        $this->dispatchPurchaseOrderSentAfterCommit($order);
 
-            if (! $order->canBeSent()) {
-                throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_send'));
-            }
+        return $this->freshSentPurchaseOrder($order);
+    }
 
-            if (! $order->supplier || ! $order->supplier->email) {
-                throw new \DomainException(trans_message('procurement.purchase_orders.supplier_email_missing'));
-            }
+    protected function lockPurchaseOrderForSend(PurchaseOrder $order): PurchaseOrder
+    {
+        return PurchaseOrder::query()
+            ->with('supplier')
+            ->whereKey($order->id)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
 
-            $pdfPath = $this->pdfService->store($order);
-            $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
-            $sentAt = $this->ownerWorkflowRuntime->occurredAt();
-            $actorId = auth()->id();
+    protected function assertPurchaseOrderCanBeSent(PurchaseOrder $order): void
+    {
+        if (! $order->canBeSent()) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_send'));
+        }
 
-            \Illuminate\Support\Facades\Mail::to($order->supplier->email)
-                ->queue(
-                    (new \App\BusinessModules\Features\Procurement\Mail\PurchaseOrderSentMail($order, $temporaryUrl))
-                        ->afterCommit(),
-                );
+        if (! $order->supplier || ! $order->supplier->email) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.supplier_email_missing'));
+        }
+    }
 
-            $order->update([
-                'status' => PurchaseOrderStatusEnum::SENT,
-                'sent_at' => $sentAt,
-                'sent_at_exact' => $sentAt,
-                'metadata' => array_merge($order->metadata ?? [], [
-                    'pdf_path' => $pdfPath,
-                    'pdf_temporary_url' => $temporaryUrl,
-                    'email_sent_to' => $order->supplier->email,
-                    'sent_by_user_id' => $actorId,
-                ]),
-            ]);
+    protected function currentPurchaseOrderActorId(): ?int
+    {
+        return auth()->id();
+    }
 
-            $onSent(
-                $order,
-                $actorId,
-                $sentAt,
+    protected function persistPurchaseOrderSent(
+        PurchaseOrder $order,
+        ?int $actorId,
+        DateTimeImmutable $sentAt,
+    ): void {
+        $pdfPath = $this->pdfService->store($order);
+        $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
+
+        \Illuminate\Support\Facades\Mail::to($order->supplier->email)
+            ->queue(
+                (new \App\BusinessModules\Features\Procurement\Mail\PurchaseOrderSentMail($order, $temporaryUrl))
+                    ->afterCommit(),
             );
 
-            DB::commit();
+        $order->update([
+            'status' => PurchaseOrderStatusEnum::SENT,
+            'sent_at' => $sentAt,
+            'sent_at_exact' => $sentAt,
+            'metadata' => array_merge($order->metadata ?? [], [
+                'pdf_path' => $pdfPath,
+                'pdf_temporary_url' => $temporaryUrl,
+                'email_sent_to' => $order->supplier->email,
+                'sent_by_user_id' => $actorId,
+            ]),
+        ]);
+    }
 
-            $this->invalidateCache($order->organization_id);
-
+    protected function dispatchPurchaseOrderSentAfterCommit(PurchaseOrder $order): void
+    {
+        $organizationId = (int) $order->organization_id;
+        $this->ownerWorkflowRuntime->afterCommit(function () use ($order, $organizationId): void {
+            $this->invalidateCache($organizationId);
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseOrderSent($order));
+        });
+    }
 
-            return $order->fresh(['items', 'supplier', 'supplierParty', 'purchaseRequest', 'contract']);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+    protected function freshSentPurchaseOrder(PurchaseOrder $order): PurchaseOrder
+    {
+        return $order->fresh(['items', 'supplier', 'supplierParty', 'purchaseRequest', 'contract']);
     }
 
     public function confirm(PurchaseOrder $order, array $proposalData): PurchaseOrder
@@ -245,21 +263,31 @@ class PurchaseOrderService
         int $userId,
         array $receiptData = []
     ): PurchaseOrder {
-        return $this->ownerWorkflowRuntime->within(fn (): PurchaseOrder => $this->receiveMaterialsOwnerWorkflow(
-            $order,
-            $warehouseId,
-            $items,
-            $userId,
-            $receiptData,
-            function (
-                PurchaseOrder $receivedOrder,
-                PurchaseReceipt $receipt,
-                int $actorId,
-                DateTimeImmutable $occurredAt,
-            ): void {
-                $this->recordReceiptMilestonesCycleEvent($receivedOrder, $receipt, $actorId, $occurredAt);
-            },
-        ));
+        try {
+            return $this->ownerWorkflowRuntime->within(fn (): PurchaseOrder => $this->receiveMaterialsOwnerWorkflow(
+                $order,
+                $warehouseId,
+                $items,
+                $userId,
+                $receiptData,
+                function (
+                    PurchaseOrder $receivedOrder,
+                    PurchaseReceipt $receipt,
+                    int $actorId,
+                    DateTimeImmutable $occurredAt,
+                ): void {
+                    $this->recordReceiptMilestonesCycleEvent($receivedOrder, $receipt, $actorId, $occurredAt);
+                },
+            ));
+        } catch (\Exception $exception) {
+            Log::error('procurement.materials_receive_failed', [
+                'purchase_order_id' => $order->id,
+                'warehouse_id' => $warehouseId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
     }
 
     protected function receiveMaterialsOwnerWorkflow(
@@ -270,129 +298,171 @@ class PurchaseOrderService
         array $receiptData,
         callable $onReceived,
     ): PurchaseOrder {
-        DB::beginTransaction();
+        $order = $this->lockPurchaseOrderForReceipt($order);
+        $this->assertPurchaseOrderCanReceiveMaterials($order, $items);
+        $receivedAt = $this->ownerWorkflowRuntime->occurredAt();
+        $ownerState = $this->persistPurchaseReceiptOwnerState(
+            $order,
+            $warehouseId,
+            $items,
+            $userId,
+            $receiptData,
+        );
+        $receipt = $ownerState['receipt'];
+        $warehouse = $ownerState['warehouse'];
+        $orderItems = $ownerState['order_items'];
 
-        try {
-            $order = PurchaseOrder::query()
-                ->whereKey($order->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $this->loadPurchaseReceiptMilestoneRelations($order, $receipt);
+        $onReceived($order, $receipt, $userId, $receivedAt);
+        $this->recordPurchaseReceiptAudit($order, $receipt, $warehouse, $items, $userId);
+        $this->dispatchPurchaseReceiptAfterCommit($order, $warehouse, $orderItems, $userId);
 
-            $this->lifecycleService->assertCanReceiveMaterials($order, $items);
-            $this->paymentGateService->assertCanReceive($order, $items);
+        return $this->freshReceivedPurchaseOrder($order);
+    }
 
-            $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
-            $orderItems = $this->resolveOrderItems($order, $items);
-            $receivedAt = $this->ownerWorkflowRuntime->occurredAt();
-            $receiptNumber = $this->generateReceiptNumber();
-            $receiptDate = $receiptData['receipt_date'] ?? now()->toDateString();
-            $receiptMetadata = is_array($receiptData['metadata'] ?? null) ? $receiptData['metadata'] : [];
-            $receiptMetadata['receipt_document'] = $this->buildReceiptDocument(
-                $order,
-                $warehouse,
-                $orderItems,
-                $items,
-                $receiptNumber,
-                $receiptDate
-            );
+    protected function lockPurchaseOrderForReceipt(PurchaseOrder $order): PurchaseOrder
+    {
+        return PurchaseOrder::query()->whereKey($order->id)->lockForUpdate()->firstOrFail();
+    }
 
-            $receipt = $order->receipts()->create([
-                'organization_id' => $order->organization_id,
+    protected function assertPurchaseOrderCanReceiveMaterials(PurchaseOrder $order, array $items): void
+    {
+        $this->lifecycleService->assertCanReceiveMaterials($order, $items);
+        $this->paymentGateService->assertCanReceive($order, $items);
+    }
+
+    protected function persistPurchaseReceiptOwnerState(
+        PurchaseOrder $order,
+        int $warehouseId,
+        array $items,
+        int $userId,
+        array $receiptData,
+    ): array {
+        $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
+        $orderItems = $this->resolveOrderItems($order, $items);
+        $receiptNumber = $this->generateReceiptNumber();
+        $receiptDate = $receiptData['receipt_date'] ?? now()->toDateString();
+        $receiptMetadata = is_array($receiptData['metadata'] ?? null) ? $receiptData['metadata'] : [];
+        $receiptMetadata['receipt_document'] = $this->buildReceiptDocument(
+            $order,
+            $warehouse,
+            $orderItems,
+            $items,
+            $receiptNumber,
+            $receiptDate,
+        );
+
+        $receipt = $order->receipts()->create([
+            'organization_id' => $order->organization_id,
+            'warehouse_id' => $warehouse->id,
+            'received_by_user_id' => $userId,
+            'receipt_number' => $receiptNumber,
+            'receipt_date' => $receiptDate,
+            'notes' => $receiptData['notes'] ?? null,
+            'metadata' => $receiptMetadata,
+        ]);
+
+        foreach ($items as $item) {
+            $quantity = (float) $item['quantity_received'];
+            $price = (float) $item['price'];
+
+            $receipt->lines()->create([
+                'purchase_order_item_id' => (int) $item['item_id'],
+                'quantity_received' => $quantity,
+                'price' => $price,
+                'total_amount' => round($quantity * $price, 2),
+                'metadata' => $item['metadata'] ?? null,
+            ]);
+        }
+
+        $order->update(['status' => $this->lifecycleService->resolveOrderReceiptStatus($order)]);
+        event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
+            $order,
+            $warehouse->id,
+            $items,
+            $userId,
+        ));
+
+        return [
+            'receipt' => $receipt,
+            'warehouse' => $warehouse,
+            'order_items' => $orderItems,
+        ];
+    }
+
+    protected function loadPurchaseReceiptMilestoneRelations(
+        PurchaseOrder $order,
+        PurchaseReceipt $receipt,
+    ): void {
+        $receipt->loadMissing('lines');
+        $order->loadMissing('items');
+    }
+
+    protected function recordPurchaseReceiptAudit(
+        PurchaseOrder $order,
+        PurchaseReceipt $receipt,
+        OrganizationWarehouse $warehouse,
+        array $items,
+        int $userId,
+    ): void {
+        $this->auditService->record(
+            ProcurementAuditEventTypeEnum::MATERIALS_RECEIVED->value,
+            $order,
+            (int) $order->organization_id,
+            $userId,
+            $order->supplier_party_id,
+            [
+                'order_number' => $order->order_number,
+                'status' => $order->status->value,
+                'receipt_number' => $receipt->receipt_number,
+                'receipt_date' => $receipt->receipt_date?->format('Y-m-d'),
                 'warehouse_id' => $warehouse->id,
-                'received_by_user_id' => $userId,
-                'receipt_number' => $receiptNumber,
-                'receipt_date' => $receiptDate,
-                'notes' => $receiptData['notes'] ?? null,
-                'metadata' => $receiptMetadata,
-            ]);
+                'warehouse_name' => $warehouse->name,
+                'supplier_name' => $this->supplierName(is_array($order->supplier_snapshot) ? $order->supplier_snapshot : []),
+                'items_count' => count($items),
+                'total_received_amount' => $receipt->lines->sum('total_amount'),
+                'items' => $this->receivedItemsPayload($order, $items),
+                'notes' => $receipt->notes,
+            ],
+        );
+    }
 
-            foreach ($items as $item) {
-                $quantity = (float) $item['quantity_received'];
-                $price = (float) $item['price'];
-
-                $receipt->lines()->create([
-                    'purchase_order_item_id' => (int) $item['item_id'],
-                    'quantity_received' => $quantity,
-                    'price' => $price,
-                    'total_amount' => round($quantity * $price, 2),
-                    'metadata' => $item['metadata'] ?? null,
-                ]);
-            }
-
-            $order->update([
-                'status' => $this->lifecycleService->resolveOrderReceiptStatus($order),
-            ]);
-
-            event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
-                $order,
-                $warehouse->id,
-                $items,
-                $userId
-            ));
-
-            $receipt->loadMissing('lines');
-            $order->loadMissing('items');
-
-            $onReceived(
-                $order,
-                $receipt,
-                $userId,
-                $receivedAt,
-            );
-
-            $this->auditService->record(
-                ProcurementAuditEventTypeEnum::MATERIALS_RECEIVED->value,
-                $order,
-                (int) $order->organization_id,
-                $userId,
-                $order->supplier_party_id,
-                [
-                    'order_number' => $order->order_number,
-                    'status' => $order->status->value,
-                    'receipt_number' => $receipt->receipt_number,
-                    'receipt_date' => $receipt->receipt_date?->format('Y-m-d'),
-                    'warehouse_id' => $warehouse->id,
-                    'warehouse_name' => $warehouse->name,
-                    'supplier_name' => $this->supplierName(is_array($order->supplier_snapshot) ? $order->supplier_snapshot : []),
-                    'items_count' => count($items),
-                    'total_received_amount' => $receipt->lines->sum('total_amount'),
-                    'items' => $this->receivedItemsPayload($order, $items),
-                    'notes' => $receipt->notes,
-                ]
-            );
-
-            DB::commit();
-
-            $this->invalidateCache($order->organization_id);
-
+    protected function dispatchPurchaseReceiptAfterCommit(
+        PurchaseOrder $order,
+        OrganizationWarehouse $warehouse,
+        Collection $orderItems,
+        int $userId,
+    ): void {
+        $organizationId = (int) $order->organization_id;
+        $this->ownerWorkflowRuntime->afterCommit(function () use (
+            $order,
+            $warehouse,
+            $orderItems,
+            $userId,
+            $organizationId,
+        ): void {
+            $this->invalidateCache($organizationId);
             Log::info('procurement.materials_received', [
                 'purchase_order_id' => $order->id,
                 'warehouse_id' => $warehouse->id,
                 'items_count' => $orderItems->count(),
                 'user_id' => $userId,
             ]);
+        });
+    }
 
-            return $order->fresh([
-                'items.receiptLines',
-                'supplier',
-                'externalSupplierContact',
-                'supplierParty',
-                'purchaseRequest',
-                'receipts.warehouse',
-                'receipts.receivedByUser',
-                'receipts.lines',
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            Log::error('procurement.materials_receive_failed', [
-                'purchase_order_id' => $order->id,
-                'warehouse_id' => $warehouseId,
-                'error' => $e->getMessage(),
-            ]);
-
-            throw $e;
-        }
+    protected function freshReceivedPurchaseOrder(PurchaseOrder $order): PurchaseOrder
+    {
+        return $order->fresh([
+            'items.receiptLines',
+            'supplier',
+            'externalSupplierContact',
+            'supplierParty',
+            'purchaseRequest',
+            'receipts.warehouse',
+            'receipts.receivedByUser',
+            'receipts.lines',
+        ]);
     }
 
     public function markInDelivery(PurchaseOrder $order): PurchaseOrder

@@ -187,7 +187,7 @@ jobs:
       - name: Run procurement-cycle PostgreSQL contract
         run: >-
           php artisan test tests/Feature/Procurement/Reporting/Cycle/ProcurementCycleSourcePostgresTest.php
-          --group=postgresql
+          --group=postgresql --fail-on-skipped
 
   report-saved-view-version-postgres-contract:
     runs-on: ubuntu-latest

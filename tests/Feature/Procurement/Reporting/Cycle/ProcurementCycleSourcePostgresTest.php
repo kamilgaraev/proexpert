@@ -205,6 +205,132 @@ final class ProcurementCycleSourcePostgresTest extends TestCase
         self::assertSame($event['payload_hash'], $persisted?->payload_hash);
     }
 
+    public function test_database_accepts_positive_direct_order_null_proposal_chain(): void
+    {
+        $chain = $this->fixture()['direct_order'];
+        $event = $this->rawEvent($chain);
+
+        $eventId = $this->insertRawEvent($event);
+        $persisted = DB::table('procurement_process_events')->where('id', $eventId)->first();
+
+        self::assertNull($persisted?->supplier_proposal_id);
+        self::assertNull($persisted?->supplier_proposal_version_id);
+        self::assertSame($chain['purchase_order_id'], (int) $persisted?->purchase_order_id);
+        self::assertSame($chain['purchase_order_item_id'], (int) $persisted?->purchase_order_item_id);
+    }
+
+    #[DataProvider('partialSupplierProposalPairCases')]
+    public function test_database_rejects_partial_supplier_proposal_version_pair(string $field): void
+    {
+        $event = $this->rawEvent($this->fixture()['a']);
+        $event[$field] = null;
+
+        $exception = $this->captureQueryException(static function () use ($event): void {
+            DB::table('procurement_process_events')->insert($event);
+        });
+
+        $this->assertSqlState($exception, '23514');
+        self::assertSame(0, $this->eventCount($event));
+    }
+
+    public static function partialSupplierProposalPairCases(): array
+    {
+        return [
+            'proposal without immutable version' => ['supplier_proposal_version_id'],
+            'version without proposal' => ['supplier_proposal_id'],
+        ];
+    }
+
+    public function test_database_accepts_strict_quarantine_without_request_created(): void
+    {
+        $event = $this->strictQuarantineEvent($this->fixture()['a']);
+        $eventId = $this->insertRawEvent($event);
+        $persisted = DB::table('procurement_process_events')->where('id', $eventId)->first();
+
+        self::assertNull($persisted?->project_id);
+        self::assertNull($persisted?->policy_version_id);
+        self::assertSame(
+            json_decode($event['dimension_snapshot'], true, flags: JSON_THROW_ON_ERROR),
+            json_decode((string) $persisted?->dimension_snapshot, true, flags: JSON_THROW_ON_ERROR),
+        );
+    }
+
+    public function test_database_rejects_current_project_reconstruction_without_request_created(): void
+    {
+        $chain = $this->fixture()['a'];
+        $event = $this->strictQuarantineEvent($chain, $chain['project_id']);
+
+        $exception = $this->captureQueryException(static function () use ($event): void {
+            DB::table('procurement_process_events')->insert($event);
+        });
+
+        $this->assertSqlState($exception, '23514');
+        self::assertStringContainsString('quarantine provenance required', $exception->getMessage());
+        self::assertSame(0, $this->eventCount($event));
+    }
+
+    #[DataProvider('partialPolicyPinCases')]
+    public function test_database_rejects_partial_policy_pins(string $field): void
+    {
+        $event = $this->rawEvent($this->fixture()['a']);
+        $event[$field] = null;
+
+        $exception = $this->captureQueryException(static function () use ($event): void {
+            DB::table('procurement_process_events')->insert($event);
+        });
+
+        $this->assertSqlState($exception, '23514');
+        self::assertSame(0, $this->eventCount($event));
+    }
+
+    public static function partialPolicyPinCases(): array
+    {
+        return [
+            'missing policy hash' => ['policy_hash'],
+            'missing calendar version' => ['calendar_version'],
+            'missing calendar hash' => ['calendar_hash'],
+        ];
+    }
+
+    #[DataProvider('malformedQuarantineGapCases')]
+    public function test_database_rejects_malformed_or_incomplete_quarantine_gap_codes(string $case): void
+    {
+        $event = $this->strictQuarantineEvent($this->fixture()['a']);
+        $snapshot = json_decode($event['dimension_snapshot'], true, flags: JSON_THROW_ON_ERROR);
+        if ($case === 'missing') {
+            unset($snapshot['gap_codes']);
+        } elseif ($case === 'null') {
+            $snapshot['gap_codes'] = null;
+        } elseif ($case === 'object') {
+            $snapshot['gap_codes'] = ['unexpected' => true];
+        } elseif ($case === 'incomplete') {
+            $snapshot['gap_codes'] = [
+                'missing_request_created_event',
+                'missing_project_lineage',
+            ];
+        } else {
+            throw new RuntimeException("Unknown malformed quarantine gap case: {$case}");
+        }
+        $event['dimension_snapshot'] = json_encode($snapshot, JSON_THROW_ON_ERROR);
+
+        $exception = $this->captureQueryException(static function () use ($event): void {
+            DB::table('procurement_process_events')->insert($event);
+        });
+
+        $this->assertSqlState($exception, '23514');
+        self::assertSame(0, $this->eventCount($event));
+    }
+
+    public static function malformedQuarantineGapCases(): array
+    {
+        return [
+            'missing gap_codes' => ['missing'],
+            'JSON null gap_codes' => ['null'],
+            'object gap_codes' => ['object'],
+            'incomplete gap_codes' => ['incomplete'],
+        ];
+    }
+
     #[DataProvider('invalidFullLineageCases')]
     public function test_database_rejects_crossed_tenant_project_or_optional_lineage(
         string $case,
@@ -549,6 +675,41 @@ final class ProcurementCycleSourcePostgresTest extends TestCase
         );
 
         return $attributes;
+    }
+
+    private function strictQuarantineEvent(array $chain, ?int $projectId = null): array
+    {
+        $event = $this->rawEvent($chain, [
+            'project_id' => $projectId,
+            'supplier_request_id' => null,
+            'supplier_request_line_id' => null,
+            'supplier_party_id' => null,
+            'supplier_proposal_id' => null,
+            'supplier_proposal_version_id' => null,
+            'supplier_proposal_decision_id' => null,
+            'purchase_order_id' => null,
+            'purchase_order_item_id' => null,
+            'purchase_receipt_id' => null,
+            'purchase_receipt_line_id' => null,
+            ...$this->policyFields(null),
+            'event_code' => ProcurementProcessEventCode::REQUEST_APPROVED->value,
+            'occurred_at' => '2026-08-01 10:05:00+00',
+        ]);
+        $event['dimension_snapshot'] = json_encode([
+            'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
+            'organization_id' => $chain['organization_id'],
+            'project_id' => $projectId,
+            'purchase_request_id' => $chain['purchase_request_id'],
+            'purchase_request_line_id' => $chain['purchase_request_line_id'],
+            'quality_status' => 'PARTIAL',
+            'gap_codes' => [
+                'missing_project_lineage',
+                'missing_policy_version',
+                'missing_request_created_event',
+            ],
+        ], JSON_THROW_ON_ERROR);
+
+        return $event;
     }
 
     private function dimensionSnapshot(array $attributes): ProcurementProcessDimensionSnapshot
