@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\Exceptions\Billing\CommercialQuotaExceededException;
@@ -16,6 +19,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 final class AiEstimateQuotaTest extends TestCase
@@ -47,6 +51,59 @@ final class AiEstimateQuotaTest extends TestCase
         $this->expectException(CommercialQuotaExceededException::class);
 
         $quota->reserve($this->session(Organization::query()->findOrFail($session->organization_id)));
+    }
+
+    public function test_retrying_failed_generation_reserves_quota_with_the_generation_transition(): void
+    {
+        Queue::fake();
+        $session = $this->session();
+        $session->forceFill([
+            'status' => EstimateGenerationStatus::Failed,
+            'resume_status' => EstimateGenerationStatus::Generating,
+            'state_version' => 3,
+        ])->save();
+
+        $result = app(RetryEstimateGenerationSession::class)->handle(new RetryEstimateGenerationSessionCommand(
+            (int) $session->id,
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            3,
+        ));
+
+        $this->assertSame(EstimateGenerationStatus::Generating, $result->status);
+        $this->assertSame(1, $this->confirmedReservations($session));
+    }
+
+    public function test_stale_terminal_failure_cannot_release_quota_reconfirmed_by_retry(): void
+    {
+        Queue::fake();
+        $session = $this->session();
+        $session->forceFill([
+            'status' => EstimateGenerationStatus::Generating,
+            'processing_stage' => 'generating',
+            'state_version' => 3,
+        ])->save();
+        $quota = app(AiEstimateQuotaService::class);
+        $quota->reserve($session->fresh());
+        $failure = $this->technicalFailure($session, expectedStateVersion: 3);
+
+        app(FailureWorkflowHandler::class)->handle($failure, 3);
+
+        $failed = $session->fresh();
+        $this->assertSame(EstimateGenerationStatus::Failed, $failed->status);
+        $this->assertSame('released', $this->reservationStatus($session));
+
+        app(RetryEstimateGenerationSession::class)->handle(new RetryEstimateGenerationSessionCommand(
+            (int) $session->id,
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $failed->state_version,
+        ));
+        app(FailureWorkflowHandler::class)->handle($failure, 3);
+
+        $this->assertSame(EstimateGenerationStatus::Generating, $session->fresh()->status);
+        $this->assertSame('confirmed', $this->reservationStatus($session));
+        $this->assertSame(1, $this->confirmedReservations($session));
     }
 
     public function test_terminal_technical_failure_before_result_releases_reservation(): void
@@ -159,6 +216,7 @@ final class AiEstimateQuotaTest extends TestCase
     private function technicalFailure(
         EstimateGenerationSession $session,
         FailureCategory $category = FailureCategory::Terminal,
+        int $expectedStateVersion = 0,
     ): FailureData
     {
         return new FailureData(new FailureContext(
@@ -170,7 +228,7 @@ final class AiEstimateQuotaTest extends TestCase
             attempt: 1,
             correlationId: (string) str()->uuid(),
             eventId: (string) str()->uuid(),
-            expectedSessionStateVersion: 0,
+            expectedSessionStateVersion: $expectedStateVersion,
             expectedSessionStatus: 'generating',
         ), $category, 'unexpected_internal_failure', []);
     }

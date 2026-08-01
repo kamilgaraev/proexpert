@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
@@ -307,6 +308,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
             new RetryEstimateGenerationSession(
                 $repository,
                 new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store),
+                new AdvanceEstimateGeneration(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store)),
                 $dispatcher,
                 $regionalContextResolver,
                 static fn (): string => 'attempt-new',

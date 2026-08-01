@@ -504,7 +504,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(AdvanceEstimateGeneration::class, fn ($app) => new AdvanceEstimateGeneration(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow::class),
             $app->make(AiEstimateQuotaService::class),
-            $app->make('db')->connection(),
         ));
         $this->app->singleton(OcrClientInterface::class, static fn ($app): TimewebVisionOcrClient => new TimewebVisionOcrClient(
             $app->make(AiUsageStore::class),
@@ -514,7 +513,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         ));
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
-        $this->app->singleton(FailureWorkflowHandler::class, EloquentFailureWorkflowHandler::class);
+        $this->app->singleton(FailureWorkflowHandler::class, fn ($app) => new EloquentFailureWorkflowHandler(
+            $app->make(AdvanceEstimateGeneration::class),
+            $app->make(FailureWorkflowFence::class),
+            $app->make(AiEstimateQuotaService::class),
+            $app->make('db')->connection(),
+        ));
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
         $this->app->singleton(FinalizationOutbox::class, fn ($app) => new EloquentFinalizationOutbox($app->make('db')->connection()));
         $this->app->singleton(FinalizationDeliveryStore::class, fn ($app) => new EloquentFinalizationDeliveryStore($app->make('db')->connection()));

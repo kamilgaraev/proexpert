@@ -9,21 +9,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
-use Illuminate\Database\Connection;
 
 final class AdvanceEstimateGeneration
 {
     private ?AiEstimateQuotaService $aiEstimateQuota;
 
-    private ?Connection $database;
-
     public function __construct(
         private EstimateGenerationWorkflow $workflow,
         ?AiEstimateQuotaService $aiEstimateQuota = null,
-        ?Connection $database = null,
     ) {
         $this->aiEstimateQuota = $aiEstimateQuota;
-        $this->database = $database;
     }
 
     /** @param array<string, mixed> $attributes */
@@ -80,14 +75,39 @@ final class AdvanceEstimateGeneration
             return $session;
         }
 
-        if ($this->aiEstimateQuota === null || $this->database === null) {
-            return $this->transitionToGeneration($session, $attemptId, $inputPayloadChanges);
-        }
+        return $this->withQuotaForGeneration($session, fn (EstimateGenerationSession $lockedSession): EstimateGenerationSession =>
+            $this->transitionToGeneration($lockedSession, $attemptId, $inputPayloadChanges),
+        );
+    }
 
-        return $this->database->transaction(function () use ($session, $attemptId, $inputPayloadChanges): EstimateGenerationSession {
-            $this->aiEstimateQuota->reserve($session);
-            return $this->transitionToGeneration($session, $attemptId, $inputPayloadChanges);
-        }, 3);
+    /** @param array<string, mixed> $inputPayloadChanges */
+    public function generationRetried(
+        EstimateGenerationSession $session,
+        string $attemptId,
+        array $inputPayloadChanges = [],
+    ): EstimateGenerationSession {
+        return $this->withQuotaForGeneration($session, function (EstimateGenerationSession $lockedSession) use ($attemptId, $inputPayloadChanges): EstimateGenerationSession {
+            return $this->workflow->transition($lockedSession, EstimateGenerationEvent::Retried, $this->generationAttributes(
+                $lockedSession,
+                $attemptId,
+                $inputPayloadChanges,
+            ));
+        });
+    }
+
+    /** @param array<string, mixed> $inputPayloadChanges */
+    public function generationRestarted(
+        EstimateGenerationSession $session,
+        string $attemptId,
+        array $inputPayloadChanges = [],
+    ): EstimateGenerationSession {
+        return $this->withQuotaForGeneration($session, function (EstimateGenerationSession $lockedSession) use ($attemptId, $inputPayloadChanges): EstimateGenerationSession {
+            return $this->workflow->update($lockedSession, [EstimateGenerationStatus::Generating], $this->generationAttributes(
+                $lockedSession,
+                $attemptId,
+                $inputPayloadChanges,
+            ));
+        });
     }
 
     private function transitionToGeneration(
@@ -95,19 +115,8 @@ final class AdvanceEstimateGeneration
         string $attemptId,
         array $inputPayloadChanges,
     ): EstimateGenerationSession {
-        $inputPayload = [
-            ...($session->input_payload ?? []),
-            ...$inputPayloadChanges,
-            'generation_attempt_id' => $attemptId,
-            'generation_requested' => false,
-        ];
-        $attributes = [
-            'processing_stage' => 'generating',
-            'processing_progress' => 40,
-            'last_error' => null,
-            'failure_code' => null,
-            'input_payload' => $inputPayload,
-        ];
+        $attributes = $this->generationAttributes($session, $attemptId, $inputPayloadChanges);
+        $inputPayload = $attributes['input_payload'];
 
         if ($session->status === EstimateGenerationStatus::Applied) {
             $supersededEstimateIds = array_values(array_unique(array_filter(array_map(
@@ -125,6 +134,34 @@ final class AdvanceEstimateGeneration
         }
 
         return $this->workflow->transition($session, EstimateGenerationEvent::GenerationStarted, $attributes);
+    }
+
+    /** @param array<string, mixed> $inputPayloadChanges */
+    /** @return array<string, mixed> */
+    private function generationAttributes(EstimateGenerationSession $session, string $attemptId, array $inputPayloadChanges): array
+    {
+        return [
+            'processing_stage' => 'generating',
+            'processing_progress' => 40,
+            'last_error' => null,
+            'failure_code' => null,
+            'input_payload' => [
+                ...($session->input_payload ?? []),
+                ...$inputPayloadChanges,
+                'generation_attempt_id' => $attemptId,
+                'generation_requested' => false,
+            ],
+        ];
+    }
+
+    /** @param callable(EstimateGenerationSession): EstimateGenerationSession $transition */
+    private function withQuotaForGeneration(EstimateGenerationSession $session, callable $transition): EstimateGenerationSession
+    {
+        if ($this->aiEstimateQuota === null) {
+            return $transition($session);
+        }
+
+        return $this->aiEstimateQuota->startGeneration($session, $transition(...));
     }
 
     public function documentsNeedReview(EstimateGenerationSession $session, ?string $failureCode = null): EstimateGenerationSession

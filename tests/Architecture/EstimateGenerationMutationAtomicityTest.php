@@ -70,14 +70,14 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
     }
 
     #[Test]
-    public function geometry_confirmation_updates_session_only_through_the_authoritative_state_store(): void
+    public function geometry_confirmation_starts_generation_through_the_quota_aware_workflow(): void
     {
         $source = $this->source('Application/Geometry/ConfirmBuildingGeometry.php');
 
-        self::assertStringContainsString('SessionStateStore $stateStore', $source);
-        self::assertStringContainsString('$this->stateStore->compareAndSet(', $source);
+        self::assertStringContainsString('AdvanceEstimateGeneration $advance', $source);
+        self::assertStringContainsString('$this->advance->generationStarted(', $source);
         self::assertStringNotContainsString("\$session->forceFill(['state_version'", $source);
-        self::assertLessThan(strpos($source, '$this->outbox->append('), strpos($source, '$this->stateStore->compareAndSet('));
+        self::assertLessThan(strpos($source, '$this->outbox->append('), strpos($source, '$this->advance->generationStarted('));
     }
 
     private function source(string $relative): string

@@ -549,6 +549,26 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     }
 
     #[Test]
+    public function geometry_confirmation_reserves_quota_with_the_generating_transition(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture();
+
+        try {
+            app(ConfirmBuildingGeometry::class)->handle($this->command($fixture));
+
+            self::assertSame('generating', $fixture['session']->fresh()->status->value);
+            self::assertSame(1, DB::table('estimate_generation_ai_estimate_quota_reservations')
+                ->where('organization_id', $fixture['organization']->id)
+                ->where('session_id', $fixture['session']->id)
+                ->where('status', 'confirmed')
+                ->count());
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
     public function outbox_requires_acknowledgement_and_recovers_failed_delivery_idempotently(): void
     {
         $this->requirePostgres();
