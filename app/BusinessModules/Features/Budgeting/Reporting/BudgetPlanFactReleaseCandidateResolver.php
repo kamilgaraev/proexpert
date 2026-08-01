@@ -102,6 +102,7 @@ final class BudgetPlanFactReleaseCandidateResolver
             || ($conformance['source']['snapshot_id'] ?? null) !== $candidate['source_close_id']
             || ! $this->proofMatchesEvidenceAndCandidate($candidate, $conformanceEvidence, $publicationProof)
             || $publicationProof->payload()['code'] !== BudgetPlanFactCandidateContract::CODE
+            || $publicationProof->payload()['ci']['commit_sha'] !== $commitSha
             || $publicationProof->payload()['release']['git_sha'] !== $commitSha
             || $publicationProof->payload()['candidate_definition_sha256'] !== $candidate['candidate_definition_sha256']
             || ! hash_equals(hash('sha256', CanonicalJson::encode($candidate)), $publicationProof->payload()['candidate_manifest_sha256'])
