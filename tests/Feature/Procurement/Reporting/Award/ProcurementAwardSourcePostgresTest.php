@@ -181,10 +181,13 @@ final class ProcurementAwardSourcePostgresTest extends TestCase
             $occurredAt = new DateTimeImmutable('2026-08-01T10:00:00+00:00');
             $prepared = $owner->prepareForSupplierRequest($request, $fixture['first']['proposal_id'], $occurredAt);
             $owner->selected($prepared, $decision, $occurredAt, $fixture['user_id'], 'Согласовано');
+        });
 
+        DB::transaction(function () use ($fixture): void {
             DB::table('supplier_proposal_decisions')
                 ->where('id', $fixture['decision_id'])
                 ->update(['status' => 'approved']);
+            $owner = $this->owner();
             $decision = SupplierProposalDecision::query()->findOrFail($fixture['decision_id']);
             $owner->approved($decision, new DateTimeImmutable('2026-08-01T10:01:00+00:00'), $fixture['user_id']);
             DB::table('supplier_proposals')
