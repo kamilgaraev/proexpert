@@ -100,4 +100,62 @@ final class ProjectReportPublicationReleaseRequestRegistryContractTest extends T
             self::assertSame(0, $resolver->calls);
         }
     }
+
+    public function test_uses_the_selected_profile_document_names_without_an_r15_fallback(): void
+    {
+        $resolver = new class implements ReportPublicationReleaseCandidateResolver
+        {
+            public int $calls = 0;
+
+            public function resolve(string $trustedDirectory, ReportPublicationReleaseRequest $request): array
+            {
+                $this->calls++;
+
+                return ['candidate-v2.json' => ['candidate_definition' => []]];
+            }
+        };
+        $registry = new ProjectReportPublicationReleaseRequestRegistry(
+            sys_get_temp_dir(),
+            '{}',
+            new Sha256Hash(hash('sha256', '{}')),
+            new ReportPublicationReleaseDispatchProfileCatalog([
+                new ReportPublicationReleaseDispatch(
+                    new ReportPublicationReleaseDispatchProfile(
+                        'other_cycle',
+                        'other_release_request',
+                        [
+                            'candidate_manifest' => 'candidate-v2.json',
+                            'conformance_evidence' => 'conformance-v2.json',
+                            'proof_template' => 'proof-v2.json',
+                        ],
+                    ),
+                    $resolver,
+                    $this->createStub(ReportPublicationReleaseBindingFactory::class),
+                ),
+            ]),
+            new ReportDefinitionFactory,
+            $this->createStub(ReportConformanceEvidenceRepository::class),
+            $this->createStub(ReportPublicationReleaseEligibilityGate::class),
+            $this->createStub(ReportPublicationRegistry::class),
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_manifest_definition_invalid');
+        try {
+            $registry->resolve(ReportPublicationReleaseRequest::fromArray([
+                'request_id' => 'other_release_request',
+                'schema_version' => '1.0.0',
+                'code' => 'other_cycle',
+                'commit_sha' => str_repeat('a', 40),
+                'proof_sha256' => str_repeat('b', 64),
+                'artifact_paths' => [
+                    'candidate_manifest' => 'candidate-v2.json',
+                    'conformance_evidence' => 'conformance-v2.json',
+                    'proof_template' => 'proof-v2.json',
+                ],
+            ]));
+        } finally {
+            self::assertSame(1, $resolver->calls);
+        }
+    }
 }

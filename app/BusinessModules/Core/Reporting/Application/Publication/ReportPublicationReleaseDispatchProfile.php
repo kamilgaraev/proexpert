@@ -48,4 +48,16 @@ final readonly class ReportPublicationReleaseDispatchProfile
             throw new InvalidArgumentException('report_publication_release_request_untrusted');
         }
     }
+
+    /** @param array<string, array<string, mixed>> $documents */
+    public function document(array $documents, string $artifactKey): array
+    {
+        $path = $this->artifactPaths[$artifactKey] ?? null;
+        $document = is_string($path) ? ($documents[$path] ?? null) : null;
+        if (! is_array($document) || array_is_list($document)) {
+            throw new InvalidArgumentException('report_publication_release_request_untrusted');
+        }
+
+        return $document;
+    }
 }

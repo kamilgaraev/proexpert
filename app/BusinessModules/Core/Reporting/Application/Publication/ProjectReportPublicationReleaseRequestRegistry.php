@@ -38,7 +38,7 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry implements R
         $dispatch = $this->dispatches->forCode($request->code);
         $dispatch->profile->assertRequest($request);
         $documents = $dispatch->candidateResolver->resolve($this->trustedDirectory, $request);
-        $candidateManifest = $documents['r15-candidate-manifest.json'];
+        $candidateManifest = $dispatch->profile->document($documents, 'candidate_manifest');
         $definitionDocument = $candidateManifest['candidate_definition'] ?? null;
         if (! is_array($definitionDocument)) {
             throw new InvalidArgumentException('report_publication_release_request_untrusted');
@@ -50,11 +50,11 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry implements R
         }
         $previous = $this->publications->currentRecord($candidate->code);
         $binding = $dispatch->bindings->create($definition);
-        $proof = ReportPublicationProof::fromArray($documents['r15-proof-template.json']);
+        $proof = ReportPublicationProof::fromArray($dispatch->profile->document($documents, 'proof_template'));
         $fixtureHash = new Sha256Hash($proof->payload()['fixture_sha256']);
         $evidence = $this->evidence->get($candidate->code, $candidate->definitionHash, $fixtureHash);
         $candidateManifestBytes = CanonicalJson::encode($candidateManifest);
-        $conformanceDocument = $documents['r15-conformance-evidence.json'];
+        $conformanceDocument = $dispatch->profile->document($documents, 'conformance_evidence');
         if (($conformanceDocument['status'] ?? null) !== 'passed'
             || ($conformanceDocument['code'] ?? null) !== $candidate->code
             || ($conformanceDocument['commit_sha'] ?? null) !== $request->commitSha
