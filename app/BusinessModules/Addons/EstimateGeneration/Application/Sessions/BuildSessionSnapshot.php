@@ -73,6 +73,7 @@ final class BuildSessionSnapshot
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
         $budgetScope = is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [];
+        $aiEstimateQuota = $session->getAttribute('ai_estimate_quota_snapshot');
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -101,7 +102,9 @@ final class BuildSessionSnapshot
             canGenerate: (bool) ($readinessSummary['can_generate'] ?? false),
             canApply: (bool) ($readinessSummary['can_apply'] ?? false),
             scopeSummary: (new EstimateScopeMetadataProjector)->project($draft, $budgetScope),
-            aiEstimateQuota: $this->aiEstimateQuota->snapshot($session),
+            aiEstimateQuota: is_array($aiEstimateQuota)
+                ? $aiEstimateQuota
+                : $this->aiEstimateQuota->snapshot($session),
         );
     }
 

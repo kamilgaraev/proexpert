@@ -108,6 +108,85 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
     }
 
     #[Test]
+    public function confirmed_reservation_in_another_session_invalidates_the_snapshot_etag(): void
+    {
+        config(['commercial_limits.free.ai_estimates_month' => 3]);
+        [$user, $project, $session] = $this->fixture();
+        $otherSession = $this->anotherSession($user, $project);
+        $this->route($project, $session);
+        $this->actingAs($user);
+
+        $first = $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
+        $etag = (string) $first->headers->get('ETag');
+
+        app(AiEstimateQuotaService::class)->reserve($otherSession);
+
+        $second = $this->withHeader('If-None-Match', $etag)
+            ->get('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
+
+        $second->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota.used', 1);
+        self::assertNotSame($etag, $second->headers->get('ETag'));
+    }
+
+    #[Test]
+    public function quota_snapshot_batches_limits_usage_and_reservation_status_in_three_queries(): void
+    {
+        [$user, $project, $session] = $this->fixture();
+        $otherSession = $this->anotherSession($user, $project);
+        $selects = 0;
+        DB::listen(static function (QueryExecuted $query) use (&$selects): void {
+            if (str_starts_with(ltrim(strtolower($query->sql)), 'select')) {
+                $selects++;
+            }
+        });
+
+        $snapshots = app(AiEstimateQuotaService::class)->snapshots([$session, $otherSession]);
+
+        self::assertSame(AiEstimateQuotaService::SNAPSHOT_QUERY_BUDGET, $selects);
+        self::assertSame(2, count($snapshots));
+        self::assertSame(0, $snapshots[(int) $session->id]['used']);
+    }
+
+    #[Test]
+    public function quota_snapshot_never_returns_negative_available_when_confirmed_usage_exceeds_limit(): void
+    {
+        config(['commercial_limits.free.ai_estimates_month' => 1]);
+        [$user, $project, $session] = $this->fixture();
+        $otherSession = $this->anotherSession($user, $project);
+        $now = now();
+        DB::table('estimate_generation_ai_estimate_quota_reservations')->insert([
+            [
+                'organization_id' => $project->organization_id,
+                'session_id' => $session->id,
+                'monthly_period' => $now->copy()->startOfMonth()->toDateString(),
+                'status' => 'confirmed',
+                'confirmed_at' => $now,
+                'released_at' => null,
+            ],
+            [
+                'organization_id' => $project->organization_id,
+                'session_id' => $otherSession->id,
+                'monthly_period' => $now->copy()->startOfMonth()->toDateString(),
+                'status' => 'confirmed',
+                'confirmed_at' => $now,
+                'released_at' => null,
+            ],
+        ]);
+        $this->route($project, $session);
+        $this->actingAs($user);
+
+        $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota', [
+                'limit' => 1,
+                'used' => 2,
+                'available' => 0,
+                'reservation_status' => 'confirmed',
+            ]);
+    }
+
+    #[Test]
     public function operational_builder_stays_inside_its_authored_query_budget(): void
     {
         [, , $session] = $this->fixture();
@@ -120,7 +199,7 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
 
         app(BuildSessionOperationalSnapshot::class)->handle($session, []);
 
-        self::assertLessThanOrEqual(BuildSessionOperationalSnapshot::QUERY_BUDGET, $selects);
+        self::assertSame(BuildSessionOperationalSnapshot::QUERY_BUDGET, $selects);
     }
 
     #[Test]
@@ -207,6 +286,23 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $after = $builder->handle($session, [])->operationalVersion;
 
         self::assertNotSame($before, $after, $source);
+    }
+
+    private function anotherSession(User $user, Project $project): EstimateGenerationSession
+    {
+        return EstimateGenerationSession::query()->create([
+            'organization_id' => $project->organization_id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => EstimateGenerationStatus::Draft->value,
+            'processing_stage' => 'draft',
+            'processing_progress' => 0,
+            'state_version' => 1,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+        ]);
     }
 
     /** @return array{User, Project, EstimateGenerationSession} */

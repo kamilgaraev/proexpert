@@ -24,7 +24,7 @@ use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
-    public const QUERY_BUDGET = 32;
+    public const QUERY_BUDGET = 14;
 
     private const CHECKPOINT_STATUS_VALUES = [
         CheckpointStatus::Running->value,
@@ -370,7 +370,8 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
         $processingProgress = $base->status === \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus::ProcessingDocuments
             ? DocumentProcessingProgress::fromSummary($documents, $base->processingProgress)
             : $base->processingProgress;
-        $revisionSources = compact('session', 'documents', 'checkpoint', 'checkpoints', 'units', 'evidence', 'usage', 'failures', 'finalization', 'estimate', 'sources');
+        $quota = $base->aiEstimateQuota;
+        $revisionSources = compact('session', 'documents', 'checkpoint', 'checkpoints', 'units', 'evidence', 'usage', 'failures', 'finalization', 'estimate', 'sources', 'quota');
         $operationalVersion = OperationalSnapshotRevision::fromSources($revisionSources);
 
         return new SessionSnapshotData(

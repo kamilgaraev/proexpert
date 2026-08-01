@@ -17,6 +17,8 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 final readonly class AiEstimateQuotaService
 {
+    public const SNAPSHOT_QUERY_BUDGET = 3;
+
     private const TABLE = 'estimate_generation_ai_estimate_quota_reservations';
 
     private const CONFIRMED = 'confirmed';
@@ -51,30 +53,76 @@ final readonly class AiEstimateQuotaService
     /** @return array{limit: int|null, used: int, available: int|null, reservation_status: 'confirmed'|'released'|null} */
     public function snapshot(EstimateGenerationSession $session): array
     {
-        $organizationId = (int) $session->organization_id;
         $sessionId = (int) $session->getKey();
+        $snapshots = $this->snapshots([$session]);
 
-        if (! $session->exists || $organizationId < 1 || $sessionId < 1) {
-            return $this->emptySnapshot();
+        return $snapshots[$sessionId] ?? $this->emptySnapshot();
+    }
+
+    /**
+     * @param  iterable<EstimateGenerationSession>  $sessions
+     * @return array<int, array{limit: int|null, used: int, available: int|null, reservation_status: 'confirmed'|'released'|null}>
+     */
+    public function snapshots(iterable $sessions): array
+    {
+        $validSessions = [];
+        $organizationIds = [];
+
+        foreach ($sessions as $session) {
+            $organizationId = (int) $session->organization_id;
+            $sessionId = (int) $session->getKey();
+            if (! $session->exists || $organizationId < 1 || $sessionId < 1) {
+                continue;
+            }
+
+            $validSessions[$sessionId] = $organizationId;
+            $organizationIds[$organizationId] = true;
         }
 
-        $organization = $session->relationLoaded('organization')
-            ? $session->getRelation('organization')
-            : Organization::query()->find($organizationId);
-
-        if (! $organization instanceof Organization) {
-            return $this->emptySnapshot();
+        if ($validSessions === []) {
+            return [];
         }
 
-        $quota = $this->commercialQuota->getAiEstimateQuota($organization);
-        $limit = $quota['limit'];
+        $organizationIds = array_map('intval', array_keys($organizationIds));
+        $limits = $this->commercialQuota->getEffectiveAiEstimateMonthlyLimits($organizationIds);
+        $reservationSummaries = $this->currentMonthReservationSummaries(
+            $organizationIds,
+            array_keys($validSessions),
+        );
+        $snapshots = [];
 
-        return [
-            'limit' => $limit,
-            'used' => $quota['used'],
-            'available' => $limit === null ? null : $limit - $quota['used'],
-            'reservation_status' => $this->reservationStatus($organizationId, $sessionId),
-        ];
+        foreach ($validSessions as $sessionId => $organizationId) {
+            $limit = $limits[$organizationId] ?? null;
+            $summary = $reservationSummaries[$organizationId] ?? ['used' => 0, 'statuses' => []];
+            $used = max(0, (int) $summary['used']);
+            $status = $summary['statuses'][$sessionId] ?? null;
+
+            $snapshots[$sessionId] = [
+                'limit' => $limit,
+                'used' => $used,
+                'available' => $limit === null ? null : max(0, $limit - $used),
+                'reservation_status' => in_array($status, [self::CONFIRMED, self::RELEASED], true) ? $status : null,
+            ];
+        }
+
+        return $snapshots;
+    }
+
+    /** @param iterable<EstimateGenerationSession> $sessions */
+    public function attachSnapshots(iterable $sessions): void
+    {
+        $models = [];
+        foreach ($sessions as $session) {
+            $models[] = $session;
+        }
+
+        $snapshots = $this->snapshots($models);
+        foreach ($models as $session) {
+            $sessionId = (int) $session->getKey();
+            if (isset($snapshots[$sessionId])) {
+                $session->setAttribute('ai_estimate_quota_snapshot', $snapshots[$sessionId]);
+            }
+        }
     }
 
     /** @param Closure(EstimateGenerationSession): EstimateGenerationSession $transition */
@@ -218,10 +266,9 @@ final readonly class AiEstimateQuotaService
 
     private function limit(Organization $organization): ?int
     {
-        $limits = $this->commercialQuota->getEffectiveLimits($organization);
-        $limit = $limits['ai_estimates_month'] ?? null;
-
-        return $limit === null ? null : max(0, (int) $limit);
+        return $this->commercialQuota->getEffectiveAiEstimateMonthlyLimits([
+            (int) $organization->getKey(),
+        ])[(int) $organization->getKey()] ?? null;
     }
 
     private function confirmedReservationsForCurrentMonth(int $organizationId): int
@@ -233,16 +280,44 @@ final readonly class AiEstimateQuotaService
             ->count();
     }
 
-    /** @return 'confirmed'|'released'|null */
-    private function reservationStatus(int $organizationId, int $sessionId): ?string
+    /**
+     * @param  list<int>  $organizationIds
+     * @param  list<int>  $sessionIds
+     * @return array<int, array{used: int, statuses: array<int, string>}>
+     */
+    private function currentMonthReservationSummaries(array $organizationIds, array $sessionIds): array
     {
-        $status = $this->database->table(self::TABLE)
-            ->where('organization_id', $organizationId)
-            ->where('session_id', $sessionId)
+        $query = $this->database->table(self::TABLE)
+            ->whereIn('organization_id', $organizationIds)
             ->where('monthly_period', now()->startOfMonth()->toDateString())
-            ->value('status');
+            ->select('organization_id')
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS used', [self::CONFIRMED]);
 
-        return in_array($status, [self::CONFIRMED, self::RELEASED], true) ? $status : null;
+        foreach ($sessionIds as $sessionId) {
+            $query->selectRaw(
+                'MAX(CASE WHEN session_id = ? THEN status ELSE NULL END) AS session_'.$sessionId,
+                [$sessionId],
+            );
+        }
+
+        $summaries = [];
+        foreach ($query->groupBy('organization_id')->get() as $row) {
+            $organizationId = (int) $row->organization_id;
+            $statuses = [];
+            foreach ($sessionIds as $sessionId) {
+                $status = $row->{'session_'.$sessionId} ?? null;
+                if (is_string($status)) {
+                    $statuses[$sessionId] = $status;
+                }
+            }
+
+            $summaries[$organizationId] = [
+                'used' => max(0, (int) $row->used),
+                'statuses' => $statuses,
+            ];
+        }
+
+        return $summaries;
     }
 
     /** @return array{limit: null, used: 0, available: null, reservation_status: null} */
