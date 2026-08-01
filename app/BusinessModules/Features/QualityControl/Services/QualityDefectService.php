@@ -6,8 +6,12 @@ namespace App\BusinessModules\Features\QualityControl\Services;
 
 use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
-use App\Models\Organization;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Contracts\QualityDefectFlowOwnerEventSink;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Enums\QualityDefectFlowEventKind;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Enums\QualityDefectFlowTerminalReason;
 use App\Models\Contractor;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Storage\FileService;
@@ -31,27 +35,27 @@ final class QualityDefectService
     public function __construct(
         private readonly QualityDefectNumberGenerator $numberGenerator,
         private readonly FileService $fileService,
-    ) {
-    }
+        private readonly QualityDefectFlowOwnerEventSink $flowRecorder,
+    ) {}
 
     public function paginate(int $organizationId, int $perPage = 15, array $filters = []): LengthAwarePaginator
     {
         $query = QualityDefect::forOrganization($organizationId)
             ->with(self::RESOURCE_RELATIONS);
 
-        if (!empty($filters['status'])) {
+        if (! empty($filters['status'])) {
             $query->withStatus((string) $filters['status']);
         }
 
-        if (!empty($filters['project_id'])) {
+        if (! empty($filters['project_id'])) {
             $query->where('project_id', (int) $filters['project_id']);
         }
 
-        if (!empty($filters['assigned_to'])) {
+        if (! empty($filters['assigned_to'])) {
             $query->where('assigned_to', (int) $filters['assigned_to']);
         }
 
-        if (!empty($filters['severity'])) {
+        if (! empty($filters['severity'])) {
             $query->where('severity', (string) $filters['severity']);
         }
 
@@ -109,7 +113,14 @@ final class QualityDefectService
             ]);
 
             $this->storePhotos($defect, $data['photos'] ?? [], $organizationId, $userId);
-            $this->recordStatus($defect, null, $status, $userId, trans_message('quality_control.history.created'));
+            $history = $this->recordStatus(
+                $defect,
+                null,
+                $status,
+                $userId,
+                trans_message('quality_control.history.created'),
+            );
+            $this->flowRecorder->record($defect, $history, QualityDefectFlowEventKind::CREATED);
 
             return $defect->fresh(self::RESOURCE_RELATIONS);
         });
@@ -117,29 +128,41 @@ final class QualityDefectService
 
     public function assign(QualityDefect $defect, int $assigneeId, int $userId, ?string $comment = null): QualityDefect
     {
-        if (!$defect->canBeAssigned()) {
+        if (! $defect->canBeAssigned()) {
             throw new DomainException(trans_message('quality_control.errors.assign_invalid_status'));
         }
 
         $this->assertOptionalUserBelongsToOrganization($assigneeId, (int) $defect->organization_id);
 
-        return $this->transition($defect, QualityDefectStatusEnum::ASSIGNED, $userId, [
-            'assigned_to' => $assigneeId,
-        ], $comment);
+        return $this->transition(
+            $defect,
+            QualityDefectStatusEnum::ASSIGNED,
+            QualityDefectFlowEventKind::ASSIGNED,
+            $userId,
+            ['assigned_to' => $assigneeId],
+            $comment,
+        );
     }
 
     public function start(QualityDefect $defect, int $userId, ?string $comment = null): QualityDefect
     {
-        if (!$defect->canBeStarted()) {
+        if (! $defect->canBeStarted()) {
             throw new DomainException(trans_message('quality_control.errors.start_invalid_status'));
         }
 
-        return $this->transition($defect, QualityDefectStatusEnum::IN_PROGRESS, $userId, [], $comment);
+        return $this->transition(
+            $defect,
+            QualityDefectStatusEnum::IN_PROGRESS,
+            QualityDefectFlowEventKind::STARTED,
+            $userId,
+            [],
+            $comment,
+        );
     }
 
     public function resolve(QualityDefect $defect, int $userId, array $data): QualityDefect
     {
-        if (!$defect->canBeResolved()) {
+        if (! $defect->canBeResolved()) {
             throw new DomainException(trans_message('quality_control.errors.resolve_invalid_status'));
         }
 
@@ -156,6 +179,7 @@ final class QualityDefectService
             return $this->transition(
                 $defect,
                 QualityDefectStatusEnum::READY_FOR_REVIEW,
+                QualityDefectFlowEventKind::SUBMITTED_FOR_REVIEW,
                 $userId,
                 ['resolved_at' => now()],
                 $comment !== '' ? $comment : null
@@ -165,13 +189,16 @@ final class QualityDefectService
 
     public function verify(QualityDefect $defect, int $userId, bool $accepted, ?string $comment = null): QualityDefect
     {
-        if (!$defect->canBeVerified()) {
+        if (! $defect->canBeVerified()) {
             throw new DomainException(trans_message('quality_control.errors.verify_invalid_status'));
         }
 
         return $this->transition(
             $defect,
             $accepted ? QualityDefectStatusEnum::RESOLVED : QualityDefectStatusEnum::REJECTED,
+            $accepted
+                ? QualityDefectFlowEventKind::VERIFIED_RESOLVED
+                : QualityDefectFlowEventKind::RETURNED_FOR_REWORK,
             $userId,
             ['verified_at' => now()],
             $comment
@@ -187,12 +214,19 @@ final class QualityDefectService
             throw new DomainException(trans_message('quality_control.errors.reject_invalid_status'));
         }
 
-        return $this->transition($defect, QualityDefectStatusEnum::REJECTED, $userId, [], $comment);
+        return $this->transition(
+            $defect,
+            QualityDefectStatusEnum::REJECTED,
+            QualityDefectFlowEventKind::REJECTED,
+            $userId,
+            [],
+            $comment,
+        );
     }
 
     public function cancel(QualityDefect $defect, int $userId, string $comment): QualityDefect
     {
-        if (!in_array($defect->status, [
+        if (! in_array($defect->status, [
             QualityDefectStatusEnum::DRAFT,
             QualityDefectStatusEnum::OPEN,
             QualityDefectStatusEnum::ASSIGNED,
@@ -202,23 +236,42 @@ final class QualityDefectService
             throw new DomainException(trans_message('quality_control.errors.cancel_invalid_status'));
         }
 
-        return $this->transition($defect, QualityDefectStatusEnum::CANCELLED, $userId, [], $comment);
+        return $this->transition(
+            $defect,
+            QualityDefectStatusEnum::CANCELLED,
+            QualityDefectFlowEventKind::CANCELLED,
+            $userId,
+            [],
+            $comment,
+            QualityDefectFlowTerminalReason::CANCELLED_BY_USER,
+        );
     }
 
     private function transition(
         QualityDefect $defect,
         QualityDefectStatusEnum $toStatus,
+        QualityDefectFlowEventKind $eventKind,
         int $userId,
         array $extra = [],
         ?string $comment = null,
+        ?QualityDefectFlowTerminalReason $terminalReason = null,
     ): QualityDefect {
-        return DB::transaction(function () use ($defect, $toStatus, $userId, $extra, $comment): QualityDefect {
+        return DB::transaction(function () use (
+            $defect,
+            $toStatus,
+            $eventKind,
+            $userId,
+            $extra,
+            $comment,
+            $terminalReason,
+        ): QualityDefect {
             $fromStatus = $defect->status;
             $defect->update(array_merge($extra, [
                 'status' => $toStatus,
             ]));
 
-            $this->recordStatus($defect, $fromStatus, $toStatus, $userId, $comment);
+            $history = $this->recordStatus($defect, $fromStatus, $toStatus, $userId, $comment);
+            $this->flowRecorder->record($defect, $history, $eventKind, $terminalReason);
 
             return $defect->fresh(self::RESOURCE_RELATIONS);
         });
@@ -245,13 +298,13 @@ final class QualityDefectService
                 }
             }
 
-            if (!is_string($url) || trim($url) === '') {
+            if (! is_string($url) || trim($url) === '') {
                 continue;
             }
 
             $type = $photo['type'] ?? null;
 
-            if (!is_string($type) || trim($type) === '') {
+            if (! is_string($type) || trim($type) === '') {
                 throw new DomainException(trans_message('quality_control.validation.photo_type_required'));
             }
 
@@ -272,8 +325,9 @@ final class QualityDefectService
         QualityDefectStatusEnum $toStatus,
         int $userId,
         ?string $comment = null,
-    ): void {
-        $defect->statusHistory()->create([
+    ): QualityDefectStatusHistory {
+        /** @var QualityDefectStatusHistory $history */
+        $history = $defect->statusHistory()->create([
             'organization_id' => $defect->organization_id,
             'from_status' => $fromStatus,
             'to_status' => $toStatus,
@@ -281,6 +335,8 @@ final class QualityDefectService
             'changed_by' => $userId,
             'changed_at' => now(),
         ]);
+
+        return $history;
     }
 
     private function assertProjectBelongsToOrganization(int $projectId, int $organizationId): void
@@ -290,7 +346,7 @@ final class QualityDefectService
             ->where('organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('quality_control.errors.project_not_found'));
         }
     }
@@ -312,7 +368,7 @@ final class QualityDefectService
             })
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('quality_control.errors.assignee_not_found'));
         }
     }
@@ -328,7 +384,7 @@ final class QualityDefectService
             ->where('organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('quality_control.errors.contractor_not_found'));
         }
     }
