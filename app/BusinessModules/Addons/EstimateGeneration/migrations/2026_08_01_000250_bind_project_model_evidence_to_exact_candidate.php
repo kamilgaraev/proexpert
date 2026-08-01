@@ -16,6 +16,11 @@ return new class extends Migration
 
     public function up(): void
     {
+        if (DB::getDriverName() === 'pgsql') {
+            $this->replaceExactBindingGuard();
+            $this->ensureExactBindingGuardTrigger();
+        }
+
         $this->ensureColumns();
 
         if (DB::getDriverName() !== 'pgsql') {
@@ -27,11 +32,9 @@ return new class extends Migration
         $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
-            $this->replaceExactBindingGuard();
-            $this->ensureExactBindingGuardTrigger();
+            $this->assertNoInvalidExactBindingRows();
             $this->ensurePostgresIndexes($runtime);
             $this->ensurePostgresConstraints($runtime);
-            $this->assertNoIncompleteExactBindingRows();
             $this->validateExactBindingConstraints($runtime);
             DB::statement('ALTER TABLE '.self::TABLE.' DROP CONSTRAINT IF EXISTS eg_project_model_evidence_binding_uq');
         } finally {
@@ -41,17 +44,14 @@ return new class extends Migration
 
     public function down(): void
     {
-        $this->assertNoExactBindingAuditData();
-
-        if (DB::getDriverName() === 'pgsql') {
-            $this->replaceLegacyBindingGuard();
-        }
-
         if (DB::getDriverName() !== 'pgsql') {
+            $this->assertNoExactBindingAuditData();
             $this->dropNonPostgresSchema();
 
             return;
         }
+
+        $this->assertNoExactBindingAuditData();
 
         $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
@@ -70,7 +70,12 @@ return new class extends Migration
             $runtime->restoreSessionTimeouts($timeouts);
         }
 
-        DB::unprepared(<<<'SQL'
+        DB::transaction(function (): void {
+            DB::statement('LOCK TABLE '.self::TABLE.' IN ACCESS EXCLUSIVE MODE');
+            $this->assertNoExactBindingAuditData();
+            $this->replaceLegacyBindingGuard();
+
+            DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_project_model_evidence_bindings
     DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_fingerprint_ck,
     DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_source_ck,
@@ -80,7 +85,8 @@ ALTER TABLE estimate_generation_project_model_evidence_bindings
     DROP CONSTRAINT IF EXISTS eg_project_model_evidence_assertion_scope_fk;
 SQL);
 
-        $this->dropColumns();
+            $this->dropColumns();
+        });
     }
 
     private function ensureColumns(): void
@@ -209,26 +215,97 @@ SQL);
         }
     }
 
-    private function assertNoIncompleteExactBindingRows(): void
+    private function assertNoInvalidExactBindingRows(): void
     {
-        $invalid = DB::table(self::TABLE)
-            ->whereRaw(<<<'SQL'
-NOT (
-    ((assertion_id IS NOT NULL AND correction_id IS NULL) OR (assertion_id IS NULL AND correction_id IS NOT NULL))
-    AND candidate_source IS NOT NULL
-    AND candidate_value_fingerprint IS NOT NULL
-    AND source_version IS NOT NULL
-    AND evidence_source_version IS NOT NULL
-    AND evidence_invalidation_version IS NOT NULL
-)
-SQL)
-            ->select('id')
-            ->orderBy('id')
-            ->first();
+        if (! $this->hasAllExactAuditColumns()) {
+            throw new RuntimeException('estimate_generation.project_model_evidence_binding_incomplete_audit_schema');
+        }
+
+        $invalid = DB::selectOne(<<<'SQL'
+SELECT binding.id
+FROM estimate_generation_project_model_evidence_bindings binding
+LEFT JOIN estimate_generation_evidence evidence
+    ON evidence.id = binding.evidence_id
+    AND evidence.organization_id = binding.organization_id
+    AND evidence.project_id = binding.project_id
+    AND evidence.session_id = binding.session_id
+LEFT JOIN estimate_generation_building_model_evidence model_evidence
+    ON model_evidence.building_model_id = binding.building_model_id
+    AND model_evidence.evidence_id = binding.evidence_id
+    AND model_evidence.organization_id = binding.organization_id
+    AND model_evidence.project_id = binding.project_id
+    AND model_evidence.session_id = binding.session_id
+LEFT JOIN estimate_generation_project_model_entities entity
+    ON entity.id = binding.entity_id
+    AND entity.building_model_id = binding.building_model_id
+    AND entity.organization_id = binding.organization_id
+    AND entity.project_id = binding.project_id
+    AND entity.session_id = binding.session_id
+    AND entity.source_version = binding.source_version
+LEFT JOIN estimate_generation_project_model_assertions assertion
+    ON assertion.id = binding.assertion_id
+    AND assertion.building_model_id = binding.building_model_id
+    AND assertion.organization_id = binding.organization_id
+    AND assertion.project_id = binding.project_id
+    AND assertion.session_id = binding.session_id
+    AND assertion.source_version = binding.source_version
+LEFT JOIN estimate_generation_project_model_corrections correction
+    ON correction.id = binding.correction_id
+    AND correction.building_model_id = binding.building_model_id
+    AND correction.organization_id = binding.organization_id
+    AND correction.project_id = binding.project_id
+    AND correction.session_id = binding.session_id
+    AND correction.source_version = binding.source_version
+LEFT JOIN estimate_generation_project_model_assertions correction_assertion
+    ON correction_assertion.id = correction.assertion_id
+    AND correction_assertion.building_model_id = binding.building_model_id
+    AND correction_assertion.organization_id = binding.organization_id
+    AND correction_assertion.project_id = binding.project_id
+    AND correction_assertion.session_id = binding.session_id
+    AND correction_assertion.source_version = binding.source_version
+WHERE NOT COALESCE(
+    evidence.id IS NOT NULL
+    AND evidence.invalidated_at IS NULL
+    AND evidence.source_version = binding.evidence_source_version
+    AND evidence.invalidation_version = binding.evidence_invalidation_version
+    AND model_evidence.evidence_id IS NOT NULL
+    AND entity.id IS NOT NULL
+    AND ((binding.assertion_id IS NOT NULL AND binding.correction_id IS NULL) OR (binding.assertion_id IS NULL AND binding.correction_id IS NOT NULL))
+    AND binding.candidate_source IN ('manual_correction', 'cad', 'table', 'explicit_dimension', 'reconciled_geometry')
+    AND binding.candidate_value_fingerprint ~ '^[a-f0-9]{64}$'
+    AND binding.source_version ~ '^sha256:[a-f0-9]{64}$'
+    AND length(btrim(binding.evidence_source_version)) > 0
+    AND binding.evidence_invalidation_version >= 0
+    AND (
+        (
+            binding.assertion_id IS NOT NULL
+            AND assertion.entity_id = binding.entity_id
+            AND assertion.payload->>'source' = binding.candidate_source
+        )
+        OR (
+            binding.correction_id IS NOT NULL
+            AND correction_assertion.entity_id = binding.entity_id
+            AND (CASE correction.correction_type WHEN 'manual' THEN 'manual_correction' WHEN 'source_reconciliation' THEN 'reconciled_geometry' END) = binding.candidate_source
+        )
+    ), false)
+ORDER BY binding.id
+LIMIT 1
+SQL);
 
         if ($invalid !== null) {
             throw new RuntimeException('estimate_generation.project_model_evidence_binding_incomplete_audit:'.$invalid->id);
         }
+    }
+
+    private function hasAllExactAuditColumns(): bool
+    {
+        foreach (['assertion_id', 'correction_id', 'candidate_source', 'candidate_value_fingerprint'] as $column) {
+            if (! Schema::hasColumn(self::TABLE, $column)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function assertNoExactBindingAuditData(): void
@@ -328,9 +405,15 @@ SQL)
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
+    binding_row jsonb := to_jsonb(NEW);
+    exact_column_count integer;
     actual_source_version text;
     actual_invalidation_version integer;
     actual_invalidated_at timestamptz;
+    binding_assertion_id bigint;
+    binding_correction_id bigint;
+    binding_candidate_source text;
+    binding_candidate_value_fingerprint text;
     assertion_entity_id bigint;
     assertion_source text;
     correction_assertion_id bigint;
@@ -350,34 +433,61 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'estimate_generation.project_model_evidence_snapshot_invalid';
     END IF;
-    IF num_nonnulls(NEW.assertion_id, NEW.correction_id) <> 1
-        OR NEW.candidate_source IS NULL OR NEW.candidate_value_fingerprint IS NULL THEN
+    PERFORM 1 FROM estimate_generation_project_model_entities
+    WHERE id = NEW.entity_id
+      AND building_model_id = NEW.building_model_id
+      AND organization_id = NEW.organization_id
+      AND project_id = NEW.project_id
+      AND session_id = NEW.session_id
+      AND source_version = NEW.source_version;
+    IF NOT FOUND THEN
         RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
     END IF;
-    IF NEW.candidate_source NOT IN ('manual_correction', 'cad', 'table', 'explicit_dimension', 'reconciled_geometry')
-        OR NEW.candidate_value_fingerprint !~ '^[a-f0-9]{64}$'
+
+    SELECT count(*) INTO exact_column_count
+    FROM pg_attribute
+    WHERE attrelid = TG_RELID
+      AND attname = ANY (ARRAY['assertion_id', 'correction_id', 'candidate_source', 'candidate_value_fingerprint'])
+      AND NOT attisdropped;
+    IF exact_column_count = 0 THEN
+        RETURN NEW;
+    END IF;
+    IF exact_column_count <> 4 THEN
+        RAISE EXCEPTION 'estimate_generation.project_model_evidence_binding_partial_schema';
+    END IF;
+
+    binding_assertion_id := NULLIF(binding_row->>'assertion_id', '')::bigint;
+    binding_correction_id := NULLIF(binding_row->>'correction_id', '')::bigint;
+    binding_candidate_source := binding_row->>'candidate_source';
+    binding_candidate_value_fingerprint := binding_row->>'candidate_value_fingerprint';
+    IF num_nonnulls(binding_assertion_id, binding_correction_id) <> 1
+        OR binding_candidate_source IS NULL OR binding_candidate_value_fingerprint IS NULL THEN
+        RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
+    END IF;
+    IF binding_candidate_source NOT IN ('manual_correction', 'cad', 'table', 'explicit_dimension', 'reconciled_geometry')
+        OR binding_candidate_value_fingerprint !~ '^[a-f0-9]{64}$'
         OR NEW.source_version IS NULL OR NEW.source_version !~ '^sha256:[a-f0-9]{64}$'
         OR NEW.evidence_source_version IS NULL OR btrim(NEW.evidence_source_version) = ''
         OR NEW.evidence_invalidation_version IS NULL OR NEW.evidence_invalidation_version < 0 THEN
         RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
     END IF;
-    IF NEW.assertion_id IS NOT NULL THEN
+    IF binding_assertion_id IS NOT NULL THEN
         SELECT entity_id, payload->>'source' INTO assertion_entity_id, assertion_source
         FROM estimate_generation_project_model_assertions
-        WHERE id = NEW.assertion_id
+        WHERE id = binding_assertion_id
           AND building_model_id = NEW.building_model_id
           AND organization_id = NEW.organization_id
           AND project_id = NEW.project_id
           AND session_id = NEW.session_id
           AND source_version = NEW.source_version;
-        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR assertion_source IS NULL OR assertion_source <> NEW.candidate_source THEN
+        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR assertion_source IS NULL OR assertion_source <> binding_candidate_source THEN
             RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
         END IF;
     ELSE
         SELECT assertion_id, CASE correction_type WHEN 'manual' THEN 'manual_correction' WHEN 'source_reconciliation' THEN 'reconciled_geometry' END
         INTO correction_assertion_id, correction_source
         FROM estimate_generation_project_model_corrections
-        WHERE id = NEW.correction_id
+        WHERE id = binding_correction_id
           AND building_model_id = NEW.building_model_id
           AND organization_id = NEW.organization_id
           AND project_id = NEW.project_id
@@ -394,7 +504,7 @@ BEGIN
           AND project_id = NEW.project_id
           AND session_id = NEW.session_id
           AND source_version = NEW.source_version;
-        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR correction_source IS NULL OR correction_source <> NEW.candidate_source THEN
+        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR correction_source IS NULL OR correction_source <> binding_candidate_source THEN
             RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
         END IF;
     END IF;

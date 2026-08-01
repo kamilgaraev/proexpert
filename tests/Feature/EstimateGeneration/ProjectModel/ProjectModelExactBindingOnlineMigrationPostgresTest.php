@@ -39,7 +39,7 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
     }
 
     #[Test]
-    public function disposable_contract_database_fails_closed_for_partial_exact_binding_migration_and_down(): void
+    public function disposable_contract_database_fails_closed_for_interrupted_exact_binding_migration_and_down(): void
     {
         $this->requireEnvironment();
         $root = dirname(__DIR__, 4);
@@ -61,25 +61,26 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
         $migration225->up();
 
         $fixture = $this->fixture();
-        $this->addPartialAuditColumns();
-        $this->insertBinding($fixture, $fixture['entity_id']);
+        $this->invokeMigrationMethod($migration250, 'replaceExactBindingGuard');
+        $this->invokeMigrationMethod($migration250, 'ensureExactBindingGuardTrigger');
+        $this->addFirstAuditColumn();
+        $this->assertRejected(fn () => $this->insertLegacyBinding($fixture, $fixture['entity_id']));
+
+        $this->addRemainingAuditColumns();
+        $assertionId = $this->insertCadAssertion($fixture);
+        $this->insertUncheckedBinding($fixture, $fixture['entity_id'], $assertionId, 'table');
 
         try {
             $migration250->up();
-            self::fail('Incomplete legacy binding completed the exact-binding migration.');
+            self::fail('Semantically invalid legacy binding completed the exact-binding migration.');
         } catch (RuntimeException $exception) {
             self::assertStringStartsWith('estimate_generation.project_model_evidence_binding_incomplete_audit:', $exception->getMessage());
         }
 
-        $secondEntityId = $this->insertEntity($fixture, 'room:strict-guard');
-        $this->assertRejected(fn () => $this->insertBinding($fixture, $secondEntityId));
-
-        EstimateGenerationContractDatabaseProvisioner::provision(DB::connection(), $root, 'training');
-        $this->assertExactBindingConstraintsValidated();
-
-        $fixture = $this->fixture();
-        $assertionId = $this->insertCadAssertion($fixture);
+        $this->deleteUncheckedBindings();
         $this->insertBinding($fixture, $fixture['entity_id'], $assertionId);
+        $migration250->up();
+        $this->assertExactBindingConstraintsValidated();
 
         try {
             $migration250->down();
@@ -91,10 +92,46 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
         self::assertTrue(Schema::hasColumn('estimate_generation_project_model_evidence_bindings', 'candidate_value_fingerprint'));
     }
 
-    private function addPartialAuditColumns(): void
+    #[Test]
+    public function access_exclusive_rollback_lock_blocks_a_concurrent_binding_insert(): void
+    {
+        $this->requireEnvironment();
+        $root = dirname(__DIR__, 4);
+        EstimateGenerationContractDatabaseProvisioner::provision(DB::connection(), $root, 'training');
+
+        $fixture = $this->fixture();
+        $assertionId = $this->insertCadAssertion($fixture);
+        $connection = config('database.connections.'.DB::getDefaultConnection());
+        config(['database.connections.project_model_exact_binding_secondary' => $connection]);
+        DB::purge('project_model_exact_binding_secondary');
+        $secondary = DB::connection('project_model_exact_binding_secondary');
+        $secondary->statement("SET lock_timeout = '100ms'");
+
+        DB::beginTransaction();
+        try {
+            DB::statement('LOCK TABLE estimate_generation_project_model_evidence_bindings IN ACCESS EXCLUSIVE MODE');
+            try {
+                $secondary->table('estimate_generation_project_model_evidence_bindings')->insert($this->bindingRow($fixture, $fixture['entity_id'], $assertionId));
+                self::fail('Concurrent insert bypassed the rollback lock.');
+            } catch (QueryException) {
+                self::addToAssertionCount(1);
+            }
+        } finally {
+            DB::rollBack();
+            DB::purge('project_model_exact_binding_secondary');
+        }
+    }
+
+    private function addFirstAuditColumn(): void
     {
         Schema::table('estimate_generation_project_model_evidence_bindings', function ($table): void {
             $table->unsignedBigInteger('assertion_id')->nullable()->after('entity_id');
+        });
+    }
+
+    private function addRemainingAuditColumns(): void
+    {
+        Schema::table('estimate_generation_project_model_evidence_bindings', function ($table): void {
             $table->unsignedBigInteger('correction_id')->nullable()->after('assertion_id');
             $table->string('candidate_source', 32)->nullable()->after('evidence_id');
             $table->char('candidate_value_fingerprint', 64)->nullable()->after('candidate_source');
@@ -201,7 +238,12 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
 
     private function insertBinding(array $fixture, int $entityId, ?int $assertionId = null): void
     {
-        DB::table('estimate_generation_project_model_evidence_bindings')->insert([
+        DB::table('estimate_generation_project_model_evidence_bindings')->insert($this->bindingRow($fixture, $entityId, $assertionId));
+    }
+
+    private function bindingRow(array $fixture, int $entityId, ?int $assertionId = null): array
+    {
+        return [
             'building_model_id' => $fixture['building_model_id'],
             'organization_id' => $fixture['organization_id'],
             'project_id' => $fixture['project_id'],
@@ -216,7 +258,64 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
             'evidence_source_version' => $fixture['evidence_source_version'],
             'evidence_invalidation_version' => 0,
             'created_at' => now(),
+        ];
+    }
+
+    private function insertLegacyBinding(array $fixture, int $entityId): void
+    {
+        DB::table('estimate_generation_project_model_evidence_bindings')->insert([
+            'building_model_id' => $fixture['building_model_id'],
+            'organization_id' => $fixture['organization_id'],
+            'project_id' => $fixture['project_id'],
+            'session_id' => $fixture['session_id'],
+            'source_version' => $fixture['source_version'],
+            'entity_id' => $entityId,
+            'evidence_id' => $fixture['evidence_id'],
+            'evidence_source_version' => $fixture['evidence_source_version'],
+            'evidence_invalidation_version' => 0,
+            'created_at' => now(),
         ]);
+    }
+
+    private function insertUncheckedBinding(array $fixture, int $entityId, int $assertionId, string $candidateSource): void
+    {
+        DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings DISABLE TRIGGER eg_project_model_evidence_binding_guard_trg');
+        try {
+            DB::table('estimate_generation_project_model_evidence_bindings')->insert([
+                'building_model_id' => $fixture['building_model_id'],
+                'organization_id' => $fixture['organization_id'],
+                'project_id' => $fixture['project_id'],
+                'session_id' => $fixture['session_id'],
+                'source_version' => $fixture['source_version'],
+                'entity_id' => $entityId,
+                'evidence_id' => $fixture['evidence_id'],
+                'assertion_id' => $assertionId,
+                'correction_id' => null,
+                'candidate_source' => $candidateSource,
+                'candidate_value_fingerprint' => str_repeat('c', 64),
+                'evidence_source_version' => $fixture['evidence_source_version'],
+                'evidence_invalidation_version' => 0,
+                'created_at' => now(),
+            ]);
+        } finally {
+            DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings ENABLE TRIGGER eg_project_model_evidence_binding_guard_trg');
+        }
+    }
+
+    private function deleteUncheckedBindings(): void
+    {
+        DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings DISABLE TRIGGER eg_project_model_evidence_binding_append_trg');
+        try {
+            DB::table('estimate_generation_project_model_evidence_bindings')->delete();
+        } finally {
+            DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings ENABLE TRIGGER eg_project_model_evidence_binding_append_trg');
+        }
+    }
+
+    private function invokeMigrationMethod(object $migration, string $method): void
+    {
+        $reflection = new \ReflectionMethod($migration, $method);
+        $reflection->invoke($migration);
     }
 
     private function assertRejected(callable $operation): void

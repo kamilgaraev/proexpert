@@ -195,9 +195,12 @@ final class ProjectModelContractTest extends TestCase
             'ensureConcurrentIndex(',
             'ensureConstraint(',
             'validateConstraint(',
-            'assertNoIncompleteExactBindingRows',
+            'assertNoInvalidExactBindingRows',
             'CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard()',
             'CREATE TRIGGER eg_project_model_evidence_binding_guard_trg BEFORE INSERT',
+            'binding_row jsonb := to_jsonb(NEW)',
+            'estimate_generation.project_model_evidence_binding_partial_schema',
+            "LOCK TABLE '.self::TABLE.' IN ACCESS EXCLUSIVE MODE",
             'DROP CONSTRAINT IF EXISTS eg_project_model_evidence_binding_uq',
             "whereNotNull('assertion_id')",
             "orWhereNotNull('correction_id')",
@@ -224,8 +227,10 @@ final class ProjectModelContractTest extends TestCase
             'assertion_id IS NULL AND correction_id IS NOT NULL',
             'candidate_source IS NOT NULL',
             'candidate_value_fingerprint IS NOT NULL',
-            'assertNoIncompleteExactBindingRows',
+            'assertNoInvalidExactBindingRows',
             'validateExactBindingConstraints',
+            'estimate_generation_project_model_corrections correction',
+            'correction_assertion.entity_id = binding.entity_id',
         ] as $required) {
             self::assertStringContainsString($required, $migration);
         }
