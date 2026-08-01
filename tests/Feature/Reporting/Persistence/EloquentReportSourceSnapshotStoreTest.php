@@ -70,7 +70,10 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
         self::assertSame(ReportSourceSnapshotStatus::READY, $ready->status);
         $roundTrip = $store->header($request);
         self::assertSame($write->header->scopeIdentity(), $roundTrip->scopeIdentity());
-        self::assertSame($write->header->reportQueryIdentity, $roundTrip->reportQueryIdentity);
+        self::assertSame(
+            CanonicalJson::encode($write->header->reportQueryIdentity),
+            CanonicalJson::encode($roundTrip->reportQueryIdentity),
+        );
         self::assertSame($write->header->reportQueryHash?->value, $roundTrip->reportQueryHash?->value);
         self::assertSame($write->header->materializedSourceHash->value, $roundTrip->materializedSourceHash->value);
 
