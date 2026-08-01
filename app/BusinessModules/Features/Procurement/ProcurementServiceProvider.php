@@ -50,6 +50,21 @@ class ProcurementServiceProvider extends ServiceProvider
      */
     protected function registerServices(): void
     {
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementProcessEventStore::class,
+            Reporting\Cycle\Services\EloquentProcurementProcessEventStore::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementTransactionBoundary::class,
+            Reporting\Cycle\Services\LaravelProcurementTransactionBoundary::class,
+        );
+
+        $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementCycleSourceState::class,
+            Reporting\Cycle\Services\EloquentProcurementCycleSourceState::class,
+        );
+
         // Основные сервисы модуля
         $this->app->singleton(
             Services\PurchaseRequestService::class

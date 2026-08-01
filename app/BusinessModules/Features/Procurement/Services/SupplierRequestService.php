@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -23,7 +24,8 @@ class SupplierRequestService
         private readonly SupplierPartyService $supplierPartyService,
         private readonly ProcurementAuditService $auditService,
         private readonly SupplierRequestVersionService $versionService,
-        private readonly ProcurementLifecycleService $lifecycleService
+        private readonly ProcurementLifecycleService $lifecycleService,
+        private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
     ) {
     }
 
@@ -141,22 +143,28 @@ class SupplierRequestService
 
     public function send(SupplierRequest $supplierRequest, ?int $actorId = null): SupplierRequest
     {
-        $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
-
-        if (!$supplierRequest->canBeSent()) {
-            throw ValidationException::withMessages([
-                'status' => trans_message('procurement.supplier_requests.cannot_be_sent'),
-            ]);
-        }
-
         return DB::transaction(function () use ($supplierRequest, $actorId): SupplierRequest {
+            $supplierRequest = SupplierRequest::query()
+                ->whereKey($supplierRequest->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+
+            if (!$supplierRequest->canBeSent()) {
+                throw ValidationException::withMessages([
+                    'status' => trans_message('procurement.supplier_requests.cannot_be_sent'),
+                ]);
+            }
+
             $previousStatus = $supplierRequest->status->value;
+            $occurredAt = now('UTC');
 
             $supplierRequest->update([
                 'status' => SupplierRequestStatusEnum::SENT,
-                'sent_at' => now(),
+                'sent_at' => $occurredAt,
                 'public_token' => $supplierRequest->public_token ?? $this->generatePublicToken(),
-                'public_token_expires_at' => now()->addDays((int) config('procurement.supplier_request_public_link_ttl_days', 14)),
+                'public_token_expires_at' => $occurredAt->copy()
+                    ->addDays((int) config('procurement.supplier_request_public_link_ttl_days', 14)),
                 'public_opened_at' => null,
             ]);
 
@@ -172,6 +180,13 @@ class SupplierRequestService
             $version = $this->versionService->createSentVersion($supplierRequest->refresh(), $actorId);
             $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
             $emailQueuedTo = $this->queuePublicLinkEmail($supplierRequest);
+
+            $this->cycleEventRecorder->recordSolicitationSent(
+                $supplierRequest,
+                $version,
+                $actorId,
+                $occurredAt->toDateTimeImmutable(),
+            );
 
             $this->auditService->record(
                 ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_SENT->value,

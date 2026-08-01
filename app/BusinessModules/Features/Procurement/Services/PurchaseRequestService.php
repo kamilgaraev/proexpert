@@ -9,6 +9,8 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementTerminalReason;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\User;
@@ -37,7 +39,8 @@ class PurchaseRequestService
 
     public function __construct(
         private readonly PurchaseRequestNumberGenerator $numberGenerator,
-        private readonly ProjectMaterialDeliveryService $deliveryService
+        private readonly ProjectMaterialDeliveryService $deliveryService,
+        private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
     ) {}
 
     public function find(int $id, int $organizationId): ?PurchaseRequest
@@ -102,6 +105,7 @@ class PurchaseRequestService
         DB::beginTransaction();
 
         try {
+            $occurredAt = now('UTC');
             $requestNumber = $this->numberGenerator->generate(
                 $siteRequest->organization_id,
                 $siteRequest->request_type
@@ -114,7 +118,7 @@ class PurchaseRequestService
                 default => 'заявки с объекта',
             };
 
-            $purchaseRequest = PurchaseRequest::create([
+            $purchaseRequest = new PurchaseRequest([
                 'organization_id' => $siteRequest->organization_id,
                 'site_request_id' => $siteRequest->id,
                 'assigned_to' => $assignedTo,
@@ -124,6 +128,9 @@ class PurchaseRequestService
                 'metadata' => $metadata !== [] ? $metadata : null,
                 'notes' => "Создана из {$requestTypeLabel}: {$siteRequest->title}",
             ]);
+            $purchaseRequest->setCreatedAt($occurredAt);
+            $purchaseRequest->setUpdatedAt($occurredAt);
+            $purchaseRequest->save();
 
             if ($siteRequest->material_name || $siteRequest->material_quantity) {
                 $quantity = $quantityOverride ?? (float) ($siteRequest->material_quantity ?: 1);
@@ -143,6 +150,11 @@ class PurchaseRequestService
             }
 
             $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest, $quantityOverride, $metadata);
+            $this->cycleEventRecorder->recordRequestCreated(
+                $purchaseRequest,
+                $actorId,
+                $occurredAt->toDateTimeImmutable(),
+            );
 
             $this->dispatchCreatedAfterCommit($purchaseRequest);
             DB::commit();
@@ -180,9 +192,10 @@ class PurchaseRequestService
         DB::beginTransaction();
 
         try {
+            $occurredAt = now('UTC');
             $requestNumber = $this->numberGenerator->generate($organizationId, $siteRequest?->request_type);
 
-            $purchaseRequest = PurchaseRequest::create([
+            $purchaseRequest = new PurchaseRequest([
                 'organization_id' => $organizationId,
                 'site_request_id' => $siteRequestId,
                 'assigned_to' => $data['assigned_to'] ?? null,
@@ -194,6 +207,9 @@ class PurchaseRequestService
                 'notes' => $data['notes'] ?? null,
                 'metadata' => $data['metadata'] ?? null,
             ]);
+            $purchaseRequest->setCreatedAt($occurredAt);
+            $purchaseRequest->setUpdatedAt($occurredAt);
+            $purchaseRequest->save();
 
             foreach ($data['lines'] ?? [] as $line) {
                 $purchaseRequest->lines()->create([
@@ -211,6 +227,12 @@ class PurchaseRequestService
                 $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
             }
 
+            $this->cycleEventRecorder->recordRequestCreated(
+                $purchaseRequest,
+                $actorId,
+                $occurredAt->toDateTimeImmutable(),
+            );
+
             $this->dispatchCreatedAfterCommit($purchaseRequest);
             DB::commit();
 
@@ -223,16 +245,29 @@ class PurchaseRequestService
 
     public function approve(PurchaseRequest $request, int $userId): PurchaseRequest
     {
-        if (! $request->canBeApproved()) {
-            throw new \DomainException(trans_message('procurement.purchase_requests.approve_invalid_status'));
-        }
-
         DB::beginTransaction();
 
         try {
-            $request->update([
-                'status' => PurchaseRequestStatusEnum::APPROVED,
-            ]);
+            $request = PurchaseRequest::query()
+                ->whereKey($request->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! $request->canBeApproved()) {
+                throw new \DomainException(trans_message('procurement.purchase_requests.approve_invalid_status'));
+            }
+
+            $occurredAt = now('UTC');
+            $request->status = PurchaseRequestStatusEnum::APPROVED;
+            $request->setUpdatedAt($occurredAt);
+            $request->save();
+
+            $this->cycleEventRecorder->recordRequestApproved(
+                $request,
+                $userId,
+                $occurredAt->toDateTimeImmutable(),
+                ProcurementTerminalReason::REQUEST_REJECTED,
+            );
 
             DB::commit();
 
@@ -249,17 +284,32 @@ class PurchaseRequestService
 
     public function reject(PurchaseRequest $request, int $userId, string $reason): PurchaseRequest
     {
-        if (! $request->canBeRejected()) {
-            throw new \DomainException(trans_message('procurement.purchase_requests.reject_invalid_status'));
-        }
-
         DB::beginTransaction();
 
         try {
-            $request->update([
-                'status' => PurchaseRequestStatusEnum::REJECTED,
-                'notes' => ($request->notes ? $request->notes."\n\n" : '')."Отклонена: {$reason}",
-            ]);
+            $request = PurchaseRequest::query()
+                ->whereKey($request->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! $request->canBeRejected()) {
+                throw new \DomainException(trans_message('procurement.purchase_requests.reject_invalid_status'));
+            }
+
+            $occurredAt = now('UTC');
+            $request->status = PurchaseRequestStatusEnum::REJECTED;
+            $request->notes = ($request->notes ? $request->notes."\n\n" : '').trans_message(
+                'procurement.purchase_requests.rejection_note',
+                ['reason' => $reason],
+            );
+            $request->setUpdatedAt($occurredAt);
+            $request->save();
+
+            $this->cycleEventRecorder->recordRequestCancelled(
+                $request,
+                $userId,
+                $occurredAt->toDateTimeImmutable(),
+            );
 
             DB::commit();
 

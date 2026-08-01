@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\DTOs\Contract\ContractDossierCreationResult;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\Models\Contract;
 use App\Models\Supplier;
 use App\Models\User;
@@ -31,12 +32,18 @@ class PurchaseOrderService
         private readonly ProcurementAuditService $auditService,
         private readonly ProcurementLifecycleService $lifecycleService,
         private readonly PurchaseOrderPaymentGateService $paymentGateService,
-        private readonly ProjectMaterialDeliveryService $deliveryService
+        private readonly ProjectMaterialDeliveryService $deliveryService,
+        private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
     ) {}
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
     {
         $this->lifecycleService->assertCanCreateSupplierRequest($request);
+        $request->loadMissing(['lines', 'siteRequest']);
+
+        if ($request->lines->isEmpty()) {
+            throw new \DomainException(trans_message('procurement.supplier_requests.purchase_request_lines_required'));
+        }
 
         if ($request->purchaseOrders()->exists()) {
             throw new \DomainException(trans_message('procurement.purchase_orders.already_exists_for_request'));
@@ -76,13 +83,13 @@ class PurchaseOrderService
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
-            $siteRequest = $request->siteRequest;
-            if ($siteRequest && ($siteRequest->material_id || $siteRequest->material_name)) {
+            foreach ($request->lines as $requestLine) {
                 $order->items()->create([
-                    'material_id' => $siteRequest->material_id,
-                    'material_name' => $siteRequest->material_name,
-                    'quantity' => $siteRequest->material_quantity ?? 1,
-                    'unit' => $siteRequest->material_unit ?? 'шт.',
+                    'purchase_request_line_id' => $requestLine->id,
+                    'material_id' => $requestLine->material_id,
+                    'material_name' => $requestLine->name,
+                    'quantity' => $requestLine->quantity,
+                    'unit' => $requestLine->unit,
                     'unit_price' => 0,
                     'total_price' => 0,
                 ]);
@@ -123,33 +130,51 @@ class PurchaseOrderService
 
     public function sendToSupplier(PurchaseOrder $order): PurchaseOrder
     {
-        if (! $order->canBeSent()) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_send'));
-        }
-
-        if (! $order->supplier || ! $order->supplier->email) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.supplier_email_missing'));
-        }
-
         DB::beginTransaction();
 
         try {
+            $order = PurchaseOrder::query()
+                ->with('supplier')
+                ->whereKey($order->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! $order->canBeSent()) {
+                throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_send'));
+            }
+
+            if (! $order->supplier || ! $order->supplier->email) {
+                throw new \DomainException(trans_message('procurement.purchase_orders.supplier_email_missing'));
+            }
+
             $pdfPath = $this->pdfService->store($order);
             $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
+            $sentAt = now('UTC');
+            $actorId = auth()->id();
 
             \Illuminate\Support\Facades\Mail::to($order->supplier->email)
-                ->queue(new \App\BusinessModules\Features\Procurement\Mail\PurchaseOrderSentMail($order, $temporaryUrl));
+                ->queue(
+                    (new \App\BusinessModules\Features\Procurement\Mail\PurchaseOrderSentMail($order, $temporaryUrl))
+                        ->afterCommit(),
+                );
 
             $order->update([
                 'status' => PurchaseOrderStatusEnum::SENT,
-                'sent_at' => now(),
+                'sent_at' => $sentAt,
+                'sent_at_exact' => $sentAt,
                 'metadata' => array_merge($order->metadata ?? [], [
                     'pdf_path' => $pdfPath,
                     'pdf_temporary_url' => $temporaryUrl,
                     'email_sent_to' => $order->supplier->email,
-                    'sent_by_user_id' => auth()->id(),
+                    'sent_by_user_id' => $actorId,
                 ]),
             ]);
+
+            $this->cycleEventRecorder->recordOrderSent(
+                $order,
+                $actorId,
+                $sentAt->toDateTimeImmutable(),
+            );
 
             DB::commit();
 
@@ -203,15 +228,20 @@ class PurchaseOrderService
         int $userId,
         array $receiptData = []
     ): PurchaseOrder {
-        $this->lifecycleService->assertCanReceiveMaterials($order, $items);
-        $this->paymentGateService->assertCanReceive($order, $items);
-
-        $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
-        $orderItems = $this->resolveOrderItems($order, $items);
-
         DB::beginTransaction();
 
         try {
+            $order = PurchaseOrder::query()
+                ->whereKey($order->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->lifecycleService->assertCanReceiveMaterials($order, $items);
+            $this->paymentGateService->assertCanReceive($order, $items);
+
+            $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
+            $orderItems = $this->resolveOrderItems($order, $items);
+            $receivedAt = now('UTC');
             $receiptNumber = $this->generateReceiptNumber();
             $receiptDate = $receiptData['receipt_date'] ?? now()->toDateString();
             $receiptMetadata = is_array($receiptData['metadata'] ?? null) ? $receiptData['metadata'] : [];
@@ -261,6 +291,13 @@ class PurchaseOrderService
             $receipt->loadMissing('lines');
             $order->loadMissing('items');
 
+            $this->cycleEventRecorder->recordReceiptMilestones(
+                $order,
+                $receipt,
+                $userId,
+                $receivedAt->toDateTimeImmutable(),
+            );
+
             $this->auditService->record(
                 ProcurementAuditEventTypeEnum::MATERIALS_RECEIVED->value,
                 $order,
@@ -308,7 +345,7 @@ class PurchaseOrderService
 
             Log::error('procurement.materials_receive_failed', [
                 'purchase_order_id' => $order->id,
-                'warehouse_id' => $warehouse->id,
+                'warehouse_id' => $warehouseId,
                 'error' => $e->getMessage(),
             ]);
 
