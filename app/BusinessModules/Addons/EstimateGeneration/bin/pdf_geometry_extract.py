@@ -497,7 +497,6 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
                 for character in (args.filename or os.path.basename(args.input))
             )[:80]
             output = Path(preview_directory) / f"{safe_filename}_page_{page_number}.png"
-            output.parent.mkdir(parents=True, exist_ok=True)
             render_scale = 2
             expected_width = max(1, math.ceil(float(page["width"]) * render_scale))
             expected_height = max(1, math.ceil(float(page["height"]) * render_scale))
@@ -506,6 +505,7 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
                 raise SafeFailure("pdf_preview_invalid")
             if preview_total_pixels + expected_pixels > args.max_preview_total_pixels:
                 raise SafeFailure("pdf_preview_aggregate_pixels_limit")
+            output.parent.mkdir(parents=True, exist_ok=True)
             document = pdfium.PdfDocument(args.input)
             bitmap = document[page_number - 1].render(scale=render_scale)
             image = bitmap.to_pil()

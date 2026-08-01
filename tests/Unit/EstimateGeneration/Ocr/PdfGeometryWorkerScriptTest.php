@@ -182,6 +182,44 @@ final class PdfGeometryWorkerScriptTest extends TestCase
         self::assertFalse($published);
     }
 
+    #[Test]
+    public function preview_directory_is_not_created_when_scale_two_pixel_preflight_rejects_page(): void
+    {
+        $module = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py';
+        $workspace = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most_pdf_pixel_preflight_'.bin2hex(random_bytes(8));
+        $previewDirectory = $workspace.DIRECTORY_SEPARATOR.'previews';
+        self::assertTrue(mkdir($workspace, 0700));
+        $script = <<<'PYTHON'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("pdf_geometry_extract", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+args = module.parser().parse_args([
+    "--input", sys.argv[2], "--workspace", sys.argv[2], "--preview-dir", sys.argv[3],
+    "--render-preview", "--max-preview-page-pixels", "1", "--max-preview-total-pixels", "1",
+])
+try:
+    module.legacy({"pages": [{"page_number": 1, "width": 1, "height": 1, "rotation": 0}], "entities": [], "texts": []}, args)
+except module.SafeFailure as error:
+    print(error.code, file=sys.stderr)
+    raise SystemExit(2)
+raise SystemExit(1)
+PYTHON;
+
+        try {
+            $process = new Process(['python', '-c', $script, $module, $workspace, $previewDirectory]);
+            $process->run();
+
+            self::assertFalse($process->isSuccessful());
+            self::assertStringContainsString('pdf_preview_invalid', $process->getErrorOutput());
+            self::assertDirectoryDoesNotExist($previewDirectory);
+        } finally {
+            @rmdir($workspace);
+        }
+    }
+
     public function test_vector_object_budget_degrades_to_raster_preview_instead_of_rejecting_pdf(): void
     {
         $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks/regression/replay-vector-pdf-001/input.pdf';

@@ -30,6 +30,64 @@ use PHPUnit\Framework\TestCase;
 final class ProductionDocumentUnitProcessorTest extends TestCase
 {
     #[Test]
+    public function legacy_pending_spreadsheet_unit_uses_native_payload_without_ocr_retry(): void
+    {
+        $nativePayload = json_encode([
+            'schema_version' => 1,
+            'source_kind' => 'spreadsheet',
+            'text' => 'Смета',
+            'native_structure' => ['status' => 'available', 'sheet' => 'Смета', 'headings' => [], 'cells' => []],
+        ], JSON_THROW_ON_ERROR);
+        $ocr = new class implements OcrClientInterface
+        {
+            public int $calls = 0;
+
+            public function recognize(OcrDocumentInput $input): OcrRecognitionResult
+            {
+                $this->calls++;
+                throw new \LogicException('OCR must not be called for a legacy spreadsheet artifact.');
+            }
+        };
+        $processor = new OcrDocumentUnitProcessor(
+            new class($nativePayload) implements DocumentUnitContentReader
+            {
+                public function __construct(private string $content) {}
+
+                public function read(DocumentUnitExecutionContext $context): string
+                {
+                    return $this->content;
+                }
+            },
+            $ocr,
+        );
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+        $context = new DocumentUnitExecutionContext(
+            1, 2, 3, 4, 5, DocumentUnitType::SpreadsheetSheet, 1, $sourceVersion,
+            [
+                'source_kind' => 'spreadsheet',
+                'source_version' => $sourceVersion,
+                'coordinate_space' => 'spreadsheet_cells',
+                'artifact_path' => 'org-2/artifacts/spreadsheet-sheet-1',
+                'artifact_bytes' => strlen($nativePayload),
+                'artifact_sha256' => 'sha256:'.hash('sha256', $nativePayload),
+                'artifact_version_id' => 'legacy-sheet-v1',
+                'artifact_source_version' => 'sha256:'.hash('sha256', $nativePayload),
+                'content_type' => 'application/vnd.most.spreadsheet-sheet+json',
+                'sheet' => 1,
+            ],
+            'org-2/source.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'source.xlsx',
+            'retry-claim', 2, 1, 'processing_documents', 6,
+        );
+
+        $output = $processor->process($context);
+
+        self::assertSame('Смета', $output->text);
+        self::assertSame(1.0, $output->confidence);
+        self::assertSame('available', $output->normalizedPayload['native_structure']['status']);
+        self::assertSame(0, $ocr->calls);
+    }
+
+    #[Test]
     public function typed_cad_failure_preserves_safe_reason_for_document_status(): void
     {
         $original = new GeometryExtractionException('cad_geometry_empty');

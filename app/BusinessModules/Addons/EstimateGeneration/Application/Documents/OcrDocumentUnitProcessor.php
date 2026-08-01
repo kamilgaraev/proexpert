@@ -66,9 +66,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             );
         }
 
-        if (($locator['content_type'] ?? null) === 'application/json'
-            && ($locator['artifact_kind'] ?? null) === 'spreadsheet_sheet'
-            && ($locator['artifact_schema_version'] ?? null) === 1) {
+        if ($this->isNativeSpreadsheetArtifact($locator)) {
             $payload = json_decode($content, true, 64, JSON_THROW_ON_ERROR);
             if (! is_array($payload) || ($payload['schema_version'] ?? null) !== 1
                 || ($payload['source_kind'] ?? null) !== 'spreadsheet'
@@ -136,5 +134,15 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
                 ],
             ],
         );
+    }
+
+    private function isNativeSpreadsheetArtifact(array $locator): bool
+    {
+        return (($locator['content_type'] ?? null) === 'application/json'
+                && ($locator['artifact_kind'] ?? null) === 'spreadsheet_sheet'
+                && ($locator['artifact_schema_version'] ?? null) === 1)
+            || (($locator['content_type'] ?? null) === 'application/vnd.most.spreadsheet-sheet+json'
+                && ! array_key_exists('artifact_kind', $locator)
+                && ! array_key_exists('artifact_schema_version', $locator));
     }
 }
