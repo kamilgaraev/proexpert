@@ -39,7 +39,7 @@ return new class extends Migration
         });
 
         Schema::create('procurement_award_evidence_events', function (Blueprint $table): void {
-            $table->uuid('id')->primary();
+            $table->uuid('id');
             $table->foreignId('organization_id')->constrained('organizations')->restrictOnDelete();
             $table->foreignId('project_id')->nullable()->constrained('projects')->restrictOnDelete();
             $table->foreignId('purchase_request_id')->constrained('purchase_requests')->restrictOnDelete();
@@ -76,6 +76,7 @@ return new class extends Migration
             $table->foreignId('purchase_order_id')->nullable()->constrained('purchase_orders')->restrictOnDelete();
             $table->timestampTz('created_at', 6);
 
+            $table->primary('id', 'proc_award_evidence_events_pk');
             $table->foreign('predecessor_event_id', 'proc_award_event_predecessor_fk')
                 ->references('id')
                 ->on('procurement_award_evidence_events')
