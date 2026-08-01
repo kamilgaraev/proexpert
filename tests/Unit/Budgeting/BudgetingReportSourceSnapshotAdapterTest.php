@@ -6,13 +6,13 @@ namespace Tests\Unit\Budgeting;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursorKeyset;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -20,14 +20,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
-use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
-use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -39,7 +40,9 @@ use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceCloseIdenti
 use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceWatermark;
 use App\BusinessModules\Features\Budgeting\DTOs\CreateBudgetingReportSourceClose;
 use App\BusinessModules\Features\Budgeting\Enums\BudgetingReportSourceCloseStatus;
+use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Services\BudgetingReportSourceCloseService;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactReportSourceSnapshotAdapter;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotMaterializer;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotWriter;
@@ -258,6 +261,82 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         self::assertNull($store->headerValue);
     }
 
+    public function test_plan_fact_release_binding_reads_rows_and_drill_from_one_sealed_snapshot(): void
+    {
+        $store = new InMemoryReportSourceSnapshotStore;
+        $source = new PlanFactSnapshotSource;
+        $closeService = self::closeService(BudgetPlanFactCandidateContract::FORMULA_VERSION);
+        $adapter = new PlanFactReportSourceSnapshotAdapter(
+            new PlanFactSourceSnapshotWriter($source, new PlanFactSourceSnapshotMaterializer, $store, $closeService),
+            $closeService,
+            $store,
+        );
+        $contract = new BudgetPlanFactCandidateContract;
+        $definition = (new ReportDefinitionBuilder)
+            ->code(BudgetPlanFactCandidateContract::CODE)
+            ->contractVersion('1.0.0')
+            ->formulaVersion(BudgetPlanFactCandidateContract::FORMULA_VERSION)
+            ->sourceSchemaVersion(PlanFactSourceSnapshotMaterializer::SCHEMA_VERSION)
+            ->filters($contract->filters())
+            ->columns($contract->columns())
+            ->sorts($contract->sorts())
+            ->formats($contract->formats())
+            ->permissionPolicy(new ReportPermissionPolicy(['budgeting.plan_fact.view'], ['budgeting.plan_fact.export'], [], []))
+            ->publicationReadiness(ReportPublicationReadiness::DRAFT)
+            ->payload();
+        $binding = (new BudgetPlanFactReportBindingFactory($adapter, $contract))->create($definition);
+        $context = (new ReportExecutionContextBuilder)->build();
+        $query = new ReportQuery(
+            $definition,
+            $context->scope,
+            new ReportFilterSet([
+                'close_id' => '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+                'organization_id' => 1,
+                'period_start' => '2026-01-01',
+                'period_end' => '2026-01-31',
+                'scenario_uuid' => 'scenario-1',
+                'budget_version_uuid' => 'budget-1',
+                'group_by' => \App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters::DEFAULT_GROUP_BY,
+            ]),
+            [],
+            new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
+            'ru',
+        );
+
+        $snapshot = $binding->dataProvider->materialize($context, $query, new ReportProgress(0));
+        $page = $binding->rowQuery->page($context, $snapshot, new ReportWindowSort('row_key', ReportSortDirection::ASC), null, 10);
+        $drill = $binding->drillDownProvider->drillDown(
+            $context,
+            $snapshot,
+            new ReportDrillDownInput(new ReportDrillDownCell($page->rows[0]['row_key'], PlanFactSourceSnapshotMaterializer::DRILL_COLUMN_ID), null, 10),
+        );
+
+        self::assertSame($adapter, $binding->dataProvider);
+        self::assertSame($adapter, $binding->rowQuery);
+        self::assertSame($adapter, $binding->drillDownProvider);
+        self::assertSame($snapshot->id, $store->headerValue?->id);
+        self::assertNotEmpty($page->rows);
+        self::assertNotEmpty($drill->rows);
+        self::assertSame([$snapshot->id], array_values(array_unique($store->readSnapshotIds)));
+
+        $wrongScopeSnapshot = new ReportSnapshotRef(
+            $snapshot->kind,
+            $snapshot->id,
+            new ReportScope(2, [2], [10, 20], [], new \DateTimeZone('UTC')),
+            $snapshot->definitionHash,
+            $snapshot->formulaVersion,
+            $snapshot->sourceHash,
+            $snapshot->generatedAt,
+            $snapshot->staleAt,
+            $snapshot->watermarks,
+            $snapshot->classification,
+            $snapshot->seal,
+            $snapshot->materializedSourceHash,
+        );
+        $this->expectException(ReportContractException::class);
+        $binding->rowQuery->page($context, $wrongScopeSnapshot, new ReportWindowSort('row_key', ReportSortDirection::ASC), null, 10);
+    }
+
     public static function adapters(): array
     {
         return [
@@ -341,13 +420,13 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         );
     }
 
-    private static function closeService(): BudgetingReportSourceCloseService
+    private static function closeService(string $formulaVersion = 'margin-v1'): BudgetingReportSourceCloseService
     {
         $close = new BudgetingReportSourceClose(
             '01JZZZZZZZZZZZZZZZZZZZZZZZ',
             new BudgetingReportSourceCloseIdentity(1, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1'),
             [new BudgetingReportSourceWatermark('actuals', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'actuals:1', 'actuals-v1')],
-            'margin-v1',
+            $formulaVersion,
             ['actuals' => ['version' => 'actuals:1']],
             str_repeat('a', 64),
             1,
@@ -379,6 +458,9 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotStr
     public ?ReportSourceSnapshotHeader $headerValue = null;
 
     public int $persistCalls = 0;
+
+    /** @var list<string> */
+    public array $readSnapshotIds = [];
 
     /** @var list<\App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotRow> */
     private array $rows = [];
@@ -482,6 +564,7 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotStr
     public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
     {
         $header = $this->headerValue ?? throw new LogicException;
+        $this->readSnapshotIds[] = $request->snapshotId;
         ReportSourceSnapshotIntegrity::assertReadable($header, $request);
 
         return $header;

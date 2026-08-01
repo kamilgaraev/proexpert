@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactSourceSnapshotRequest;
@@ -96,6 +98,23 @@ final readonly class BudgetPlanFactCandidateContract
         }
     }
 
+    public function assertDefinition(ReportDefinition $definition): void
+    {
+        if ($definition->code !== self::CODE
+            || $definition->formulaVersion !== $this->formulaVersion
+            || $definition->sourceSchemaVersion !== $this->sourceSchemaVersion
+            || $definition->filters !== self::canonicalItems($this->filters())
+            || $definition->columns !== self::canonicalItems($this->columns())
+            || $definition->sorts !== self::canonicalItems($this->sorts())
+            || $definition->formats !== $this->formats()
+            || $definition->permissionPolicy->viewPermissions !== ['budgeting.plan_fact.view']
+            || $definition->permissionPolicy->exportPermissions !== ['budgeting.plan_fact.export']
+            || $definition->permissionPolicy->sensitivePermissions !== []
+            || $definition->permissionPolicy->auditPermissions !== []) {
+            throw new InvalidArgumentException('budget_plan_fact_candidate_definition_invalid');
+        }
+    }
+
     public function assertSnapshotRequest(
         ReportScope $scope,
         array $filters,
@@ -176,5 +195,13 @@ final readonly class BudgetPlanFactCandidateContract
         }
 
         return $hash;
+    }
+
+    private static function canonicalItems(array $items): array
+    {
+        return array_map(
+            static fn (array $item): array => json_decode(CanonicalJson::encode($item), true, 512, JSON_THROW_ON_ERROR),
+            $items,
+        );
     }
 }
