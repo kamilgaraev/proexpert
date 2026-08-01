@@ -112,7 +112,7 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
         if (! is_array($normalizedPayload)) {
             return ['payload' => null, 'reason' => 'vector_capture_invalid'];
         }
-        if (array_key_exists('source_kind', $normalizedPayload) && ($normalizedPayload['source_kind'] ?? null) !== 'cad') {
+        if (($normalizedPayload['source_kind'] ?? null) !== 'cad') {
             return ['payload' => null, 'reason' => 'semantic_confirmation_unavailable'];
         }
         $payload = $this->sourceConfirmation->makeFromNormalizedPayload($normalizedPayload, $sourceVersion);

@@ -71,8 +71,7 @@ final readonly class AssemblePersistedVectorGeometry
         if (! is_array($value)) {
             throw new InvalidArgumentException('Confirmed geometry source is invalid.');
         }
-        if ($unit->unit_type !== 'cad_drawing'
-            || (array_key_exists('source_kind', $value) && ($value['source_kind'] ?? null) !== 'cad')) {
+        if ($unit->unit_type !== 'cad_drawing' || ($value['source_kind'] ?? null) !== 'cad') {
             throw new InvalidArgumentException('geometry_confirmation_source_unavailable');
         }
         $canonicalConfirmation = $this->sourceConfirmation->makeFromNormalizedPayload($value, $document->source_version);
