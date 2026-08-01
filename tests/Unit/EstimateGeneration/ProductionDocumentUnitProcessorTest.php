@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProductionDocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
@@ -85,6 +86,63 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
         self::assertSame(1.0, $output->confidence);
         self::assertSame('available', $output->normalizedPayload['native_structure']['status']);
         self::assertSame(0, $ocr->calls);
+    }
+
+    #[Test]
+    public function legacy_spreadsheet_mime_on_pdf_unit_uses_ocr_instead_of_native_transform(): void
+    {
+        $nativePayload = json_encode([
+            'schema_version' => 1,
+            'source_kind' => 'spreadsheet',
+            'text' => 'Таблица',
+            'native_structure' => ['status' => 'available', 'sheet' => 'Смета', 'headings' => [], 'cells' => []],
+        ], JSON_THROW_ON_ERROR);
+        $ocr = new class implements OcrClientInterface
+        {
+            public int $calls = 0;
+
+            public function recognize(OcrDocumentInput $input): OcrRecognitionResult
+            {
+                $this->calls++;
+
+                return new OcrRecognitionResult('test', 'test-model', [new OcrPageResult(1, 'Текст PDF')]);
+            }
+        };
+        $processor = new OcrDocumentUnitProcessor(
+            new class($nativePayload) implements DocumentUnitContentReader
+            {
+                public function __construct(private string $content) {}
+
+                public function read(DocumentUnitExecutionContext $context): string
+                {
+                    return $this->content;
+                }
+            },
+            $ocr,
+        );
+        $sourceVersion = 'sha256:'.str_repeat('b', 64);
+        $context = new DocumentUnitExecutionContext(
+            1, 2, 3, 4, 5, DocumentUnitType::PdfPage, 1, $sourceVersion,
+            [
+                'source_kind' => 'pdf',
+                'source_version' => $sourceVersion,
+                'coordinate_space' => 'pdf_points',
+                'artifact_path' => 'org-2/artifacts/pdf-page-1',
+                'artifact_bytes' => strlen($nativePayload),
+                'artifact_sha256' => 'sha256:'.hash('sha256', $nativePayload),
+                'artifact_version_id' => 'legacy-pdf-v1',
+                'artifact_source_version' => 'sha256:'.hash('sha256', $nativePayload),
+                'content_type' => 'application/vnd.most.spreadsheet-sheet+json',
+                'page' => 1,
+            ],
+            'org-2/source.pdf', 'application/pdf', 'source.pdf',
+            'retry-claim', 2, 1, 'processing_documents', 6,
+        );
+
+        $output = $processor->process($context);
+
+        self::assertSame('Текст PDF', $output->text);
+        self::assertSame(1, $ocr->calls);
     }
 
     #[Test]

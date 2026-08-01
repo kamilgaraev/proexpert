@@ -66,7 +66,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             );
         }
 
-        if ($this->isNativeSpreadsheetArtifact($locator)) {
+        if ($this->isNativeSpreadsheetArtifact($context)) {
             $payload = json_decode($content, true, 64, JSON_THROW_ON_ERROR);
             if (! is_array($payload) || ($payload['schema_version'] ?? null) !== 1
                 || ($payload['source_kind'] ?? null) !== 'spreadsheet'
@@ -136,8 +136,15 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
         );
     }
 
-    private function isNativeSpreadsheetArtifact(array $locator): bool
+    private function isNativeSpreadsheetArtifact(DocumentUnitExecutionContext $context): bool
     {
+        $locator = $context->locator;
+
+        if ($context->type !== DocumentUnitType::SpreadsheetSheet
+            || (array_key_exists('source_kind', $locator) && ($locator['source_kind'] ?? null) !== 'spreadsheet')) {
+            return false;
+        }
+
         return (($locator['content_type'] ?? null) === 'application/json'
                 && ($locator['artifact_kind'] ?? null) === 'spreadsheet_sheet'
                 && ($locator['artifact_schema_version'] ?? null) === 1)
