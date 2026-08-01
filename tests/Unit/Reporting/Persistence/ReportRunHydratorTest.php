@@ -9,7 +9,9 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportDefinitionSnapshotDecoder;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use DateTimeImmutable;
 use Illuminate\Container\Container;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Database\Schema\Blueprint;
@@ -21,6 +23,49 @@ use ReflectionClass;
 
 final class ReportRunHydratorTest extends TestCase
 {
+    public function test_export_source_reverifies_persisted_official_plan_fact_style_seal_with_trusted_key(): void
+    {
+        $keyPair = sodium_crypto_sign_keypair();
+        $record = $this->officialReadyRecord(sodium_crypto_sign_secretkey($keyPair));
+        $hydrator = new ReportRunHydrator($this->trustedVerifier($keyPair));
+
+        $source = $hydrator->exportSource($record, 1250);
+
+        self::assertSame('official', $source->snapshot->classification->value);
+        self::assertSame('snapshot_one', $source->snapshot->id);
+    }
+
+    public function test_export_source_rejects_tampered_persisted_official_seal_before_returning_source(): void
+    {
+        $keyPair = sodium_crypto_sign_keypair();
+        $record = $this->officialReadyRecord(sodium_crypto_sign_secretkey($keyPair));
+        $record->snapshot_seal_signature = str_repeat('A', 86);
+
+        $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
+        (new ReportRunHydrator($this->trustedVerifier($keyPair)))->exportSource($record, 1250);
+    }
+
+    public function test_export_source_rejects_persisted_official_seal_when_key_is_revoked(): void
+    {
+        $keyPair = sodium_crypto_sign_keypair();
+        $record = $this->officialReadyRecord(sodium_crypto_sign_secretkey($keyPair));
+
+        $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
+        (new ReportRunHydrator($this->trustedVerifier($keyPair, true)))->exportSource($record, 1250);
+    }
+
+    public function test_export_source_rejects_persisted_official_seal_when_signed_payload_hash_differs_from_source(): void
+    {
+        $keyPair = sodium_crypto_sign_keypair();
+        $record = $this->officialReadyRecord(
+            sodium_crypto_sign_secretkey($keyPair),
+            str_repeat('f', 64),
+        );
+
+        $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
+        (new ReportRunHydrator($this->trustedVerifier($keyPair)))->exportSource($record, 1250);
+    }
+
     public function test_store_contract_has_exact_typed_surface(): void
     {
         $reflection = new ReflectionClass(ReportRunStore::class);
@@ -760,6 +805,109 @@ final class ReportRunHydratorTest extends TestCase
         $record->setRawAttributes($attributes);
 
         return $record;
+    }
+
+    private function officialReadyRecord(string $secretKey, ?string $sealedPayloadHash = null): ReportRunRecord
+    {
+        $record = $this->readyRecord();
+        $initialAttributes = $record->getAttributes();
+        $queryProjection = [
+            'as_of' => '2026-07-26T00:00:00.000000Z',
+            'comparison' => [],
+            'definition_hash' => $initialAttributes['definition_hash'],
+            'filters' => ['period' => 'month'],
+            'locale' => 'ru',
+            'scope' => [
+                'organization_id' => 10,
+                'holding_organization_ids' => [10, 11],
+                'project_ids' => [20],
+                'resources' => [['kind' => 'task', 'id' => 30, 'project_id' => 20]],
+                'timezone' => 'UTC',
+            ],
+        ];
+        $initialAttributes['canonical_query_json'] = CanonicalJson::encode($queryProjection);
+        $initialAttributes['query_hash'] = hash('sha256', $initialAttributes['canonical_query_json']);
+        $initialAttributes['input_fingerprint'] = hash('sha256', CanonicalJson::encode([
+            'definition_snapshot_hash' => $initialAttributes['definition_snapshot_hash'],
+            'query' => $queryProjection,
+            'saved_view' => null,
+        ]));
+        $record->setRawAttributes($initialAttributes);
+        $query = (new ReportRunHydrator($this->trustedVerifier(sodium_crypto_sign_keypair())))->query($record);
+        $snapshot = $record->definition_snapshot;
+        $snapshot['snapshot_classification'] = 'official';
+        $definitionSnapshot = CanonicalJson::encode($snapshot);
+        $definitionSnapshotHash = hash('sha256', $definitionSnapshot);
+        $sourceHash = $record->source_hash;
+        $sealedPayloadHash ??= $sourceHash;
+        $generatedAt = new DateTimeImmutable('2026-07-26T00:30:00.000000Z');
+        $seal = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal(
+            'hydrator-test-key',
+            'ed25519-sha256',
+            new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash($sealedPayloadHash),
+            rtrim(strtr(base64_encode(str_repeat("\0", 64)), '+/', '-_'), '='),
+            $generatedAt,
+        );
+        $signature = rtrim(strtr(base64_encode(str_repeat("\0", 64)), '+/', '-_'), '=');
+        if ($sealedPayloadHash === $sourceHash) {
+            $input = new \App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput(
+                $seal,
+                'snapshot_one',
+                'materialized',
+                \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OFFICIAL,
+                $generatedAt,
+                new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash($sourceHash),
+            );
+            $signature = rtrim(strtr(base64_encode(sodium_crypto_sign_detached($input->signedBytes(), $secretKey)), '+/', '-_'), '=');
+        }
+        $attributes = $record->getAttributes();
+        $attributes['definition_snapshot'] = $definitionSnapshot;
+        $attributes['definition_snapshot_hash'] = $definitionSnapshotHash;
+        $attributes['canonical_query_json'] = $query->canonicalJson;
+        $attributes['query_hash'] = $query->queryHash->value;
+        $attributes['input_fingerprint'] = hash('sha256', CanonicalJson::encode([
+            'definition_snapshot_hash' => $definitionSnapshotHash,
+            'query' => json_decode($query->canonicalJson, true, 512, JSON_THROW_ON_ERROR),
+            'saved_view' => null,
+        ]));
+        $attributes['snapshot_classification'] = 'official';
+        $attributes['snapshot_seal_key_id'] = 'hydrator-test-key';
+        $attributes['snapshot_seal_algorithm'] = 'ed25519-sha256';
+        $attributes['snapshot_sealed_payload_hash'] = $sealedPayloadHash;
+        $attributes['snapshot_seal_signature'] = $signature;
+        $attributes['snapshot_sealed_at'] = '2026-07-26T00:30:00.000000Z';
+        $resultProjection = [
+            'metadata' => [
+                'snapshot' => [
+                    'kind' => 'materialized', 'id' => 'snapshot_one',
+                    'scope' => json_decode($query->canonicalJson, true, 512, JSON_THROW_ON_ERROR)['scope'],
+                    'definition_hash' => $record->definition_hash, 'formula_version' => '1', 'source_hash' => $sourceHash,
+                    'generated_at' => '2026-07-26T00:30:00.000000Z', 'stale_at' => null,
+                    'watermarks' => ['ledger' => 'watermark_one'], 'classification' => 'official',
+                    'seal' => ['key_id' => 'hydrator-test-key', 'algorithm' => 'ed25519-sha256', 'sealed_payload_hash' => $sealedPayloadHash, 'signature' => $signature, 'sealed_at' => '2026-07-26T00:30:00.000000Z'],
+                ],
+                'row_count' => 1, 'generated_at' => '2026-07-26T00:30:00.000000Z', 'stale_at' => null,
+            ],
+            'totals' => ['amount' => '100.00'], 'freshness' => 'fresh',
+            'quality' => json_decode($attributes['quality'], true, 512, JSON_THROW_ON_ERROR),
+            'provenance' => json_decode($attributes['provenance'], true, 512, JSON_THROW_ON_ERROR),
+            'row_schema' => json_decode($attributes['row_schema'], true, 512, JSON_THROW_ON_ERROR),
+            'capabilities' => json_decode($attributes['capabilities'], true, 512, JSON_THROW_ON_ERROR),
+        ];
+        $attributes['result_hash'] = hash('sha256', CanonicalJson::encode($resultProjection));
+        $record->setRawAttributes($attributes);
+
+        return $record;
+    }
+
+    private function trustedVerifier(string $keyPair, bool $revoked = false): TrustedReportSnapshotSealVerifier
+    {
+        return new TrustedReportSnapshotSealVerifier([
+            'hydrator-test-key' => [
+                'public_key' => rtrim(strtr(base64_encode(sodium_crypto_sign_publickey($keyPair)), '+/', '-_'), '='),
+                'revoked' => $revoked,
+            ],
+        ]);
     }
 
     private function legacySnapshotRecord(ReportRunRecord $record): ReportRunRecord
