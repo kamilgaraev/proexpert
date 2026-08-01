@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\Persistence;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportDefinitionSnapshotDecoder;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Illuminate\Container\Container;
@@ -298,6 +299,38 @@ final class ReportRunHydratorTest extends TestCase
         self::assertSame(['act_reports.view'], $definition->permissionPolicy->viewPermissions);
     }
 
+    public function test_pre_access_mode_snapshot_decodes_as_versioned_reporting_workspace_contract(): void
+    {
+        $record = $this->legacySnapshotRecord($this->record());
+        $attributes = $record->getAttributes();
+        $attributes['status'] = 'failed';
+        $attributes['error_code'] = 'REPORT_SOURCE_UNAVAILABLE';
+        $attributes['failed_at'] = '2026-07-26T00:10:00.000000Z';
+        $attributes['updated_at'] = '2026-07-26T00:10:00.000000Z';
+        $record->setRawAttributes($attributes);
+
+        $query = (new ReportRunHydrator)->query($record);
+        $retry = (new ReportRunHydrator)->retrySource($record, 1250);
+
+        self::assertSame('reports', $query->definition->sourceModule);
+        self::assertSame('reporting_workspace', $query->definition->coreAccessMode->value);
+        self::assertSame($query->definition->definitionHash->value, $retry->query->definition->definitionHash->value);
+    }
+
+    public function test_pre_access_mode_ready_snapshot_remains_exportable_with_original_identity(): void
+    {
+        $record = $this->legacySnapshotRecord($this->readyRecord());
+
+        $source = (new ReportRunHydrator)->exportSource($record, 1250);
+
+        self::assertSame('reports', $source->query->definition->sourceModule);
+        self::assertSame('reporting_workspace', $source->query->definition->coreAccessMode->value);
+        self::assertSame(
+            hash('sha256', CanonicalJson::encode($record->definition_snapshot)),
+            $record->definition_snapshot_hash,
+        );
+    }
+
     public static function definitionMemberMutations(): iterable
     {
         yield 'code' => ['code', 'changed_report'];
@@ -306,6 +339,7 @@ final class ReportRunHydratorTest extends TestCase
         yield 'formula_version' => ['formula_version', '2'];
         yield 'source_schema_version' => ['source_schema_version', '2'];
         yield 'renderer_version' => ['renderer_version', '2'];
+        yield 'snapshot_schema' => ['snapshot_schema', ReportDefinitionSnapshotDecoder::LEGACY_SCHEMA];
         yield 'filters' => ['filters', [['id' => 'changed_filter']]];
         yield 'columns' => ['columns', [['id' => 'changed_column']]];
         yield 'sorts' => ['sorts', [['id' => 'changed_sort']]];
@@ -532,6 +566,7 @@ final class ReportRunHydratorTest extends TestCase
     {
         $definitionHash = str_repeat('a', 64);
         $snapshot = [
+            'snapshot_schema' => ReportDefinitionSnapshotDecoder::CURRENT_SCHEMA,
             'code' => 'cost_control',
             'definition_hash' => $definitionHash,
             'contract_version' => '1.0.0',
@@ -723,6 +758,21 @@ final class ReportRunHydratorTest extends TestCase
         $attributes['totals'] = CanonicalJson::encode(['amount' => '100.00']);
         $attributes['updated_at'] = '2026-07-26T00:31:00.000000Z';
         $record->setRawAttributes($attributes);
+
+        return $record;
+    }
+
+    private function legacySnapshotRecord(ReportRunRecord $record): ReportRunRecord
+    {
+        $snapshot = $record->definition_snapshot;
+        unset($snapshot['snapshot_schema'], $snapshot['source_module'], $snapshot['core_access_mode']);
+        $record->definition_snapshot = $snapshot;
+        $record->definition_snapshot_hash = hash('sha256', CanonicalJson::encode($snapshot));
+        $record->input_fingerprint = hash('sha256', CanonicalJson::encode([
+            'definition_snapshot_hash' => $record->definition_snapshot_hash,
+            'query' => json_decode($record->canonical_query_json, true, 512, JSON_THROW_ON_ERROR),
+            'saved_view' => null,
+        ]));
 
         return $record;
     }

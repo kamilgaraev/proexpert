@@ -21,6 +21,7 @@ use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModuleEntitlement;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportScopedResourceAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunAction;
@@ -72,6 +73,7 @@ use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfDocumentRend
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfRenderBudget;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelCurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportHttpAuthorizationTargetResolver;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportModuleEntitlement;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\CoreReportAuditIntentConsumer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LaravelReportAuditDispatcher;
@@ -158,6 +160,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         foreach ([
             ReportAuthorizationSubjectReader::class => EloquentReportAuthorizationSubjectReader::class,
             ReportHttpAuthorizationTargetResolver::class => LaravelReportHttpAuthorizationTargetResolver::class,
+            ReportModuleEntitlement::class => LaravelReportModuleEntitlement::class,
             CurrentReportAbacEvaluator::class => LaravelCurrentReportAbacEvaluator::class,
         ] as $contract => $expected) {
             if ($this->boundConcrete($contract) !== $expected) {
@@ -269,6 +272,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
 
         $this->app->singleton(ReportAuthorizationSubjectReader::class, EloquentReportAuthorizationSubjectReader::class);
         $this->app->singleton(ReportHttpAuthorizationTargetResolver::class, LaravelReportHttpAuthorizationTargetResolver::class);
+        $this->app->singleton(ReportModuleEntitlement::class, LaravelReportModuleEntitlement::class);
         $this->app->singleton(CurrentReportAbacEvaluator::class, LaravelCurrentReportAbacEvaluator::class);
         $this->app->singleton(LaravelReportScopedResourceAuthorizerRegistry::class, function (Container $app): LaravelReportScopedResourceAuthorizerRegistry {
             return new LaravelReportScopedResourceAuthorizerRegistry(

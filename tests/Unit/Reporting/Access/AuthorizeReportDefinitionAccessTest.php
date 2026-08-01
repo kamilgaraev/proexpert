@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Access;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModuleEntitlement;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
@@ -17,7 +19,6 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use App\Models\User;
-use App\Modules\Services\ModulePermissionService;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Http\Request;
@@ -32,8 +33,11 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
     {
         $definition = $this->sourceDefinition('a');
         $resolver = new DefinitionAccessTargetResolver([$definition]);
-        $modules = new DefinitionAccessModuleService(['act-reporting']);
-        $middleware = new AuthorizeReportDefinitionAccess($resolver, $modules);
+        $modules = new DefinitionAccessModuleEntitlement(['act-reporting']);
+        $middleware = new AuthorizeReportDefinitionAccess(
+            $resolver,
+            new ReportDefinitionModuleAuthorizer($modules),
+        );
         $request = $this->request('admin.reports.runs.store', ['reportCode' => 'server_report']);
         $called = false;
 
@@ -58,7 +62,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
         $request = $this->request('admin.reports.catalog');
         $middleware = new AuthorizeReportDefinitionAccess(
             new DefinitionAccessTargetResolver([$generic, $source]),
-            new DefinitionAccessModuleService(['act-reporting']),
+            new ReportDefinitionModuleAuthorizer(new DefinitionAccessModuleEntitlement(['act-reporting'])),
         );
 
         $middleware->handle($request, static fn (): Response => new Response('', 204));
@@ -72,8 +76,11 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
     public function test_identity_route_resolves_persisted_run_definition_instead_of_client_values(): void
     {
         $resolver = new DefinitionAccessTargetResolver([$this->sourceDefinition('e')]);
-        $modules = new DefinitionAccessModuleService(['act-reporting']);
-        $middleware = new AuthorizeReportDefinitionAccess($resolver, $modules);
+        $modules = new DefinitionAccessModuleEntitlement(['act-reporting']);
+        $middleware = new AuthorizeReportDefinitionAccess(
+            $resolver,
+            new ReportDefinitionModuleAuthorizer($modules),
+        );
         $request = $this->request('admin.reports.runs.show', ['runId' => '01J00000000000000000000001']);
         $request->request->set('report_code', 'client_forgery');
 
@@ -90,7 +97,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
     {
         $middleware = new AuthorizeReportDefinitionAccess(
             new DefinitionAccessTargetResolver([$this->sourceDefinition('d')]),
-            new DefinitionAccessModuleService(['act-reporting']),
+            new ReportDefinitionModuleAuthorizer(new DefinitionAccessModuleEntitlement(['act-reporting'])),
         );
         $called = false;
 
@@ -114,7 +121,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
     {
         $middleware = new AuthorizeReportDefinitionAccess(
             new DefinitionAccessTargetResolver([$this->sourceDefinition('f')]),
-            new DefinitionAccessModuleService(['reports']),
+            new ReportDefinitionModuleAuthorizer(new DefinitionAccessModuleEntitlement(['reports'])),
         );
         $called = false;
 
@@ -139,7 +146,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
         $resolver = new DefinitionAccessTargetResolver([$this->sourceDefinition('9')]);
         $middleware = new AuthorizeReportDefinitionAccess(
             $resolver,
-            new DefinitionAccessModuleService(['act-reporting']),
+            new ReportDefinitionModuleAuthorizer(new DefinitionAccessModuleEntitlement(['act-reporting'])),
         );
         $next = static fn (): Response => new Response('', 204);
 
@@ -188,6 +195,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
     private function request(string $name, array $parameters = []): Request
     {
         $request = Request::create('/api/v1/admin/reports/test');
+        $request->attributes->set('current_organization_id', 7);
         $request->setUserResolver(static fn (): User => new User(['id' => 41]));
         $route = (new Route(['GET'], '/api/v1/admin/reports/test', static fn () => null))
             ->name($name);
@@ -280,16 +288,16 @@ final class DefinitionAccessTargetResolver implements ReportHttpAuthorizationTar
     }
 }
 
-final class DefinitionAccessModuleService extends ModulePermissionService
+final class DefinitionAccessModuleEntitlement implements ReportModuleEntitlement
 {
     public array $checkedModules = [];
 
     public function __construct(private readonly array $allowedModules) {}
 
-    public function userHasModuleAccess(User $user, string $moduleSlug): bool
+    public function organizationHasModule(int $organizationId, string $moduleSlug): bool
     {
         $this->checkedModules[] = $moduleSlug;
 
-        return in_array($moduleSlug, $this->allowedModules, true);
+        return $organizationId === 7 && in_array($moduleSlug, $this->allowedModules, true);
     }
 }

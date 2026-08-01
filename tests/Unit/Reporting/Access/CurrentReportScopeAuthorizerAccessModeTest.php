@@ -6,20 +6,17 @@ namespace Tests\Unit\Reporting\Access;
 
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportPermissionDecision;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
-use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelCurrentReportScopeAuthorizer;
 use DateTimeImmutable;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\DeterministicReportModuleEntitlement;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 
 final class CurrentReportScopeAuthorizerAccessModeTest extends TestCase
@@ -107,11 +104,33 @@ final class CurrentReportScopeAuthorizerAccessModeTest extends TestCase
         self::assertFalse($vector['download']);
     }
 
+    public function test_source_module_revocation_zeroes_visibility_before_permissions_are_evaluated(): void
+    {
+        $evaluator = new RecordingAccessModeAbacEvaluator([
+            'act_reports.view',
+            'act_reports.export.excel',
+        ]);
+
+        $vector = $this->permissionVector($evaluator, moduleAllowed: false);
+
+        self::assertSame([
+            'view' => false,
+            'run' => false,
+            'export' => false,
+            'download' => false,
+            'manage' => false,
+            'sensitive' => false,
+            'audit' => false,
+        ], $vector);
+        self::assertSame([], $evaluator->permissions);
+    }
+
     private function permissionVector(
         RecordingAccessModeAbacEvaluator $evaluator,
         ?ReportScope $scope = null,
         array $formats = ['xlsx'],
         ?string $exportFormat = null,
+        bool $moduleAllowed = true,
     ): array {
         $exportPermissions = array_map(
             static fn (string $format): string => match ($format) {
@@ -132,36 +151,55 @@ final class CurrentReportScopeAuthorizerAccessModeTest extends TestCase
                 [],
             ))
             ->payload();
-        $authorizer = new LaravelCurrentReportScopeAuthorizer(
-            $evaluator,
-            new LaravelReportScopedResourceAuthorizerRegistry([]),
-        );
-        $method = new \ReflectionMethod($authorizer, 'permissionVector');
-
-        return $method->invoke(
-            $authorizer,
-            41,
-            $scope ?? new ReportScope(7, [7], [], [], new DateTimeZone('UTC')),
-            new CurrentReportAuthorizationTarget(
-                $definition,
-                $exportFormat === null ? ReportOperation::VIEW : ReportOperation::EXPORT,
-                $exportFormat === null ? null : new ReportSnapshotRef(
-                    'report',
-                    'snapshot',
-                    $scope ?? new ReportScope(7, [7], [], [], new DateTimeZone('UTC')),
-                    $definition->definitionHash,
-                    $definition->formulaVersion,
-                    new Sha256Hash(str_repeat('f', 64)),
+        $scope ??= new ReportScope(7, [7], [], [], new DateTimeZone('UTC'));
+        $visibility = (new ReportDefinitionVisibilityResolver(
+            new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement(
+                $moduleAllowed ? ['act-reporting'] : [],
+                [7],
+            )),
+        ))->resolve(
+            $scope->organizationId,
+            $definition,
+            $exportFormat === null ? ReportOperation::VIEW : ReportOperation::EXPORT,
+            $exportFormat,
+            function (string $permission) use ($evaluator, $scope): bool {
+                $facts = [new CurrentReportAuthorizationFacts(
+                    'queue',
+                    41,
+                    $scope->organizationId,
+                    null,
+                    null,
                     new DateTimeImmutable('2026-08-01T00:00:00Z'),
-                    null,
-                    [],
-                    ReportSnapshotClassification::OPERATIONAL,
-                    null,
-                ),
-                $exportFormat,
-            ),
-            new DateTimeImmutable('2026-08-01T00:00:00Z'),
+                )];
+                foreach ($scope->projectIds as $projectId) {
+                    $facts[] = new CurrentReportAuthorizationFacts(
+                        'queue',
+                        41,
+                        $scope->organizationId,
+                        $projectId,
+                        null,
+                        new DateTimeImmutable('2026-08-01T00:00:00Z'),
+                    );
+                }
+                foreach ($facts as $fact) {
+                    if (! $evaluator->evaluate(41, $permission, $fact)->granted) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
         );
+
+        return [
+            'view' => $visibility->canView,
+            'run' => $visibility->canRun,
+            'export' => $visibility->canExport,
+            'download' => $visibility->canDownload,
+            'manage' => $visibility->canManage,
+            'sensitive' => $visibility->canViewSensitive,
+            'audit' => $visibility->canViewAudit,
+        ];
     }
 }
 

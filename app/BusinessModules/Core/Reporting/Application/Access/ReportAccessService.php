@@ -11,7 +11,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use Throwable;
 
@@ -20,6 +19,7 @@ final readonly class ReportAccessService
     public function __construct(
         private ReportActorLoader $actorLoader,
         private ReportSourceAccessResolver $sourceAccessResolver,
+        private ReportDefinitionVisibilityResolver $visibilityResolver,
     ) {}
 
     public function assertOperation(
@@ -31,7 +31,13 @@ final readonly class ReportAccessService
     ): ReportVisibility {
         $actor = $this->reloadActor($context);
         $permissions = array_fill_keys($actor->permissionSlugs, true);
-        $visibility = $this->visibility($definition, $permissions, $operation, $exportFormat);
+        $visibility = $this->visibilityResolver->resolve(
+            $context->scope->organizationId,
+            $definition,
+            $operation,
+            $exportFormat,
+            static fn (string $permission): bool => isset($permissions[$permission]),
+        );
 
         $allowed = match ($operation) {
             ReportOperation::VIEW => $visibility->canView,
@@ -59,89 +65,6 @@ final readonly class ReportAccessService
         return $visibility;
     }
 
-    private function visibility(
-        ReportDefinition $definition,
-        array $permissions,
-        ReportOperation $operation,
-        ?string $exportFormat,
-    ): ReportVisibility {
-        $policy = $definition->permissionPolicy;
-        if ($definition->coreAccessMode === ReportCoreAccessMode::SOURCE_MODULE_REPORT) {
-            $canView = $this->has($permissions, $policy->viewPermissions);
-            $canExport = $canView && $this->sourceExportAllowed(
-                $definition,
-                $permissions,
-                $operation,
-                $exportFormat,
-            );
-
-            return new ReportVisibility(
-                $canView,
-                $canView,
-                $canExport,
-                $canExport,
-                false,
-                false,
-                false,
-            );
-        }
-
-        $canView = $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::VIEW))
-            && $this->has($permissions, $policy->viewPermissions);
-        $canExport = $canView
-            && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::EXPORT))
-            && $this->has($permissions, $policy->exportPermissions);
-
-        return new ReportVisibility(
-            $canView,
-            $canView && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::RUN)),
-            $canExport,
-            $canExport && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::DOWNLOAD)),
-            $canView && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::MANAGE)),
-            $canView
-                && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::VIEW_SENSITIVE))
-                && $this->has($permissions, $policy->sensitivePermissions),
-            $canView
-                && $this->has($permissions, ReportingPermissionMatrix::requiredFor(ReportOperation::VIEW_AUDIT))
-                && $this->has($permissions, $policy->auditPermissions),
-        );
-    }
-
-    private function sourceExportAllowed(
-        ReportDefinition $definition,
-        array $permissions,
-        ReportOperation $operation,
-        ?string $exportFormat,
-    ): bool {
-        if ($exportFormat !== null) {
-            if (! in_array($exportFormat, $definition->formats, true)) {
-                return false;
-            }
-
-            $permission = match ($exportFormat) {
-                'xlsx' => 'act_reports.export.excel',
-                'pdf' => 'act_reports.export.pdf',
-                default => null,
-            };
-
-            return $permission !== null
-                && in_array($permission, $definition->permissionPolicy->exportPermissions, true)
-                && isset($permissions[$permission]);
-        }
-
-        if (in_array($operation, [ReportOperation::EXPORT, ReportOperation::DOWNLOAD], true)) {
-            return false;
-        }
-
-        foreach ($definition->permissionPolicy->exportPermissions as $permission) {
-            if (isset($permissions[$permission])) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private function reloadActor(ReportExecutionContext $context): ReportActor
     {
         try {
@@ -157,17 +80,6 @@ final readonly class ReportAccessService
                 previous: $exception,
             );
         }
-    }
-
-    private function has(array $permissions, array $required): bool
-    {
-        foreach ($required as $permission) {
-            if (! isset($permissions[$permission])) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private function assertSourceAccessible(

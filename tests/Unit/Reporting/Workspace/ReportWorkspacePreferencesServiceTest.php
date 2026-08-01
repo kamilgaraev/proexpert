@@ -6,6 +6,8 @@ namespace Tests\Unit\Reporting\Workspace;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceAccessResolver;
 use App\BusinessModules\Core\Reporting\Application\Workspace\ReportWorkspacePreferencesService;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
@@ -22,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use Closure;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\DeterministicReportModuleEntitlement;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
@@ -270,7 +273,13 @@ final class ReportWorkspacePreferencesServiceTest extends TestCase
             public function assertAccessible(ReportExecutionContext $context, ReportDefinition $definition, ReportSourceRef $source): void {}
         };
 
-        return new ReportWorkspacePreferencesService($store, $definitions, new ReportAccessService($loader, $resolver));
+        return new ReportWorkspacePreferencesService($store, $definitions, new ReportAccessService(
+            $loader,
+            $resolver,
+            new ReportDefinitionVisibilityResolver(
+                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement),
+            ),
+        ));
     }
 
     private function definitions(array $codes): ReportDefinitionRegistry

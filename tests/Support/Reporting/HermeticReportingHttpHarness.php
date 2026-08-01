@@ -7,10 +7,13 @@ namespace Tests\Support\Reporting;
 use App\BusinessModules\Core\Reporting\Application\Access\OrganizationReportScopeResolver;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationSubject;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModuleEntitlement;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloadLinkAction;
@@ -27,22 +30,26 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunActio
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportHttpAuthorizationTargetResolver;
 use App\BusinessModules\Core\Reporting\ReportingContractsServiceProvider;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -103,13 +110,15 @@ final class HermeticReportingHttpHarness
 
     private readonly DeterministicModulePermissionService $modules;
 
+    private readonly HermeticReportModuleEntitlement $reportModules;
+
     private readonly DeterministicReportActorLoader $actors;
 
     private readonly FakeReportingActions $actions;
 
     private readonly string $initialOutputFingerprint;
 
-    public function __construct()
+    public function __construct(private readonly bool $sourceMode = false)
     {
         $this->basePath = dirname(__DIR__, 3);
         $this->boundaries = new HermeticBoundaryLedger;
@@ -156,9 +165,13 @@ final class HermeticReportingHttpHarness
 
         $this->authorization = new DeterministicAuthorizationService;
         $this->modules = new DeterministicModulePermissionService;
+        $this->reportModules = new HermeticReportModuleEntitlement;
         $this->actors = new DeterministicReportActorLoader;
         $app->instance(AuthorizationService::class, $this->authorization);
         $app->instance(ModulePermissionService::class, $this->modules);
+        $app->instance(ReportModuleEntitlement::class, $this->reportModules);
+        $app->singleton(ReportDefinitionModuleAuthorizer::class);
+        $app->singleton(ReportDefinitionVisibilityResolver::class);
         $app->instance(ReportActorLoader::class, $this->actors);
         $app->singleton(OrganizationReportScopeResolver::class);
 
@@ -188,6 +201,15 @@ final class HermeticReportingHttpHarness
     public function router(): Router
     {
         return $this->router;
+    }
+
+    public function sourceModeBoundaryComponents(): array
+    {
+        return [
+            'target_resolver' => $this->app->make(ReportHttpAuthorizationTargetResolver::class)::class,
+            'orchestrator' => $this->app->make(ReportHttpAuthorizationOrchestrator::class)::class,
+            'visibility_resolver' => $this->app->make(ReportDefinitionVisibilityResolver::class)::class,
+        ];
     }
 
     public function productionTopologySnapshot(): array
@@ -393,6 +415,7 @@ final class HermeticReportingHttpHarness
         [$permissions, $module, $requests, $actorStates] = $this->authorizationScenario($caseId);
         $this->authorization->permissions = $permissions;
         $this->modules->allowed = $module;
+        $this->reportModules->states = [$module];
         $this->actors->states = $actorStates;
 
         $responses = [];
@@ -438,6 +461,7 @@ final class HermeticReportingHttpHarness
             'reports.download',
         ];
         $this->modules->allowed = true;
+        $this->reportModules->states = [true];
         $this->actors->states = ['active'];
         $requests = $this->malformedScenario($caseId);
         $responses = [];
@@ -457,6 +481,33 @@ final class HermeticReportingHttpHarness
             'action_calls' => $this->actionCallCount(),
             'actor_loads' => $this->actors->loads,
             'assertions' => 6,
+        ];
+    }
+
+    public function runSourceModeAuthorizationCase(string $caseId): array
+    {
+        if (! $this->sourceMode) {
+            throw new LogicException('REPORT_HERMETIC_SOURCE_MODE_REQUIRED');
+        }
+
+        [$permissions, $moduleStates, $request] = $this->sourceModeScenario($caseId);
+        $this->authorization->permissions = $permissions;
+        $this->modules->allowed = true;
+        $this->reportModules->states = $moduleStates;
+        $this->actors->states = ['active'];
+
+        $response = $this->dispatch(...$request);
+        if ($this->boundaries->breaches() !== []) {
+            throw new LogicException('REPORT_HERMETIC_BOUNDARY_BREACH');
+        }
+
+        return [
+            'case_id' => $caseId,
+            'status' => $response['status'],
+            'code' => $response['code'],
+            'action_calls' => $this->actionCallCount(),
+            'actor_loads' => $this->actors->loads,
+            'module_checks' => $this->reportModules->checks,
         ];
     }
 
@@ -580,16 +631,23 @@ final class HermeticReportingHttpHarness
 
     private function bindHttpAuthorizations(Application $app): void
     {
-        $definition = (new ReportDefinitionBuilder)->payload();
+        $definition = $this->authorizationDefinition();
         $scope = new ReportScope(1, [1], [], [], new \DateTimeZone('UTC'));
         $run = (new ReportRunBuilder)->ready();
         if (! $run->resultMetadata instanceof \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata) {
             throw new LogicException('REPORT_HERMETIC_SNAPSHOT_INVALID');
         }
         $snapshot = $run->resultMetadata->snapshot;
-        $targets = new HermeticReportAuthorizationTargetResolver($definition, $snapshot);
         $subjects = new HermeticReportAuthorizationSubjectReader($definition, $scope, $snapshot);
-        $authorizer = new HermeticCurrentReportScopeAuthorizer($this->authorization, $this->actors);
+        $targets = new LaravelReportHttpAuthorizationTargetResolver(
+            new HermeticReportDefinitionRegistry(new PublishedReportDefinition($definition)),
+            $subjects,
+        );
+        $authorizer = new HermeticCurrentReportScopeAuthorizer(
+            $this->authorization,
+            $this->actors,
+            $app->make(ReportDefinitionVisibilityResolver::class),
+        );
         $app->instance(ReportHttpAuthorizationTargetResolver::class, $targets);
 
         $app->instance(
@@ -602,6 +660,25 @@ final class HermeticReportingHttpHarness
                 $authorizer,
             ),
         );
+    }
+
+    private function authorizationDefinition(): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition
+    {
+        if (! $this->sourceMode) {
+            return (new ReportDefinitionBuilder)->payload();
+        }
+
+        return (new ReportDefinitionBuilder)
+            ->sourceModule('act-reporting')
+            ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
+            ->formats(['xlsx', 'pdf'])
+            ->permissionPolicy(new ReportPermissionPolicy(
+                ['act_reports.view'],
+                ['act_reports.export.excel', 'act_reports.export.pdf'],
+                [],
+                [],
+            ))
+            ->payload();
     }
 
     private static function actionInterfaces(): array
@@ -750,6 +827,44 @@ final class HermeticReportingHttpHarness
                 ['active', 'deleted'],
             ],
             default => throw new LogicException('Unknown authorization case.'),
+        };
+    }
+
+    private function sourceModeScenario(string $caseId): array
+    {
+        $view = ['admin.access', 'act_reports.view'];
+        $excel = [...$view, 'act_reports.export.excel'];
+        $pdf = [...$view, 'act_reports.export.pdf'];
+        $all = [...$excel, 'act_reports.export.pdf'];
+        $runId = self::RUN_ID;
+        $exportId = self::EXPORT_ID;
+        $xlsxBody = [...$this->validExportBody(), 'format' => 'xlsx'];
+        $pdfBody = [...$this->validExportBody(), 'format' => 'pdf'];
+
+        return match ($caseId) {
+            'catalog' => [$view, [true], ['GET', '/api/v1/admin/reports/catalog']],
+            'run_create' => [$view, [true], ['POST', '/api/v1/admin/reports/report/runs', $this->validRunBody()]],
+            'run_show' => [$view, [true], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
+            'run_rows' => [$view, [true], ['GET', '/api/v1/admin/reports/runs/'.$runId.'/rows?cursor&limit=50&sort_by=name&sort_dir=asc']],
+            'run_drill_down' => [$view, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/drill-down', [
+                'token' => 'source-token',
+                'cursor' => null,
+                'limit' => 50,
+            ]]],
+            'run_retry' => [$view, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/retry']],
+            'run_cancel' => [$view, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/cancel']],
+            'export_create_xlsx' => [$excel, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/exports', $xlsxBody]],
+            'export_create_pdf' => [$pdf, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/exports', $pdfBody]],
+            'export_show' => [$view, [true], ['GET', '/api/v1/admin/reports/exports/'.$exportId]],
+            'export_retry' => [$excel, [true], ['POST', '/api/v1/admin/reports/exports/'.$exportId.'/retry']],
+            'export_cancel' => [$excel, [true], ['POST', '/api/v1/admin/reports/exports/'.$exportId.'/cancel']],
+            'export_download' => [$excel, [true], ['POST', '/api/v1/admin/reports/exports/'.$exportId.'/download-link']],
+            'module_revoked_before_http' => [$all, [false], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
+            'module_revoked_at_final_decision' => [$all, [true, false], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
+            'view_permission_revoked' => [['admin.access', 'act_reports.export.excel'], [true], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
+            'xlsx_permission_revoked' => [$view, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/exports', $xlsxBody]],
+            'pdf_permission_cannot_export_xlsx' => [$pdf, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/exports', $xlsxBody]],
+            default => throw new LogicException('Unknown source-mode authorization case.'),
         };
     }
 
@@ -1032,52 +1147,27 @@ final class HermeticReadonlyConnection extends Connection
     }
 }
 
-final readonly class HermeticReportAuthorizationTargetResolver implements ReportHttpAuthorizationTargetResolver
+final readonly class HermeticReportDefinitionRegistry implements ReportDefinitionRegistry
 {
-    public function __construct(
-        private \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $definition,
-        private ReportSnapshotRef $snapshot,
-    ) {}
+    public function __construct(private PublishedReportDefinition $definition) {}
 
-    public function createRun(string $reportCode): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
+    public function published(string $code): PublishedReportDefinition
     {
-        return $this->target(ReportOperation::RUN);
+        if ($code !== $this->definition->code) {
+            throw new LogicException('REPORT_HERMETIC_DEFINITION_NOT_FOUND');
+        }
+
+        return $this->definition;
     }
 
-    public function run(string $runId, ReportOperation $operation): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
+    public function publishedCodes(): array
     {
-        return $this->target($operation);
+        return [$this->definition->code];
     }
 
-    public function createExport(string $runId, ?string $format): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
+    public function manifestSha256(): Sha256Hash
     {
-        return $this->target(ReportOperation::EXPORT, $format);
-    }
-
-    public function export(string $exportId, ReportOperation $operation): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
-    {
-        return $this->target($operation, $this->definition->formats[0]);
-    }
-
-    public function catalog(): array
-    {
-        return [new \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget(
-            $this->definition,
-            ReportOperation::VIEW,
-            null,
-        )];
-    }
-
-    private function target(
-        ReportOperation $operation,
-        ?string $format = null,
-    ): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget {
-        return new \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget(
-            $this->definition,
-            $operation,
-            $operation === ReportOperation::RUN ? null : $this->snapshot,
-            $format,
-        );
+        return $this->definition->definitionHash;
     }
 }
 
@@ -1123,6 +1213,7 @@ final readonly class HermeticCurrentReportScopeAuthorizer implements CurrentRepo
     public function __construct(
         private DeterministicAuthorizationService $authorization,
         private DeterministicReportActorLoader $actors,
+        private ReportDefinitionVisibilityResolver $visibilityResolver,
     ) {}
 
     public function authorizeCatalog(
@@ -1202,18 +1293,16 @@ final readonly class HermeticCurrentReportScopeAuthorizer implements CurrentRepo
         ReportScope $scope,
         \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget $target,
     ): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization {
-        $permissions = $this->authorization->permissions;
-        $canView = in_array('reports.view', $permissions, true);
-        $canExport = $canView && in_array('reports.export', $permissions, true);
-
-        $visibility = new ReportVisibility(
-            $canView,
-            $canView && in_array('reports.run', $permissions, true),
-            $canExport,
-            $canExport && in_array('reports.download', $permissions, true),
-            $canView && in_array('reports.manage', $permissions, true),
-            false,
-            false,
+        $visibility = $this->visibilityResolver->resolve(
+            $scope->organizationId,
+            $target->definition,
+            $target->operation,
+            $target->exportFormat,
+            fn (string $permission): bool => in_array(
+                $permission,
+                $this->authorization->permissions,
+                true,
+            ),
         );
         $allowed = match ($target->operation) {
             ReportOperation::VIEW, ReportOperation::DRILL_DOWN => $visibility->canView,
@@ -1360,6 +1449,23 @@ final class DeterministicModulePermissionService extends ModulePermissionService
     public function userHasModuleAccess(User $user, string $moduleSlug): bool
     {
         return $moduleSlug === 'reports' && $this->allowed;
+    }
+}
+
+final class HermeticReportModuleEntitlement implements ReportModuleEntitlement
+{
+    public array $states = [true];
+
+    public int $checks = 0;
+
+    public function organizationHasModule(int $organizationId, string $moduleSlug): bool
+    {
+        $state = $this->states[min($this->checks, count($this->states) - 1)] ?? false;
+        $this->checks++;
+
+        return $organizationId === 1
+            && in_array($moduleSlug, ['reports', 'act-reporting'], true)
+            && $state;
     }
 }
 

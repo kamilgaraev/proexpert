@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Exports;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationSubject;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
@@ -23,6 +25,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -31,6 +34,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
@@ -46,6 +50,8 @@ use DateTimeImmutable;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use Tests\Support\Reporting\DeterministicReportModuleEntitlement;
+use Tests\Support\Reporting\PolicyBackedCurrentReportAuthorizer;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 use Tests\Support\Reporting\ReportExportBuilder;
@@ -113,6 +119,39 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         self::assertSame(0, $result->skipped);
         self::assertSame(1, $result->deleted);
         self::assertSame(['claim', 'delete', 'seal'], $mutations);
+    }
+
+    public function test_reconciliation_denies_source_export_after_module_revocation(): void
+    {
+        [$context, $export, $source, $published, $subject] = $this->fixture(true);
+        $recovery = $this->createMock(ReportCompletedArtifactRecoveryStore::class);
+        $exports = $this->createMock(ReportExportStore::class);
+        $exports->expects(self::once())->method('get')->willReturn($export);
+        $files = $this->createMock(FileService::class);
+        $authorizer = new PolicyBackedCurrentReportAuthorizer(
+            new ReportDefinitionVisibilityResolver(
+                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement([], [1])),
+            ),
+            ['act_reports.view', 'act_reports.export.excel'],
+        );
+
+        $this->expectException(ReportContractException::class);
+        $this->expectExceptionMessage('REPORT_SCOPE_FORBIDDEN');
+
+        $this->service(
+            [],
+            $recovery,
+            $exports,
+            $files,
+            $source,
+            $published,
+            $subject,
+            $authorizer,
+        )->reconcile(
+            $context,
+            self::EXPORT_ID,
+            new DateTimeImmutable('2026-01-01T00:02:00Z'),
+        );
     }
 
     public function test_metadata_drift_fails_before_claim_seal_or_delete(): void
@@ -339,7 +378,7 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         return $authorizer;
     }
 
-    private function fixture(): array
+    private function fixture(bool $sourceMode = false): array
     {
         $scope = new ReportScope(1, [1], [], [], new DateTimeZone('UTC'));
         $base = (new ReportExecutionContextBuilder)->build();
@@ -349,14 +388,26 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
             ->visibility($base->visibility)
             ->authorization($base->authorization)
             ->build();
-        $published = (new ReportDefinitionBuilder)
-            ->code('report')
-            ->published();
+        $definition = (new ReportDefinitionBuilder)->code('report');
+        if ($sourceMode) {
+            $definition = $definition
+                ->sourceModule('act-reporting')
+                ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
+                ->formats(['xlsx'])
+                ->permissionPolicy(new ReportPermissionPolicy(
+                    ['act_reports.view'],
+                    ['act_reports.export.excel'],
+                    [],
+                    [],
+                ));
+        }
+        $published = $definition->published();
         $source = $this->source($scope, $published);
         $export = (new ReportExportBuilder)
             ->id(self::EXPORT_ID)
             ->runId(self::RUN_ID)
             ->status(ReportExportStatus::UPLOADING)
+            ->format($sourceMode ? 'xlsx' : 'csv')
             ->exportHash(new Sha256Hash(str_repeat('d', 64)))
             ->createdAt(new DateTimeImmutable('2026-01-01T00:00:00Z'))
             ->updatedAt(new DateTimeImmutable('2026-01-01T00:01:00Z'))

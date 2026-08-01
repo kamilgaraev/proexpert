@@ -6,6 +6,8 @@ namespace Tests\Feature\Reporting\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportPermissionDecision;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportScopedResourceAccessDecision;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportScopedResourceAuthorizer;
@@ -27,6 +29,7 @@ use DateTimeZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\Reporting\DeterministicReportModuleEntitlement;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\TestCase;
@@ -412,6 +415,9 @@ final class LaravelCurrentReportScopeAuthorizationRaceTest extends TestCase
         return new LaravelCurrentReportScopeAuthorizer(
             $evaluator,
             new LaravelReportScopedResourceAuthorizerRegistry($resources),
+            new ReportDefinitionVisibilityResolver(
+                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement),
+            ),
         );
     }
 

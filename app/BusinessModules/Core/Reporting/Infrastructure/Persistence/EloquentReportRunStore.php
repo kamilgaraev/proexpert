@@ -569,6 +569,7 @@ final class EloquentReportRunStore implements ReportRunStore
         $definition = $query->definition;
 
         return [
+            'snapshot_schema' => ReportDefinitionSnapshotDecoder::CURRENT_SCHEMA,
             'code' => $definition->code,
             'definition_hash' => $definition->definitionHash->value,
             'contract_version' => $definition->contractVersion,

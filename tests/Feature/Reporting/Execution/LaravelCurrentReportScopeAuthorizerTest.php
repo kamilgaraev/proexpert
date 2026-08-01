@@ -7,6 +7,8 @@ namespace Tests\Feature\Reporting\Execution;
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportPermissionDecision;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
@@ -30,6 +32,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use ReflectionMethod;
+use Tests\Support\Reporting\DeterministicReportModuleEntitlement;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\TestCase;
 
@@ -549,6 +552,9 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         return new LaravelCurrentReportScopeAuthorizer(
             $evaluator ?? new AlwaysGrantedCurrentReportEvaluator,
             new LaravelReportScopedResourceAuthorizerRegistry([]),
+            new ReportDefinitionVisibilityResolver(
+                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement),
+            ),
         );
     }
 

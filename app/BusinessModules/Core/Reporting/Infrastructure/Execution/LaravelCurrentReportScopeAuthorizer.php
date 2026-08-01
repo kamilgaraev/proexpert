@@ -6,7 +6,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
-use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
@@ -19,7 +19,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
 use App\Models\Organization;
@@ -36,6 +35,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
     public function __construct(
         private CurrentReportAbacEvaluator $abac,
         private LaravelReportScopedResourceAuthorizerRegistry $resources,
+        private ReportDefinitionVisibilityResolver $visibilityResolver,
     ) {}
 
     public function authorizeForOrganization(
@@ -248,101 +248,28 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         CurrentReportAuthorizationTarget $target,
         DateTimeImmutable $occurredAt,
     ): array {
-        $policy = $target->definition->permissionPolicy;
-        if ($target->definition->coreAccessMode === ReportCoreAccessMode::SOURCE_MODULE_REPORT) {
-            $view = $this->allPermissionsGranted(
+        $visibility = $this->visibilityResolver->resolve(
+            $scope->organizationId,
+            $target->definition,
+            $target->operation,
+            $target->exportFormat,
+            fn (string $permission): bool => $this->grantedForEveryFact(
                 $actorId,
                 $scope,
                 $occurredAt,
-                $policy->viewPermissions,
-            );
-            $export = $view && $this->sourceExportAllowed(
-                $actorId,
-                $scope,
-                $target,
-                $occurredAt,
-            );
-
-            return [
-                'view' => $view,
-                'run' => $view,
-                'export' => $export,
-                'download' => $export,
-                'manage' => false,
-                'sensitive' => false,
-                'audit' => false,
-            ];
-        }
-
-        $checks = [
-            ...ReportingPermissionMatrix::permissionChecks(),
-            'definition_view' => $policy->viewPermissions,
-            'definition_export' => $policy->exportPermissions,
-            'definition_sensitive' => $policy->sensitivePermissions,
-            'definition_audit' => $policy->auditPermissions,
-        ];
-        $result = [];
-        foreach ($checks as $key => $required) {
-            $result[$key] = $this->allPermissionsGranted($actorId, $scope, $occurredAt, $required);
-        }
-        $view = $result['base_view'] && $result['definition_view'];
-        $export = $view && $result['export'] && $result['definition_export'];
+                $permission,
+            ),
+        );
 
         return [
-            'view' => $view,
-            'run' => $view && $result['run'],
-            'export' => $export,
-            'download' => $export && $result['download'],
-            'manage' => $view && $result['manage'],
-            'sensitive' => $view && $result['sensitive'] && $result['definition_sensitive'],
-            'audit' => $view && $result['audit'] && $result['definition_audit'],
+            'view' => $visibility->canView,
+            'run' => $visibility->canRun,
+            'export' => $visibility->canExport,
+            'download' => $visibility->canDownload,
+            'manage' => $visibility->canManage,
+            'sensitive' => $visibility->canViewSensitive,
+            'audit' => $visibility->canViewAudit,
         ];
-    }
-
-    private function sourceExportAllowed(
-        int $actorId,
-        ReportScope $scope,
-        CurrentReportAuthorizationTarget $target,
-        DateTimeImmutable $occurredAt,
-    ): bool {
-        if ($target->exportFormat !== null) {
-            $permission = match ($target->exportFormat) {
-                'xlsx' => 'act_reports.export.excel',
-                'pdf' => 'act_reports.export.pdf',
-                default => null,
-            };
-
-            return $permission !== null
-                && in_array($permission, $target->definition->permissionPolicy->exportPermissions, true)
-                && $this->grantedForEveryFact($actorId, $scope, $occurredAt, $permission);
-        }
-
-        if (in_array($target->operation, [ReportOperation::EXPORT, ReportOperation::DOWNLOAD], true)) {
-            return false;
-        }
-
-        foreach ($target->definition->permissionPolicy->exportPermissions as $permission) {
-            if ($this->grantedForEveryFact($actorId, $scope, $occurredAt, $permission)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function allPermissionsGranted(
-        int $actorId,
-        ReportScope $scope,
-        DateTimeImmutable $occurredAt,
-        array $permissions,
-    ): bool {
-        foreach ($permissions as $permission) {
-            if (! is_string($permission) || ! $this->grantedForEveryFact($actorId, $scope, $occurredAt, $permission)) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private function grantedForEveryFact(

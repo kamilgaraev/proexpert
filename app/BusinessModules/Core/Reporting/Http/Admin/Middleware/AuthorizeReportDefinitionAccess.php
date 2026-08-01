@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Middleware;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\Models\User;
-use App\Modules\Services\ModulePermissionService;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -22,7 +22,7 @@ final readonly class AuthorizeReportDefinitionAccess
 
     public function __construct(
         private ReportHttpAuthorizationTargetResolver $targets,
-        private ModulePermissionService $modules,
+        private ReportDefinitionModuleAuthorizer $modules,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -32,6 +32,10 @@ final readonly class AuthorizeReportDefinitionAccess
             if (! $actor instanceof User) {
                 $this->deny();
             }
+            $organizationId = $request->attributes->get('current_organization_id');
+            if (! is_int($organizationId) || $organizationId <= 0) {
+                $this->deny();
+            }
 
             $routeName = $request->route()?->getName();
             if (! is_string($routeName)) {
@@ -39,14 +43,14 @@ final readonly class AuthorizeReportDefinitionAccess
             }
 
             if ($routeName === 'admin.reports.catalog') {
-                $hashes = $this->catalogHashes($actor);
+                $hashes = $this->catalogHashes($organizationId);
                 if ($hashes === []) {
                     $this->deny();
                 }
                 $request->attributes->set(self::ACCESSIBLE_DEFINITION_HASHES_ATTRIBUTE, $hashes);
             } else {
                 $target = $this->target($request, $routeName);
-                if (! $this->modules->userHasModuleAccess($actor, $target->definition->sourceModule)) {
+                if (! $this->modules->allows($organizationId, $target->definition)) {
                     $this->deny();
                 }
             }
@@ -98,7 +102,7 @@ final readonly class AuthorizeReportDefinitionAccess
         };
     }
 
-    private function catalogHashes(User $actor): array
+    private function catalogHashes(int $organizationId): array
     {
         $hashes = [];
         $moduleAccess = [];
@@ -110,7 +114,7 @@ final readonly class AuthorizeReportDefinitionAccess
             }
 
             $module = $target->definition->sourceModule;
-            $moduleAccess[$module] ??= $this->modules->userHasModuleAccess($actor, $module);
+            $moduleAccess[$module] ??= $this->modules->allows($organizationId, $target->definition);
             if ($moduleAccess[$module]) {
                 $hashes[$target->definition->definitionHash->value] = true;
             }
@@ -126,10 +130,32 @@ final readonly class AuthorizeReportDefinitionAccess
     {
         $value = $request->route($key);
         if (! is_string($value) || trim($value) === '') {
-            $this->deny();
+            $this->invalidRouteId($key);
+        }
+        if ($key === 'reportCode') {
+            if (preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $value) !== 1) {
+                $this->invalidRouteId($key);
+            }
+        } elseif (preg_match('/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/D', $value) !== 1) {
+            $this->invalidRouteId($key);
         }
 
         return $value;
+    }
+
+    private function invalidRouteId(string $key): never
+    {
+        $field = match ($key) {
+            'reportCode' => 'report_code',
+            'runId' => 'run_id',
+            'exportId' => 'export_id',
+            default => 'route_id',
+        };
+
+        throw ReportContractException::fromCode(
+            ReportErrorCode::REPORT_REQUEST_INVALID,
+            ['fields' => [$field]],
+        );
     }
 
     private function deny(): never

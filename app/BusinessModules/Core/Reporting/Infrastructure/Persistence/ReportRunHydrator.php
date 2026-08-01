@@ -44,14 +44,6 @@ use Throwable;
 
 final class ReportRunHydrator
 {
-    private const DEFINITION_KEYS = [
-        'code', 'definition_hash', 'contract_version', 'formula_version',
-        'source_schema_version', 'renderer_version', 'filters', 'columns',
-        'sorts', 'formats', 'permission_policy', 'snapshot_classification',
-        'output_classification', 'publication_readiness',
-        'supports_subscriptions', 'source_module', 'core_access_mode',
-    ];
-
     public function hydrate(ReportRunRecord $record, string $httpDisposition, int $pollAfterMs): ReportRun
     {
         try {
@@ -106,11 +98,13 @@ final class ReportRunHydrator
     public function query(ReportRunRecord $record): ReportQuery
     {
         try {
-            $snapshot = $this->closedArray($record->definition_snapshot, self::DEFINITION_KEYS);
-            $snapshotCanonical = \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($snapshot);
+            $persistedSnapshot = $this->array($record->definition_snapshot);
+            $snapshotCanonical = \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($persistedSnapshot);
             if (! hash_equals(hash('sha256', $snapshotCanonical), $this->string($record->definition_snapshot_hash))) {
                 throw new \InvalidArgumentException('report_definition_snapshot_digest_mismatch');
             }
+            $decodedSnapshot = (new ReportDefinitionSnapshotDecoder)->decode($persistedSnapshot);
+            $snapshot = $decodedSnapshot['payload'];
             $policy = $this->closedArray($snapshot['permission_policy'], [
                 'view_permissions', 'export_permissions', 'sensitive_permissions', 'audit_permissions',
             ]);

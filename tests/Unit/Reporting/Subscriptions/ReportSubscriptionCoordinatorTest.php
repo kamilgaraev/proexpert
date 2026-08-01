@@ -6,6 +6,8 @@ namespace Tests\Unit\Reporting\Subscriptions;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceAccessResolver;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -36,6 +38,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\DeterministicReportModuleEntitlement;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
@@ -254,6 +257,9 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
         return new ReportAccessService(
             new FakeReportActorLoader($actor),
             new FakeReportSourceAccessResolver,
+            new ReportDefinitionVisibilityResolver(
+                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement),
+            ),
         );
     }
 }

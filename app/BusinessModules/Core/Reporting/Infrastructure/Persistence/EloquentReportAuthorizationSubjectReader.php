@@ -199,7 +199,7 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
             throw new \InvalidArgumentException('report_persistence_string_invalid');
         }
 
-return $value;
+        return $value;
     }
 
     private function array(mixed $value): array
@@ -208,7 +208,7 @@ return $value;
             throw new \InvalidArgumentException('report_persistence_array_invalid');
         }
 
-return $value;
+        return $value;
     }
 
     private function instant(mixed $value): DateTimeImmutable

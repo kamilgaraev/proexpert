@@ -6,7 +6,10 @@ namespace Tests\Unit\Reporting\Access;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceAccessResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModuleEntitlement;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
@@ -275,7 +278,11 @@ final class ReportAccessServiceTest extends TestCase
                 throw new \RuntimeException('foreign_source_identifier');
             }
         };
-        $service = new ReportAccessService($this->loader($permissions), $resolver);
+        $service = new ReportAccessService(
+            $this->loader($permissions),
+            $resolver,
+            $this->moduleAuthorizer(),
+        );
         $context = $this->context($permissions);
         $definition = $this->definition();
 
@@ -299,7 +306,11 @@ final class ReportAccessServiceTest extends TestCase
         };
         $this->expectScopeForbidden();
 
-        (new ReportAccessService($loader, $this->sourceResolver(true)))->assertOperation(
+        (new ReportAccessService(
+            $loader,
+            $this->sourceResolver(true),
+            $this->moduleAuthorizer(),
+        ))->assertOperation(
             $this->context($permissions),
             $this->definition(),
             ReportOperation::DOWNLOAD,
@@ -331,7 +342,11 @@ final class ReportAccessServiceTest extends TestCase
                 $this->source = $source;
             }
         };
-        $service = new ReportAccessService($this->loader($permissions), $resolver);
+        $service = new ReportAccessService(
+            $this->loader($permissions),
+            $resolver,
+            $this->moduleAuthorizer(),
+        );
 
         $service->assertOperation($context, $definition, ReportOperation::DRILL_DOWN, $source);
 
@@ -353,7 +368,11 @@ final class ReportAccessServiceTest extends TestCase
                 );
             }
         };
-        $service = new ReportAccessService($loader, $this->sourceResolver(true));
+        $service = new ReportAccessService(
+            $loader,
+            $this->sourceResolver(true),
+            $this->moduleAuthorizer(),
+        );
 
         $error = $this->captureDenial(fn () => $service->assertOperation(
             $this->context($permissions),
@@ -438,9 +457,46 @@ final class ReportAccessServiceTest extends TestCase
         );
     }
 
-    private function service(array $permissions, bool $sourceAllowed = true): ReportAccessService
+    public function test_revoked_definition_module_denies_direct_application_service_call(): void
     {
-        return new ReportAccessService($this->loader($permissions), $this->sourceResolver($sourceAllowed));
+        $permissions = ['act_reports.view'];
+        $this->expectScopeForbidden();
+
+        $this->service($permissions, true, false)->assertOperation(
+            $this->context($permissions),
+            $this->sourceModuleDefinition(),
+            ReportOperation::VIEW,
+            null,
+        );
+    }
+
+    private function service(
+        array $permissions,
+        bool $sourceAllowed = true,
+        bool $moduleAllowed = true,
+    ): ReportAccessService {
+        return new ReportAccessService(
+            $this->loader($permissions),
+            $this->sourceResolver($sourceAllowed),
+            $this->moduleAuthorizer($moduleAllowed),
+        );
+    }
+
+    private function moduleAuthorizer(bool $allowed = true): ReportDefinitionVisibilityResolver
+    {
+        return new ReportDefinitionVisibilityResolver(
+            new ReportDefinitionModuleAuthorizer(new class($allowed) implements ReportModuleEntitlement
+            {
+                public function __construct(private readonly bool $allowed) {}
+
+                public function organizationHasModule(int $organizationId, string $moduleSlug): bool
+                {
+                    return $organizationId === 1
+                        && in_array($moduleSlug, ['reports', 'act-reporting'], true)
+                        && $this->allowed;
+                }
+            }),
+        );
     }
 
     private function loader(array $permissions): ReportActorLoader
