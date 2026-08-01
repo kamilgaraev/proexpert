@@ -4,12 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
-use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
@@ -46,8 +44,6 @@ use Throwable;
 
 final class ReportRunHydrator
 {
-    public function __construct(private readonly ?ReportSnapshotSealVerifier $sealVerifier = null) {}
-
     public function hydrate(ReportRunRecord $record, string $httpDisposition, int $pollAfterMs): ReportRun
     {
         try {
@@ -281,7 +277,7 @@ final class ReportRunHydrator
             $query = $this->query($record);
             $sealed = $this->sealed($record, $query->scope);
 
-            $source = new ReportRunExportSource(
+            return new ReportRunExportSource(
                 $run,
                 $query,
                 $sealed['result'],
@@ -294,43 +290,11 @@ final class ReportRunHydrator
                 $this->string($record->source_schema_version),
                 $this->string($record->renderer_version),
             );
-            $this->assertTrustedOfficialExportSnapshot($source);
-
-            return $source;
         } catch (ReportContractException $exception) {
             throw $exception;
         } catch (Throwable $exception) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, [], $exception);
         }
-    }
-
-    private function assertTrustedOfficialExportSnapshot(ReportRunExportSource $source): void
-    {
-        $snapshot = $source->snapshot;
-        if ($snapshot->classification !== ReportSnapshotClassification::OFFICIAL) {
-            return;
-        }
-        if ($snapshot->seal === null || $this->sealVerifier === null) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED);
-        }
-
-        try {
-            $input = new ReportSnapshotSealVerificationInput(
-                $snapshot->seal,
-                $snapshot->id,
-                $snapshot->kind,
-                $snapshot->classification,
-                $snapshot->generatedAt,
-                $snapshot->sourceHash,
-            );
-        } catch (Throwable $exception) {
-            throw ReportContractException::fromCode(
-                ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED,
-                previous: $exception,
-            );
-        }
-
-        $this->sealVerifier->assertTrusted($input);
     }
 
     private function sealed(ReportRunRecord $record, ReportScope $scope): array

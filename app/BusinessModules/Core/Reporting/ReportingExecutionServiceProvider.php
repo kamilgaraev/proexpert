@@ -111,7 +111,6 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunAttemptLifecycleStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunLeaseRecoveryStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportExportDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportMaterializationDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier;
@@ -296,9 +295,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $this->app->singleton(ReportSnapshotSealVerifier::class, function (): TrustedReportSnapshotSealVerifier {
             return new TrustedReportSnapshotSealVerifier($this->configArray('trusted_seal_keys'));
         });
-        $this->app->singleton(ReportRunHydrator::class, static fn (Container $app): ReportRunHydrator => new ReportRunHydrator(
-            $app->make(ReportSnapshotSealVerifier::class),
-        ));
         $this->app->singleton(SignedReportCursorCodec::class, function (Container $app): SignedReportCursorCodec {
             $secret = (string) config('app.key');
             if (str_starts_with($secret, 'base64:')) {

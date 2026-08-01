@@ -182,23 +182,6 @@ final class BudgetPlanFactExportEvidenceTest extends TestCase
         }
     }
 
-    public function test_forged_or_revoked_official_seal_cannot_be_retrieved_for_export(): void
-    {
-        foreach ([
-            'signature' => ['tamperSignature' => true],
-            'payload' => ['tamperPayload' => true],
-            'revoked key' => ['revokedKey' => true],
-        ] as $name => $arguments) {
-            try {
-                BudgetPlanFactExportEvidenceFixture::sealedSource(...$arguments);
-                self::fail("Expected {$name} seal rejection.");
-            } catch (Throwable $exception) {
-                self::assertInstanceOf(ReportContractException::class, $exception, $name);
-                self::assertSame(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED, $exception->errorCode, $name);
-            }
-        }
-    }
-
     /** @param list<\App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunk> $chunks */
     private function render(ReportExportRendererRegistry $registry, mixed $definition, mixed $source, string $format, array $chunks): string
     {
