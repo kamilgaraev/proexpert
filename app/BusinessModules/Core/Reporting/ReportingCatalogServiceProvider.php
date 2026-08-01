@@ -62,8 +62,8 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             new \App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog,
             new \App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy,
             new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher,
-            [],
-            [],
+            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements::requiredChecksByCode(),
+            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements::deliveryContractsByCode(),
             (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
         ));
         $this->app->singleton(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier::class, fn (): \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier => (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create());

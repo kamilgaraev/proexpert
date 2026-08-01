@@ -59,6 +59,58 @@ final class ReportPublicationReleaseIngestionServiceTest extends TestCase
         );
     }
 
+    public function test_rejects_a_historic_valid_bundle_when_checkout_sha_is_newer(): void
+    {
+        $fixture = ReportPublicationFixtureFactory::eligible();
+        $eligible = $fixture['eligible'];
+        [$proofPath, $artifactPath] = $this->writeBundle($eligible);
+        $registry = $this->createMock(ReportPublicationRegistry::class);
+        $registry->expects(self::never())->method('promote');
+
+        $this->expectExceptionMessage('report_publication_release_input_untrusted');
+
+        $this->service($fixture, $registry, $this->createMock(ReportPublicationFeatureStore::class))->ingest(
+            $proofPath,
+            $artifactPath,
+            $this->directory,
+            ReportPublicationReleaseArtifactTestFactory::releaseAdmission($fixture),
+            str_repeat('b', 40),
+        );
+    }
+
+    public function test_rejects_admission_with_missing_verified_check_before_promotion(): void
+    {
+        $fixture = ReportPublicationFixtureFactory::eligible();
+        $eligible = $fixture['eligible'];
+        [$proofPath, $artifactPath] = $this->writeBundle($eligible);
+        $base = ReportPublicationReleaseArtifactTestFactory::releaseAdmission($fixture);
+        $checks = $base->verifiedChecks;
+        array_pop($checks);
+        $admission = new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseAdmission(
+            $base->candidate,
+            $base->candidateDocument,
+            $base->binding,
+            $base->evidence,
+            $base->proofTemplate,
+            $checks,
+            $base->candidateManifestBytes,
+            $base->officialManifestBytes,
+            $base->previous,
+        );
+        $registry = $this->createMock(ReportPublicationRegistry::class);
+        $registry->expects(self::never())->method('promote');
+
+        $this->expectExceptionMessage('report_publication_release_input_untrusted');
+
+        $this->service($fixture, $registry, $this->createMock(ReportPublicationFeatureStore::class))->ingest(
+            $proofPath,
+            $artifactPath,
+            $this->directory,
+            $admission,
+            $eligible->release->gitSha,
+        );
+    }
+
     private function service(array $fixture, ReportPublicationRegistry $registry, ReportPublicationFeatureStore $features): ReportPublicationReleaseIngestionService
     {
         return new ReportPublicationReleaseIngestionService(

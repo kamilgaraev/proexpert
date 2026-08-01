@@ -75,6 +75,7 @@ final readonly class ReportPublicationReleaseIngestionService
         $subject = $artifact->payload()['subject'];
         $evidence = $artifact->payload()['evidence'];
         if (preg_match('/^[a-f0-9]{40}$/D', $expectedCommitSha) !== 1
+            || $admission->verifiedChecks !== ($proof['ci']['required_checks'] ?? null)
             || ! hash_equals($admission->candidate->code, $proof['code'])
             || ! hash_equals($proof['code'], $subject['code'])
             || ! hash_equals($bundle->proof->digest()->value, $subject['proof_sha256'])
@@ -91,7 +92,8 @@ final readonly class ReportPublicationReleaseIngestionService
             || ! hash_equals($proof['ci']['commit_sha'], $evidence['commit_sha'])
             || ! hash_equals($proof['ci']['completed_at_utc'], $evidence['completed_at_utc'])
             || ! hash_equals($proof['ci']['suite_sha256'], hash('sha256', CanonicalJson::encode($evidence)))
-            || array_keys($evidence['checks']) !== $proof['ci']['required_checks']) {
+            || array_keys($evidence['checks']) !== $proof['ci']['required_checks']
+            || array_values($evidence['checks']) !== array_fill(0, count($evidence['checks']), 'passed')) {
             throw new InvalidArgumentException('report_publication_release_input_untrusted');
         }
 
