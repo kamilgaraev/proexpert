@@ -6,7 +6,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
-use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceEmployeeService;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use App\Models\Organization;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
@@ -19,9 +19,10 @@ use Illuminate\Support\Facades\DB;
 
 final class WorkforceProService
 {
-    public function __construct(private readonly WorkforceEmployeeService $employeeService)
-    {
-    }
+    public function __construct(
+        private readonly WorkforceEmployeeService $employeeService,
+        private readonly WorkforceCapacityOwnerMutationBridge $capacityCapture,
+    ) {}
 
     public function paginateList(string $table, int $organizationId, int $perPage, ?string $search = null): LengthAwarePaginator
     {
@@ -45,8 +46,12 @@ final class WorkforceProService
                 'created_at' => now(),
                 'updated_at' => now(),
             ]));
+            $record = DB::table($table)->where('id', $id)->first();
+            if ($this->capacityCapture->supports($table)) {
+                $this->capacityCapture->afterMutation($table, $organizationId, null, (array) $record);
+            }
 
-            return $this->decorateRecord($table, $organizationId, DB::table($table)->where('id', $id)->first());
+            return $this->decorateRecord($table, $organizationId, $record);
         });
     }
 
@@ -54,7 +59,7 @@ final class WorkforceProService
     {
         return DB::transaction(function () use ($table, $organizationId, $id, $payload): array {
             $this->lockOrganization($organizationId);
-            $this->assertRecord($table, $organizationId, $id);
+            $current = $this->assertRecord($table, $organizationId, $id);
 
             if (($payload['is_active'] ?? null) === false && in_array($table, ['workforce_departments', 'workforce_positions'], true)) {
                 $this->assertNoActiveAssignmentsForStructure($table, $organizationId, $id);
@@ -63,8 +68,12 @@ final class WorkforceProService
             DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update(array_merge($this->normalizeJsonPayload($payload), [
                 'updated_at' => now(),
             ]));
+            $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
+            if ($this->capacityCapture->supports($table)) {
+                $this->capacityCapture->afterMutation($table, $organizationId, (array) $current, (array) $record);
+            }
 
-            return $this->decorateRecord($table, $organizationId, DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first());
+            return $this->decorateRecord($table, $organizationId, $record);
         });
     }
 
@@ -112,11 +121,11 @@ final class WorkforceProService
             throw new DomainException(trans_message('workforce.errors.staff_unit_structure_mismatch'));
         }
 
-        if (!empty($payload['work_schedule_id'])) {
+        if (! empty($payload['work_schedule_id'])) {
             $this->assertActiveRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
         }
 
-        if (!empty($payload['project_id'])) {
+        if (! empty($payload['project_id'])) {
             $this->assertProject($organizationId, (int) $payload['project_id']);
         }
 
@@ -197,7 +206,7 @@ final class WorkforceProService
                 ->whereIn('work_schedule_id', $scheduleIds)
                 ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
                 ->get()
-                ->keyBy(fn (object $record): string => $record->work_schedule_id . ':' . $record->work_date);
+                ->keyBy(fn (object $record): string => $record->work_schedule_id.':'.$record->work_date);
 
         $employeeIds = $assignments
             ->pluck('employee_id')
@@ -248,12 +257,12 @@ final class WorkforceProService
             ->where('code', $payload['absence_type_code'] ?? 'vacation')
             ->first();
 
-        if (!$absenceType) {
+        if (! $absenceType) {
             $absenceTypeCode = $payload['absence_type_code'] ?? 'vacation';
             $absenceTypeId = DB::table('workforce_absence_types')->insertGetId([
                 'organization_id' => $organizationId,
                 'code' => $absenceTypeCode,
-                'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.' . $absenceTypeCode),
+                'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.'.$absenceTypeCode),
                 'affects_payroll' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -274,7 +283,7 @@ final class WorkforceProService
     {
         $this->assertEmployee($organizationId, (int) $payload['employee_id']);
 
-        if (!empty($payload['project_id'])) {
+        if (! empty($payload['project_id'])) {
             $this->assertProject($organizationId, (int) $payload['project_id']);
         }
 
@@ -285,7 +294,7 @@ final class WorkforceProService
 
     public function storeOrder(int $organizationId, array $payload): array
     {
-        if (!empty($payload['employee_id'])) {
+        if (! empty($payload['employee_id'])) {
             $this->assertEmployee($organizationId, (int) $payload['employee_id']);
         }
 
@@ -390,7 +399,7 @@ final class WorkforceProService
 
     public function storePayrollPeriod(int $organizationId, int $userId, array $payload): array
     {
-        if (!empty($payload['project_id'])) {
+        if (! empty($payload['project_id'])) {
             $this->assertProject($organizationId, (int) $payload['project_id']);
         }
 
@@ -568,7 +577,7 @@ final class WorkforceProService
                             ->first(fn (object $candidate): bool => $candidate->valid_from <= $row->work_date
                                 && ($candidate->valid_to === null || $candidate->valid_to >= $row->work_date));
 
-                        if (!$assignment) {
+                        if (! $assignment) {
                             $issues[] = $this->validationIssueRow(
                                 $organizationId,
                                 $periodId,
@@ -576,6 +585,7 @@ final class WorkforceProService
                                 trans_message('workforce.validation.missing_assignment'),
                                 $row
                             );
+
                             continue;
                         }
 
@@ -593,9 +603,9 @@ final class WorkforceProService
                             $allowsWork = $schedule
                                 && (bool) $schedule->is_active
                                 && (float) $schedule->hours_per_day > 0
-                                && (!$day || ($day->day_type === 'work' && (float) $day->planned_hours > 0));
+                                && (! $day || ($day->day_type === 'work' && (float) $day->planned_hours > 0));
 
-                            if (!$allowsWork) {
+                            if (! $allowsWork) {
                                 $issues[] = $this->validationIssueRow(
                                     $organizationId,
                                     $periodId,
@@ -632,7 +642,7 @@ final class WorkforceProService
                 ->where('source.payroll_period_id', $periodId)
                 ->selectRaw(
                     'source.work_order_line_id, source.work_date, MIN(source.id) as id, '
-                    . 'MIN(source.employee_id) as employee_id, MIN(source.project_id) as project_id, SUM(source.hours) as hours'
+                    .'MIN(source.employee_id) as employee_id, MIN(source.project_id) as project_id, SUM(source.hours) as hours'
                 )
                 ->groupBy('source.work_order_line_id', 'source.work_date');
             $outputAggregates = DB::table('production_labor_output_entries as output')
@@ -666,6 +676,7 @@ final class WorkforceProService
                                 trans_message('workforce.validation.missing_output'),
                                 $source
                             );
+
                             continue;
                         }
 
@@ -720,8 +731,8 @@ final class WorkforceProService
                 ->where('organization_id', $organizationId)
                 ->where('payroll_period_id', $periodId)
                 ->selectRaw(
-                    "COUNT(*) as issues_count, "
-                    . "COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
+                    'COUNT(*) as issues_count, '
+                    ."COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
                 )
                 ->first();
             $blockingCount = (int) ($summary->blocking_count ?? 0);
@@ -864,8 +875,8 @@ final class WorkforceProService
             ->where('organization_id', $organizationId)
             ->where('payroll_period_id', $periodId)
             ->selectRaw(
-                "COUNT(*) as issues_count, "
-                . "COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
+                'COUNT(*) as issues_count, '
+                ."COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
             )
             ->first();
 
@@ -922,7 +933,7 @@ final class WorkforceProService
                 $statementId = DB::table('workforce_payroll_statements')->insertGetId([
                     'organization_id' => $organizationId,
                     'payroll_period_id' => $periodId,
-                    'statement_number' => 'PAY-' . $periodId . '-' . now()->format('YmdHis'),
+                    'statement_number' => 'PAY-'.$periodId.'-'.now()->format('YmdHis'),
                     'status' => 'prepared',
                     'created_by_user_id' => $userId,
                     'created_at' => now(),
@@ -940,7 +951,7 @@ final class WorkforceProService
             $grossAmount = 0.0;
 
             $sourceRows
-                ->groupBy(fn (object $row): string => $row->employee_id . ':' . ($row->project_id ?? 'all'))
+                ->groupBy(fn (object $row): string => $row->employee_id.':'.($row->project_id ?? 'all'))
                 ->each(function (Collection $rows) use ($organizationId, $periodId, $statementId, &$totalHours, &$grossAmount): void {
                     $first = $rows->first();
                     $hours = (float) $rows->sum(fn (object $row): float => (float) $row->hours);
@@ -1061,7 +1072,7 @@ final class WorkforceProService
             ];
         }
 
-        $scheduleDay = $scheduleDays->get($assignment->work_schedule_id . ':' . $date);
+        $scheduleDay = $scheduleDays->get($assignment->work_schedule_id.':'.$date);
 
         if ($scheduleDay !== null && $scheduleDay->day_type !== 'work') {
             return [
@@ -1098,7 +1109,7 @@ final class WorkforceProService
     {
         $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
 
-        if (!$record) {
+        if (! $record) {
             throw new DomainException(trans_message('workforce.errors.record_not_found'));
         }
 
@@ -1118,7 +1129,7 @@ final class WorkforceProService
 
     private function assertEmployee(int $organizationId, int $employeeId): void
     {
-        if (!WorkforceEmployee::query()->where('organization_id', $organizationId)->whereKey($employeeId)->exists()) {
+        if (! WorkforceEmployee::query()->where('organization_id', $organizationId)->whereKey($employeeId)->exists()) {
             throw new DomainException(trans_message('workforce.errors.employee_not_found'));
         }
     }
@@ -1130,7 +1141,7 @@ final class WorkforceProService
             ->whereKey($employeeId)
             ->first();
 
-        if (!$employee) {
+        if (! $employee) {
             throw new DomainException(trans_message('workforce.errors.employee_not_found'));
         }
 
@@ -1141,7 +1152,7 @@ final class WorkforceProService
 
     private function assertProject(int $organizationId, int $projectId): void
     {
-        if (!Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
+        if (! Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
             throw new DomainException(trans_message('workforce.errors.project_not_found'));
         }
     }
@@ -1275,7 +1286,7 @@ final class WorkforceProService
             ->where('is_active', true)
             ->first();
 
-        if (!$schedule || (float) $schedule->hours_per_day <= 0) {
+        if (! $schedule || (float) $schedule->hours_per_day <= 0) {
             return false;
         }
 
@@ -1285,7 +1296,7 @@ final class WorkforceProService
             ->whereDate('work_date', $date)
             ->first();
 
-        if (!$day) {
+        if (! $day) {
             return true;
         }
 
@@ -1299,8 +1310,7 @@ final class WorkforceProService
         string $message,
         object $row,
         string $entityType = 'payroll_source_row'
-    ): array
-    {
+    ): array {
         return [
             'organization_id' => $organizationId,
             'payroll_period_id' => $periodId,
@@ -1463,7 +1473,7 @@ final class WorkforceProService
             ->whereKey($employeeId)
             ->first(['last_name', 'first_name', 'middle_name']);
 
-        if (!$employee) {
+        if (! $employee) {
             return null;
         }
 

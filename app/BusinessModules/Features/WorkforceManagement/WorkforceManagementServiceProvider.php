@@ -23,11 +23,31 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
             Reporting\PayrollReadiness\DTO\PayrollReadinessPolicyDefinition::class,
             static fn (): Reporting\PayrollReadiness\DTO\PayrollReadinessPolicyDefinition => Reporting\PayrollReadiness\DTO\PayrollReadinessPolicyDefinition::v1(),
         );
+        $this->app->singleton(
+            Reporting\Capacity\Contracts\WorkforceCapacityClock::class,
+            Reporting\Capacity\Services\SystemWorkforceCapacityClock::class,
+        );
+        $this->app->singleton(
+            Reporting\Capacity\Contracts\WorkforceCapacityCurrentSource::class,
+            Reporting\Capacity\Services\EloquentWorkforceCapacityCurrentSource::class,
+        );
+        $this->app->singleton(
+            Reporting\Capacity\Contracts\WorkforceCapacityPolicySource::class,
+            Reporting\Capacity\Services\EloquentWorkforceCapacityPolicySource::class,
+        );
+        $this->app->singleton(
+            Reporting\Capacity\Contracts\WorkforceCapacitySnapshotStore::class,
+            Reporting\Capacity\Services\EloquentWorkforceCapacitySnapshotStore::class,
+        );
+        $this->app->singleton(
+            Reporting\Capacity\Contracts\WorkforceCapacityCaptureBoundary::class,
+            Reporting\Capacity\Services\WorkforceCapacitySnapshotService::class,
+        );
     }
 
     public function boot(): void
     {
-        $this->loadMigrationsFrom(__DIR__ . '/migrations');
-        $this->loadRoutesFrom(__DIR__ . '/routes.php');
+        $this->loadMigrationsFrom(__DIR__.'/migrations');
+        $this->loadRoutesFrom(__DIR__.'/routes.php');
     }
 }

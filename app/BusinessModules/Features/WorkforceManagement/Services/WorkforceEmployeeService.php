@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use App\Models\Organization;
 use App\Models\User;
 use DomainException;
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 final class WorkforceEmployeeService
 {
+    public function __construct(private readonly WorkforceCapacityOwnerMutationBridge $capacityCapture) {}
+
     public function paginate(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
         return WorkforceEmployee::query()
@@ -73,6 +76,16 @@ final class WorkforceEmployeeService
         DB::transaction(function () use ($employee, $organizationId, $date): void {
             $this->lockOrganization($organizationId);
             $this->assertDismissalDoesNotChangeLockedPayrollSource($organizationId, (int) $employee->id, $date);
+            $assignments = DB::table('workforce_employee_assignments')
+                ->where('organization_id', $organizationId)
+                ->where('employee_id', $employee->id)
+                ->where('status', 'active')
+                ->orderBy('id')
+                ->get([
+                    'id', 'organization_id', 'employee_id', 'staff_unit_id', 'department_id', 'position_id',
+                    'project_id', 'work_schedule_id', 'rate', 'valid_from', 'valid_to', 'status', 'deleted_at',
+                ]);
+            $assignmentIds = $assignments->pluck('id')->map(static fn ($id): int => (int) $id)->all();
             $employee->update([
                 'employment_status' => 'dismissed',
                 'dismissal_date' => $date,
@@ -90,6 +103,32 @@ final class WorkforceEmployeeService
                     'valid_to' => $date,
                     'updated_at' => now(),
                 ]);
+            DB::table('workforce_employee_assignments')
+                ->where('organization_id', $organizationId)
+                ->where('employee_id', $employee->id)
+                ->where('status', 'active')
+                ->whereDate('valid_from', '>', $date)
+                ->update([
+                    'status' => 'cancelled',
+                    'updated_at' => now(),
+                ]);
+            $updatedAssignments = $assignmentIds === []
+                ? collect()
+                : DB::table('workforce_employee_assignments')
+                    ->where('organization_id', $organizationId)
+                    ->whereIn('id', $assignmentIds)
+                    ->orderBy('id')
+                    ->get([
+                        'id', 'organization_id', 'employee_id', 'staff_unit_id', 'department_id', 'position_id',
+                        'project_id', 'work_schedule_id', 'rate', 'valid_from', 'valid_to', 'status', 'deleted_at',
+                    ]);
+            $this->capacityCapture->afterEmployeeDismissal(
+                $organizationId,
+                (int) $employee->id,
+                $date,
+                $assignments->map(static fn (object $row): array => (array) $row)->all(),
+                $updatedAssignments->map(static fn (object $row): array => (array) $row)->all(),
+            );
         });
 
         return $employee->refresh()->load('user:id,name,email,current_organization_id');
@@ -110,7 +149,7 @@ final class WorkforceEmployeeService
             ->where('organization_id', $organizationId)
             ->find($employeeId);
 
-        if (!$employee) {
+        if (! $employee) {
             throw new DomainException(trans_message('workforce.errors.employee_not_found'));
         }
 
@@ -190,7 +229,7 @@ final class WorkforceEmployeeService
             ->where('current_organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('workforce.errors.user_not_found'));
         }
     }
