@@ -33,6 +33,9 @@ final class ProcurementCycleCandidateEvidenceBuilderTest extends TestCase
         $workflow = file_get_contents(dirname(__DIR__, 5).'/.github/workflows/notification-concurrency.yml');
         self::assertIsString($workflow);
         self::assertStringContainsString('id-token: write', $workflow);
+        preg_match('/report-publication-release-artifact:.*?(?=\n  [A-Za-z0-9-]+:|\z)/s', $workflow, $releaseJob);
+        self::assertCount(1, $releaseJob);
+        self::assertStringNotContainsString('id-token: write', $releaseJob[0]);
         self::assertStringContainsString("if: github.event_name == 'push' && github.ref == 'refs/heads/main'", $workflow);
         self::assertStringContainsString('php scripts/reporting/build-r15-publication-candidate.php', $workflow);
         self::assertStringContainsString('path: build/reports/r15-candidate-evidence/', $workflow);
