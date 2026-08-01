@@ -174,6 +174,7 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertIsArray($discoveryJob);
         self::assertEqualsCanonicalizing([
             'procurement-cycle-postgres-contract',
+            'procurement-cycle-r15-candidate-evidence',
             'report-publication-postgres-contract',
         ], $discoveryJob['needs'] ?? null);
         self::assertArrayNotHasKey('environment', $discoveryJob);
@@ -181,7 +182,13 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
             static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
             $discoveryJob['steps'] ?? [],
         ));
-        self::assertStringContainsString('publication-release-requests/*.json', $discoveryCommands);
+        self::assertStringContainsString('r15-candidate-evidence-${{ github.sha }}', implode("\n", array_map(
+            static fn (array $step): string => is_string($step['with']['name'] ?? null) ? $step['with']['name'] : '',
+            $discoveryJob['steps'] ?? [],
+        )));
+        self::assertStringContainsString('r15_release_request.json', $discoveryCommands);
+        self::assertStringContainsString('requests=()', $discoveryCommands);
+        self::assertStringNotContainsString('publication-release-requests/*.json', $discoveryCommands);
         self::assertStringContainsString('has_requests=false', $discoveryCommands);
         self::assertStringNotContainsString('REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64', $discoveryCommands);
 
@@ -191,7 +198,10 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
             "needs.report-publication-release-request-discovery.outputs.has_requests == 'true'",
             $releaseJob['if'] ?? null,
         );
-        self::assertSame('report-publication-release-request-discovery', $releaseJob['needs'] ?? null);
+        self::assertEqualsCanonicalizing([
+            'report-publication-release-request-discovery',
+            'procurement-cycle-r15-candidate-evidence',
+        ], $releaseJob['needs'] ?? null);
         self::assertSame('report-publication-release', $releaseJob['environment'] ?? null);
         $releaseCommands = implode("\n", array_map(
             static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
@@ -259,6 +269,20 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
             self::assertContains($path, $pullRequestPaths);
             self::assertContains($path, $pushPaths);
         }
+    }
+
+    public function test_discovery_has_requests_is_false_when_same_run_candidate_has_no_request(): void
+    {
+        $workflow = Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/notification-concurrency.yml');
+        $job = $workflow['jobs']['report-publication-release-request-discovery'] ?? null;
+        self::assertIsArray($job);
+        $commands = implode("\n", array_map(
+            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
+            $job['steps'] ?? [],
+        ));
+        self::assertStringContainsString('if [[ -f "$request" && ! -L "$request" ]]', $commands);
+        self::assertStringContainsString('has_requests=false', $commands);
+        self::assertStringNotContainsString('build/reports/publication-release-requests', $commands);
     }
 
     private function migrationPath(): string

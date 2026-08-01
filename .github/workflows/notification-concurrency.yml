@@ -621,11 +621,23 @@ jobs:
       - name: Checkout trusted main commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
+      - name: Download exact same-run R15 candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: r15-candidate-evidence-${{ github.sha }}
+          path: build/reports/r15-candidate-evidence
+
       - name: Discover registered release requests
         id: release-requests
         run: |
           shopt -s nullglob
-          requests=(build/reports/publication-release-requests/*.json)
+          trusted_root="$GITHUB_WORKSPACE/build/reports/r15-candidate-evidence"
+          request="$trusted_root/r15_release_request.json"
+          test -d "$trusted_root"
+          requests=()
+          if [[ -f "$request" && ! -L "$request" ]]; then
+            requests+=("$request")
+          fi
           for request in "${requests[@]}"; do
             test -f "$request"
             test ! -L "$request"
