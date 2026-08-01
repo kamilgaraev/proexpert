@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuilding
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Support\Collection;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
