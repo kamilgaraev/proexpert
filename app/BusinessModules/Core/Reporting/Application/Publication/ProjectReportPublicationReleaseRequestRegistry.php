@@ -20,6 +20,7 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry
     public function __construct(
         private string $trustedDirectory,
         private string $officialManifestBytes,
+        private Sha256Hash $officialManifestHash,
         private ProcurementCycleReleaseCandidateResolver $candidateResolver,
         private ReportDefinitionFactory $definitions,
         private ProcurementCycleReportBindingFactory $bindings,
@@ -29,7 +30,8 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry
     ) {
         $root = realpath($trustedDirectory);
         if (! is_string($root) || is_link($trustedDirectory) || ! is_dir($root)
-            || $officialManifestBytes === '') {
+            || $officialManifestBytes === ''
+            || ! hash_equals($officialManifestHash->value, hash('sha256', $officialManifestBytes))) {
             throw new InvalidArgumentException('report_publication_release_composition_invalid');
         }
     }
@@ -49,6 +51,16 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry
         $fixtureHash = new Sha256Hash($proof->payload()['fixture_sha256']);
         $evidence = $this->evidence->get($candidate->code, $candidate->definitionHash, $fixtureHash);
         $candidateManifestBytes = CanonicalJson::encode($candidateManifest);
+        $conformanceDocument = $documents['r15-conformance-evidence.json'];
+        if (($conformanceDocument['status'] ?? null) !== 'passed'
+            || ($conformanceDocument['code'] ?? null) !== $candidate->code
+            || ($conformanceDocument['commit_sha'] ?? null) !== $request->commitSha
+            || ! hash_equals((string) ($conformanceDocument['definition_hash'] ?? ''), $candidate->definitionHash->value)
+            || ! hash_equals((string) ($conformanceDocument['fixture_hash'] ?? ''), $evidence->fixtureHash->value)
+            || ! hash_equals((string) ($conformanceDocument['digest'] ?? ''), $evidence->digest()->value)
+            || ! hash_equals($proof->payload()['conformance_evidence_sha256'], $evidence->digest()->value)) {
+            throw new InvalidArgumentException('report_publication_release_evidence_untrusted');
+        }
 
         if (! hash_equals($request->proofSha256, $proof->digest()->value)
             || ! hash_equals($request->commitSha, $proof->payload()['release']['git_sha'])
