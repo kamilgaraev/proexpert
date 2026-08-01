@@ -29,7 +29,7 @@ final class GitHubActionsOidcProvenanceVerifier
 
     public function verify(string $endpointUrl, string $requestToken, string $sha, string $runId): void
     {
-        if (! $this->isHttpsUrl($endpointUrl)
+        if (! $this->isGithubActionsEndpoint($endpointUrl)
             || $requestToken === ''
             || preg_match('/^[a-f0-9]{40}$/D', $sha) !== 1
             || preg_match('/^[1-9][0-9]*$/D', $runId) !== 1) {
@@ -173,11 +173,16 @@ final class GitHubActionsOidcProvenanceVerifier
         return $decoded;
     }
 
-    private function isHttpsUrl(string $url): bool
+    private function isGithubActionsEndpoint(string $url): bool
     {
         $parts = parse_url($url);
 
-        return is_array($parts) && ($parts['scheme'] ?? null) === 'https' && is_string($parts['host'] ?? null);
+        if (! is_array($parts) || ($parts['scheme'] ?? null) !== 'https' || ! is_string($parts['host'] ?? null)) {
+            return false;
+        }
+        $host = strtolower($parts['host']);
+
+        return $host === 'actions.githubusercontent.com' || str_ends_with($host, '.actions.githubusercontent.com');
     }
 
     private function reject(): never

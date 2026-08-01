@@ -14,7 +14,7 @@ final class ProcurementCycleCandidateEvidenceBuilderTest extends TestCase
         $sha = trim((string) shell_exec('git -C '.escapeshellarg($root).' rev-parse HEAD'));
         foreach ([
             'GITHUB_ACTIONS=true', 'GITHUB_SHA='.$sha, 'GITHUB_RUN_ID=123456', 'GITHUB_RUN_ATTEMPT=1',
-            'ACTIONS_ID_TOKEN_REQUEST_URL=https://example.test/token', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN=spoofed',
+            'ACTIONS_ID_TOKEN_REQUEST_URL=https://spoof.example.test/token', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN=eyJhbGciOiJSUzI1NiIsImtpZCI6InNwb29mIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIn0.signature',
         ] as $setting) {
             putenv($setting);
         }

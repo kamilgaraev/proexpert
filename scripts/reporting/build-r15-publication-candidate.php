@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\GitHubActionsOidcProvenanceVerifier;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\R15EvidenceIdentity;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\StreamR15HttpClient;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\SystemR15Clock;
 use Opis\JsonSchema\CompliantValidator;
@@ -99,12 +100,12 @@ function artifactGroups(string $root, string $sha): array
         'events_and_policy' => ['app/BusinessModules/Features/Procurement/Reporting/Cycle/DTO/ProcurementCycleEvent.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/DTO/ProcurementCyclePolicyDefinition.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/DTO/ProcurementCyclePolicySnapshot.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/DTO/ProcurementProcessDimensionSnapshot.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/DTO/ProcurementProcessTransition.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Enums/ProcurementProcessEventCode.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Enums/ProcurementTerminalReason.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/ProcurementCycleOwnerEventRecorder.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/ProcurementCyclePolicyPublisher.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/EloquentProcurementProcessEventStore.php'],
         'formula_and_calendar' => ['app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/ProcurementBusinessCalendar.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/ProcurementCycleFormula.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/DTO/ProcurementCycleLineResult.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/DTO/ProcurementCycleMetric.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Enums/ProcurementCycleStage.php'],
         'readiness_and_binding' => ['app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/ProcurementCycleReadinessProbe.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/ProcurementCycleReportAdapter.php', 'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/ProcurementCycleReportBindingFactory.php'],
-        'core_reporting_delivery_and_drill' => ['app/BusinessModules/Core/Reporting/Application/Exports/ReportExportRenderer.php', 'app/BusinessModules/Core/Reporting/Infrastructure/Exports/CsvReportExportRenderer.php', 'app/BusinessModules/Core/Reporting/Infrastructure/Exports/PdfReportExportRenderer.php', 'app/BusinessModules/Core/Reporting/Infrastructure/Exports/XlsxReportExportRenderer.php', 'app/BusinessModules/Core/Reporting/Domain/DTO/ReportPublicationProof.php', 'app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml', 'docs/reports/contracts/report-publication-proof.v1.schema.json', 'docs/reports/contracts/report-conformance-evidence.schema.json'],
+        'core_reporting_delivery_and_drill' => array_merge(gitTreePaths($root, $sha, 'app/BusinessModules/Core/Reporting'), ['composer.json', 'composer.lock']),
         'cycle_runtime' => gitTreePaths($root, $sha, 'app/BusinessModules/Features/Procurement/Reporting/Cycle'),
         'rbac_and_translation' => array_merge(['lang/ru/permissions.php', 'lang/ru/reports.php'], roleDefinitionPaths($root, $sha)),
         'ci_contract' => ['.github/workflows/notification-concurrency.yml', 'scripts/reporting/build-r15-publication-candidate.php', 'docs/reports/contracts/r15-candidate-manifest.v1.schema.json', 'docs/reports/contracts/r15-candidate-conformance.v1.schema.json', 'docs/reports/contracts/r15-candidate-proof-template.v1.schema.json', 'docs/reports/contracts/r15-publication-request.v1.schema.json'],
     ];
-    assertNoUntrackedInputs($root, ['app/BusinessModules/Features/Procurement/Reporting/Cycle', 'app/BusinessModules/Features/Procurement/migrations/2026_08_01_000001_create_procurement_cycle_source.php', 'app/BusinessModules/Core/Reporting', 'config/RoleDefinitions', 'lang/ru/permissions.php', 'lang/ru/reports.php', 'docs/reports/contracts', '.github/workflows/notification-concurrency.yml', 'scripts/reporting/build-r15-publication-candidate.php']);
+    assertNoUntrackedInputs($root, ['app/BusinessModules/Features/Procurement/Reporting/Cycle', 'app/BusinessModules/Features/Procurement/migrations/2026_08_01_000001_create_procurement_cycle_source.php', 'app/BusinessModules/Core/Reporting', 'config/RoleDefinitions', 'lang/ru/permissions.php', 'lang/ru/reports.php', 'docs/reports/contracts', '.github/workflows/notification-concurrency.yml', 'scripts/reporting/build-r15-publication-candidate.php', 'composer.json', 'composer.lock']);
     $result = [];
     foreach ($manifest as $name => $paths) {
         $result[$name] = hashesAtCommit($sha, $paths);
@@ -183,7 +184,7 @@ function digest(array $document): string
 /** @param array<string,mixed> $artifacts */
 function manifestIdentity(array $artifacts): string
 {
-    return hash('sha256', CanonicalJson::encode($artifacts));
+    return R15EvidenceIdentity::fromArtifacts($artifacts);
 }
 
 /** @param array<string,array<string,mixed>> $documents */

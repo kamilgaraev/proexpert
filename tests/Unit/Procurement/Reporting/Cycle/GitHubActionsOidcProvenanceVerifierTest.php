@@ -51,8 +51,8 @@ PEM;
         $clock = new FixedR15Clock(new DateTimeImmutable('@2000000000'));
         $http = new FakeR15HttpClient($this->jwtResponse($this->token($privateKey)), ['keys' => [$jwk]]);
         $verifier = $this->verifier($http, $clock);
-        $verifier->verify('https://oidc.actions.example/id-token', 'endpoint-token', str_repeat('a', 40), '123');
-        $verifier->verify('https://oidc.actions.example/id-token', 'endpoint-token', str_repeat('a', 40), '123');
+        $verifier->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
+        $verifier->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
 
         self::assertSame(1, $http->jwksRequests);
     }
@@ -66,8 +66,13 @@ PEM;
         if ($variant === 'key') {
             $jwks = ['keys' => [array_replace($jwk, ['kid' => 'other'])]];
         }
-        if ($variant === 'claims') {
-            $claims['workflow_ref'] = 'kamilgaraev/proexpert/.github/workflows/other.yml@refs/heads/main';
+        $claimChanges = [
+            'issuer' => ['iss' => 'https://spoof.example'], 'audience' => ['aud' => 'other'], 'repository' => ['repository' => 'spoof/repository'], 'ref' => ['ref' => 'refs/heads/spoof'],
+            'workflow' => ['workflow' => 'Spoof workflow'], 'workflow_ref' => ['workflow_ref' => 'spoof/repository/.github/workflows/spoof.yml@refs/heads/main'], 'sha' => ['sha' => str_repeat('b', 40)],
+            'run_id' => ['run_id' => '999'], 'nbf' => ['nbf' => 2000000001], 'expiry' => ['exp' => 1999999999],
+        ];
+        if (isset($claimChanges[$variant])) {
+            $claims = array_replace($claims, $claimChanges[$variant]);
         }
         if ($variant === 'expiry') {
             $claims['exp'] = 1999999999;
@@ -76,16 +81,45 @@ PEM;
         if ($variant === 'signature') {
             $jwt = substr($jwt, 0, -1).(str_ends_with($jwt, 'A') ? 'B' : 'A');
         }
+        if ($variant === 'alg') {
+            $jwt = $this->token($privateKey, $claims, ['alg' => 'HS256', 'kid' => 'test-key']);
+        }
+        if ($variant === 'key_type') {
+            $jwks = ['keys' => [array_replace($jwk, ['kty' => 'EC'])]];
+        }
+        if ($variant === 'rsa_size') {
+            $jwks = ['keys' => [array_replace($jwk, ['n' => $this->base64Url(substr(base64_decode(strtr($jwk['n'], '-_', '+/').str_repeat('=', (4 - strlen($jwk['n']) % 4) % 4), true), 128))])]];
+        }
         $http = new FakeR15HttpClient($this->jwtResponse($jwt), $jwks);
 
         $this->expectException(RuntimeException::class);
-        $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://oidc.actions.example/id-token', 'endpoint-token', str_repeat('a', 40), '123');
+        $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
     }
 
     /** @return array<string,array{string}> */
     public static function invalidTokens(): array
     {
-        return ['signature' => ['signature'], 'unknown key' => ['key'], 'claims' => ['claims'], 'expiry' => ['expiry']];
+        return ['signature' => ['signature'], 'unknown key' => ['key'], 'issuer' => ['issuer'], 'audience' => ['audience'], 'repository' => ['repository'], 'ref' => ['ref'], 'workflow' => ['workflow'], 'workflow ref' => ['workflow_ref'], 'sha' => ['sha'], 'run id' => ['run_id'], 'not before' => ['nbf'], 'expiry' => ['expiry'], 'algorithm' => ['alg'], 'JWK type' => ['key_type'], 'RSA size' => ['rsa_size']];
+    }
+
+    public function test_rejects_non_github_endpoint_before_any_request(): void
+    {
+        [, $jwk] = $this->key();
+        $http = new FakeR15HttpClient('{}', ['keys' => [$jwk]]);
+        $this->expectException(RuntimeException::class);
+        try {
+            $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://spoof.example.test/id-token', 'syntactically-plausible-token', str_repeat('a', 40), '123');
+        } finally {
+            self::assertSame(0, $http->requests);
+        }
+    }
+
+    public function test_rejects_endpoint_failure(): void
+    {
+        [, $jwk] = $this->key();
+        $http = new FakeR15HttpClient('{}', ['keys' => [$jwk]], true);
+        $this->expectException(RuntimeException::class);
+        $this->verifier($http, new FixedR15Clock(new DateTimeImmutable('@2000000000')))->verify('https://pipelines.actions.githubusercontent.com/id-token', 'endpoint-token', str_repeat('a', 40), '123');
     }
 
     private function verifier(FakeR15HttpClient $http, R15Clock $clock): GitHubActionsOidcProvenanceVerifier
@@ -105,9 +139,9 @@ PEM;
     }
 
     /** @param mixed $privateKey @param array<string,mixed>|null $claims */
-    private function token(mixed $privateKey, ?array $claims = null): string
+    private function token(mixed $privateKey, ?array $claims = null, ?array $header = null): string
     {
-        $header = $this->base64Url(json_encode(['alg' => 'RS256', 'kid' => 'test-key'], JSON_THROW_ON_ERROR));
+        $header = $this->base64Url(json_encode($header ?? ['alg' => 'RS256', 'kid' => 'test-key'], JSON_THROW_ON_ERROR));
         $payload = $this->base64Url(json_encode($claims ?? $this->claims(), JSON_THROW_ON_ERROR));
         self::assertTrue(openssl_sign($header.'.'.$payload, $signature, $privateKey, OPENSSL_ALGO_SHA256));
 
@@ -144,17 +178,23 @@ final class FakeR15HttpClient implements R15HttpClient
 {
     public int $jwksRequests = 0;
 
+    public int $requests = 0;
+
     /** @param array<string,mixed> $jwks */
-    public function __construct(private readonly string $tokenResponse, private readonly array $jwks) {}
+    public function __construct(private readonly string $tokenResponse, private readonly array $jwks, private readonly bool $fails = false) {}
 
     public function get(string $url, array $headers = []): string
     {
+        $this->requests++;
+        if ($this->fails) {
+            throw new RuntimeException('endpoint_failed');
+        }
         if (str_contains($url, '/.well-known/jwks')) {
             $this->jwksRequests++;
 
             return json_encode($this->jwks, JSON_THROW_ON_ERROR);
         }
 
-return $this->tokenResponse;
+        return $this->tokenResponse;
     }
 }
