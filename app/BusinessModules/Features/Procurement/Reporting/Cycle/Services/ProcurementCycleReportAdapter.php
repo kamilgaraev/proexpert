@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Services;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
@@ -61,6 +62,7 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
     public function __construct(
         private ProcurementCycleSourceSnapshotWriter $writer,
         private ReportSourceSnapshotStore $store,
+        private ?CanonicalReportSourceHashBuilder $hashes = null,
     ) {}
 
     public function materialize(
@@ -73,7 +75,7 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
         $this->assertHeader($header, $query);
         $progress->advance(100);
 
-        return new ReportSnapshotRef(
+        $provisional = new ReportSnapshotRef(
             $header->sourceKind,
             $header->id,
             $header->scope,
@@ -89,6 +91,27 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
             ],
             ReportSnapshotClassification::OPERATIONAL,
             null,
+            $header->materializedSourceHash,
+        );
+        $canonical = ($this->hashes ?? new CanonicalReportSourceHashBuilder)->build($query, $provisional, $this->result($context, $provisional));
+
+        return new ReportSnapshotRef(
+            $header->sourceKind,
+            $header->id,
+            $header->scope,
+            $query->definition->definitionHash,
+            $query->definition->formulaVersion,
+            $canonical,
+            $header->generatedAt,
+            $header->staleAt,
+            [
+                ...$header->watermarks,
+                self::REPORT_QUERY_HASH => $query->queryHash->value,
+                self::SOURCE_QUERY_HASH => $header->queryHash->value,
+            ],
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+            $header->materializedSourceHash,
         );
     }
 
@@ -217,6 +240,8 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
             || $header->sourceKind !== self::SOURCE_KIND
             || $header->schemaVersion !== self::SCHEMA_VERSION
             || $header->scopeIdentity() !== $query->scope->canonicalIdentity()
+            || $header->reportQueryHash === null
+            || ! hash_equals($header->reportQueryHash->value, $query->queryHash->value)
             || ($header->watermarks['formula_version'] ?? null) !== self::FORMULA_VERSION) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
         }
@@ -230,7 +255,7 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
         }
         $header = $this->store->header($this->readRequest($context, $snapshot));
         if ($header->id !== $snapshot->id
-            || ! hash_equals($header->sourceHash->value, $snapshot->sourceHash->value)
+            || ! hash_equals($header->materializedSourceHash->value, $snapshot->materializedSourceHash->value)
             || $header->generatedAt != $snapshot->generatedAt
             || $header->staleAt != $snapshot->staleAt
             || ($header->watermarks['formula_version'] ?? null) !== $snapshot->formulaVersion) {

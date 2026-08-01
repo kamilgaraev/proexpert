@@ -22,6 +22,7 @@ final class ReportSourceSnapshotRecord extends Model
     protected $casts = [
         'organization_id' => 'integer',
         'scope_identity' => 'array',
+        'report_query_identity' => 'array',
         'watermarks' => 'array',
         'as_of' => 'immutable_datetime',
         'generated_at' => 'immutable_datetime',

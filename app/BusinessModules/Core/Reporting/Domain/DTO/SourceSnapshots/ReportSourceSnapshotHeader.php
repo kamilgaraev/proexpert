@@ -13,6 +13,12 @@ use InvalidArgumentException;
 
 final readonly class ReportSourceSnapshotHeader
 {
+    public ?array $reportQueryIdentity;
+
+    public ?Sha256Hash $reportQueryHash;
+
+    public Sha256Hash $materializedSourceHash;
+
     public function __construct(
         public string $id,
         public string $sourceKind,
@@ -31,7 +37,12 @@ final readonly class ReportSourceSnapshotHeader
         public Sha256Hash $snapshotHash,
         public ?DateTimeImmutable $readyAt,
         public ?DateTimeImmutable $expiredAt,
+        ?array $reportQueryIdentity = null,
+        ?Sha256Hash $reportQueryHash = null,
     ) {
+        $this->reportQueryIdentity = $reportQueryIdentity;
+        $this->reportQueryHash = $reportQueryHash;
+        $this->materializedSourceHash = $sourceHash;
         if (preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $id) !== 1
             || preg_match('/^[a-z][a-z0-9_.:-]{0,63}$/D', $sourceKind) !== 1
             || preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $reportCode) !== 1
@@ -47,6 +58,11 @@ final readonly class ReportSourceSnapshotHeader
         }
 
         CanonicalJson::encode($watermarks);
+        if (($reportQueryIdentity === null) !== ($reportQueryHash === null)
+            || ($reportQueryIdentity !== null
+                && ! hash_equals($reportQueryHash->value, hash('sha256', CanonicalJson::encode($reportQueryIdentity))))) {
+            throw new InvalidArgumentException('report_source_snapshot_header_invalid');
+        }
     }
 
     public function scopeIdentity(): array

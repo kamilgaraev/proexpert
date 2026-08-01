@@ -31,6 +31,12 @@ final class ReportSourceSnapshotIntegrity
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
 
+        if ($header->reportQueryIdentity === null
+            || $header->reportQueryHash === null
+            || ! hash_equals($header->reportQueryHash->value, hash('sha256', CanonicalJson::encode($header->reportQueryIdentity)))) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+        }
+
         if (! $request->allowStale && $header->staleAt !== null && $header->staleAt <= $request->readAt) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
         }
@@ -51,10 +57,12 @@ final class ReportSourceSnapshotIntegrity
                 'as_of' => $header->asOf->format(DATE_ATOM),
                 'organization_id' => $header->scope->organizationId,
                 'query_hash' => $header->queryHash->value,
+                'report_query_identity' => $header->reportQueryIdentity,
+                'report_query_hash' => $header->reportQueryHash?->value,
                 'report_code' => $header->reportCode,
                 'schema_version' => $header->schemaVersion,
                 'scope' => $header->scopeIdentity(),
-                'source_hash' => $header->sourceHash->value,
+                'materialized_source_hash' => $header->materializedSourceHash->value,
                 'source_kind' => $header->sourceKind,
                 'stale_at' => $header->staleAt?->format(DATE_ATOM),
                 'watermarks' => $header->watermarks,

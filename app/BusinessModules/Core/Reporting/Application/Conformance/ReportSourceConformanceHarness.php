@@ -225,9 +225,9 @@ final class ReportSourceConformanceHarness
                     $result,
                 );
                 $sourceChecks['source_hash'] = hash_equals(
-                    $snapshot->sourceHash->value,
+                    $snapshot->canonicalReportHash->value,
                     $result->provenance->sourceHash->value,
-                ) && hash_equals($snapshot->sourceHash->value, $canonicalSourceHash->value);
+                ) && hash_equals($snapshot->canonicalReportHash->value, $canonicalSourceHash->value);
             } catch (Throwable) {
                 $sourceChecks['source_hash'] = false;
             }

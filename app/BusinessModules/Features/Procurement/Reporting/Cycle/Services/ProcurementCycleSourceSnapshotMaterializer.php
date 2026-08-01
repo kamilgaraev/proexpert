@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Services;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
@@ -49,6 +50,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
         ProcurementCycleSourceRead $source,
         array $results,
         array $eventsByLine,
+        ?ReportQuery $query = null,
     ): ReportSourceSnapshotWrite {
         $identity = $this->identity($request, $source);
         $rows = [];
@@ -133,6 +135,8 @@ final class ProcurementCycleSourceSnapshotMaterializer
             $this->hash(['pending' => $snapshotId]),
             null,
             null,
+            $query?->identity->projection,
+            $query?->queryHash,
         );
         $header = new ReportSourceSnapshotHeader(
             $header->id,
@@ -152,6 +156,8 @@ final class ProcurementCycleSourceSnapshotMaterializer
             ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows),
             null,
             null,
+            $header->reportQueryIdentity,
+            $header->reportQueryHash,
         );
 
         return new ReportSourceSnapshotWrite($header, $rows, $drillRows);

@@ -129,6 +129,10 @@ final class MaterializeReportRunJob implements ShouldQueue
 
             $result = $binding->dataProvider->result($context, $snapshot);
             $sourceHash = $sourceHashes->build($query, $snapshot, $result);
+            if (! hash_equals($snapshot->canonicalReportHash->value, $sourceHash->value)
+                || ! hash_equals($result->provenance->sourceHash->value, $sourceHash->value)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+            }
             $progress->advance(100);
             $runs->sealReady($context, $this->runId, $leaseToken, $snapshot, $result, $sourceHash, $clock->now());
             $telemetry->runTransition($run->reportCode, ReportRunStatus::READY->value);

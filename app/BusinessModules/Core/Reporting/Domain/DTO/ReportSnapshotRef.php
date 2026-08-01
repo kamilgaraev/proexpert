@@ -14,6 +14,10 @@ use InvalidArgumentException;
 
 final readonly class ReportSnapshotRef
 {
+    public Sha256Hash $canonicalReportHash;
+
+    public Sha256Hash $materializedSourceHash;
+
     public function __construct(
         public string $kind,
         public string $id,
@@ -26,7 +30,10 @@ final readonly class ReportSnapshotRef
         public array $watermarks,
         public ReportSnapshotClassification $classification,
         public ?ReportSnapshotSeal $seal,
+        ?Sha256Hash $materializedSourceHash = null,
     ) {
+        $this->canonicalReportHash = $sourceHash;
+        $this->materializedSourceHash = $materializedSourceHash ?? $sourceHash;
         if (preg_match('/^[a-z][a-z0-9_.:-]{0,63}$/D', $kind) !== 1) {
             throw new ReportSnapshotIdentityViolation(ReportSnapshotIdentityViolationReason::INVALID_KIND);
         }

@@ -22,7 +22,7 @@ final class CanonicalReportSourceHashBuilder
         'schema_version',
         'watermark',
         'row_count',
-        'hash',
+        'materialized_source_hash',
     ];
 
     public function build(ReportQuery $query, ReportSnapshotRef $snapshot, ReportResult $result): Sha256Hash
@@ -37,7 +37,7 @@ final class CanonicalReportSourceHashBuilder
                 'schema_version' => $ref->schemaVersion,
                 'watermark' => $ref->watermark,
                 'row_count' => $ref->rowCount,
-                'hash' => $ref->hash->value,
+                'materialized_source_hash' => $ref->hash->value,
             ];
             $identity = CanonicalJson::encode(array_intersect_key($projected, array_flip([
                 'source',
@@ -72,7 +72,7 @@ final class CanonicalReportSourceHashBuilder
                 'formula_version' => $query->definition->formulaVersion,
                 'source_schema_version' => $query->definition->sourceSchemaVersion,
                 'renderer_version' => $query->definition->rendererVersion,
-                'canonical_query_json' => json_decode($query->canonicalJson, true, 512, JSON_THROW_ON_ERROR),
+                'identity' => $query->identity->projection,
             ],
             'snapshot' => [
                 'kind' => $snapshot->kind,

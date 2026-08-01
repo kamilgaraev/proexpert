@@ -50,7 +50,7 @@ use Tests\Support\Reporting\ReportDefinitionBuilder;
 
 final class CanonicalReportSourceHashBuilderTest extends TestCase
 {
-    private const BASELINE_HASH = '3a8c083820d41fd05aff4dea7580b5f6bc8e76249b7aa1c961994766d475a82f';
+    private const BASELINE_HASH = 'ca9dc342d70837357f04736b64b7e5ab4c5b3c0afdd93c6fe5fb07e8d8fc158a';
 
     public function test_closed_projection_has_the_exact_known_digest(): void
     {
@@ -145,7 +145,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             'schema_version' => 'schema_a',
             'watermark' => 'wm_a',
             'row_count' => 3,
-            'hash' => str_repeat('a', 64),
+            'materialized_source_hash' => str_repeat('a', 64),
         ];
         $second = $first;
         $second[$field] = match ($field) {
@@ -156,7 +156,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             'watermark' => 'wm_b',
         };
         $second['row_count'] = 4;
-        $second['hash'] = str_repeat('b', 64);
+        $second['materialized_source_hash'] = str_repeat('b', 64);
         $sources = [$this->sourceFromProjection($first), $this->sourceFromProjection($second)];
         [$query, $snapshot, $result] = $this->fixture($sources);
         [, , $reversed] = $this->fixture(array_reverse($sources));
@@ -205,8 +205,8 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
                 "        'row_count',\n",
                 '',
             ],
-            'hash removed from constant' => [
-                "        'hash',\n",
+            'materialized source hash removed from constant' => [
+                "        'materialized_source_hash',\n",
                 '',
             ],
             'constant precedence reordered' => [
@@ -232,7 +232,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         ];
     }
 
-    public function test_snapshot_and_provenance_source_hashes_are_excluded_from_projection(): void
+    public function test_canonical_hash_does_not_depend_on_its_own_snapshot_or_provenance_hash(): void
     {
         [$query, $snapshot, $result] = $this->fixture($this->baselineSources());
         [, $changedSnapshot, $changedResult] = $this->fixture(
@@ -427,7 +427,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             $projection['schema_version'],
             $projection['watermark'],
             $projection['row_count'],
-            new Sha256Hash($projection['hash']),
+            new Sha256Hash($projection['materialized_source_hash']),
         );
     }
 
@@ -467,7 +467,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             'schema_version',
             'watermark',
             'row_count',
-            'hash',
+            'materialized_source_hash',
         ];
         if (! $sortConstant instanceof Array_) {
             $violations[] = 'sort_constant_missing';

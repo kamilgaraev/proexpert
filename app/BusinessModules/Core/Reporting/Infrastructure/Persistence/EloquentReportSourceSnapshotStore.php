@@ -126,7 +126,7 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotSto
                 $header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope,
                 $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt,
                 $header->staleAt, ReportSourceSnapshotStatus::READY, $header->rowCount, $header->drillRowCount,
-                $header->snapshotHash, $readyAt, null,
+                $header->snapshotHash, $readyAt, null, $header->reportQueryIdentity, $header->reportQueryHash,
             );
         });
     }
@@ -196,9 +196,12 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotSto
             'id' => $header->id, 'source_kind' => $header->sourceKind, 'report_code' => $header->reportCode,
             'schema_version' => $header->schemaVersion, 'organization_id' => $header->scope->organizationId,
             'scope_identity' => $header->scopeIdentity(), 'query_hash' => $header->queryHash->value,
+            'report_query_identity' => $header->reportQueryIdentity,
+            'report_query_hash' => $header->reportQueryHash?->value,
             'scope_identity_hash' => $identity?->scopeIdentityHash()->value,
             'source_version' => $identity?->sourceVersion,
-            'as_of' => $header->asOf, 'source_hash' => $header->sourceHash->value,
+            'as_of' => $header->asOf, 'source_hash' => $header->materializedSourceHash->value,
+            'materialized_source_hash' => $header->materializedSourceHash->value,
             'watermarks' => $header->watermarks, 'generated_at' => $header->generatedAt,
             'stale_at' => $header->staleAt, 'status' => $header->status->value, 'row_count' => $header->rowCount,
             'drill_row_count' => $header->drillRowCount, 'snapshot_hash' => $header->snapshotHash->value,
@@ -240,10 +243,12 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotSto
 
             return new ReportSourceSnapshotHeader(
                 (string) $record->id, (string) $record->source_kind, (string) $record->report_code, (string) $record->schema_version,
-                $scope, new Sha256Hash((string) $record->query_hash), $record->as_of, new Sha256Hash((string) $record->source_hash),
+                $scope, new Sha256Hash((string) $record->query_hash), $record->as_of, new Sha256Hash((string) ($record->materialized_source_hash ?? $record->source_hash)),
                 $record->watermarks, $record->generated_at, $record->stale_at, ReportSourceSnapshotStatus::from((string) $record->status),
                 (int) $record->row_count, (int) $record->drill_row_count, new Sha256Hash((string) $record->snapshot_hash),
                 $record->ready_at, $record->expired_at,
+                $record->report_query_identity,
+                $record->report_query_hash === null ? null : new Sha256Hash((string) $record->report_query_hash),
             );
         } catch (Throwable $exception) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, [], $exception);

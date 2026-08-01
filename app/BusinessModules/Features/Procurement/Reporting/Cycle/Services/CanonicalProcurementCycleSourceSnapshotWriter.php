@@ -51,6 +51,7 @@ final readonly class CanonicalProcurementCycleSourceSnapshotWriter implements Pr
             $source,
             $results,
             $eventsByLine,
+            $query,
         );
 
         return $this->store->resolveReady($identity, $write);
