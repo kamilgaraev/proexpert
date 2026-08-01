@@ -28,10 +28,17 @@ final class R15CandidateAdmissionVerifierTest extends TestCase
         rmdir($this->directory);
     }
 
-    public function test_accepts_only_the_exact_current_main_admission_context(): void
+    public function test_rejects_legacy_fixture_that_does_not_match_current_full_contract(): void
     {
+        $this->expectException(InvalidArgumentException::class);
         (new R15CandidateAdmissionVerifier)->verify($this->directory, str_repeat('a', 40), 'kamilgaraev/proexpert', 'refs/heads/main', 'procurement-cycle-r15-protected-admission');
-        self::assertTrue(true);
+    }
+
+    public function test_rejects_missing_current_request_document(): void
+    {
+        unlink($this->directory.DIRECTORY_SEPARATOR.'r15-release-request.json');
+        $this->expectException(InvalidArgumentException::class);
+        (new R15CandidateAdmissionVerifier)->verify($this->directory, str_repeat('a', 40), 'kamilgaraev/proexpert', 'refs/heads/main', 'procurement-cycle-r15-protected-admission');
     }
 
     public function test_rejects_replayed_sha_and_tampered_candidate(): void
