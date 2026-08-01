@@ -12,6 +12,27 @@ final class EstimateGenerationAuditService
 {
     public const EVENT_NORMATIVE_DECISION_SUMMARY = 'normative_decision_summary';
 
+    public const EVENT_SHEET_TARGETED_REANALYSIS = 'sheet_targeted_reanalysis';
+
+    /** @param array<string, mixed> $routing */
+    public function recordSheetTargetedReanalysis(EstimateGenerationSession $session, int $documentId, int $unitId, array $routing): void
+    {
+        EstimateGenerationAuditEvent::query()->create([
+            'session_id' => $session->id,
+            'package_id' => null,
+            'user_id' => $session->user_id,
+            'event_type' => self::EVENT_SHEET_TARGETED_REANALYSIS,
+            'payload' => [
+                'document_id' => $documentId,
+                'unit_id' => $unitId,
+                'reason' => $routing['reanalysis_reason'] ?? null,
+                'target_role' => $routing['role'] ?? null,
+                'attempt_limit' => 1,
+                'outcome' => 'targeted_reanalysis',
+            ],
+        ]);
+    }
+
     /**
      * @param array<string, mixed> $draft
      */
