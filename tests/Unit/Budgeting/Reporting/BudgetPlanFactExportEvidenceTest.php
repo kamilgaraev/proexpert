@@ -26,6 +26,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRen
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\ReportExportRendererRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use LogicException;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Budgeting\BudgetPlanFactExportEvidenceFixture;
@@ -44,6 +45,10 @@ final class BudgetPlanFactExportEvidenceTest extends TestCase
         self::assertStringContainsString("actual_amount;committed_amount;currency;drill;forecast_amount;group;plan_amount;risk_level;row_key;variance_amount;variance_percent\r\n", $csv);
         self::assertSame($csv, $this->render($registry, $definition, $source, 'csv', $chunks));
         self::assertSame(2, substr_count($csv, "\r\n") - 1);
+        $group = CanonicalJson::encode($chunks[0]->rows[0]->values['group']);
+        $drill = CanonicalJson::encode($chunks[0]->rows[0]->values['drill']);
+        self::assertStringContainsString('"'.str_replace('"', '""', $group).'"', $csv);
+        self::assertStringContainsString('"'.str_replace('"', '""', $drill).'"', $csv);
 
         $xlsx = $this->render($registry, $definition, $source, 'xlsx', $chunks);
         self::assertSame($xlsx, $this->render($registry, $definition, $source, 'xlsx', $chunks));
@@ -52,6 +57,8 @@ final class BudgetPlanFactExportEvidenceTest extends TestCase
         self::assertStringContainsString('<c r="K1" s="1" t="inlineStr"><is><t>variance_percent</t>', $sheet);
         self::assertStringContainsString('<c r="I2" t="inlineStr"><is><t>plan_fact:', $sheet);
         self::assertStringContainsString('<c r="I3" t="inlineStr"><is><t>plan_fact:', $sheet);
+        self::assertStringContainsString(htmlspecialchars($group, ENT_XML1 | ENT_QUOTES, 'UTF-8'), $sheet);
+        self::assertStringContainsString(htmlspecialchars($drill, ENT_XML1 | ENT_QUOTES, 'UTF-8'), $sheet);
     }
 
     public function test_renderer_rejects_unpublished_format_and_identity_tampering_before_rows_are_read(): void
@@ -90,6 +97,9 @@ final class BudgetPlanFactExportEvidenceTest extends TestCase
             $this->assertLimit($exception);
         }
         self::assertSame(0, $cursorReads);
+
+        $this->expectException(ReportContractException::class);
+        BudgetPlanFactExportEvidenceFixture::sealedSource(tamperDefinitionHash: true);
     }
 
     public function test_sealed_rows_reject_query_and_source_identity_tampering_and_neutralize_csv_formulas(): void
@@ -123,10 +133,19 @@ final class BudgetPlanFactExportEvidenceTest extends TestCase
             $original->queryHash,
             $original->sourceHash,
         );
-        $second = $chunks[0]->rows[1];
+        $secondValues = $chunks[0]->rows[1]->values;
+        $secondValues['risk_level'] = "quoted\";field\r\nnext";
+        $second = new \App\BusinessModules\Core\Reporting\Application\Rows\ReportCursorRow(
+            $chunks[0]->rows[1]->rowKey,
+            $secondValues,
+            $chunks[0]->rows[1]->snapshotId,
+            $chunks[0]->rows[1]->queryHash,
+            $chunks[0]->rows[1]->sourceHash,
+        );
         $stream = new BudgetPlanFactInMemoryStream;
         $renderer->render($source, BudgetPlanFactExportEvidenceFixture::export('csv'), [new \App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunk([$formulaRow, $second])], $stream);
         self::assertStringContainsString("'=SUM(1+1)", $stream->bytes());
+        self::assertStringContainsString("\"quoted\"\";field\r\nnext\"", $stream->bytes());
     }
 
     public function test_revoked_export_authorization_fails_closed_for_the_sealed_plan_fact_subject(): void
