@@ -85,9 +85,11 @@ return new class extends Migration
             });
         }
 
-        $this->backfillJournalMaterialEstimateItems();
-        $this->backfillJournalEquipmentEstimateItems();
-        $this->backfillJournalWorkerEstimateItems();
+        if (Schema::hasColumn('construction_journal_entries', 'estimate_id')) {
+            $this->backfillJournalMaterialEstimateItems();
+            $this->backfillJournalEquipmentEstimateItems();
+            $this->backfillJournalWorkerEstimateItems();
+        }
 
         Schema::table('journal_materials', function (Blueprint $table): void {
             $table->index('estimate_item_id', 'journal_materials_estimate_item_idx');
