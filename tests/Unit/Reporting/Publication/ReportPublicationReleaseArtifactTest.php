@@ -30,6 +30,41 @@ final class ReportPublicationReleaseArtifactTest extends TestCase
             '.github/workflows/notification-concurrency.yml@refs/heads/main',
             $artifact->payload()['provenance']['workflow_ref'],
         );
+        self::assertSame('push', $artifact->payload()['provenance']['event_name']);
+        self::assertSame('refs/heads/main', $artifact->payload()['provenance']['ref']);
+        self::assertSame(
+            'report-publication-release',
+            $artifact->payload()['provenance']['environment'],
+        );
+    }
+
+    #[DataProvider('untrustedExecutionBoundaryProvider')]
+    public function test_signed_artifact_outside_the_protected_execution_boundary_is_rejected(
+        array $provenanceOverrides,
+    ): void {
+        $fixture = ReportPublicationFixtureFactory::eligible();
+        $artifactPayload = json_decode($fixture['eligible']->releaseArtifactBytes, true, 512, JSON_THROW_ON_ERROR);
+        $artifact = ReportPublicationReleaseArtifactTestFactory::issue(
+            $fixture['eligible']->proof,
+            $fixture['eligible']->candidateManifestHash,
+            $fixture['eligible']->officialManifestHash,
+            $fixture['eligible']->release,
+            $artifactPayload['evidence'],
+            provenanceOverrides: $provenanceOverrides,
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_release_artifact_untrusted');
+
+        ReportPublicationReleaseArtifactTestFactory::verifier()->verify($artifact);
+    }
+
+    public static function untrustedExecutionBoundaryProvider(): iterable
+    {
+        yield 'pull request event' => [['event_name' => 'pull_request']];
+        yield 'pull request ref' => [['ref' => 'refs/pull/123/merge']];
+        yield 'unprotected environment' => [['environment' => 'report-publication-preview']];
+        yield 'different repository' => [['repository' => 'attacker/proexpert']];
     }
 
     #[DataProvider('tamperProvider')]

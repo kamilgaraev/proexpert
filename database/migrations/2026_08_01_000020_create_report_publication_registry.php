@@ -238,8 +238,9 @@ return new class extends Migration
         DB::statement(<<<'SQL'
             ALTER TABLE report_publications
                 ADD CONSTRAINT report_publications_release_artifact_shape_check
-                CHECK (
-                    (release_artifact_json::jsonb ?& ARRAY[
+                CHECK ((
+                    (jsonb_typeof(release_artifact_json::jsonb) = 'object') IS TRUE
+                    AND (release_artifact_json::jsonb ?& ARRAY[
                         'algorithm', 'artifact_id', 'evidence', 'issuer', 'key_id',
                         'provenance', 'schema_version', 'signature', 'subject'
                     ]) IS TRUE
@@ -247,12 +248,50 @@ return new class extends Migration
                         'algorithm', 'artifact_id', 'evidence', 'issuer', 'key_id',
                         'provenance', 'schema_version', 'signature', 'subject'
                     ]) = '{}'::jsonb) IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'algorithm') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'artifact_id') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'issuer') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'key_id') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'schema_version') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'signature') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance') = 'object') IS TRUE
+                    AND ((release_artifact_json::jsonb -> 'provenance') ?& ARRAY[
+                        'artifact_name', 'commit_sha', 'environment', 'event_name', 'job',
+                        'ref', 'repository', 'run_attempt', 'run_id', 'workflow_ref'
+                    ]) IS TRUE
+                    AND (((release_artifact_json::jsonb -> 'provenance') - ARRAY[
+                        'artifact_name', 'commit_sha', 'environment', 'event_name', 'job',
+                        'ref', 'repository', 'run_attempt', 'run_id', 'workflow_ref'
+                    ]) = '{}'::jsonb) IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'artifact_name') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'commit_sha') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'environment') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'event_name') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'job') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'ref') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'repository') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'run_attempt') = 'number') IS TRUE
+                    AND ((release_artifact_json::jsonb -> 'provenance' ->> 'run_attempt') COLLATE "C") ~ '\A[1-9][0-9]*\Z'
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'run_id') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'workflow_ref') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'evidence') = 'object') IS TRUE
+                    AND ((release_artifact_json::jsonb -> 'evidence') ?& ARRAY[
+                        'checks', 'commit_sha', 'completed_at_utc', 'run_id'
+                    ]) IS TRUE
+                    AND (((release_artifact_json::jsonb -> 'evidence') - ARRAY[
+                        'checks', 'commit_sha', 'completed_at_utc', 'run_id'
+                    ]) = '{}'::jsonb) IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'evidence' -> 'checks') = 'object') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'evidence' -> 'commit_sha') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'evidence' -> 'completed_at_utc') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'evidence' -> 'run_id') = 'string') IS TRUE
                     AND (release_artifact_json::jsonb ->> 'artifact_id') = 'most.report_publication.release'
                     AND (release_artifact_json::jsonb ->> 'schema_version') = '1.0.0'
                     AND (release_artifact_json::jsonb ->> 'algorithm') = 'ed25519'
                     AND (release_artifact_json::jsonb ->> 'issuer') = release_issuer
                     AND (release_artifact_json::jsonb ->> 'key_id') = release_key_id
                     AND ((release_artifact_json::jsonb ->> 'signature') COLLATE "C") ~ '\A[A-Za-z0-9_-]{86}\Z'
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject') = 'object') IS TRUE
                     AND ((release_artifact_json::jsonb -> 'subject') ?& ARRAY[
                         'approver_identity', 'binding_sha256', 'candidate_definition_sha256',
                         'candidate_manifest_sha256', 'code', 'conformance_evidence_sha256',
@@ -265,6 +304,16 @@ return new class extends Migration
                         'official_manifest_sha256', 'proof_sha256', 'release_created_at_utc',
                         'release_git_sha'
                     ]) = '{}'::jsonb) IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'approver_identity') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'binding_sha256') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'candidate_definition_sha256') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'candidate_manifest_sha256') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'code') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'conformance_evidence_sha256') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'official_manifest_sha256') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'proof_sha256') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'release_created_at_utc') = 'string') IS TRUE
+                    AND (jsonb_typeof(release_artifact_json::jsonb -> 'subject' -> 'release_git_sha') = 'string') IS TRUE
                     AND (release_artifact_json::jsonb -> 'subject' ->> 'code') = code
                     AND (release_artifact_json::jsonb -> 'subject' ->> 'candidate_manifest_sha256') = candidate_manifest_sha256
                     AND (release_artifact_json::jsonb -> 'subject' ->> 'candidate_definition_sha256') = candidate_definition_sha256
@@ -286,6 +335,7 @@ return new class extends Migration
                         proof_json
                     ) IS TRUE
                     AND encode(sha256(convert_to(release_artifact_json, 'UTF8')), 'hex') = release_artifact_sha256
+                    ) IS TRUE
                 )
             SQL);
         DB::statement(<<<'SQL'
@@ -350,7 +400,7 @@ return new class extends Migration
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             BEGIN
                 IF TG_OP = 'DELETE' THEN
@@ -401,7 +451,7 @@ return new class extends Migration
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             DECLARE
                 transition_type text;
@@ -419,7 +469,7 @@ return new class extends Migration
                     END IF;
                     IF EXISTS (
                         SELECT 1
-                        FROM report_publications AS previous
+                        FROM public.report_publications AS previous
                         WHERE previous.code = NEW.code
                             AND previous.id <> NEW.id
                             AND COALESCE(previous.disabled_at, previous.published_at) >= NEW.published_at
@@ -447,7 +497,7 @@ return new class extends Migration
                         'hex'
                     );
 
-                    UPDATE report_publication_features
+                    UPDATE public.report_publication_features
                     SET mode = 'disabled',
                         canary_organization_ids = '[]'::jsonb,
                         canary_user_ids = '[]'::jsonb,
@@ -461,7 +511,7 @@ return new class extends Migration
                     END IF;
                 END IF;
 
-                INSERT INTO report_publication_events (
+                INSERT INTO public.report_publication_events (
                     id, publication_id, event_type, actor_identity,
                     release_git_sha, payload_sha256, occurred_at
                 ) VALUES (
@@ -478,7 +528,7 @@ return new class extends Migration
                     'publication_id', NEW.id,
                     'payload_sha256', transition_payload_sha
                 );
-                INSERT INTO report_publication_outbox (
+                INSERT INTO public.report_publication_outbox (
                     id, publication_id, event_type, deduplication_key,
                     payload_json, created_at, delivered_at
                 ) VALUES (
@@ -496,7 +546,7 @@ return new class extends Migration
             $$;
 
             CREATE TRIGGER report_publications_transition_artifacts
-                AFTER INSERT OR UPDATE ON report_publications
+                AFTER INSERT OR UPDATE ON public.report_publications
                 FOR EACH ROW EXECUTE FUNCTION report_publication_append_transition_artifacts();
             SQL);
 
@@ -505,7 +555,7 @@ return new class extends Migration
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             DECLARE
                 required_type text;
@@ -542,7 +592,7 @@ return new class extends Migration
 
                 IF NOT EXISTS (
                     SELECT 1
-                    FROM report_publication_events AS event
+                    FROM public.report_publication_events AS event
                     WHERE event.publication_id = NEW.id
                         AND event.event_type = required_type
                         AND event.actor_identity = required_actor
@@ -560,7 +610,7 @@ return new class extends Migration
                 required_deduplication_key := NEW.id || ':' || required_outbox_type || ':' || required_payload_sha;
                 IF NOT EXISTS (
                     SELECT 1
-                    FROM report_publication_outbox AS outbox
+                    FROM public.report_publication_outbox AS outbox
                     WHERE outbox.publication_id = NEW.id
                         AND outbox.event_type = required_outbox_type
                         AND outbox.deduplication_key = required_deduplication_key
@@ -573,7 +623,7 @@ return new class extends Migration
 
                 IF NOT EXISTS (
                     SELECT 1
-                    FROM report_publication_features AS feature
+                    FROM public.report_publication_features AS feature
                     WHERE feature.code = NEW.code
                         AND feature.publication_id = NEW.id
                         AND feature.proof_sha256 = NEW.proof_sha256
@@ -590,7 +640,7 @@ return new class extends Migration
             $$;
 
             CREATE CONSTRAINT TRIGGER report_publications_event_required
-                AFTER INSERT OR UPDATE ON report_publications
+                AFTER INSERT OR UPDATE ON public.report_publications
                 DEFERRABLE INITIALLY DEFERRED
                 FOR EACH ROW EXECUTE FUNCTION report_publication_require_event();
             SQL);
@@ -600,15 +650,15 @@ return new class extends Migration
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             DECLARE
-                publication report_publications%ROWTYPE;
+                publication public.report_publications%ROWTYPE;
                 expected_payload jsonb;
                 expected_payload_sha text;
             BEGIN
                 SELECT * INTO publication
-                FROM report_publications
+                FROM public.report_publications
                 WHERE id = NEW.publication_id
                 FOR KEY SHARE;
 
@@ -651,14 +701,14 @@ return new class extends Migration
             $$;
 
             CREATE TRIGGER report_publication_events_insert_guard
-                BEFORE INSERT ON report_publication_events
+                BEFORE INSERT ON public.report_publication_events
                 FOR EACH ROW EXECUTE FUNCTION report_publication_event_insert_guard();
 
             CREATE OR REPLACE FUNCTION report_publication_event_reject_mutation()
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             BEGIN
                 RAISE EXCEPTION 'report_publication_events_are_append_only' USING ERRCODE = '55000';
@@ -666,7 +716,7 @@ return new class extends Migration
             $$;
 
             CREATE TRIGGER report_publication_events_append_only
-                BEFORE UPDATE OR DELETE ON report_publication_events
+                BEFORE UPDATE OR DELETE ON public.report_publication_events
                 FOR EACH ROW EXECUTE FUNCTION report_publication_event_reject_mutation();
             SQL);
 
@@ -675,17 +725,17 @@ return new class extends Migration
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             DECLARE
-                publication report_publications%ROWTYPE;
+                publication public.report_publications%ROWTYPE;
             BEGIN
                 IF TG_OP = 'DELETE' THEN
                     RAISE EXCEPTION 'report_publication_feature_delete_forbidden' USING ERRCODE = '55000';
                 END IF;
 
                 SELECT * INTO publication
-                FROM report_publications
+                FROM public.report_publications
                 WHERE id = NEW.publication_id
                     AND proof_sha256 = NEW.proof_sha256
                 FOR KEY SHARE NOWAIT;
@@ -704,7 +754,7 @@ return new class extends Migration
             $$;
 
             CREATE TRIGGER report_publication_features_binding
-                BEFORE INSERT OR UPDATE OR DELETE ON report_publication_features
+                BEFORE INSERT OR UPDATE OR DELETE ON public.report_publication_features
                 FOR EACH ROW EXECUTE FUNCTION report_publication_feature_binding_guard();
             SQL);
 
@@ -713,7 +763,7 @@ return new class extends Migration
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             DECLARE
                 feature_payload jsonb;
@@ -731,7 +781,7 @@ return new class extends Migration
                     'hex'
                 );
 
-                INSERT INTO report_publication_outbox (
+                INSERT INTO public.report_publication_outbox (
                     id, publication_id, event_type, deduplication_key,
                     payload_json, created_at, delivered_at
                 ) VALUES (
@@ -750,7 +800,7 @@ return new class extends Migration
             $$;
 
             CREATE TRIGGER report_publication_features_outbox
-                AFTER UPDATE ON report_publication_features
+                AFTER UPDATE ON public.report_publication_features
                 FOR EACH ROW
                 WHEN (
                     OLD.publication_id IS DISTINCT FROM NEW.publication_id
@@ -768,7 +818,7 @@ return new class extends Migration
             RETURNS trigger
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             BEGIN
                 IF TG_OP = 'DELETE'
@@ -789,7 +839,7 @@ return new class extends Migration
             $$;
 
             CREATE TRIGGER report_publication_outbox_immutable_guard
-                BEFORE UPDATE OR DELETE ON report_publication_outbox
+                BEFORE UPDATE OR DELETE ON public.report_publication_outbox
                 FOR EACH ROW EXECUTE FUNCTION report_publication_outbox_guard();
             SQL);
 
@@ -820,9 +870,13 @@ return new class extends Migration
             RETURNS void
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             BEGIN
+                IF p_published_at > clock_timestamp() THEN
+                    RAISE EXCEPTION 'report_publication_release_timestamp_in_future' USING ERRCODE = '23514';
+                END IF;
+
                 PERFORM pg_advisory_xact_lock(hashtextextended('report-publication:' || p_code, 0));
 
                 INSERT INTO public.report_publications (
@@ -870,7 +924,7 @@ return new class extends Migration
             RETURNS timestamptz
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             DECLARE
                 disabled_at_value timestamptz;
@@ -903,7 +957,7 @@ return new class extends Migration
             RETURNS timestamptz
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             DECLARE
                 configured_at timestamptz;
@@ -956,7 +1010,7 @@ return new class extends Migration
             RETURNS void
             LANGUAGE plpgsql
             SECURITY DEFINER
-            SET search_path = pg_catalog, public
+            SET search_path = pg_catalog, public, pg_temp
             AS $$
             BEGIN
                 UPDATE public.report_publication_outbox

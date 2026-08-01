@@ -24,7 +24,15 @@ final readonly class Ed25519ReportPublicationReleaseArtifactVerifier implements 
             $payload = $artifact->payload();
             $authority = $this->trustedAuthorities[$payload['issuer']][$payload['key_id']] ?? null;
             if (! is_array($authority)
-                || array_keys($authority) !== ['job', 'public_key_base64', 'repository', 'workflow_ref']) {
+                || array_keys($authority) !== [
+                    'environment',
+                    'event_name',
+                    'job',
+                    'public_key_base64',
+                    'ref',
+                    'repository',
+                    'workflow_ref',
+                ]) {
                 $this->invalid();
             }
             $publicKey = base64_decode((string) $authority['public_key_base64'], true);
@@ -38,6 +46,9 @@ final readonly class Ed25519ReportPublicationReleaseArtifactVerifier implements 
                 || ! hash_equals((string) $authority['repository'], $provenance['repository'])
                 || ! hash_equals((string) $authority['workflow_ref'], $provenance['workflow_ref'])
                 || ! hash_equals((string) $authority['job'], $provenance['job'])
+                || ! hash_equals((string) $authority['event_name'], $provenance['event_name'])
+                || ! hash_equals((string) $authority['ref'], $provenance['ref'])
+                || ! hash_equals((string) $authority['environment'], $provenance['environment'])
                 || ! hash_equals($provenance['run_id'], $evidence['run_id'])
                 || ! hash_equals($provenance['commit_sha'], $evidence['commit_sha'])
                 || ! hash_equals(

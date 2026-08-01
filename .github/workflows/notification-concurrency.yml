@@ -24,12 +24,24 @@ on:
       - 'tests/Feature/Reporting/Publication/**'
       - 'tests/Unit/Reporting/Publication/**'
       - 'tests/Support/Reporting/Publication/**'
+      - 'tests/Unit/Reporting/Exports/**'
+      - 'tests/Contract/Reporting/ReportExportParityContractTest.php'
+      - 'tests/Performance/Reporting/ReportExportStreamingBudgetTest.php'
+      - 'tests/Architecture/Reporting/ReportingExecutionBindingsTest.php'
       - 'tests/Feature/QualityControl/Reporting/DefectFlow/**'
       - 'tests/Unit/QualityControl/Reporting/DefectFlow/**'
       - 'tests/Support/Reporting/PostgresProcessRaceHarness.php'
       - 'tests/Architecture/Reporting/ReportPublicationProofSchemaTest.php'
       - 'tests/Fixtures/Reporting/Publication/**'
       - 'docs/reports/contracts/report-publication-proof.v1.schema.json'
+      - 'resources/views/reports/exports/canonical-report-pdf.blade.php'
+      - 'config/dompdf.php'
+      - 'app/Helpers/helpers.php'
+      - 'app/Helpers/TranslationHelper.php'
+      - 'lang/en/reports.php'
+      - 'lang/ru/reports.php'
+      - 'scripts/issue-report-publication-release.php'
+      - 'build/reports/publication-release-requests/**'
       - 'composer.json'
       - 'composer.lock'
       - '.github/workflows/notification-concurrency.yml'
@@ -57,12 +69,24 @@ on:
       - 'tests/Feature/Reporting/Publication/**'
       - 'tests/Unit/Reporting/Publication/**'
       - 'tests/Support/Reporting/Publication/**'
+      - 'tests/Unit/Reporting/Exports/**'
+      - 'tests/Contract/Reporting/ReportExportParityContractTest.php'
+      - 'tests/Performance/Reporting/ReportExportStreamingBudgetTest.php'
+      - 'tests/Architecture/Reporting/ReportingExecutionBindingsTest.php'
       - 'tests/Feature/QualityControl/Reporting/DefectFlow/**'
       - 'tests/Unit/QualityControl/Reporting/DefectFlow/**'
       - 'tests/Support/Reporting/PostgresProcessRaceHarness.php'
       - 'tests/Architecture/Reporting/ReportPublicationProofSchemaTest.php'
       - 'tests/Fixtures/Reporting/Publication/**'
       - 'docs/reports/contracts/report-publication-proof.v1.schema.json'
+      - 'resources/views/reports/exports/canonical-report-pdf.blade.php'
+      - 'config/dompdf.php'
+      - 'app/Helpers/helpers.php'
+      - 'app/Helpers/TranslationHelper.php'
+      - 'lang/en/reports.php'
+      - 'lang/ru/reports.php'
+      - 'scripts/issue-report-publication-release.php'
+      - 'build/reports/publication-release-requests/**'
       - 'composer.json'
       - 'composer.lock'
       - '.github/workflows/notification-concurrency.yml'
@@ -398,13 +422,13 @@ jobs:
       REPORT_PUBLICATION_POSTGRES_TESTS: 1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45
         with:
           php-version: 8.2
-          extensions: mbstring, pcntl, pdo_pgsql, pgsql
+          extensions: dom, mbstring, pcntl, pdo_pgsql, pgsql, zip
           coverage: none
           tools: composer:v2
 
@@ -413,7 +437,7 @@ jobs:
         run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ steps.publication-composer-cache.outputs.dir }}
           key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
@@ -435,6 +459,19 @@ jobs:
           tests/Unit/Reporting/Publication
           tests/Architecture/Reporting/ReportPublicationProofSchemaTest.php
 
+      - name: Run real renderer delivery contracts
+        run: >-
+          php vendor/bin/phpunit
+          tests/Unit/Reporting/Exports/CsvReportExportRendererTest.php
+          tests/Unit/Reporting/Exports/XlsxReportExportRendererTest.php
+          tests/Unit/Reporting/Exports/PdfReportExportRendererTest.php
+          tests/Unit/Reporting/Exports/ReportExportRendererRegistryTest.php
+          tests/Contract/Reporting/ReportExportParityContractTest.php
+          tests/Performance/Reporting/ReportExportStreamingBudgetTest.php
+          tests/Architecture/Reporting/ReportingExecutionBindingsTest.php
+          tests/Unit/Reporting/Exports/S3ReportArtifactStreamTest.php
+          --no-coverage
+
       - name: Prepare isolated PostgreSQL schema
         run: php artisan migrate:fresh --force
 
@@ -443,6 +480,64 @@ jobs:
           php vendor/bin/phpunit tests/Feature/Reporting/Publication/ReportPublicationRegistryPostgresTest.php
           --group=postgresql
           --fail-on-skipped
+
+  report-publication-release-artifact:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: report-publication-postgres-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: report-publication-release
+    env:
+      REPORT_PUBLICATION_RELEASE_ENVIRONMENT: report-publication-release
+    steps:
+      - name: Checkout trusted main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45
+        with:
+          php-version: 8.2
+          extensions: dom, mbstring, sodium, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Verify protected release context
+        run: |
+          test "$GITHUB_EVENT_NAME" = "push"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REPOSITORY" = "kamilgaraev/proexpert"
+          test "$GITHUB_JOB" = "report-publication-release-artifact"
+          test -n "$GITHUB_ACTOR_ID"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Issue and self-verify signed release artifact
+        env:
+          REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64: ${{ secrets.REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64 }}
+        run: |
+          php scripts/issue-report-publication-release.php \
+            --proof-template=tests/Fixtures/Reporting/Publication/report-publication-proof.valid.json \
+            --candidate-manifest=app/BusinessModules/Core/Reporting/resources/candidates/wave-1-candidates.v1.yaml \
+            --official-manifest=app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml \
+            --output-directory=build/reports/signed-publication-releases
+          shopt -s nullglob
+          for request in build/reports/publication-release-requests/*; do
+            php scripts/issue-report-publication-release.php \
+              --proof-template="$request/proof-template.json" \
+              --candidate-manifest="$request/candidate-manifest.yaml" \
+              --official-manifest="$request/official-manifest.yaml" \
+              --output-directory=build/reports/signed-publication-releases
+          done
+
+      - name: Upload immutable release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: report-publication-release-${{ github.sha }}
+          path: build/reports/signed-publication-releases/
+          if-no-files-found: error
+          retention-days: 30
 
   quality-defect-flow-postgres-contract:
     runs-on: ubuntu-latest

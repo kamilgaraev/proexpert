@@ -26,7 +26,10 @@ final readonly class ReportPublicationReleaseArtifact
     private const PROVENANCE_KEYS = [
         'artifact_name',
         'commit_sha',
+        'environment',
+        'event_name',
         'job',
+        'ref',
         'repository',
         'run_attempt',
         'run_id',
@@ -118,6 +121,9 @@ final readonly class ReportPublicationReleaseArtifact
         self::assertPattern($provenance['repository'], '/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/D');
         self::assertPattern($provenance['workflow_ref'], '/^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml@refs\/heads\/[A-Za-z0-9._\/-]+$/D');
         self::assertPattern($provenance['job'], '/^[a-z][a-z0-9_-]{2,127}$/D');
+        self::assertPattern($provenance['event_name'], '/^[a-z][a-z0-9_]{2,63}$/D');
+        self::assertPattern($provenance['ref'], '/^refs\/(?:heads|pull|tags)\/[A-Za-z0-9._\/-]{1,255}$/D');
+        self::assertPattern($provenance['environment'], '/^[a-z][a-z0-9_.-]{2,63}$/D');
         self::assertPattern($provenance['run_id'], '/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/D');
         self::assertGitSha($provenance['commit_sha']);
         self::assertPattern($provenance['artifact_name'], '/^report-publication-[a-z][a-z0-9_]{2,63}-[a-f0-9]{64}$/D');

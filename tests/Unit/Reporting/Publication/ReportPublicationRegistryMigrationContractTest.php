@@ -50,12 +50,37 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('most_report_publication_runtime', $source);
         self::assertStringContainsString('most_report_publication_outbox_worker', $source);
         self::assertStringContainsString('SECURITY DEFINER', $source);
-        self::assertStringContainsString('SET search_path = pg_catalog, public', $source);
+        self::assertStringNotContainsString('SET search_path = pg_catalog, public\n', $source);
+        self::assertStringContainsString('SET search_path = pg_catalog, public, pg_temp', $source);
+        self::assertSame(
+            substr_count($source, 'SECURITY DEFINER'),
+            substr_count($source, 'SET search_path = pg_catalog, public, pg_temp'),
+        );
         self::assertStringContainsString('report_publication_promote(', $source);
         self::assertStringContainsString('report_publication_disable(', $source);
         self::assertStringContainsString('report_publication_configure_feature(', $source);
         self::assertStringContainsString('report_publication_mark_outbox_delivered(', $source);
         self::assertStringContainsString('release_artifact_sha256', $source);
+        self::assertStringContainsString(
+            "encode(sha256(convert_to(release_artifact_json, 'UTF8')), 'hex') = release_artifact_sha256\n                    ) IS TRUE",
+            $source,
+        );
+        self::assertStringContainsString(
+            "jsonb_typeof(release_artifact_json::jsonb -> 'provenance' -> 'run_attempt') = 'number'",
+            $source,
+        );
+        foreach ([
+            'FROM public.report_publications',
+            'UPDATE public.report_publication_features',
+            'INSERT INTO public.report_publication_events',
+            'INSERT INTO public.report_publication_outbox',
+            'FROM public.report_publication_events AS event',
+            'FROM public.report_publication_outbox AS outbox',
+            'FROM public.report_publication_features AS feature',
+        ] as $qualifiedRelation) {
+            self::assertStringContainsString($qualifiedRelation, $source);
+        }
+        self::assertStringContainsString('p_published_at > clock_timestamp()', $source);
         self::assertStringContainsString("(proof_json -> 'versions' ->> 'contract') = contract_version", $source);
         self::assertStringContainsString("(proof_json -> 'release' ->> 'approver_identity') = published_by", $source);
         self::assertStringContainsString('REVOKE ALL ON TABLE report_publications', $source);
@@ -108,6 +133,16 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('test_persisted_canary_allowlist_denies_other_tenants', $source);
         self::assertStringContainsString('test_runtime_role_cannot_forge_publication_event_or_outbox_rows', $source);
         self::assertStringContainsString('test_issuer_role_promotes_only_through_the_owned_admission_function', $source);
+        self::assertStringContainsString(
+            'test_non_superuser_issuer_principal_can_only_use_admission_function_without_owner_bypass',
+            $source,
+        );
+        self::assertStringContainsString('NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', $source);
+        self::assertStringContainsString("pg_has_role(current_user, 'most_report_publication_owner', 'MEMBER')", $source);
+        self::assertStringContainsString('test_issuer_admission_rejects_null_release_signature_and_evidence', $source);
+        self::assertStringContainsString('test_issuer_admission_rejects_future_release_timestamp', $source);
+        self::assertStringContainsString('test_issuer_admission_rejects_non_integer_provenance_run_attempt', $source);
+        self::assertStringContainsString('test_temp_shadow_cannot_redirect_security_definer_transition_artifacts', $source);
     }
 
     public function test_existing_postgres_workflow_executes_publication_gate_fail_closed(): void
@@ -127,8 +162,42 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('php artisan migrate:fresh --force', $commands);
         self::assertStringContainsString('tests/Unit/Reporting/Publication', $commands);
         self::assertStringContainsString('ReportPublicationProofSchemaTest.php', $commands);
+        self::assertStringContainsString('CsvReportExportRendererTest.php', $commands);
+        self::assertStringContainsString('XlsxReportExportRendererTest.php', $commands);
+        self::assertStringContainsString('PdfReportExportRendererTest.php', $commands);
+        self::assertStringContainsString('ReportExportParityContractTest.php', $commands);
+        self::assertStringContainsString('ReportExportStreamingBudgetTest.php', $commands);
         self::assertStringContainsString('ReportPublicationRegistryPostgresTest.php', $commands);
         self::assertStringContainsString('--fail-on-skipped', $commands);
+
+        $releaseJob = $workflow['jobs']['report-publication-release-artifact'] ?? null;
+        self::assertIsArray($releaseJob);
+        self::assertSame(
+            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            $releaseJob['if'] ?? null,
+        );
+        self::assertSame('report-publication-postgres-contract', $releaseJob['needs'] ?? null);
+        self::assertSame('report-publication-release', $releaseJob['environment'] ?? null);
+        $releaseCommands = implode("\n", array_map(
+            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
+            $releaseJob['steps'] ?? [],
+        ));
+        self::assertStringContainsString('GITHUB_EVENT_NAME', $releaseCommands);
+        self::assertStringContainsString('GITHUB_REF', $releaseCommands);
+        self::assertStringContainsString('GITHUB_REPOSITORY', $releaseCommands);
+        self::assertStringContainsString('issue-report-publication-release.php', $releaseCommands);
+        self::assertContains(
+            'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+            array_column($releaseJob['steps'] ?? [], 'uses'),
+        );
+        self::assertContains(
+            'actions/checkout@11d5960a326750d5838078e36cf38b85af677262',
+            array_column($releaseJob['steps'] ?? [], 'uses'),
+        );
+        self::assertContains(
+            'shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45',
+            array_column($releaseJob['steps'] ?? [], 'uses'),
+        );
 
         $pullRequestPaths = $workflow['on']['pull_request']['paths'] ?? [];
         $pushPaths = $workflow['on']['push']['paths'] ?? [];
@@ -136,9 +205,18 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
             'tests/Feature/Reporting/Publication/**',
             'tests/Unit/Reporting/Publication/**',
             'tests/Support/Reporting/Publication/**',
+            'tests/Unit/Reporting/Exports/**',
+            'tests/Contract/Reporting/ReportExportParityContractTest.php',
+            'tests/Performance/Reporting/ReportExportStreamingBudgetTest.php',
             'tests/Architecture/Reporting/ReportPublicationProofSchemaTest.php',
             'tests/Fixtures/Reporting/Publication/**',
             'docs/reports/contracts/report-publication-proof.v1.schema.json',
+            'resources/views/reports/exports/canonical-report-pdf.blade.php',
+            'config/dompdf.php',
+            'lang/en/reports.php',
+            'lang/ru/reports.php',
+            'scripts/issue-report-publication-release.php',
+            'build/reports/publication-release-requests/**',
         ] as $path) {
             self::assertContains($path, $pullRequestPaths);
             self::assertContains($path, $pushPaths);

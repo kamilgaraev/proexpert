@@ -6,6 +6,7 @@ namespace Tests\Support\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Publication\Ed25519ReportPublicationReleaseArtifactSigner;
 use App\BusinessModules\Core\Reporting\Application\Publication\Ed25519ReportPublicationReleaseArtifactVerifier;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseArtifactIssuer;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationReleaseIdentity;
@@ -17,11 +18,17 @@ final class ReportPublicationReleaseArtifactTestFactory
 
     private const KEY_ID = 'reports-release-test-01';
 
-    private const REPOSITORY = 'most/backend';
+    private const REPOSITORY = 'kamilgaraev/proexpert';
 
     private const WORKFLOW_REF = '.github/workflows/notification-concurrency.yml@refs/heads/main';
 
-    private const JOB = 'report-publication-postgres-contract';
+    private const JOB = 'report-publication-release-artifact';
+
+    private const EVENT_NAME = 'push';
+
+    private const REF = 'refs/heads/main';
+
+    private const ENVIRONMENT = 'report-publication-release';
 
     public static function issue(
         ReportPublicationProof $proof,
@@ -30,19 +37,26 @@ final class ReportPublicationReleaseArtifactTestFactory
         ReportPublicationReleaseIdentity $release,
         array $evidence,
         int $runAttempt = 1,
+        array $provenanceOverrides = [],
     ): string {
         $proofPayload = $proof->payload();
 
+        $provenance = array_replace([
+            'artifact_name' => 'report-publication-'.$proofPayload['code'].'-'.$proof->digest()->value,
+            'commit_sha' => $release->gitSha,
+            'environment' => self::ENVIRONMENT,
+            'event_name' => self::EVENT_NAME,
+            'job' => self::JOB,
+            'ref' => self::REF,
+            'repository' => self::REPOSITORY,
+            'run_attempt' => $runAttempt,
+            'run_id' => $evidence['run_id'],
+            'workflow_ref' => self::WORKFLOW_REF,
+        ], $provenanceOverrides);
+        ksort($provenance, SORT_STRING);
+
         return self::signer()->issue(
-            [
-                'artifact_name' => 'report-publication-'.$proofPayload['code'].'-'.$proof->digest()->value,
-                'commit_sha' => $release->gitSha,
-                'job' => self::JOB,
-                'repository' => self::REPOSITORY,
-                'run_attempt' => $runAttempt,
-                'run_id' => $evidence['run_id'],
-                'workflow_ref' => self::WORKFLOW_REF,
-            ],
+            $provenance,
             [
                 'approver_identity' => $release->approverIdentity,
                 'binding_sha256' => $proofPayload['binding_sha256'],
@@ -66,13 +80,21 @@ final class ReportPublicationReleaseArtifactTestFactory
         return new Ed25519ReportPublicationReleaseArtifactVerifier([
             self::ISSUER => [
                 self::KEY_ID => [
+                    'environment' => self::ENVIRONMENT,
+                    'event_name' => self::EVENT_NAME,
                     'job' => self::JOB,
                     'public_key_base64' => base64_encode($publicKey),
+                    'ref' => self::REF,
                     'repository' => self::REPOSITORY,
                     'workflow_ref' => self::WORKFLOW_REF,
                 ],
             ],
         ]);
+    }
+
+    public static function issuer(): ReportPublicationReleaseArtifactIssuer
+    {
+        return new ReportPublicationReleaseArtifactIssuer(self::signer(), self::verifier());
     }
 
     private static function signer(): Ed25519ReportPublicationReleaseArtifactSigner

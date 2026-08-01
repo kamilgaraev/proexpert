@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Tests\Feature\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationFeatureGate;
+use App\BusinessModules\Core\Reporting\Domain\DTO\EligibleReportPublication;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationIdentity;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -160,6 +163,181 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
             hash('sha256', $fixture['eligible']->releaseArtifactBytes),
             DB::table('report_publications')->value('release_artifact_sha256'),
         );
+    }
+
+    public function test_non_superuser_issuer_principal_can_only_use_admission_function_without_owner_bypass(): void
+    {
+        $connectionName = 'report-publication-issuer-principal';
+        $login = 'most_report_publication_test_issuer_login';
+        $password = 'publication-test-only-password';
+        DB::unprepared(<<<'SQL'
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles
+                    WHERE rolname = 'most_report_publication_test_issuer_login'
+                ) THEN
+                    CREATE ROLE most_report_publication_test_issuer_login
+                        LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+                        PASSWORD 'publication-test-only-password';
+                END IF;
+                GRANT most_report_publication_issuer TO most_report_publication_test_issuer_login;
+            END;
+            $$;
+            SQL);
+        $configuration = config('database.connections.pgsql');
+        self::assertIsArray($configuration);
+        config(["database.connections.{$connectionName}" => array_replace($configuration, [
+            'username' => $login,
+            'password' => $password,
+        ])]);
+        $connection = DB::connection($connectionName);
+
+        try {
+            $identity = $connection->selectOne(<<<'SQL'
+                SELECT current_user AS current_user,
+                    rolsuper,
+                    rolcreaterole,
+                    rolcreatedb,
+                    rolbypassrls,
+                    pg_has_role(current_user, 'most_report_publication_owner', 'MEMBER') AS owner_member
+                FROM pg_roles
+                WHERE rolname = current_user
+                SQL);
+            self::assertSame($login, $identity->current_user ?? null);
+            self::assertFalse((bool) ($identity->rolsuper ?? true));
+            self::assertFalse((bool) ($identity->rolcreaterole ?? true));
+            self::assertFalse((bool) ($identity->rolcreatedb ?? true));
+            self::assertFalse((bool) ($identity->rolbypassrls ?? true));
+            self::assertFalse((bool) ($identity->owner_member ?? true));
+
+            $fixture = ReportPublicationFixtureFactory::eligible();
+            $registry = new EloquentReportPublicationRegistry(
+                $connection,
+                $fixture['eligibility_service'],
+                new ReportDefinitionFactory,
+            );
+            $published = $registry->promote($fixture['eligible']);
+            self::assertSame(
+                $fixture['eligible']->proofHash->value,
+                $published->publicationIdentity?->proofHash->value,
+            );
+
+            $eventException = $this->queryException(static fn () => $connection
+                ->table('report_publication_events')
+                ->insert([
+                    'id' => (string) Str::ulid(),
+                    'publication_id' => $published->publicationIdentity?->publicationId,
+                    'event_type' => 'disabled',
+                    'actor_identity' => 'forged@most',
+                    'release_git_sha' => str_repeat('a', 40),
+                    'payload_sha256' => str_repeat('f', 64),
+                    'occurred_at' => now(),
+                ]));
+            $ownerException = $this->queryException(
+                static fn () => $connection->statement('SET ROLE most_report_publication_owner'),
+            );
+            self::assertSame('42501', $eventException->errorInfo[0] ?? null);
+            self::assertSame('42501', $ownerException->errorInfo[0] ?? null);
+        } finally {
+            DB::purge($connectionName);
+            DB::statement('REVOKE most_report_publication_issuer FROM most_report_publication_test_issuer_login');
+            DB::statement('DROP ROLE IF EXISTS most_report_publication_test_issuer_login');
+        }
+    }
+
+    public function test_issuer_admission_rejects_null_release_signature_and_evidence(): void
+    {
+        $fixture = ReportPublicationFixtureFactory::eligible();
+        $artifact = json_decode(
+            $fixture['eligible']->releaseArtifactBytes,
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+        self::assertIsArray($artifact);
+        $artifact['signature'] = null;
+        $artifact['evidence'] = null;
+        $artifact['provenance'] = null;
+
+        $exception = $this->queryException(fn () => $this->promoteThroughAdmissionFunction(
+            $fixture['eligible'],
+            CanonicalJson::encode($artifact),
+        ));
+
+        self::assertSame('23514', $exception->errorInfo[0] ?? null);
+        self::assertSame(0, DB::table('report_publications')->count());
+    }
+
+    public function test_issuer_admission_rejects_future_release_timestamp(): void
+    {
+        $releaseAt = new DateTimeImmutable('+1 day');
+        $fixture = ReportPublicationFixtureFactory::eligible(
+            'e',
+            $releaseAt,
+            $releaseAt->modify('-1 microsecond'),
+        );
+
+        $exception = $this->queryException(
+            fn () => $this->promoteThroughAdmissionFunction($fixture['eligible']),
+        );
+
+        self::assertSame('23514', $exception->errorInfo[0] ?? null);
+        self::assertSame(0, DB::table('report_publications')->count());
+    }
+
+    public function test_issuer_admission_rejects_non_integer_provenance_run_attempt(): void
+    {
+        $fixture = ReportPublicationFixtureFactory::eligible();
+        $artifact = json_decode(
+            $fixture['eligible']->releaseArtifactBytes,
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+        self::assertIsArray($artifact);
+        $artifact['provenance']['run_attempt'] = '1';
+
+        $exception = $this->queryException(fn () => $this->promoteThroughAdmissionFunction(
+            $fixture['eligible'],
+            CanonicalJson::encode($artifact),
+        ));
+
+        self::assertSame('23514', $exception->errorInfo[0] ?? null);
+        self::assertSame(0, DB::table('report_publications')->count());
+    }
+
+    public function test_temp_shadow_cannot_redirect_security_definer_transition_artifacts(): void
+    {
+        DB::statement(<<<'SQL'
+            CREATE TEMPORARY TABLE report_publication_events
+                (LIKE public.report_publication_events INCLUDING ALL)
+                ON COMMIT PRESERVE ROWS
+            SQL);
+        DB::statement(<<<'SQL'
+            CREATE TEMPORARY TABLE report_publication_outbox
+                (LIKE public.report_publication_outbox INCLUDING ALL)
+                ON COMMIT PRESERVE ROWS
+            SQL);
+        DB::statement(<<<'SQL'
+            GRANT SELECT, INSERT, UPDATE, DELETE
+                ON TABLE pg_temp.report_publication_events, pg_temp.report_publication_outbox
+                TO most_report_publication_owner
+            SQL);
+        DB::statement('DISCARD PLANS');
+
+        try {
+            $fixture = ReportPublicationFixtureFactory::eligible();
+            $this->promoteThroughAdmissionFunction($fixture['eligible']);
+
+            self::assertSame(1, $this->tableCount('public.report_publication_events'));
+            self::assertSame(1, $this->tableCount('public.report_publication_outbox'));
+            self::assertSame(0, $this->tableCount('pg_temp.report_publication_events'));
+            self::assertSame(0, $this->tableCount('pg_temp.report_publication_outbox'));
+        } finally {
+            DB::statement('DROP TABLE IF EXISTS pg_temp.report_publication_outbox');
+            DB::statement('DROP TABLE IF EXISTS pg_temp.report_publication_events');
+        }
     }
 
     public function test_only_one_active_publication_exists_per_code(): void
@@ -737,6 +915,55 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
             ),
             $fixture['eligible'],
         ];
+    }
+
+    private function promoteThroughAdmissionFunction(
+        EligibleReportPublication $eligible,
+        ?string $releaseArtifactBytes = null,
+    ): void {
+        $artifactBytes = $releaseArtifactBytes ?? $eligible->releaseArtifactBytes;
+        $artifact = json_decode($artifactBytes, true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($artifact);
+        $proof = $eligible->proof->payload();
+
+        DB::transaction(static function () use ($artifact, $artifactBytes, $eligible, $proof): void {
+            DB::statement('SET LOCAL ROLE most_report_publication_issuer');
+            DB::select(<<<'SQL'
+                SELECT report_publication_promote(
+                    ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, CAST(? AS timestamptz)
+                )
+                SQL, [
+                (string) Str::ulid(),
+                $eligible->candidate->code,
+                CanonicalJson::encode($eligible->candidateDocument),
+                $eligible->proof->canonicalBytes(),
+                $eligible->proofHash->value,
+                $eligible->candidateManifestHash->value,
+                $eligible->candidate->definitionHash->value,
+                $eligible->officialManifestHash->value,
+                $proof['binding_sha256'],
+                $proof['conformance_evidence_sha256'],
+                $proof['versions']['contract'],
+                $proof['versions']['source_schema'],
+                $proof['versions']['formula'],
+                $proof['versions']['renderer'],
+                $eligible->release->gitSha,
+                $artifactBytes,
+                hash('sha256', $artifactBytes),
+                $artifact['issuer'],
+                $artifact['key_id'],
+                $eligible->release->approverIdentity,
+                $eligible->release->createdAtUtc(),
+            ]);
+        });
+    }
+
+    private function tableCount(string $qualifiedTable): int
+    {
+        $row = DB::connection()->selectOne("SELECT count(*) AS aggregate FROM {$qualifiedTable}");
+
+        return (int) ($row->aggregate ?? 0);
     }
 
     private function queryException(callable $operation): QueryException
