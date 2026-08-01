@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -243,6 +244,264 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
             DB::purge($connectionName);
             DB::statement('REVOKE most_report_publication_issuer FROM most_report_publication_test_issuer_login');
             DB::statement('DROP ROLE IF EXISTS most_report_publication_test_issuer_login');
+        }
+    }
+
+    public function test_non_superuser_issuer_principal_cannot_redirect_registry_through_temporary_tables(): void
+    {
+        $connectionName = 'report-publication-issuer-shadow-principal';
+        $login = 'most_report_publication_test_issuer_shadow_login';
+        $password = 'publication-shadow-test-only-password';
+        DB::unprepared(<<<'SQL'
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles
+                    WHERE rolname = 'most_report_publication_test_issuer_shadow_login'
+                ) THEN
+                    CREATE ROLE most_report_publication_test_issuer_shadow_login
+                        LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+                        PASSWORD 'publication-shadow-test-only-password';
+                END IF;
+                GRANT most_report_publication_issuer TO most_report_publication_test_issuer_shadow_login;
+            END;
+            $$;
+            SQL);
+        $connection = $this->principalConnection($connectionName, $login, $password);
+
+        try {
+            $principal = $connection->selectOne(<<<'SQL'
+                SELECT current_user AS current_user,
+                    rolsuper,
+                    pg_has_role(current_user, 'most_report_publication_owner', 'MEMBER') AS owner_member,
+                    pg_has_role(current_user, 'most_report_publication_issuer', 'MEMBER') AS issuer_member
+                FROM pg_roles
+                WHERE rolname = current_user
+                SQL);
+            self::assertSame($login, $principal->current_user ?? null);
+            self::assertFalse((bool) ($principal->rolsuper ?? true));
+            self::assertFalse((bool) ($principal->owner_member ?? true));
+            self::assertTrue((bool) ($principal->issuer_member ?? false));
+
+            $fixture = ReportPublicationFixtureFactory::eligible();
+            $seedRegistry = new EloquentReportPublicationRegistry(
+                DB::connection(),
+                $fixture['eligibility_service'],
+                new ReportDefinitionFactory,
+            );
+            $seed = $seedRegistry->promote($fixture['eligible']);
+            $shadowPublicationId = $seed->publicationIdentity?->publicationId;
+            self::assertIsString($shadowPublicationId);
+
+            foreach ([
+                'report_publications',
+                'report_publication_events',
+                'report_publication_features',
+                'report_publication_outbox',
+            ] as $table) {
+                $connection->statement(
+                    "CREATE TEMPORARY TABLE {$table} "
+                    ."(LIKE public.{$table} INCLUDING ALL) ON COMMIT PRESERVE ROWS",
+                );
+            }
+            $connection->statement(
+                'INSERT INTO pg_temp.report_publications SELECT * FROM public.report_publications',
+            );
+            $connection->statement(
+                'INSERT INTO pg_temp.report_publication_features SELECT * FROM public.report_publication_features',
+            );
+            $connection->statement(<<<'SQL'
+                GRANT SELECT, INSERT, UPDATE, DELETE
+                    ON TABLE pg_temp.report_publications, pg_temp.report_publication_events,
+                        pg_temp.report_publication_features, pg_temp.report_publication_outbox
+                    TO most_report_publication_owner
+                SQL);
+            $this->truncateRegistry();
+
+            $registry = new EloquentReportPublicationRegistry(
+                $connection,
+                $fixture['eligibility_service'],
+                new ReportDefinitionFactory,
+            );
+            $published = $registry->promote($fixture['eligible']);
+            $publicationId = $published->publicationIdentity?->publicationId;
+            self::assertIsString($publicationId);
+            self::assertNotSame($shadowPublicationId, $publicationId);
+            self::assertSame(
+                $publicationId,
+                $registry->current($fixture['eligible']->candidate->code)?->publicationIdentity?->publicationId,
+            );
+            $history = iterator_to_array($registry->history($fixture['eligible']->candidate->code), false);
+
+            self::assertCount(1, $history);
+            self::assertSame($publicationId, $history[0]->identity->publicationId);
+            self::assertSame(1, $this->tableCount('public.report_publications'));
+            self::assertSame(1, $this->tableCount('public.report_publication_features'));
+            $event = DB::table('public.report_publication_events')->first();
+            self::assertSame($publicationId, $event->publication_id ?? null);
+            self::assertSame('promoted', $event->event_type ?? null);
+            self::assertSame(1, $this->tableCount('public.report_publication_outbox'));
+            self::assertSame(1, $this->connectionTableCount($connection, 'pg_temp.report_publications'));
+            self::assertSame(0, $this->connectionTableCount($connection, 'pg_temp.report_publication_events'));
+            self::assertSame(0, $this->connectionTableCount($connection, 'pg_temp.report_publication_outbox'));
+        } finally {
+            DB::purge($connectionName);
+            DB::statement(
+                'REVOKE most_report_publication_issuer FROM most_report_publication_test_issuer_shadow_login',
+            );
+            DB::statement('DROP ROLE IF EXISTS most_report_publication_test_issuer_shadow_login');
+        }
+    }
+
+    public function test_non_superuser_operator_principal_configures_and_disables_only_through_admission_functions(): void
+    {
+        $connectionName = 'report-publication-operator-principal';
+        $login = 'most_report_publication_test_operator_login';
+        $password = 'publication-operator-test-only-password';
+        DB::unprepared(<<<'SQL'
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles
+                    WHERE rolname = 'most_report_publication_test_operator_login'
+                ) THEN
+                    CREATE ROLE most_report_publication_test_operator_login
+                        LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+                        PASSWORD 'publication-operator-test-only-password';
+                END IF;
+                GRANT most_report_publication_operator TO most_report_publication_test_operator_login;
+            END;
+            $$;
+            SQL);
+        $connection = $this->principalConnection($connectionName, $login, $password);
+
+        try {
+            $identity = $connection->selectOne(<<<'SQL'
+                SELECT current_user AS current_user,
+                    rolsuper,
+                    rolcreaterole,
+                    rolcreatedb,
+                    rolbypassrls,
+                    pg_has_role(current_user, 'most_report_publication_owner', 'MEMBER') AS owner_member,
+                    pg_has_role(current_user, 'most_report_publication_issuer', 'MEMBER') AS issuer_member,
+                    pg_has_role(current_user, 'most_report_publication_operator', 'MEMBER') AS operator_member
+                FROM pg_roles
+                WHERE rolname = current_user
+                SQL);
+            self::assertSame($login, $identity->current_user ?? null);
+            self::assertFalse((bool) ($identity->rolsuper ?? true));
+            self::assertFalse((bool) ($identity->rolcreaterole ?? true));
+            self::assertFalse((bool) ($identity->rolcreatedb ?? true));
+            self::assertFalse((bool) ($identity->rolbypassrls ?? true));
+            self::assertFalse((bool) ($identity->owner_member ?? true));
+            self::assertFalse((bool) ($identity->issuer_member ?? true));
+            self::assertTrue((bool) ($identity->operator_member ?? false));
+
+            $fixture = ReportPublicationFixtureFactory::eligible();
+            $seedRegistry = new EloquentReportPublicationRegistry(
+                DB::connection(),
+                $fixture['eligibility_service'],
+                new ReportDefinitionFactory,
+            );
+            $published = $seedRegistry->promote($fixture['eligible']);
+            $publicationIdentity = $published->publicationIdentity;
+            self::assertNotNull($publicationIdentity);
+            $store = new EloquentReportPublicationFeatureStore($connection);
+            $registry = new EloquentReportPublicationRegistry(
+                $connection,
+                $fixture['eligibility_service'],
+                new ReportDefinitionFactory,
+            );
+
+            $configuration = $store->configure(
+                $publicationIdentity,
+                ReportPublicationFeatureMode::CANARY,
+                [10],
+                [20],
+            );
+            self::assertSame(ReportPublicationFeatureMode::CANARY, $configuration->mode);
+            self::assertSame('canary', DB::table('report_publication_features')->value('mode'));
+
+            $stale = new ReportPublicationIdentity(
+                $publicationIdentity->publicationId,
+                $publicationIdentity->code,
+                new Sha256Hash(str_repeat('f', 64)),
+                $publicationIdentity->releaseGitSha,
+            );
+            $staleException = $this->logicException(
+                static fn () => $store->configure($stale, ReportPublicationFeatureMode::ON, [], []),
+            );
+            self::assertSame('report_publication_feature_stale_identity', $staleException->getMessage());
+
+            foreach ([
+                static fn () => $connection->table('public.report_publications')
+                    ->where('id', $publicationIdentity->publicationId)
+                    ->update(['disabled_reason' => 'forged']),
+                static fn () => $connection->table('public.report_publication_features')
+                    ->where('publication_id', $publicationIdentity->publicationId)
+                    ->update(['mode' => 'on']),
+                static fn () => $connection->table('public.report_publication_events')->insert([
+                    'id' => (string) Str::ulid(),
+                    'publication_id' => $publicationIdentity->publicationId,
+                    'event_type' => 'disabled',
+                    'actor_identity' => 'forged@most',
+                    'release_git_sha' => $publicationIdentity->releaseGitSha,
+                    'payload_sha256' => str_repeat('f', 64),
+                    'occurred_at' => now(),
+                ]),
+                static fn () => $connection->table('public.report_publication_outbox')->insert([
+                    'id' => (string) Str::ulid(),
+                    'publication_id' => $publicationIdentity->publicationId,
+                    'event_type' => 'report_publication_disabled',
+                    'deduplication_key' => 'forged:'.$publicationIdentity->publicationId,
+                    'payload_json' => '{}',
+                    'created_at' => now(),
+                    'delivered_at' => null,
+                ]),
+            ] as $mutation) {
+                $exception = $this->queryException($mutation);
+                self::assertSame('42501', $exception->errorInfo[0] ?? null);
+            }
+            $ownerException = $this->queryException(
+                static fn () => $connection->statement('SET ROLE most_report_publication_owner'),
+            );
+            self::assertSame('42501', $ownerException->errorInfo[0] ?? null);
+
+            $registry->disable(
+                $publicationIdentity->publicationId,
+                'source_contract_revoked',
+                'release-bot@most',
+            );
+            self::assertSame(
+                'disabled',
+                DB::table('report_publications')->where('id', $publicationIdentity->publicationId)->value('status'),
+            );
+            self::assertSame(
+                'disabled',
+                DB::table('report_publication_features')->where('publication_id', $publicationIdentity->publicationId)
+                    ->value('mode'),
+            );
+            self::assertSame(
+                1,
+                DB::table('report_publication_events')
+                    ->where('publication_id', $publicationIdentity->publicationId)
+                    ->where('event_type', 'disabled')
+                    ->count(),
+            );
+            $repeatException = $this->logicException(
+                static fn () => $registry->disable(
+                    $publicationIdentity->publicationId,
+                    'source_contract_revoked',
+                    'release-bot@most',
+                ),
+            );
+            self::assertSame('report_publication_not_active', $repeatException->getMessage());
+        } finally {
+            DB::purge($connectionName);
+            DB::statement(
+                'REVOKE most_report_publication_operator FROM most_report_publication_test_operator_login',
+            );
+            DB::statement('DROP ROLE IF EXISTS most_report_publication_test_operator_login');
         }
     }
 
@@ -966,6 +1225,28 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         return (int) ($row->aggregate ?? 0);
     }
 
+    private function connectionTableCount(ConnectionInterface $connection, string $qualifiedTable): int
+    {
+        $row = $connection->selectOne("SELECT count(*) AS aggregate FROM {$qualifiedTable}");
+
+        return (int) ($row->aggregate ?? 0);
+    }
+
+    private function principalConnection(
+        string $connectionName,
+        string $login,
+        string $password,
+    ): ConnectionInterface {
+        $configuration = config('database.connections.pgsql');
+        self::assertIsArray($configuration);
+        config(["database.connections.{$connectionName}" => array_replace($configuration, [
+            'username' => $login,
+            'password' => $password,
+        ])]);
+
+        return DB::connection($connectionName);
+    }
+
     private function queryException(callable $operation): QueryException
     {
         try {
@@ -975,6 +1256,17 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         }
 
         self::fail('Expected a PostgreSQL contract violation.');
+    }
+
+    private function logicException(callable $operation): LogicException
+    {
+        try {
+            $operation();
+        } catch (LogicException $exception) {
+            return $exception;
+        }
+
+        self::fail('Expected a publication domain error.');
     }
 
     private function safeDatabase(): bool
