@@ -1,0 +1,63 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\Reporting\Publication;
+
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use PHPUnit\Framework\TestCase;
+use RuntimeException;
+
+final class ReportPublicationAdmissionRequirementsTest extends TestCase
+{
+    public function test_provider_contracts_match_the_canonical_delivery_source(): void
+    {
+        $source = dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/resources/report-publication-delivery-contracts.v1.json';
+        $decoded = json_decode((string) file_get_contents($source), true, 64, JSON_THROW_ON_ERROR);
+        $contracts = ReportPublicationAdmissionRequirements::deliveryContractsByCode()['procurement_cycle'];
+        $canonical = $decoded['codes']['procurement_cycle'];
+
+        self::assertSame($canonical['drill_down']['schema_sha256'], $contracts['drill_down_schema_sha256']);
+        foreach (['csv', 'pdf', 'xlsx'] as $format) {
+            self::assertSame($canonical['exports'][$format]['schema_sha256'], $contracts['exports'][$format]['schema_sha256']);
+            self::assertSame($canonical['exports'][$format]['renderer_class'], $contracts['exports'][$format]['renderer_class']);
+        }
+        self::assertSame(
+            hash('sha256', CanonicalJson::encode([
+                'csv' => [
+                    'renderer_class' => $contracts['exports']['csv']['renderer_class'],
+                    'schema_sha256' => $contracts['exports']['csv']['schema_sha256'],
+                ],
+                'pdf' => [
+                    'renderer_class' => $contracts['exports']['pdf']['renderer_class'],
+                    'schema_sha256' => $contracts['exports']['pdf']['schema_sha256'],
+                ],
+                'xlsx' => [
+                    'renderer_class' => $contracts['exports']['xlsx']['renderer_class'],
+                    'schema_sha256' => $contracts['exports']['xlsx']['schema_sha256'],
+                ],
+            ])),
+            ReportPublicationAdmissionRequirements::contractHashesByCode()['procurement_cycle']['delivery_contract_sha256'],
+        );
+        self::assertSame(
+            $contracts['drill_down_schema_sha256'],
+            ReportPublicationAdmissionRequirements::contractHashesByCode()['procurement_cycle']['drill_contract_sha256'],
+        );
+    }
+
+    public function test_tampered_contract_source_is_rejected(): void
+    {
+        $source = dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/resources/report-publication-delivery-contracts.v1.json';
+        $tampered = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-contract-'.bin2hex(random_bytes(8)).'.json';
+        $bytes = file_get_contents($source);
+        self::assertIsString($bytes);
+        file_put_contents($tampered, str_replace('a6a14ce7f1fd0db3727eb92f1bd43dd325a90874bee5b250695927bf75540dfe', str_repeat('0', 64), $bytes));
+        try {
+            $this->expectException(RuntimeException::class);
+            ReportPublicationAdmissionRequirements::validateFile($tampered);
+        } finally {
+            @unlink($tampered);
+        }
+    }
+}
