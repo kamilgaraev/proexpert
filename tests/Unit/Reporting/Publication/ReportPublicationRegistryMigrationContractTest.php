@@ -216,6 +216,14 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringNotContainsString('wave-1-candidates.v1.yaml', $releaseCommands);
         self::assertStringContainsString('MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT', $releaseCommands);
         self::assertStringNotContainsString('MOST_R15_RELEASE_TRUSTED_ROOT', $releaseCommands);
+        self::assertStringContainsString(
+            "printf 'MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT=%s\\n' \"\$R15_TRUSTED_ROOT\" >> \"\$GITHUB_ENV\"",
+            $releaseCommands,
+        );
+        self::assertStringContainsString(
+            '"$MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT"/r15_release_request.json',
+            $releaseCommands,
+        );
         self::assertStringContainsString('r15_release_request.json', $releaseCommands);
         self::assertStringNotContainsString('publication-release-requests/*.json', $releaseCommands);
         self::assertStringNotContainsString('publication-release-requests/*.php', $releaseCommands);
