@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\DTO;
 
+use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 
 final readonly class VisionAnalysisData
@@ -11,6 +12,8 @@ final readonly class VisionAnalysisData
     public const SCHEMA_VERSION = 1;
 
     public const CURRENT_SCHEMA_VERSION = 2;
+
+    public const PROJECT_SHEET_SCHEMA_VERSION = 3;
 
     private const SHEET_TYPES = ['floor_plan', 'elevation', 'section', 'detail', 'site_plan', 'schedule', 'sketch', 'photo', 'unknown'];
 
@@ -31,6 +34,7 @@ final readonly class VisionAnalysisData
         public ?int $inputTokens,
         public ?int $outputTokens,
         public array $visualAttributes = [],
+        public ?ProjectSheetAnalysisData $projectSheetAnalysis = null,
     ) {
         if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
             || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
@@ -106,14 +110,17 @@ final readonly class VisionAnalysisData
     public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements): self
     {
         $schemaVersion = $data['schema_version'] ?? null;
-        $expectedKeys = $schemaVersion === self::CURRENT_SCHEMA_VERSION
-            ? ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes']
-            : ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings'];
+        $expectedKeys = match ($schemaVersion) {
+            self::PROJECT_SHEET_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes', 'project_sheet_analysis'],
+            self::CURRENT_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes'],
+            default => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings'],
+        };
         if (! self::hasExactKeys($data, $expectedKeys)
-            || ! in_array($schemaVersion, [self::SCHEMA_VERSION, self::CURRENT_SCHEMA_VERSION], true)
+            || ! in_array($schemaVersion, [self::SCHEMA_VERSION, self::CURRENT_SCHEMA_VERSION, self::PROJECT_SHEET_SCHEMA_VERSION], true)
             || ! is_string($data['sheet_type'])
             || ! is_array($data['evidence']) || ! is_array($data['elements']) || ! is_array($data['scale_candidates']) || ! is_array($data['warnings'])
             || ($schemaVersion === self::CURRENT_SCHEMA_VERSION && ! is_array($data['visual_attributes']))
+            || ($schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION && (! is_array($data['visual_attributes']) || ! is_array($data['project_sheet_analysis'])))
             || count($data['elements']) > $maxElements) {
             throw new VisionContractException('invalid_analysis_schema');
         }
@@ -121,6 +128,9 @@ final readonly class VisionAnalysisData
         $evidence = array_map(static fn (mixed $item): VisionEvidenceData => is_array($item) ? VisionEvidenceData::fromArray($item) : throw new VisionContractException('invalid_evidence'), $evidencePayload);
         $elements = array_map(static fn (mixed $item): VisionElementData => is_array($item) ? VisionElementData::fromArray($item) : throw new VisionContractException('invalid_element'), $data['elements']);
         $scales = array_map(static fn (mixed $item): VisionScaleCandidateData => is_array($item) ? VisionScaleCandidateData::fromArray($item) : throw new VisionContractException('invalid_scale_candidate'), $data['scale_candidates']);
+        $projectSheetAnalysis = $schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION
+            ? ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence))
+            : null;
         foreach ($data['warnings'] as $warning) {
             if (! is_string($warning)) {
                 throw new VisionContractException('invalid_warning');
@@ -141,6 +151,7 @@ final readonly class VisionAnalysisData
             $inputTokens,
             $outputTokens,
             is_array($data['visual_attributes'] ?? null) ? $data['visual_attributes'] : [],
+            $projectSheetAnalysis,
         );
     }
 
@@ -159,6 +170,7 @@ final readonly class VisionAnalysisData
             $this->provider, $this->requestedModel, $this->reportedModel, $this->modelVersion,
             $this->usageStatus, $this->inputTokens, $this->outputTokens,
             $this->visualAttributes,
+            $this->projectSheetAnalysis?->mapPolygonsToSource($transform),
         );
     }
 
@@ -177,7 +189,7 @@ final readonly class VisionAnalysisData
     public function toArray(): array
     {
         $payload = [
-            'schema_version' => $this->visualAttributes === [] ? self::SCHEMA_VERSION : self::CURRENT_SCHEMA_VERSION,
+            'schema_version' => $this->projectSheetAnalysis === null ? ($this->visualAttributes === [] ? self::SCHEMA_VERSION : self::CURRENT_SCHEMA_VERSION) : self::PROJECT_SHEET_SCHEMA_VERSION,
             'sheet_type' => $this->sheetType,
             'evidence' => array_map(static fn (VisionEvidenceData $item): array => $item->toArray(), $this->evidence),
             'elements' => array_map(static fn (VisionElementData $item): array => $item->toArray(), $this->elements),
@@ -191,6 +203,9 @@ final readonly class VisionAnalysisData
         ];
         if ($this->visualAttributes !== []) {
             $payload['visual_attributes'] = $this->visualAttributes;
+        }
+        if ($this->projectSheetAnalysis !== null) {
+            $payload['project_sheet_analysis'] = $this->projectSheetAnalysis->toArray();
         }
 
         return $payload;
