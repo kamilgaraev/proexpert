@@ -13,28 +13,55 @@ use RuntimeException;
 
 final class ReportPublicationAdmissionRequirements
 {
+    /** @var array<string, array<string, class-string>> */
+    private const DELIVERY_RENDERERS_BY_CODE = [
+        'budget_plan_fact' => [
+            'csv' => CsvReportExportRenderer::class,
+            'xlsx' => XlsxReportExportRenderer::class,
+        ],
+        'procurement_cycle' => [
+            'csv' => CsvReportExportRenderer::class,
+            'pdf' => PdfReportExportRenderer::class,
+            'xlsx' => XlsxReportExportRenderer::class,
+        ],
+    ];
+
+    /** @var list<string> */
+    private const BASE_REQUIRED_CHECKS = [
+        'binding_contract',
+        'drill_down_contract',
+        'formula_contract',
+        'postgresql_contract',
+        'rbac_contract',
+        'source_contract',
+    ];
+
     public static function profileCatalog(): ReportPublicationAdmissionProfileCatalog
     {
-        $contracts = self::catalog()['codes']['procurement_cycle'];
-        $exports = [];
-        foreach ($contracts['exports'] as $format => $contract) {
-            $exports[$format] = [
-                'schema_sha256' => $contract['schema_sha256'],
-                'renderer_class' => $contract['renderer_class'],
-            ];
-        }
+        $profiles = [];
+        foreach (self::catalog()['codes'] as $code => $contracts) {
+            $exports = [];
+            foreach ($contracts['exports'] as $format => $contract) {
+                $exports[$format] = [
+                    'schema_sha256' => $contract['schema_sha256'],
+                    'renderer_class' => $contract['renderer_class'],
+                ];
+            }
 
-        return new ReportPublicationAdmissionProfileCatalog([
-            new ReportPublicationAdmissionProfile(
-                'procurement_cycle',
-                [
-                    'binding_contract', 'drill_down_contract', 'export_csv_contract', 'export_pdf_contract',
-                    'export_xlsx_contract', 'formula_contract', 'postgresql_contract', 'rbac_contract', 'source_contract',
-                ],
+            $checks = array_merge(
+                self::BASE_REQUIRED_CHECKS,
+                array_map(static fn (string $format): string => 'export_'.$format.'_contract', array_keys($exports)),
+            );
+            sort($checks, SORT_STRING);
+            $profiles[] = new ReportPublicationAdmissionProfile(
+                $code,
+                $checks,
                 $contracts['drill_down']['schema_sha256'],
                 $exports,
-            ),
-        ]);
+            );
+        }
+
+        return new ReportPublicationAdmissionProfileCatalog($profiles);
     }
 
     public static function requiredChecksByCode(): array
@@ -49,12 +76,15 @@ final class ReportPublicationAdmissionRequirements
 
     public static function contractHashesByCode(): array
     {
-        $contracts = self::catalog()['codes']['procurement_cycle'];
+        $hashes = [];
+        foreach (self::catalog()['codes'] as $code => $contracts) {
+            $hashes[$code] = [
+                'delivery_contract_sha256' => hash('sha256', CanonicalJson::encode($contracts['exports'])),
+                'drill_contract_sha256' => $contracts['drill_down']['schema_sha256'],
+            ];
+        }
 
-        return ['procurement_cycle' => [
-            'delivery_contract_sha256' => hash('sha256', CanonicalJson::encode($contracts['exports'])),
-            'drill_contract_sha256' => $contracts['drill_down']['schema_sha256'],
-        ]];
+        return $hashes;
     }
 
     public static function validateFile(string $path): void
@@ -87,34 +117,37 @@ final class ReportPublicationAdmissionRequirements
             || ($decoded['schema_version'] ?? null) !== '1.0.0') {
             throw new RuntimeException('report_publication_delivery_contracts_invalid');
         }
-        $code = $decoded['codes']['procurement_cycle'] ?? null;
-        if (! is_array($decoded['codes'] ?? null) || array_keys($decoded['codes']) !== ['procurement_cycle']
-            || ! is_array($code) || array_keys($code) !== ['drill_down', 'exports', 'version']
-            || $code['version'] !== '1.0.0'
-            || ! is_array($code['drill_down'] ?? null) || ! is_array($code['exports'] ?? null)
-            || array_keys($code['drill_down']) !== ['schema', 'schema_sha256']
-            || array_keys($code['exports']) !== ['csv', 'pdf', 'xlsx']) {
+        $codes = $decoded['codes'] ?? null;
+        if (! is_array($codes) || array_is_list($codes)
+            || array_keys($codes) !== array_keys(self::DELIVERY_RENDERERS_BY_CODE)) {
             throw new RuntimeException('report_publication_delivery_contracts_invalid');
         }
-        $renderers = [
-            'csv' => CsvReportExportRenderer::class,
-            'pdf' => PdfReportExportRenderer::class,
-            'xlsx' => XlsxReportExportRenderer::class,
-        ];
-        foreach ([$code['drill_down']] as $contract) {
-            if (! is_array($contract) || ! is_array($contract['schema'] ?? null)
-                || ! is_string($contract['schema_sha256'] ?? null)
-                || ! hash_equals($contract['schema_sha256'], hash('sha256', CanonicalJson::encode($contract['schema'])))) {
+
+        foreach (self::DELIVERY_RENDERERS_BY_CODE as $code => $renderers) {
+            $contracts = $codes[$code] ?? null;
+            if (! is_array($contracts) || array_keys($contracts) !== ['drill_down', 'exports', 'version']
+                || $contracts['version'] !== '1.0.0'
+                || ! is_array($contracts['drill_down'] ?? null) || ! is_array($contracts['exports'] ?? null)
+                || array_keys($contracts['drill_down']) !== ['schema', 'schema_sha256']
+                || array_keys($contracts['exports']) !== array_keys($renderers)) {
                 throw new RuntimeException('report_publication_delivery_contracts_invalid');
             }
-        }
-        foreach ($renderers as $format => $renderer) {
-            $contract = $code['exports'][$format];
-            if (! is_array($contract) || array_keys($contract) !== ['renderer_class', 'schema', 'schema_sha256']
-                || $contract['renderer_class'] !== $renderer || ! is_array($contract['schema'] ?? null)
-                || ! is_string($contract['schema_sha256'] ?? null)
-                || ! hash_equals($contract['schema_sha256'], hash('sha256', CanonicalJson::encode($contract['schema'])))) {
+
+            $drillDown = $contracts['drill_down'];
+            if (! is_array($drillDown) || ! is_array($drillDown['schema'] ?? null)
+                || ! is_string($drillDown['schema_sha256'] ?? null)
+                || ! hash_equals($drillDown['schema_sha256'], hash('sha256', CanonicalJson::encode($drillDown['schema'])))) {
                 throw new RuntimeException('report_publication_delivery_contracts_invalid');
+            }
+
+            foreach ($renderers as $format => $renderer) {
+                $contract = $contracts['exports'][$format];
+                if (! is_array($contract) || array_keys($contract) !== ['renderer_class', 'schema', 'schema_sha256']
+                    || $contract['renderer_class'] !== $renderer || ! is_array($contract['schema'] ?? null)
+                    || ! is_string($contract['schema_sha256'] ?? null)
+                    || ! hash_equals($contract['schema_sha256'], hash('sha256', CanonicalJson::encode($contract['schema'])))) {
+                    throw new RuntimeException('report_publication_delivery_contracts_invalid');
+                }
             }
         }
 

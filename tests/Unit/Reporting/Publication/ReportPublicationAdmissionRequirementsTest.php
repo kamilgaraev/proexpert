@@ -44,6 +44,31 @@ final class ReportPublicationAdmissionRequirementsTest extends TestCase
         }
     }
 
+    public function test_budget_plan_fact_profile_requires_only_its_supported_delivery_evidence(): void
+    {
+        $source = dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/resources/report-publication-delivery-contracts.v1.json';
+        $decoded = json_decode((string) file_get_contents($source), true, 64, JSON_THROW_ON_ERROR);
+        $canonical = $decoded['codes']['budget_plan_fact'];
+        $profile = ReportPublicationAdmissionRequirements::profileCatalog()->forCode('budget_plan_fact');
+
+        self::assertSame([
+            'binding_contract',
+            'drill_down_contract',
+            'export_csv_contract',
+            'export_xlsx_contract',
+            'formula_contract',
+            'postgresql_contract',
+            'rbac_contract',
+            'source_contract',
+        ], $profile->requiredChecks);
+        self::assertSame(['csv', 'xlsx'], array_keys($profile->exports));
+        self::assertSame($canonical['drill_down']['schema_sha256'], $profile->drillDownSchemaHash);
+        self::assertSame(
+            hash('sha256', CanonicalJson::encode($canonical['exports'])),
+            ReportPublicationAdmissionRequirements::contractHashesByCode()['budget_plan_fact']['delivery_contract_sha256'],
+        );
+    }
+
     public function test_tampered_contract_source_is_rejected(): void
     {
         $source = dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/resources/report-publication-delivery-contracts.v1.json';
