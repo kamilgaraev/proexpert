@@ -81,13 +81,11 @@ final class SheetAnalysisRoutingContractTest extends TestCase
     {
         $root = dirname(__DIR__, 3);
         $provider = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Providers/TimewebVisionProvider.php');
-        $journal = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/Understanding/SheetAnalysisOperationJournal.php');
         $unit = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/ProcessDocumentUnit.php');
 
         self::assertStringContainsString('DOCUMENT_OPERATION_MAX_SECONDS = 1800', $provider);
         self::assertStringContainsString('boundedDocumentAttemptTimeout', $provider);
         self::assertStringContainsString('retryDelayMilliseconds', $provider);
-        self::assertStringContainsString('LEASE_SECONDS = 1860', $journal);
-        self::assertStringContainsString('LEASE_SECONDS = 2100', $unit);
+        self::assertStringContainsString('SheetAnalysisLeasePolicy::UNIT_LEASE_SECONDS', $unit);
     }
 }

@@ -174,8 +174,17 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $scope = new DocumentSheetOperationScope($context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $context->claimToken);
         $primaryRouting = ['role' => 'unknown', 'needs_review' => false, 'outcome' => 'not_applicable'];
         $primaryRun = $this->sheetAnalysisJournal?->run($correlationId, 'primary', $scope, $primaryRouting,
-            fn () => $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform));
-        $analysis = $primaryRun?->analysis ?? $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
+            function () use ($context, $input, $preprocessed) {
+                $context->renewLeaseOrFail();
+
+                return $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
+            });
+        if ($primaryRun !== null) {
+            $analysis = $primaryRun->analysis;
+        } else {
+            $context->renewLeaseOrFail();
+            $analysis = $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
+        }
         if ($analysis === null) {
             throw new DocumentUnitProcessingException('sheet_analysis_requires_review');
         }
@@ -251,12 +260,21 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 reanalysisReason: $routing->classification->reanalysisReason,
                 );
                 $targetedRun = $this->sheetAnalysisJournal?->run($targetedOperation, 'targeted', $scope, $targetedRouting,
-                    fn () => $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform));
+                    function () use ($context, $targetedInput, $preprocessed) {
+                        $context->renewLeaseOrFail();
+
+                        return $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform);
+                    });
                 if ($targetedRun?->analysis === null) {
                     $targetedRouting['outcome'] = 'needs_review';
                     $targetedRouting['needs_review'] = true;
                 } else {
-                    $analysis = $targetedRun?->analysis ?? $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform);
+                    if ($targetedRun !== null) {
+                        $analysis = $targetedRun->analysis;
+                    } else {
+                        $context->renewLeaseOrFail();
+                        $analysis = $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform);
+                    }
                     $final = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
                     $targetedRouting = $final?->toArray() ?? $targetedRouting;
                     $targetedRouting['outcome'] = $targetedRun?->outcome ?? 'succeeded';

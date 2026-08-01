@@ -14,7 +14,7 @@ use Throwable;
 
 final readonly class ProcessDocumentUnit
 {
-    public const LEASE_SECONDS = 2100;
+    public const LEASE_SECONDS = \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisLeasePolicy::UNIT_LEASE_SECONDS;
 
     public const MAX_ATTEMPTS = 3;
 

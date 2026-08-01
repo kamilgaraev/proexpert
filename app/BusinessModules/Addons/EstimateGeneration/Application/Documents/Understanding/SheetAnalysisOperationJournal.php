@@ -42,12 +42,16 @@ final class SheetAnalysisOperationJournal
         }
 
         try {
+            $this->renew($operationId, $scope);
             $analysis = $wire();
             $finalRouting = $routing;
             $this->complete($operationId, $kind, $scope, $analysis, $finalRouting);
 
             return SheetAnalysisOperationRun::performed($analysis, $finalRouting);
         } catch (Throwable $exception) {
+            if ($exception instanceof SheetAnalysisOperationBusy) {
+                throw $exception;
+            }
             $status = $exception instanceof \App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException
                 && $exception->reason === 'vision_wire_replay_forbidden' ? 'needs_review' : 'failed';
             $this->fail($operationId, $kind, $scope, $status, $exception::class);
@@ -97,6 +101,22 @@ final class SheetAnalysisOperationJournal
             ]) === 1;
     }
 
+    private function renew(string $operationId, DocumentSheetOperationScope $scope): void
+    {
+        $now = now()->toDateTimeImmutable();
+        $policy = new SheetAnalysisLeasePolicy;
+        if (EstimateGenerationSheetAnalysisOperation::query()
+            ->whereKey($operationId)->where($scope->attributes())
+            ->where('status', 'claimed')->where('lease_token', $scope->claimToken)
+            ->where('lease_expires_at', '>', $now)
+            ->update([
+                'lease_expires_at' => $policy->renewedJournalLease($now),
+                'updated_at' => $now,
+            ]) !== 1) {
+            throw new SheetAnalysisOperationBusy('sheet_analysis_operation_lease_lost');
+        }
+    }
+
     /** @param array<string, mixed> $routing */
     private function complete(string $operationId, string $kind, DocumentSheetOperationScope $scope, VisionAnalysisData $analysis, array $routing): void
     {
@@ -124,7 +144,9 @@ final class SheetAnalysisOperationJournal
     {
         DB::transaction(function () use ($operationId, $kind, $scope, $status, $reason, $attributes): void {
             $operation = EstimateGenerationSheetAnalysisOperation::query()->whereKey($operationId)->where($scope->attributes())->lockForUpdate()->first();
-            if (! $operation instanceof EstimateGenerationSheetAnalysisOperation || $operation->status !== 'claimed' || $operation->lease_token !== $scope->claimToken) {
+            $now = now()->toDateTimeImmutable();
+            if (! $operation instanceof EstimateGenerationSheetAnalysisOperation || $operation->status !== 'claimed' || $operation->lease_token !== $scope->claimToken
+                || ! (new SheetAnalysisLeasePolicy)->canFinalize($operation->lease_expires_at?->toDateTimeImmutable(), $now)) {
                 throw new SheetAnalysisOperationBusy('sheet_analysis_operation_lease_lost');
             }
             $operation->forceFill([
@@ -184,8 +206,6 @@ final class SheetAnalysisOperationJournal
     private function routing(mixed $stored, array $fallback): array { return is_array($stored) && $stored !== [] ? $stored : $fallback; }
     private function leaseExpiry(): DateTimeImmutable
     {
-        return (new DateTimeImmutable)->modify(sprintf('+%d seconds', self::LEASE_SECONDS));
+        return (new SheetAnalysisLeasePolicy)->renewedJournalLease(new DateTimeImmutable);
     }
-
-    private const LEASE_SECONDS = 1860;
 }

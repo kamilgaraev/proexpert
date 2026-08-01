@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use LogicException;
+
 final readonly class DocumentUnitExecutionContext
 {
     /** @param array<string, scalar|null> $locator */
@@ -25,5 +27,13 @@ final readonly class DocumentUnitExecutionContext
         public int $sessionStateVersion,
         public string $sessionStatus,
         public ?int $pageId = null,
+        public ?\Closure $renewLease = null,
     ) {}
+
+    public function renewLeaseOrFail(): void
+    {
+        if ($this->renewLease === null || ! ($this->renewLease)()) {
+            throw new LogicException('document_unit_lease_renewal_failed');
+        }
+    }
 }
