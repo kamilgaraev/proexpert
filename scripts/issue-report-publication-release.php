@@ -7,6 +7,7 @@ use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPubl
 use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistryFactory;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseArtifactIssuer;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleWriter;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIssuerPreflight;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader;
 
 require dirname(__DIR__).'/vendor/autoload.php';
@@ -22,38 +23,16 @@ try {
             throw new RuntimeException('report_publication_release_input_invalid');
         }
     }
-    $trustedRoot = getenv('MOST_R15_RELEASE_TRUSTED_ROOT');
+    $trustedRoot = getenv('MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT');
     if (! is_string($trustedRoot) || $trustedRoot === '') {
         throw new RuntimeException('report_publication_release_trusted_root_missing');
     }
-    $trustedRootReal = realpath($trustedRoot);
-    if (! is_string($trustedRootReal) || is_link($trustedRoot) || ! is_dir($trustedRootReal)) {
-        throw new RuntimeException('report_publication_release_trusted_root_untrusted');
-    }
-    foreach ([
-        'r15-candidate-manifest.json',
-        'r15-conformance-evidence.json',
-        'r15-proof-template.json',
-        'r15_release_request.json',
-    ] as $requiredFile) {
-        $path = $trustedRootReal.DIRECTORY_SEPARATOR.$requiredFile;
-        if (is_link($path) || ! is_file($path) || realpath($path) !== $path) {
-            throw new RuntimeException('report_publication_release_trusted_root_incomplete');
-        }
-    }
-    $request = (new ReportPublicationReleaseRequestFileLoader)->load($options['request'], $trustedRootReal);
-    $trustedRequest = (new ReportPublicationReleaseRequestFileLoader)->load(
-        $trustedRootReal.DIRECTORY_SEPARATOR.'r15_release_request.json',
-        $trustedRootReal,
-    );
-    if ($trustedRequest->requestId !== $request->requestId
-        || $trustedRequest->code !== $request->code
-        || $trustedRequest->commitSha !== $request->commitSha
-        || $trustedRequest->proofSha256 !== $request->proofSha256
-        || $trustedRequest->schemaVersion !== $request->schemaVersion
-        || $trustedRequest->artifactPaths !== $request->artifactPaths) {
-        throw new RuntimeException('report_publication_release_request_identity_mismatch');
-    }
+    $issuerInput = (new ReportPublicationReleaseIssuerPreflight(
+        new ReportPublicationReleaseRequestFileLoader,
+        ProjectReportPublicationReleaseRequestRegistryFactory::profiles(),
+    ))->validate($options['request'], $trustedRoot);
+    $request = $issuerInput->request;
+    $trustedRootReal = $issuerInput->trustedRoot;
 
     $application = require dirname(__DIR__).'/bootstrap/app.php';
     $application->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();

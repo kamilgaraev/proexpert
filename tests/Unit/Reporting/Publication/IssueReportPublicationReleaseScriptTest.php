@@ -32,14 +32,29 @@ final class IssueReportPublicationReleaseScriptTest extends TestCase
 
     public function test_incomplete_trusted_root_fails_closed(): void
     {
-        [$status, $stdout, $stderr] = $this->runScript($this->root, $this->root);
+        $request = $this->root.DIRECTORY_SEPARATOR.'r15_release_request.json';
+        file_put_contents($request, $this->request('r15_release_request', str_repeat('a', 40)));
+
+        [$status, $stdout, $stderr] = $this->runScript($this->root, $request);
 
         self::assertSame(1, $status);
         self::assertSame('', $stdout);
         self::assertStringContainsString('report_publication_release_trusted_root_incomplete', $stderr);
     }
 
-    public function test_request_identity_mismatch_fails_before_factory_resolution(): void
+    public function test_neutral_trusted_root_environment_is_used_before_laravel_bootstrap(): void
+    {
+        $request = $this->root.DIRECTORY_SEPARATOR.'r15_release_request.json';
+        file_put_contents($request, $this->request('r15_release_request', str_repeat('a', 40)));
+
+        [$status, $stdout, $stderr] = $this->runScript($this->root, $request);
+
+        self::assertSame(1, $status);
+        self::assertSame('', $stdout);
+        self::assertStringContainsString('report_publication_release_trusted_root_incomplete', $stderr);
+    }
+
+    public function test_request_outside_its_profile_canonical_name_fails_before_laravel_bootstrap(): void
     {
         foreach ([
             'r15-candidate-manifest.json',
@@ -50,13 +65,13 @@ final class IssueReportPublicationReleaseScriptTest extends TestCase
         }
         file_put_contents($this->root.DIRECTORY_SEPARATOR.'r15_release_request.json', $this->request('r15_release_request', str_repeat('a', 40)));
         $external = $this->root.DIRECTORY_SEPARATOR.'other_request.json';
-        file_put_contents($external, $this->request('other_request', str_repeat('b', 40)));
+        file_put_contents($external, $this->request('r15_release_request', str_repeat('a', 40)));
 
         [$status, $stdout, $stderr] = $this->runScript($this->root, $external);
 
         self::assertSame(1, $status);
         self::assertSame('', $stdout);
-        self::assertStringContainsString('report_publication_release_request_identity_mismatch', $stderr);
+        self::assertStringContainsString('report_publication_release_input_invalid', $stderr);
     }
 
     private function runScript(?string $trustedRoot, string $request): array
@@ -66,9 +81,9 @@ final class IssueReportPublicationReleaseScriptTest extends TestCase
             .' --request='.escapeshellarg($request)
             .' --output-directory='.escapeshellarg($output);
         $environment = $_ENV;
-        unset($environment['MOST_R15_RELEASE_TRUSTED_ROOT']);
+        unset($environment['MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT']);
         if ($trustedRoot !== null) {
-            $environment['MOST_R15_RELEASE_TRUSTED_ROOT'] = $trustedRoot;
+            $environment['MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT'] = $trustedRoot;
         }
         $pipes = [];
         $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, dirname(__DIR__, 4), $environment);

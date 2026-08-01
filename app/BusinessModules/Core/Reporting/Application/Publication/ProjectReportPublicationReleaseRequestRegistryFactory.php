@@ -53,23 +53,32 @@ final class ProjectReportPublicationReleaseRequestRegistryFactory
 
     public function dispatches(Container $container): ReportPublicationReleaseDispatchProfileCatalog
     {
+        $profiles = self::profiles();
+
         return new ReportPublicationReleaseDispatchProfileCatalog([
             new ReportPublicationReleaseDispatch(
-                new ReportPublicationReleaseDispatchProfile(
-                    'procurement_cycle',
-                    'r15_release_request',
-                    [
-                        'candidate_manifest' => 'r15-candidate-manifest.json',
-                        'conformance_evidence' => 'r15-conformance-evidence.json',
-                        'proof_template' => 'r15-proof-template.json',
-                    ],
-                ),
+                $profiles->forCode('procurement_cycle'),
                 new ProcurementCycleReleaseCandidateResolverAdapter(
                     $container->make(ProcurementCycleReleaseCandidateResolver::class),
                 ),
                 new ProcurementCycleReleaseBindingFactoryAdapter(
                     $container->make(ProcurementCycleReportBindingFactory::class),
                 ),
+            ),
+        ]);
+    }
+
+    public static function profiles(): ReportPublicationReleaseProfileCatalog
+    {
+        return new ReportPublicationReleaseProfileCatalog([
+            new ReportPublicationReleaseDispatchProfile(
+                'procurement_cycle',
+                'r15_release_request',
+                [
+                    'candidate_manifest' => 'r15-candidate-manifest.json',
+                    'conformance_evidence' => 'r15-conformance-evidence.json',
+                    'proof_template' => 'r15-proof-template.json',
+                ],
             ),
         ]);
     }
