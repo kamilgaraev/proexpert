@@ -54,16 +54,18 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
                 $this->assertRejected(fn () => $this->insertEntity($fixture, $kind, $payload));
             }
 
-            $this->insertEvidenceBinding($fixture, $entities['room']);
+            $roomAssertionId = $this->insertCadAssertion($fixture, $entities['room'], 'assertion:room:height');
+            $wallAssertionId = $this->insertCadAssertion($fixture, $entities['wall'], 'assertion:wall:height');
+            $this->insertEvidenceBinding($fixture, $entities['room'], $roomAssertionId);
             DB::table('estimate_generation_evidence')->where('id', $fixture['evidence_id'])->update([
                 'invalidated_at' => now(),
                 'invalidation_version' => 1,
                 'updated_at' => now(),
             ]);
 
-            $this->assertRejected(fn () => $this->insertEvidenceBinding($fixture, $entities['wall']));
+            $this->assertRejected(fn () => $this->insertEvidenceBinding($fixture, $entities['wall'], $wallAssertionId));
             $this->assertRejected(fn () => DB::table('estimate_generation_project_model_evidence_bindings')->insert([
-                ...$this->evidenceBindingRow($fixture, $entities['opening']),
+                ...$this->evidenceBindingRow($fixture, $entities['opening'], $roomAssertionId),
                 'organization_id' => $fixture['organization_id'] + 1000000,
             ]));
         } finally {
@@ -77,7 +79,11 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
         $this->requireEnvironment();
         $migration150 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000150_add_project_model_projection_scope_indexes.php';
         $migration200 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php';
+        $migration225 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000225_add_project_model_correction_scope_unique.php';
+        $migration250 = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php';
 
+        $migration250->down();
+        $migration225->down();
         $migration200->down();
         $migration150->down();
 
@@ -96,6 +102,8 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
 
         $migration150->up();
         $migration200->up();
+        $migration225->up();
+        $migration250->up();
         $this->assertSchemaObjects();
     }
 
@@ -115,8 +123,11 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'eg_project_model_relations_to_idx',
             'eg_project_model_corrections_model_key_uq',
             'eg_project_model_corrections_assertion_idx',
-            'eg_project_model_evidence_binding_uq',
+            'eg_project_model_evidence_candidate_binding_uq',
             'eg_project_model_evidence_entity_idx',
+            'eg_project_model_evidence_assertion_idx',
+            'eg_project_model_evidence_correction_idx',
+            'eg_project_model_corrections_scope_uq',
         ] as $index) {
             $catalog = DB::selectOne('SELECT i.indisvalid, i.indisready FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = ?', [$index]);
             self::assertNotNull($catalog, $index);
@@ -137,6 +148,12 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'eg_project_model_evidence_model_scope_fk',
             'eg_project_model_evidence_entity_scope_fk',
             'eg_project_model_evidence_provenance_fk',
+            'eg_project_model_evidence_assertion_scope_fk',
+            'eg_project_model_evidence_correction_scope_fk',
+            'eg_project_model_evidence_candidate_subject_ck',
+            'eg_project_model_evidence_candidate_source_ck',
+            'eg_project_model_evidence_candidate_fingerprint_ck',
+            'eg_project_model_evidence_candidate_version_ck',
         ] as $constraint) {
             self::assertTrue((bool) DB::table('pg_constraint')->where('conname', $constraint)->value('convalidated'), $constraint);
         }
@@ -244,12 +261,12 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
         ]);
     }
 
-    private function insertEvidenceBinding(array $fixture, int $entityId): void
+    private function insertEvidenceBinding(array $fixture, int $entityId, int $assertionId): void
     {
-        DB::table('estimate_generation_project_model_evidence_bindings')->insert($this->evidenceBindingRow($fixture, $entityId));
+        DB::table('estimate_generation_project_model_evidence_bindings')->insert($this->evidenceBindingRow($fixture, $entityId, $assertionId));
     }
 
-    private function evidenceBindingRow(array $fixture, int $entityId): array
+    private function evidenceBindingRow(array $fixture, int $entityId, int $assertionId): array
     {
         return [
             'building_model_id' => $fixture['building_model_id'],
@@ -259,10 +276,31 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'source_version' => $fixture['source_version'],
             'entity_id' => $entityId,
             'evidence_id' => $fixture['evidence_id'],
+            'assertion_id' => $assertionId,
+            'correction_id' => null,
+            'candidate_source' => 'cad',
+            'candidate_value_fingerprint' => str_repeat('c', 64),
             'evidence_source_version' => $fixture['evidence_source_version'],
             'evidence_invalidation_version' => 0,
             'created_at' => now(),
         ];
+    }
+
+    private function insertCadAssertion(array $fixture, int $entityId, string $stableKey): int
+    {
+        return (int) DB::table('estimate_generation_project_model_assertions')->insertGetId([
+            'building_model_id' => $fixture['building_model_id'],
+            'organization_id' => $fixture['organization_id'],
+            'project_id' => $fixture['project_id'],
+            'session_id' => $fixture['session_id'],
+            'source_version' => $fixture['source_version'],
+            'stable_key' => $stableKey,
+            'entity_id' => $entityId,
+            'assertion_type' => 'height',
+            'payload' => json_encode(['source' => 'cad', 'value' => 2.8, 'unit' => 'm'], JSON_THROW_ON_ERROR),
+            'confidence' => 0.9,
+            'created_at' => now(),
+        ]);
     }
 
     private function assertRejected(callable $operation): void

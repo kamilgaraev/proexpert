@@ -179,7 +179,7 @@ final class ProjectModelContractTest extends TestCase
     }
 
     #[Test]
-    public function exact_evidence_binding_migration_recovers_partial_online_steps_and_refuses_to_erase_audit_links(): void
+    public function exact_evidence_binding_migration_declares_partial_online_recovery_guards(): void
     {
         $migration = (string) file_get_contents(
             dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php'
@@ -194,6 +194,8 @@ final class ProjectModelContractTest extends TestCase
             "'eg_project_model_evidence_correction_idx'",
             'ensureConcurrentIndex(',
             'ensureConstraint(',
+            'validateConstraint(',
+            'assertNoIncompleteExactBindingRows',
             'CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard()',
             'CREATE TRIGGER eg_project_model_evidence_binding_guard_trg BEFORE INSERT',
             'DROP CONSTRAINT IF EXISTS eg_project_model_evidence_binding_uq',
@@ -208,6 +210,30 @@ final class ProjectModelContractTest extends TestCase
 
         self::assertStringNotContainsString("->groupBy(['entity_id', 'evidence_id'])", $migration);
         self::assertStringNotContainsString('duplicate_count', $migration);
+    }
+
+    #[Test]
+    public function exact_evidence_binding_migration_declares_null_safe_audit_requirements_before_online_indexes(): void
+    {
+        $migration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php'
+        );
+
+        foreach ([
+            'assertion_id IS NOT NULL AND correction_id IS NULL',
+            'assertion_id IS NULL AND correction_id IS NOT NULL',
+            'candidate_source IS NOT NULL',
+            'candidate_value_fingerprint IS NOT NULL',
+            'assertNoIncompleteExactBindingRows',
+            'validateExactBindingConstraints',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+
+        self::assertLessThan(
+            strpos($migration, 'ensurePostgresIndexes($runtime)'),
+            strpos($migration, 'ensureExactBindingGuardTrigger();'),
+        );
     }
 
     private function sourceVersion(): string
