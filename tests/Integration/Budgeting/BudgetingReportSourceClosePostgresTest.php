@@ -140,7 +140,29 @@ final class BudgetingReportSourceClosePostgresTest extends TestCase
         });
     }
 
-    private function close(string $closeId, ?string $restatesCloseId = null): array
+    public function test_restatement_with_replacement_from_different_identity_is_rejected_at_commit(): void
+    {
+        $priorCloseId = '01JZZZZZZZZZZZZZZZZZZZZZZZ';
+        $replacementCloseId = '01K00000000000000000000000';
+        DB::table('budgeting_report_source_closes')->insert($this->close($priorCloseId));
+
+        $this->expectException(QueryException::class);
+        DB::transaction(function () use ($priorCloseId, $replacementCloseId): void {
+            DB::table('budgeting_report_source_closes')->where('close_id', $priorCloseId)->update([
+                'status' => 'restated',
+                'restated_by' => 900000001,
+                'restated_at' => '2026-02-01 00:00:00+00',
+                'restated_by_close_id' => $replacementCloseId,
+            ]);
+            DB::table('budgeting_report_source_closes')->insert($this->close(
+                $replacementCloseId,
+                $priorCloseId,
+                'budget-v3'
+            ));
+        });
+    }
+
+    private function close(string $closeId, ?string $restatesCloseId = null, string $planIdentity = 'budget-v2'): array
     {
         return [
             'close_id' => $closeId,
@@ -148,7 +170,7 @@ final class BudgetingReportSourceClosePostgresTest extends TestCase
             'period_start' => '2026-01-01',
             'period_end' => '2026-01-31',
             'scenario_identity' => 'base',
-            'plan_identity' => 'budget-v2',
+            'plan_identity' => $planIdentity,
             'formula_version' => 'margin-v1',
             'source_manifest' => json_encode(['budget_version' => 'budget-v2'], JSON_THROW_ON_ERROR),
             'content_hash' => str_repeat('a', 64),
