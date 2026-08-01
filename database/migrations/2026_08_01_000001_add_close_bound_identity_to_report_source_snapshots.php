@@ -26,6 +26,11 @@ return new class extends Migration
             'ALTER TABLE report_source_snapshots ADD CONSTRAINT report_source_snapshots_source_version_check '
             ."CHECK (source_version IS NULL OR source_version ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')",
         );
+        DB::statement(
+            'ALTER TABLE report_source_snapshots ADD CONSTRAINT report_source_snapshots_identity_pair_check '
+            .'CHECK ((scope_identity_hash IS NULL AND source_version IS NULL) '
+            .'OR (scope_identity_hash IS NOT NULL AND source_version IS NOT NULL))',
+        );
         DB::statement(sprintf(
             'CREATE UNIQUE INDEX %s ON report_source_snapshots '
             .'(source_kind, report_code, schema_version, organization_id, scope_identity_hash, query_hash, source_version) '
@@ -44,6 +49,10 @@ return new class extends Migration
         DB::statement(
             'ALTER TABLE report_source_snapshots DROP CONSTRAINT IF EXISTS '
             .'report_source_snapshots_source_version_check',
+        );
+        DB::statement(
+            'ALTER TABLE report_source_snapshots DROP CONSTRAINT IF EXISTS '
+            .'report_source_snapshots_identity_pair_check',
         );
 
         Schema::table('report_source_snapshots', function (Blueprint $table): void {
