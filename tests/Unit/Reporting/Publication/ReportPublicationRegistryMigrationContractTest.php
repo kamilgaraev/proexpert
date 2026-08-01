@@ -221,6 +221,14 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertIsString($releaseScript);
         self::assertStringContainsString('ReportPublicationReleaseRequestFileLoader', $releaseScript);
         self::assertStringContainsString('ProjectReportPublicationReleaseRequestRegistry', $releaseScript);
+        self::assertStringContainsString("getenv('MOST_R15_RELEASE_TRUSTED_ROOT')", $releaseScript);
+        self::assertStringContainsString('realpath($trustedRoot)', $releaseScript);
+        self::assertStringContainsString('is_link($trustedRoot)', $releaseScript);
+        self::assertStringContainsString('r15-candidate-manifest.json', $releaseScript);
+        self::assertStringContainsString('r15-conformance-evidence.json', $releaseScript);
+        self::assertStringContainsString('r15-proof-template.json', $releaseScript);
+        self::assertStringContainsString('r15_release_request.json', $releaseScript);
+        self::assertStringContainsString('report_publication_release_trusted_root_incomplete', $releaseScript);
         self::assertStringContainsString('assertProductionSafe', $releaseScript);
         self::assertStringContainsString('ReportPublicationReleaseBundleWriter', $releaseScript);
         self::assertStringNotContainsString('require $requestPath', $releaseScript);

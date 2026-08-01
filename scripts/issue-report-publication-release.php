@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPubl
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseArtifactIssuer;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleWriter;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\ProcurementCycleReleaseCandidateResolver;
 
 require dirname(__DIR__).'/vendor/autoload.php';
 
@@ -24,6 +25,28 @@ try {
     }
     $requestRoot = dirname(__DIR__).'/build/reports/publication-release-requests';
     $request = (new ReportPublicationReleaseRequestFileLoader)->load($options['request'], $requestRoot);
+
+    $trustedRoot = getenv('MOST_R15_RELEASE_TRUSTED_ROOT');
+    if (! is_string($trustedRoot) || $trustedRoot === '') {
+        throw new RuntimeException('report_publication_release_trusted_root_missing');
+    }
+    $trustedRootReal = realpath($trustedRoot);
+    if (! is_string($trustedRootReal) || is_link($trustedRoot) || ! is_dir($trustedRootReal)) {
+        throw new RuntimeException('report_publication_release_trusted_root_untrusted');
+    }
+    foreach ([
+        'r15-candidate-manifest.json',
+        'r15-conformance-evidence.json',
+        'r15-proof-template.json',
+        'r15_release_request.json',
+    ] as $requiredFile) {
+        $path = $trustedRootReal.DIRECTORY_SEPARATOR.$requiredFile;
+        if (is_link($path) || ! is_file($path) || realpath($path) !== $path) {
+            throw new RuntimeException('report_publication_release_trusted_root_incomplete');
+        }
+    }
+
+    (new ProcurementCycleReleaseCandidateResolver)->resolve($trustedRootReal, $request->commitSha);
     throw new RuntimeException('report_publication_release_composition_not_wired');
     $resolvedRequest->admission->assertProductionSafe();
     $repository = getenv('GITHUB_REPOSITORY');
