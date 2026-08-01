@@ -10,8 +10,6 @@ use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublication
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader;
 
 require dirname(__DIR__).'/vendor/autoload.php';
-$application = require dirname(__DIR__).'/bootstrap/app.php';
-$application->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 $options = getopt('', [
     'output-directory:',
@@ -57,6 +55,8 @@ try {
         throw new RuntimeException('report_publication_release_request_identity_mismatch');
     }
 
+    $application = require dirname(__DIR__).'/bootstrap/app.php';
+    $application->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
     $registry = $application->make(ProjectReportPublicationReleaseRequestRegistryFactory::class)->create(
         $application,
         $trustedRootReal,

@@ -23,17 +23,19 @@ final class IssueReportPublicationReleaseScriptTest extends TestCase
 
     public function test_missing_trusted_root_fails_before_release_resolution(): void
     {
-        [$status, $stderr] = $this->runScript(null, $this->root);
+        [$status, $stdout, $stderr] = $this->runScript(null, $this->root);
 
         self::assertSame(1, $status);
+        self::assertSame('', $stdout);
         self::assertStringContainsString('report_publication_release_trusted_root_missing', $stderr);
     }
 
     public function test_incomplete_trusted_root_fails_closed(): void
     {
-        [$status, $stderr] = $this->runScript($this->root, $this->root);
+        [$status, $stdout, $stderr] = $this->runScript($this->root, $this->root);
 
         self::assertSame(1, $status);
+        self::assertSame('', $stdout);
         self::assertStringContainsString('report_publication_release_trusted_root_incomplete', $stderr);
     }
 
@@ -50,9 +52,10 @@ final class IssueReportPublicationReleaseScriptTest extends TestCase
         $external = $this->root.DIRECTORY_SEPARATOR.'other_request.json';
         file_put_contents($external, $this->request('other_request', str_repeat('b', 40)));
 
-        [$status, $stderr] = $this->runScript($this->root, $external);
+        [$status, $stdout, $stderr] = $this->runScript($this->root, $external);
 
         self::assertSame(1, $status);
+        self::assertSame('', $stdout);
         self::assertStringContainsString('report_publication_release_request_identity_mismatch', $stderr);
     }
 
@@ -75,7 +78,7 @@ final class IssueReportPublicationReleaseScriptTest extends TestCase
         fclose($pipes[1]);
         fclose($pipes[2]);
 
-        return [proc_close($process), $stdout.$stderr];
+        return [proc_close($process), $stdout, $stderr];
     }
 
     private function request(string $requestId, string $commitSha): string
