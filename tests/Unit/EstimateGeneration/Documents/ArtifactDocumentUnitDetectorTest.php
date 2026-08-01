@@ -70,11 +70,15 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
     }
 
     #[Test]
-    public function ifc_is_rejected_until_a_dedicated_provider_is_available(): void
+    #[DataProvider('ifcRejectionMatrix')]
+    public function ifc_is_rejected_until_a_dedicated_provider_is_available(
+        string $filename,
+        string $mimeType,
+    ): void
     {
         $document = new EstimateGenerationDocument([
-            'filename' => 'model.ifc',
-            'mime_type' => 'application/x-step',
+            'filename' => $filename,
+            'mime_type' => $mimeType,
             'storage_path' => 'org-10/source/model.ifc',
             'file_size_bytes' => 256,
             'meta' => ['storage_version_id' => 'ifc-v1'],
@@ -86,6 +90,15 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
         } catch (DocumentManifestNeedsReview $exception) {
             self::assertSame('document_source_kind_unsupported', $exception->safeCode);
         }
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function ifcRejectionMatrix(): array
+    {
+        return [
+            'IFC extension with image MIME' => ['model.ifc', 'image/png'],
+            'IFC MIME with image extension' => ['preview.png', 'application/ifc'],
+        ];
     }
 
     #[Test]

@@ -22,6 +22,10 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
 
     public function detect(EstimateGenerationDocument $document, string $sourceVersion): array
     {
+        if ($this->isIfc($document)) {
+            throw new DocumentManifestNeedsReview('document_source_kind_unsupported');
+        }
+
         foreach ($this->adapters as $adapter) {
             if ($adapter->supports($document)) {
                 return $adapter->detect($document, $sourceVersion);
@@ -29,5 +33,11 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
         }
 
         throw new DocumentManifestNeedsReview('document_source_kind_unsupported');
+    }
+
+    private function isIfc(EstimateGenerationDocument $document): bool
+    {
+        return strtolower((string) pathinfo((string) $document->filename, PATHINFO_EXTENSION)) === 'ifc'
+            || str_contains(strtolower((string) $document->mime_type), 'ifc');
     }
 }
