@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Features\Budgeting\Console\Commands\RecalculateEpmDataMartSnapshotsCommand;
 use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
@@ -18,6 +19,7 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetLineService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodClosureService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodReopenService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactReportBindingFactory;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\Budgeting\Services\BudgetVersionService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastReadService;
@@ -51,6 +53,7 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(PlanFactReportSourceSnapshotAdapter::class);
         $this->app->singleton(BudgetPlanFactCandidateContract::class);
         $this->app->singleton(BudgetPlanFactReportBindingFactory::class);
+        $this->app->singleton(BudgetPlanFactPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(BudgetCatalogService::class);
         $this->app->singleton(BudgetVersionService::class);
         $this->app->singleton(BudgetLineService::class);
@@ -77,6 +80,14 @@ final class BudgetingServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->app->afterResolving(
+            ReportDefinitionBindingAssembler::class,
+            function (ReportDefinitionBindingAssembler $assembler): void {
+                $this->app
+                    ->make(BudgetPlanFactPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+            },
+        );
         $this->loadMigrationsFrom(__DIR__.'/migrations');
 
         if ($this->app->runningInConsole()) {
