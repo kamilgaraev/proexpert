@@ -168,6 +168,13 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         );
         self::assertSame(ReportPublicationFeatureMode::CANARY, $canary->mode);
         self::assertSame([10], $store->current($identity->code)?->organizationAllowlist);
+        self::assertSame(
+            1,
+            DB::table('report_publication_outbox')
+                ->where('publication_id', $identity->publicationId)
+                ->where('event_type', 'report_feature_configured')
+                ->count(),
+        );
 
         $stale = new ReportPublicationIdentity(
             $identity->publicationId,
@@ -251,6 +258,45 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
             sort($statuses, SORT_STRING);
 
             self::assertSame(['conflict', 'promoted'], $statuses);
+            self::assertSame(1, DB::table('report_publications')->where('status', 'published')->count());
+            self::assertSame(1, DB::table('report_publication_events')->where('event_type', 'promoted')->count());
+        } finally {
+            $harness->terminateAndReap($children);
+            $harness->cleanup();
+        }
+    }
+
+    public function test_concurrent_equal_promotions_are_idempotent(): void
+    {
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-publication-'.bin2hex(random_bytes(8));
+        $harness = new PostgresProcessRaceHarness($directory);
+        $children = [];
+        try {
+            foreach ([0, 1] as $index) {
+                $children[] = $harness->spawn($index, static function (): array {
+                    $fixture = ReportPublicationFixtureFactory::eligible();
+                    $registry = new EloquentReportPublicationRegistry(
+                        DB::connection(),
+                        $fixture['registry'],
+                    );
+                    try {
+                        $published = $registry->promote($fixture['eligible']);
+
+                        return ['status' => 'promoted', 'id' => $published->publicationIdentity?->publicationId];
+                    } catch (Throwable $exception) {
+                        return ['status' => 'conflict', 'error' => $exception::class];
+                    }
+                });
+            }
+            $harness->release(0);
+            $harness->release(1);
+            $harness->waitForChildren($children, 30.0);
+            $first = $harness->result(0);
+            $second = $harness->result(1);
+
+            self::assertSame('promoted', $first['status']);
+            self::assertSame('promoted', $second['status']);
+            self::assertSame($first['id'], $second['id']);
             self::assertSame(1, DB::table('report_publications')->where('status', 'published')->count());
             self::assertSame(1, DB::table('report_publication_events')->where('event_type', 'promoted')->count());
         } finally {

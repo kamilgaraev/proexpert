@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use LogicException;
 
@@ -72,6 +73,23 @@ final class EloquentReportPublicationFeatureStore implements ReportPublicationFe
             if ($updated !== 1) {
                 throw new LogicException('report_publication_feature_stale_identity');
             }
+
+            $outboxId = (string) Str::ulid();
+            $this->connection->table('report_publication_outbox')->insert([
+                'id' => $outboxId,
+                'publication_id' => $publication->publicationId,
+                'event_type' => 'report_feature_configured',
+                'deduplication_key' => $publication->publicationId.':report_feature_configured:'.$outboxId,
+                'payload_json' => CanonicalJson::encode([
+                    'canary_organization_ids' => $configuration->organizationAllowlist,
+                    'canary_user_ids' => $configuration->userAllowlist,
+                    'mode' => $configuration->mode->value,
+                    'proof_sha256' => $publication->proofHash->value,
+                    'publication_id' => $publication->publicationId,
+                ]),
+                'created_at' => $updatedAt,
+                'delivered_at' => null,
+            ]);
 
             return $configuration;
         });

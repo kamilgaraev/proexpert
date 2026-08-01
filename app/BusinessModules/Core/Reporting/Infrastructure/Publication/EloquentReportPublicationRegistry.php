@@ -43,6 +43,10 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
     public function promote(EligibleReportPublication $publication): PublishedReportDefinition
     {
         return $this->connection->transaction(function () use ($publication): PublishedReportDefinition {
+            $this->connection->select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ['report-publication:'.$publication->candidate->code],
+            );
             $existing = $this->connection->table('report_publications')
                 ->where('code', $publication->candidate->code)
                 ->where('status', ReportPublicationStatus::PUBLISHED->value)
