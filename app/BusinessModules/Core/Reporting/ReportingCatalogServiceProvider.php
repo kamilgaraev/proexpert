@@ -36,6 +36,12 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportWorkspacePreferenc
 use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LogReportSubscriptionEventRecorder;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinPublishedReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinReportCatalogMetadataRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinReportSchedulingCapabilityRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\CompositePublishedReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\CompositeReportCatalogMetadataRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\CompositeReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabasePublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabaseReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabaseReportSchedulingCapabilityRegistry;
@@ -52,6 +58,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
+use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 
@@ -120,15 +127,26 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
                 $app->make(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier::class),
             ),
         );
-        $this->app->singleton(ReportDefinitionRegistry::class, DatabasePublishedReportDefinitionRegistry::class);
+        $this->app->singleton(BudgetPlanFactBuiltinPublishedReport::class, fn (Application $app): BudgetPlanFactBuiltinPublishedReport => new BudgetPlanFactBuiltinPublishedReport(
+            $app->make(\App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract::class),
+        ));
         $this->app->singleton(
-            ReportCatalogMetadataRegistry::class,
-            DatabaseReportCatalogMetadataRegistry::class,
+            BuiltinPublishedReportDefinitionRegistry::class,
+            fn (Application $app): BuiltinPublishedReportDefinitionRegistry => new BuiltinPublishedReportDefinitionRegistry(
+                $app->make(BudgetPlanFactBuiltinPublishedReport::class),
+            ),
         );
         $this->app->singleton(
-            ReportSchedulingCapabilityRegistry::class,
-            DatabaseReportSchedulingCapabilityRegistry::class,
+            ReportDefinitionRegistry::class,
+            fn (Application $app): CompositePublishedReportDefinitionRegistry => new CompositePublishedReportDefinitionRegistry(
+                $app->make(BuiltinPublishedReportDefinitionRegistry::class),
+                $app->make(DatabasePublishedReportDefinitionRegistry::class),
+            ),
         );
+        $this->app->singleton(BuiltinReportCatalogMetadataRegistry::class, fn (Application $app): BuiltinReportCatalogMetadataRegistry => new BuiltinReportCatalogMetadataRegistry($app->make(BudgetPlanFactBuiltinPublishedReport::class)));
+        $this->app->singleton(ReportCatalogMetadataRegistry::class, fn (Application $app): CompositeReportCatalogMetadataRegistry => new CompositeReportCatalogMetadataRegistry($app->make(BuiltinReportCatalogMetadataRegistry::class), $app->make(DatabaseReportCatalogMetadataRegistry::class)));
+        $this->app->singleton(BuiltinReportSchedulingCapabilityRegistry::class, fn (Application $app): BuiltinReportSchedulingCapabilityRegistry => new BuiltinReportSchedulingCapabilityRegistry($app->make(BudgetPlanFactBuiltinPublishedReport::class)));
+        $this->app->singleton(ReportSchedulingCapabilityRegistry::class, fn (Application $app): CompositeReportSchedulingCapabilityRegistry => new CompositeReportSchedulingCapabilityRegistry($app->make(BuiltinReportSchedulingCapabilityRegistry::class), $app->make(DatabaseReportSchedulingCapabilityRegistry::class)));
         $this->app->singleton(GetReportCatalogAction::class, GetReportCatalogHandler::class);
         $this->app->singleton(
             ReportWorkspacePreferencesStore::class,
