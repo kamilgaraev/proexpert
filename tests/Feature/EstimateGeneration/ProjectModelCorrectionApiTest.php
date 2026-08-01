@@ -35,4 +35,20 @@ final class ProjectModelCorrectionApiTest extends TestCase
         self::assertStringContainsString("Route::post('/{session}/project-model/corrections/revert'", $routes);
         self::assertStringContainsString("authorize:estimate_generation.review,project,project", $routes);
     }
+
+    #[Test]
+    public function correction_workflow_locks_the_actual_model_head_and_uses_one_idempotency_namespace_before_assertion_lookup(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/BuildingModel/ApplyProjectModelCorrection.php');
+
+        self::assertIsString($source);
+        self::assertStringContainsString('$modelCorrections = $this->modelCorrections(', $source);
+        self::assertLessThan(
+            strpos($source, '$assertion = $this->assertion('),
+            strpos($source, '$existing = $this->idempotentCorrection($modelCorrections'),
+        );
+        self::assertStringContainsString("return 'correction:'.\$idempotencyHash;", $source);
+        self::assertStringNotContainsString("->where('content_version', \$expectedSourceVersion)\n            ->latest('id')", $source);
+        self::assertStringContainsString("->latest('id')\n            ->lockForUpdate()", $source);
+    }
 }

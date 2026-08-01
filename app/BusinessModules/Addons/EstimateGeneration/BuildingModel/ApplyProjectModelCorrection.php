@@ -85,14 +85,18 @@ final readonly class ApplyProjectModelCorrection
         return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $actorId, $expectedSourceVersion, $expectedValueFingerprint, $assertionStableKey, $value, $reason, $idempotencyKey, $operation): array {
             $this->lockSession($organizationId, $projectId, $sessionId);
             $model = $this->model($organizationId, $projectId, $sessionId, $expectedSourceVersion);
-            $assertion = $this->assertion($model, $organizationId, $projectId, $sessionId, $expectedSourceVersion, $assertionStableKey);
             $requestHash = $this->requestHash($operation, $expectedSourceVersion, $expectedValueFingerprint, $assertionStableKey, $value, $reason);
             $idempotencyHash = hash('sha256', $idempotencyKey);
-            $corrections = $this->corrections($model, $organizationId, $projectId, $sessionId, $expectedSourceVersion, (int) $assertion->id);
-            $existing = $this->idempotentCorrection($corrections, $idempotencyHash, $requestHash);
+            $modelCorrections = $this->modelCorrections($model, $organizationId, $projectId, $sessionId);
+            $existing = $this->idempotentCorrection($modelCorrections, $idempotencyHash, $requestHash);
             if ($existing !== null) {
                 return $this->result($existing, true);
             }
+            $assertion = $this->assertion($model, $organizationId, $projectId, $sessionId, $expectedSourceVersion, $assertionStableKey);
+            $corrections = array_values(array_filter(
+                $modelCorrections,
+                static fn (stdClass $correction): bool => (int) ($correction->assertion_id ?? 0) === (int) $assertion->id,
+            ));
 
             $previous = $this->currentValue($assertion, $corrections);
             if (! hash_equals(ProjectModelValueFingerprint::for($previous), $expectedValueFingerprint)) {
@@ -137,7 +141,7 @@ final readonly class ApplyProjectModelCorrection
                 'project_id' => $projectId,
                 'session_id' => $sessionId,
                 'source_version' => $expectedSourceVersion,
-                'stable_key' => $this->stableKey($operation, $idempotencyHash),
+                'stable_key' => $this->stableKey($idempotencyHash),
                 'assertion_id' => (int) $assertion->id,
                 'correction_type' => 'manual',
                 'payload' => BuildingModelSchema::canonicalJson($payload),
@@ -188,7 +192,6 @@ final readonly class ApplyProjectModelCorrection
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('session_id', $sessionId)
-            ->where('content_version', $expectedSourceVersion)
             ->latest('id')
             ->lockForUpdate()
             ->first(['id', 'content_version']);
@@ -217,18 +220,17 @@ final readonly class ApplyProjectModelCorrection
         return $assertion;
     }
 
-    private function corrections(stdClass $model, int $organizationId, int $projectId, int $sessionId, string $sourceVersion, int $assertionId): array
+    private function modelCorrections(stdClass $model, int $organizationId, int $projectId, int $sessionId): array
     {
         return $this->database->table('estimate_generation_project_model_corrections')
             ->where('building_model_id', (int) $model->id)
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('session_id', $sessionId)
-            ->where('source_version', $sourceVersion)
-            ->where('assertion_id', $assertionId)
+            ->where('source_version', (string) $model->content_version)
             ->orderBy('id')
             ->lockForUpdate()
-            ->get(['id', 'stable_key', 'payload', 'reason', 'actor_id', 'created_at'])
+            ->get(['id', 'stable_key', 'assertion_id', 'payload', 'reason', 'actor_id', 'created_at'])
             ->all();
     }
 
@@ -324,9 +326,9 @@ final readonly class ApplyProjectModelCorrection
         ]));
     }
 
-    private function stableKey(string $operation, string $idempotencyHash): string
+    private function stableKey(string $idempotencyHash): string
     {
-        return 'correction:'.$operation.':'.$idempotencyHash;
+        return 'correction:'.$idempotencyHash;
     }
 
     private function result(stdClass $correction, bool $idempotent): array

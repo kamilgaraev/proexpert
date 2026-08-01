@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\EffectiveProjectModelQuantityInputProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCalculationResult;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
@@ -33,6 +34,7 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         private BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
         private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
         private ResidentialQuantityScenarioCatalog $residentialScenarios = new ResidentialQuantityScenarioCatalog,
+        private EffectiveProjectModelQuantityInputProjector $effectiveProjection = new EffectiveProjectModelQuantityInputProjector,
     ) {}
 
     public function stage(): ProcessingStage
@@ -57,7 +59,9 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         $model = null;
         if (is_array($normalized)) {
             $model = NormalizedBuildingModelData::fromArray($normalized);
-            $calculation = $this->calculator->calculate($this->inputMapper->map($model));
+            $effectiveValues = is_array($analysis['effective_project_model_values'] ?? null)
+                ? $analysis['effective_project_model_values'] : [];
+            $calculation = $this->calculator->calculate($this->effectiveProjection->project($this->inputMapper->map($model), $effectiveValues));
             $quantities = $calculation->all();
             $diagnostics = $calculation->diagnostics;
             $metrics = $calculation->metrics;

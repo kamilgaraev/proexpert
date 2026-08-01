@@ -140,6 +140,30 @@ final class BuildingModelPayloadServiceTest extends TestCase
     }
 
     #[Test]
+    public function effective_area_correction_changes_the_get_quantity_and_revert_restores_the_immutable_snapshot_value(): void
+    {
+        $effective = [[
+            'entity_stable_key' => 'room-1',
+            'assertion_stable_key' => 'assertion:room-1:area',
+            'assertion_type' => 'area',
+            'value' => ['value' => 19.5, 'unit' => 'm2'],
+            'correction_stable_key' => 'correction:'.str_repeat('a', 64),
+        ]];
+        $applied = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource($this->model(), [], effectiveValues: $effective));
+        $reverted = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource($this->model(), []));
+
+        $afterApply = $applied->handle($this->generationSession());
+        $afterRevert = $reverted->handle($this->generationSession());
+
+        self::assertSame('19.500000', $afterApply['quantities']['data'][0]['amount']);
+        self::assertSame($effective, $afterApply['effective_values']);
+        self::assertSame('12.500000', $afterRevert['quantities']['data'][0]['amount']);
+        self::assertSame([], $afterRevert['effective_values']);
+        self::assertSame($this->model(), $afterApply['building_model']);
+        self::assertSame($this->contentVersion(), $afterApply['content_version']);
+    }
+
+    #[Test]
     public function exact_document_total_area_overrides_polygon_derived_floor_area(): void
     {
         $evidence = $this->evidence(21, 'document', 'source_fact', [
@@ -242,11 +266,16 @@ final class FakeBuildingModelReadDataSource implements BuildingModelReadDataSour
         private array $evidence,
         private array $documents = [],
         private ?array $totalArea = null,
+        private array $effectiveValues = [],
     ) {}
 
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
     {
-        return ['content_version' => NormalizedBuildingModelData::fromArray($this->model)->contentVersion(), 'model' => $this->model];
+        return [
+            'content_version' => NormalizedBuildingModelData::fromArray($this->model)->contentVersion(),
+            'model' => $this->model,
+            'effective_values' => $this->effectiveValues,
+        ];
     }
 
     public function evidenceForIds(int $organizationId, int $projectId, int $sessionId, array $ids): array

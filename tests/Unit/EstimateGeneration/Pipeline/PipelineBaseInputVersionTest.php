@@ -20,7 +20,7 @@ final class PipelineBaseInputVersionTest extends TestCase
 {
     public function test_document_floor_identity_contract_has_its_own_cache_generation(): void
     {
-        self::assertSame(6, PipelineBaseInputVersion::SCHEMA_VERSION);
+        self::assertSame(7, PipelineBaseInputVersion::SCHEMA_VERSION);
     }
 
     public function test_schema_version_is_part_of_base_input_version(): void
@@ -101,6 +101,36 @@ final class PipelineBaseInputVersionTest extends TestCase
         self::assertNotSame($first, $newInvalidationVersion);
         self::assertSame($inactive, $inactiveBaseline);
         self::assertNotSame($first, $invalidated);
+    }
+
+    public function test_effective_project_model_corrections_change_the_rebuild_input_without_mutating_the_raw_model_version(): void
+    {
+        $documents = [[
+            'id' => 10,
+            'source_version' => 'sha256:'.str_repeat('a', 64),
+            'status' => 'ready',
+            'derived_version' => 'sha256:'.str_repeat('b', 64),
+        ]];
+        $raw = [
+            'content_version' => 'sha256:'.str_repeat('c', 64),
+            'model' => ['scale_status' => 'confirmed', 'evidence_ids' => [1]],
+        ];
+        $applied = [...$raw, 'effective_values' => [[
+            'entity_stable_key' => 'room-1',
+            'assertion_stable_key' => 'assertion:room-1:area',
+            'assertion_type' => 'area',
+            'value' => ['value' => 19.5, 'unit' => 'm2'],
+            'correction_stable_key' => 'correction:'.str_repeat('d', 64),
+        ]]];
+
+        self::assertNotSame(
+            PipelineBaseInputVersion::fromProjection([], $documents, null, $raw),
+            PipelineBaseInputVersion::fromProjection([], $documents, null, $applied),
+        );
+        self::assertSame(
+            PipelineBaseInputVersion::fromProjection([], $documents, null, $raw),
+            PipelineBaseInputVersion::fromProjection([], $documents, null, [...$applied, 'effective_values' => []]),
+        );
     }
 
     #[DataProvider('derivedMutations')]

@@ -35,6 +35,9 @@ final readonly class UnderstandObjectStage implements LeaseAwarePipelineStage
         if (is_array($source['document_total_area'] ?? null)) {
             $analysis['document_total_area'] = $source['document_total_area'];
         }
+        if (is_array($source['effective_project_model_values'] ?? null)) {
+            $analysis['effective_project_model_values'] = $source['effective_project_model_values'];
+        }
 
         return $this->results->make($context, $this->stage(), ['analysis' => $analysis]);
     }

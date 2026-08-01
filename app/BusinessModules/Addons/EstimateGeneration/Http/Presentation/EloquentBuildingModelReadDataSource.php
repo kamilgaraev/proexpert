@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DocumentTotalAreaConstraintResolver;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionChainProjector;
 use Illuminate\Database\DatabaseManager;
 use stdClass;
 
@@ -13,6 +14,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
     public function __construct(
         private DatabaseManager $database,
         private DocumentTotalAreaConstraintResolver $areaConstraints = new DocumentTotalAreaConstraintResolver,
+        private ProjectModelCorrectionChainProjector $corrections = new ProjectModelCorrectionChainProjector,
     ) {}
 
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
@@ -22,7 +24,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
             ->where('project_id', $projectId)
             ->where('session_id', $sessionId)
             ->latest('id')
-            ->first(['content_version', 'model']);
+            ->first(['id', 'organization_id', 'project_id', 'session_id', 'content_version', 'model']);
         if (! $row instanceof stdClass) {
             return null;
         }
@@ -31,6 +33,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
         return $model === null ? null : [
             'content_version' => (string) $row->content_version,
             'model' => $model,
+            'effective_values' => $this->corrections->project($this->correctionRows($row)),
         ];
     }
 
@@ -169,5 +172,44 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
         $decoded = json_decode($value, true);
 
         return is_array($decoded) ? $decoded : null;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function correctionRows(stdClass $model): array
+    {
+        return $this->database->table('estimate_generation_project_model_corrections as correction')
+            ->join('estimate_generation_project_model_assertions as assertion', 'assertion.id', '=', 'correction.assertion_id')
+            ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'assertion.entity_id')
+            ->where('correction.building_model_id', (int) $model->id)
+            ->where('correction.organization_id', $model->organization_id ?? null)
+            ->where('correction.project_id', $model->project_id ?? null)
+            ->where('correction.session_id', $model->session_id ?? null)
+            ->where('correction.source_version', (string) $model->content_version)
+            ->orderBy('correction.id')
+            ->get([
+                'correction.stable_key as correction_stable_key',
+                'correction.payload as correction_payload',
+                'assertion.stable_key as assertion_stable_key',
+                'assertion.assertion_type',
+                'assertion.payload as assertion_payload',
+                'entity.stable_key as entity_stable_key',
+            ])
+            ->map(function (stdClass $row): array {
+                $correction = $this->json($row->correction_payload);
+                $assertion = $this->json($row->assertion_payload);
+                if ($correction === null || $assertion === null) {
+                    throw new \UnexpectedValueException('Project model correction history is invalid.');
+                }
+
+                return [
+                    'correction_stable_key' => (string) $row->correction_stable_key,
+                    'correction_payload' => $correction,
+                    'assertion_stable_key' => (string) $row->assertion_stable_key,
+                    'assertion_type' => (string) $row->assertion_type,
+                    'assertion_payload' => $assertion,
+                    'entity_stable_key' => (string) $row->entity_stable_key,
+                ];
+            })
+            ->all();
     }
 }
