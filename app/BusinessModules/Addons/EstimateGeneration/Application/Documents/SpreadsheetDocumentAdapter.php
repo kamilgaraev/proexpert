@@ -43,7 +43,7 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                     DocumentUnitType::SpreadsheetSheet,
                     $page->pageNumber,
                     json_encode($this->nativeAdapter->extract($page), JSON_THROW_ON_ERROR),
-                    'application/vnd.most.spreadsheet-sheet+json',
+                    'application/json',
                 );
                 $units[] = new DocumentUnitData(
                     DocumentUnitType::SpreadsheetSheet,
@@ -55,6 +55,8 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                         'source_version' => $sourceVersion,
                         'coordinate_space' => DocumentUnitType::SpreadsheetSheet->coordinateSpace(),
                         'artifact_source_version' => $artifact->sha256,
+                        'artifact_kind' => 'spreadsheet_sheet',
+                        'artifact_schema_version' => 1,
                         'sheet' => $page->pageNumber,
                     ],
                 );

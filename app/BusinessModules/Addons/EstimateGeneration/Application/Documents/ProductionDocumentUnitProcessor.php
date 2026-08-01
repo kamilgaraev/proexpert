@@ -177,7 +177,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'geometry_incomplete',
         ]));
         $pdfGeometry = null;
+        $nativePdfText = null;
         $geometryPath = $context->locator['geometry_artifact_path'] ?? null;
+        if ($context->type === DocumentUnitType::PdfPage && ! is_string($geometryPath)) {
+            throw new DocumentUnitProcessingException('pdf_page_geometry_locator_invalid');
+        }
         if (is_string($geometryPath)) {
             $geometryBytes = $context->locator['geometry_artifact_bytes'] ?? null;
             $geometrySha256 = $context->locator['geometry_artifact_sha256'] ?? null;
@@ -194,15 +198,23 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 $geometryVersionId,
             )->body;
             $decoded = json_decode($geometryContent, true, 64, JSON_THROW_ON_ERROR);
-            if (! is_array($decoded) || ! is_array($decoded['geometry'] ?? null)) {
+            if (! is_array($decoded) || ($decoded['schema_version'] ?? null) !== 1
+                || ! is_string($decoded['text'] ?? null)
+                || ! is_array($decoded['geometry'] ?? null)
+                || ! is_array($decoded['sources'] ?? null)
+                || ! is_array($decoded['provenance'] ?? null)) {
                 throw new DocumentUnitProcessingException('pdf_page_geometry_contract_invalid');
             }
             $pdfGeometry = $decoded;
+            $nativePdfText = $decoded['text'];
         }
 
         return new DocumentUnitOutput(
-            version: hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
-            text: implode("\n", array_values(array_filter(array_map(
+            version: hash('sha256', json_encode([
+                'vision_analysis' => $payload,
+                'pdf_native_text' => $nativePdfText,
+            ], JSON_THROW_ON_ERROR)),
+            text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
                 $payload['elements'],
             )))),

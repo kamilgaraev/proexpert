@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
@@ -78,6 +79,42 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
         } catch (TypedFailureException $exception) {
             self::assertSame('document_source_integrity_failed', $exception->safeCode);
         }
+    }
+
+    #[Test]
+    public function stores_spreadsheet_manifests_as_supported_json_artifacts(): void
+    {
+        $document = $this->document(1);
+        $content = json_encode([
+            'schema_version' => 1,
+            'source_kind' => 'spreadsheet',
+            'text' => 'Смета',
+            'native_structure' => ['status' => 'available'],
+        ], JSON_THROW_ON_ERROR);
+        $path = 'org-71/estimate-generation/sessions/17/documents/23/manifests/sha256-'.str_repeat('a', 64).'/spreadsheet_sheet-00001.json';
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putImmutable')->once()->with($path, $content, 'application/json')->andReturn([
+            'path' => $path,
+            'body' => $content,
+            'size' => strlen($content),
+            'sha256' => hash('sha256', $content),
+            'etag' => null,
+            'version_id' => 'artifact-v1',
+            'content_type' => 'application/json',
+            'created' => true,
+        ]);
+
+        $artifact = $this->storage($files)->put(
+            $document,
+            'sha256:'.str_repeat('a', 64),
+            DocumentUnitType::SpreadsheetSheet,
+            1,
+            $content,
+            'application/json',
+        );
+
+        self::assertSame($path, $artifact->path);
+        self::assertSame('application/json', $artifact->contentType);
     }
 
     private function storage(FileService $files): S3DocumentSourceManifestStorage

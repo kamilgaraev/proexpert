@@ -6,12 +6,53 @@ namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\PdfGeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Process\Process;
 
 final class PdfGeometryWorkerScriptTest extends TestCase
 {
+    #[Test]
+    public function worker_passes_configured_preview_pixel_limits_to_the_preflight_script(): void
+    {
+        $previous = Container::getInstance();
+        $container = new Container;
+        $container->instance('config', new Repository([
+            'estimate-generation' => ['ocr' => ['geometry' => [
+                'max_preview_page_pixels' => 240_000,
+                'max_preview_total_pixels' => 480_000,
+            ]]],
+        ]));
+        Container::setInstance($container);
+        $script = tempnam(sys_get_temp_dir(), 'most_pdf_arguments_');
+        self::assertIsString($script);
+        self::assertNotFalse(file_put_contents($script, '<?php echo json_encode(["pages" => [], "arguments" => array_slice($argv, 1)]);'));
+
+        try {
+            $payload = (new PdfGeometryWorker(
+                scriptPath: $script,
+                pythonBinary: PHP_BINARY,
+                timeoutSeconds: 5,
+                maxPages: 1,
+                maxVectorElements: 1,
+            ))->extract('%PDF-1.7', 'limits.pdf', static fn (): array => []);
+
+            $arguments = $payload['arguments'] ?? [];
+            self::assertIsArray($arguments);
+            $pagePixelsIndex = array_search('--max-preview-page-pixels', $arguments, true);
+            $totalPixelsIndex = array_search('--max-preview-total-pixels', $arguments, true);
+            self::assertIsInt($pagePixelsIndex);
+            self::assertIsInt($totalPixelsIndex);
+            self::assertSame('240000', $arguments[$pagePixelsIndex + 1] ?? null);
+            self::assertSame('480000', $arguments[$totalPixelsIndex + 1] ?? null);
+        } finally {
+            Container::setInstance($previous);
+            @unlink($script);
+        }
+    }
+
     public function test_worker_surfaces_structured_pdf_failure_code(): void
     {
         $script = tempnam(sys_get_temp_dir(), 'most_pdf_failure_');

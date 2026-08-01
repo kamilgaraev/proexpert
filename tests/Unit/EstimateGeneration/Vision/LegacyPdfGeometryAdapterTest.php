@@ -97,6 +97,36 @@ final class LegacyPdfGeometryAdapterTest extends TestCase
     }
 
     #[Test]
+    public function legacy_preview_preflights_scale_two_pixels_before_rendering(): void
+    {
+        $root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'legacy-preview-limit-'.bin2hex(random_bytes(6));
+        mkdir($root, 0700);
+        $pdf = $root.DIRECTORY_SEPARATOR.'source.pdf';
+        $preview = $root.DIRECTORY_SEPARATOR.'preview';
+        file_put_contents($pdf, $this->pdf('0 0 m 10 0 l S'));
+        $script = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py';
+
+        try {
+            $process = new Process([
+                'python', $script, '--input', $pdf, '--workspace', $root, '--preview-dir', $preview,
+                '--render-preview', '--max-preview-page-pixels', '239999',
+            ]);
+            $process->run();
+
+            self::assertFalse($process->isSuccessful());
+            self::assertStringContainsString('pdf_preview_invalid', $process->getErrorOutput());
+            self::assertDirectoryDoesNotExist($preview);
+        } finally {
+            foreach (glob($preview.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+                @unlink($file);
+            }
+            @rmdir($preview);
+            @unlink($pdf);
+            @rmdir($root);
+        }
+    }
+
+    #[Test]
     public function legacy_missing_runtime_keeps_pymupdf_error_identifier(): void
     {
         $path = tempnam(sys_get_temp_dir(), 'legacy-error-').'.pdf';

@@ -66,7 +66,9 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             );
         }
 
-        if (($locator['content_type'] ?? null) === 'application/vnd.most.spreadsheet-sheet+json') {
+        if (($locator['content_type'] ?? null) === 'application/json'
+            && ($locator['artifact_kind'] ?? null) === 'spreadsheet_sheet'
+            && ($locator['artifact_schema_version'] ?? null) === 1) {
             $payload = json_decode($content, true, 64, JSON_THROW_ON_ERROR);
             if (! is_array($payload) || ($payload['schema_version'] ?? null) !== 1
                 || ($payload['source_kind'] ?? null) !== 'spreadsheet'
