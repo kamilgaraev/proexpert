@@ -160,14 +160,15 @@ final class ProjectModelMerger
                 throw new InvalidArgumentException('Project model correction references an unknown assertion.');
             }
             $this->assertSameScope($assertion, $correction);
-            $this->assertValue($assertion->assertionType, $correction->payload);
+            $value = $correction->canonicalValue();
+            $this->assertValue($assertion->assertionType, $value);
             $isManual = $correction->correctionType === 'manual';
             $subject = $assertion->entityStableKey.'|'.$assertion->assertionType;
             $candidatesBySubject[$subject][] = ProjectModelCandidate::forCorrection(
                 $assertion,
                 $correction,
                 $isManual ? 'manual_correction' : 'reconciled_geometry',
-                $correction->payload,
+                $value,
                 $evidenceBindings,
             );
         }

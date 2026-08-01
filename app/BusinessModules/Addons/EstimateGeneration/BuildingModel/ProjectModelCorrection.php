@@ -38,6 +38,18 @@ final readonly class ProjectModelCorrection
 
     public function valueFingerprint(): string
     {
-        return ProjectModelValueFingerprint::for($this->payload);
+        return ProjectModelValueFingerprint::for($this->canonicalValue());
+    }
+
+    public function canonicalValue(): array
+    {
+        $value = $this->payload['canonical_value'] ?? $this->payload;
+        if (! is_array($value)) {
+            throw new InvalidArgumentException('Project model correction canonical value is invalid.');
+        }
+
+        ProjectModelEntity::assertObject($value, 'Correction canonical value');
+
+        return $value;
     }
 }
