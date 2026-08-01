@@ -359,6 +359,30 @@ final class WorkforceCapacitySourcePostgresTest extends TestCase
         self::assertStringContainsString('synchronous capture invalid', $exception->getMessage());
     }
 
+    public function test_owner_revision_is_monotonic_for_multiple_updates_in_the_same_second(): void
+    {
+        $fixture = $this->fixture();
+        $fixedTimestamp = '2026-08-15 09:00:00+00';
+
+        DB::table('workforce_employee_assignments')->where('id', $fixture['assignment_id'])->update([
+            'rate' => '0.7500',
+            'updated_at' => $fixedTimestamp,
+        ]);
+        $firstRevision = (int) DB::table('workforce_employee_assignments')
+            ->where('id', $fixture['assignment_id'])
+            ->value('workforce_capacity_revision');
+        DB::table('workforce_employee_assignments')->where('id', $fixture['assignment_id'])->update([
+            'rate' => '1.0000',
+            'updated_at' => $fixedTimestamp,
+        ]);
+        $secondRevision = (int) DB::table('workforce_employee_assignments')
+            ->where('id', $fixture['assignment_id'])
+            ->value('workforce_capacity_revision');
+
+        self::assertSame(1, $firstRevision);
+        self::assertSame(2, $secondRevision);
+    }
+
     public function test_zero_affected_frozen_capture_seals_as_completed_without_dispatchable_work(): void
     {
         $fixture = $this->fixture();

@@ -33,7 +33,7 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
             $bridge->afterMutation($table, 7, null, [
                 'organization_id' => 7,
                 ...$state,
-            ], '2026-08-15 09:00:00.000001+00');
+            ], '0');
             self::assertSame($type, $capture->commands[array_key_last($capture->commands)]->sourceType);
         }
 
@@ -52,7 +52,7 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
             'employee_id' => 41,
             'status' => 'draft',
             'comment' => 'medical details',
-        ], '2026-08-15 09:00:00.000001+00');
+        ], '0');
         self::assertCount(0, $capture->commands);
 
         $bridge->afterMutation(
@@ -72,7 +72,7 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
                 'status' => 'cancelled',
                 'comment' => 'medical details',
             ],
-            '2026-08-15 09:01:00.000001+00',
+            '1',
         );
 
         self::assertCount(1, $capture->commands);
@@ -120,15 +120,15 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
 
         $bridge->afterMutation(
             'workforce_employee_assignments', 7, $oldState, $firstOccurrence,
-            '2026-08-15 09:01:00.000001+00',
+            '1',
         );
         $bridge->afterMutation(
             'workforce_employee_assignments', 7, $oldState, $firstOccurrence,
-            '2026-08-15 09:01:00.000001+00',
+            '1',
         );
         $bridge->afterMutation(
             'workforce_employee_assignments', 7, $oldState, $firstOccurrence,
-            '2026-08-15 10:01:00.000001+00',
+            '2',
         );
 
         self::assertCount(3, $capture->commands);

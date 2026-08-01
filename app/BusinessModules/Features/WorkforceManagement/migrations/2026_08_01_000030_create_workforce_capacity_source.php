@@ -14,6 +14,18 @@ return new class extends Migration
         Schema::table('organizations', function (Blueprint $table): void {
             $table->string('workforce_timezone', 80)->default('Europe/Moscow');
         });
+        foreach ([
+            'workforce_staff_units',
+            'workforce_employee_assignments',
+            'workforce_work_schedules',
+            'workforce_work_schedule_days',
+            'workforce_absences',
+            'workforce_business_trips',
+        ] as $ownerTable) {
+            Schema::table($ownerTable, static function (Blueprint $table): void {
+                $table->unsignedBigInteger('workforce_capacity_revision')->default(0);
+            });
+        }
 
         Schema::create('workforce_capacity_capture_requests', function (Blueprint $table): void {
             $table->id();
@@ -401,6 +413,14 @@ $$ LANGUAGE sql IMMUTABLE;
 CREATE FUNCTION workforce_capacity_prevent_mutation() RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'workforce capacity evidence is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION workforce_capacity_bump_owner_revision() RETURNS trigger AS $$
+BEGIN
+    NEW.workforce_capacity_revision := OLD.workforce_capacity_revision + 1;
+
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -1169,6 +1189,30 @@ CREATE TRIGGER workforce_capacity_capture_request_update_guard
 BEFORE INSERT OR UPDATE OR DELETE ON workforce_capacity_capture_requests
 FOR EACH ROW EXECUTE FUNCTION workforce_capacity_capture_request_guard();
 
+CREATE TRIGGER workforce_capacity_staff_unit_revision
+BEFORE UPDATE ON workforce_staff_units
+FOR EACH ROW EXECUTE FUNCTION workforce_capacity_bump_owner_revision();
+
+CREATE TRIGGER workforce_capacity_assignment_revision
+BEFORE UPDATE ON workforce_employee_assignments
+FOR EACH ROW EXECUTE FUNCTION workforce_capacity_bump_owner_revision();
+
+CREATE TRIGGER workforce_capacity_schedule_revision
+BEFORE UPDATE ON workforce_work_schedules
+FOR EACH ROW EXECUTE FUNCTION workforce_capacity_bump_owner_revision();
+
+CREATE TRIGGER workforce_capacity_schedule_day_revision
+BEFORE UPDATE ON workforce_work_schedule_days
+FOR EACH ROW EXECUTE FUNCTION workforce_capacity_bump_owner_revision();
+
+CREATE TRIGGER workforce_capacity_absence_revision
+BEFORE UPDATE ON workforce_absences
+FOR EACH ROW EXECUTE FUNCTION workforce_capacity_bump_owner_revision();
+
+CREATE TRIGGER workforce_capacity_business_trip_revision
+BEFORE UPDATE ON workforce_business_trips
+FOR EACH ROW EXECUTE FUNCTION workforce_capacity_bump_owner_revision();
+
 CREATE TRIGGER workforce_capacity_capture_range_insert_lineage
 BEFORE INSERT ON workforce_capacity_capture_ranges
 FOR EACH ROW EXECUTE FUNCTION workforce_capacity_capture_range_insert_guard();
@@ -1227,6 +1271,12 @@ DROP TRIGGER IF EXISTS workforce_capacity_frozen_source_insert_lineage ON workfo
 DROP TRIGGER IF EXISTS workforce_capacity_capture_range_mutation_guard ON workforce_capacity_capture_ranges;
 DROP TRIGGER IF EXISTS workforce_capacity_capture_range_insert_lineage ON workforce_capacity_capture_ranges;
 DROP TRIGGER IF EXISTS workforce_capacity_capture_request_update_guard ON workforce_capacity_capture_requests;
+DROP TRIGGER IF EXISTS workforce_capacity_business_trip_revision ON workforce_business_trips;
+DROP TRIGGER IF EXISTS workforce_capacity_absence_revision ON workforce_absences;
+DROP TRIGGER IF EXISTS workforce_capacity_schedule_day_revision ON workforce_work_schedule_days;
+DROP TRIGGER IF EXISTS workforce_capacity_schedule_revision ON workforce_work_schedules;
+DROP TRIGGER IF EXISTS workforce_capacity_assignment_revision ON workforce_employee_assignments;
+DROP TRIGGER IF EXISTS workforce_capacity_staff_unit_revision ON workforce_staff_units;
 DROP FUNCTION IF EXISTS workforce_capacity_snapshot_commit_guard();
 DROP FUNCTION IF EXISTS workforce_capacity_snapshot_finalize_guard();
 DROP FUNCTION IF EXISTS workforce_capacity_item_insert_guard();
@@ -1234,6 +1284,7 @@ DROP FUNCTION IF EXISTS workforce_capacity_snapshot_insert_guard();
 DROP FUNCTION IF EXISTS workforce_capacity_capture_request_guard();
 DROP FUNCTION IF EXISTS workforce_capacity_frozen_source_insert_guard();
 DROP FUNCTION IF EXISTS workforce_capacity_capture_range_insert_guard();
+DROP FUNCTION IF EXISTS workforce_capacity_bump_owner_revision();
 DROP FUNCTION IF EXISTS workforce_capacity_prevent_mutation();
 DROP FUNCTION IF EXISTS workforce_capacity_expected_policy(text);
 DROP FUNCTION IF EXISTS workforce_capacity_json_has_forbidden(jsonb);
@@ -1248,5 +1299,17 @@ SQL);
         Schema::table('organizations', function (Blueprint $table): void {
             $table->dropColumn('workforce_timezone');
         });
+        foreach ([
+            'workforce_staff_units',
+            'workforce_employee_assignments',
+            'workforce_work_schedules',
+            'workforce_work_schedule_days',
+            'workforce_absences',
+            'workforce_business_trips',
+        ] as $ownerTable) {
+            Schema::table($ownerTable, static function (Blueprint $table): void {
+                $table->dropColumn('workforce_capacity_revision');
+            });
+        }
     }
 };

@@ -53,7 +53,7 @@ final class WorkforceProService
                     $organizationId,
                     null,
                     (array) $record,
-                    (string) $record->updated_at,
+                    (string) $record->workforce_capacity_revision,
                 );
             }
 
@@ -71,9 +71,13 @@ final class WorkforceProService
                 $this->assertNoActiveAssignmentsForStructure($table, $organizationId, $id);
             }
 
-            DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update(array_merge($this->normalizeJsonPayload($payload), [
+            $changes = array_merge($this->normalizeJsonPayload($payload), [
                 'updated_at' => now(),
-            ]));
+            ]);
+            if ($this->capacityCapture->supports($table)) {
+                $changes['workforce_capacity_revision'] = DB::raw('workforce_capacity_revision + 1');
+            }
+            DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update($changes);
             $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
             if ($this->capacityCapture->supports($table)) {
                 $this->capacityCapture->afterMutation(
@@ -81,7 +85,7 @@ final class WorkforceProService
                     $organizationId,
                     (array) $current,
                     (array) $record,
-                    (string) $record->updated_at,
+                    (string) $record->workforce_capacity_revision,
                 );
             }
 
