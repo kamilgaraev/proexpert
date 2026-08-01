@@ -130,6 +130,22 @@ final class GeometryReviewPayloadServiceTest extends TestCase
         self::assertSame('semantic_confirmation_unavailable', $payload['sources'][0]['source_confirmation_unavailable_reason']);
     }
 
+    #[Test]
+    public function it_marks_cad_drawings_without_an_explicit_cad_source_kind_unavailable(): void
+    {
+        $row = $this->vectorRow();
+        unset($row->normalized_payload['source_kind']);
+        $source = new FakeGeometryReviewDataSource(1, [$row]);
+        $files = Mockery::mock(FileService::class);
+        $files->expects('temporaryUrl')->once()->andReturn('https://storage.example/plan.png');
+        $service = new GeometryReviewPayloadService($source, new GeometryReviewSourcePresenter($files), new GeometrySourceConfirmationFactory);
+
+        $payload = $service->handle($this->session());
+
+        self::assertNull($payload['sources'][0]['source_confirmation']);
+        self::assertSame('semantic_confirmation_unavailable', $payload['sources'][0]['source_confirmation_unavailable_reason']);
+    }
+
     private function session(): EstimateGenerationSession
     {
         $session = new EstimateGenerationSession;

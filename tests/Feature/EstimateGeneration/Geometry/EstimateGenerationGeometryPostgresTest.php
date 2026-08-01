@@ -346,6 +346,28 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     }
 
     #[Test]
+    public function source_confirmation_rejects_a_canonical_capture_without_an_explicit_cad_source_kind_without_persistence(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture();
+        $this->attachVectorCapture($fixture);
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnTrue();
+        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $this->actingAs($fixture['user'], 'api_admin');
+        $before = $this->counts($fixture);
+        try {
+            $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
+                ->postJson($url, $this->sourcePayload($fixture))->assertUnprocessable();
+            self::assertSame($before, $this->counts($fixture));
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
     public function geometry_outbox_has_composite_tenant_fk_idempotency_and_claim_indexes(): void
     {
         $this->requirePostgres();
