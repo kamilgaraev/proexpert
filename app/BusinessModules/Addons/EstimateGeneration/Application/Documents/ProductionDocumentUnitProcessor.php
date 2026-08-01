@@ -60,7 +60,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
     {
         $organization = new Organization;
         $organization->id = $context->organizationId;
-        $geometry = $this->cad->extract($provenance->artifactPath, $organization);
+        $geometry = $this->cad->extract($provenance, $organization);
         $payload = $geometry->toArray();
         $text = implode("\n", array_values(array_filter(array_map(
             static fn (mixed $item): string => is_array($item) ? trim((string) ($item['text'] ?? '')) : '',

@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 
 final class CadDocumentAdapter implements DocumentUnitAdapter
 {
-    private const EXTENSIONS = ['dwg', 'dxf', 'ifc'];
+    private const EXTENSIONS = ['dwg', 'dxf'];
 
     public function supports(EstimateGenerationDocument $document): bool
     {
@@ -16,8 +16,7 @@ final class CadDocumentAdapter implements DocumentUnitAdapter
 
         return in_array($this->extension($document), self::EXTENSIONS, true)
             || str_contains($mime, 'dwg')
-            || str_contains($mime, 'dxf')
-            || str_contains($mime, 'ifc');
+            || str_contains($mime, 'dxf');
     }
 
     public function detect(EstimateGenerationDocument $document, string $sourceVersion): array

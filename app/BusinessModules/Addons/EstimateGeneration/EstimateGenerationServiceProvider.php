@@ -391,8 +391,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             );
         });
         $this->app->singleton(DwgDxfGeometryProvider::class, static fn ($app): DwgDxfGeometryProvider => new DwgDxfGeometryProvider(
-            $app->make(\App\Services\Storage\FileService::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\BoundedStorageReader::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader::class),
             $app->make(CadConversionRuntime::class),
             $app->make(CadRuntimeConfiguration::class)->maxInputBytes,
         ));

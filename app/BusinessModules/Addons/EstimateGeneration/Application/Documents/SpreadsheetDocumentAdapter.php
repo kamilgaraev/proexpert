@@ -28,7 +28,7 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
 
     public function detect(EstimateGenerationDocument $document, string $sourceVersion): array
     {
-        $source = $this->storage->open($document);
+        $source = $this->storage->open($document, $sourceVersion);
 
         try {
             $recognition = $this->extractor->extractFile($document, $source->path());

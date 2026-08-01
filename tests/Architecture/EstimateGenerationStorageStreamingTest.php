@@ -20,23 +20,22 @@ final class EstimateGenerationStorageStreamingTest extends TestCase
     }
 
     #[Test]
-    public function s3_document_reads_are_chunked_and_bounded_by_the_document_contract(): void
+    public function s3_document_reads_are_pinned_and_verified_by_the_document_contract(): void
     {
         $source = $this->source('Application/Documents/S3DocumentSourceManifestStorage.php');
         $contract = $this->source('Application/Documents/DocumentSourceManifestStorage.php');
-        $consumer = $this->source('Application/Documents/ArtifactDocumentUnitDetector.php');
+        $pdfAdapter = $this->source('Application/Documents/PdfDocumentAdapter.php');
+        $spreadsheetAdapter = $this->source('Application/Documents/SpreadsheetDocumentAdapter.php');
 
-        self::assertStringNotContainsString('stream_get_contents(', $source);
-        self::assertStringNotContainsString('$content .=', $source);
-        self::assertStringContainsString('fread(', $source);
+        self::assertStringContainsString('BoundedVersionedS3ObjectReader', $source);
+        self::assertStringContainsString('$this->reader->read(', $source);
+        self::assertStringNotContainsString('$this->files->disk(', $source);
         self::assertStringContainsString('maxReadableBytes(', $source);
-        self::assertStringContainsString("'document_source_too_large'", $source);
-        self::assertStringContainsString('fclose($stream)', $source);
-        self::assertStringContainsString('public function open(', $contract);
+        self::assertStringContainsString('string $sourceVersion', $contract);
         self::assertStringContainsString('): SeekableDocumentSource;', $contract);
         self::assertStringNotContainsString('read(EstimateGenerationDocument $document): string', $contract);
-        self::assertStringContainsString('$this->storage->open($document)', $consumer);
-        self::assertStringContainsString('->extractFile(', $consumer);
+        self::assertStringContainsString('$this->storage->open($document, $sourceVersion)', $pdfAdapter);
+        self::assertStringContainsString('$this->storage->open($document, $sourceVersion)', $spreadsheetAdapter);
     }
 
     private function source(string $relative): string

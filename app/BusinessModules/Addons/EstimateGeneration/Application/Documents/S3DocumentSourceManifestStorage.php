@@ -7,13 +7,19 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectTransportException;
 use App\Services\Storage\FileService;
 
 final readonly class S3DocumentSourceManifestStorage implements DocumentSourceManifestStorage
 {
-    public function __construct(private FileService $files) {}
+    public function __construct(
+        private FileService $files,
+        private BoundedVersionedS3ObjectReader $reader,
+    ) {}
 
-    public function open(EstimateGenerationDocument $document): SeekableDocumentSource
+    public function open(EstimateGenerationDocument $document, string $sourceVersion): SeekableDocumentSource
     {
         $document->loadMissing('session.organization');
         $organization = $document->session?->organization;
@@ -31,61 +37,47 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
             ]);
         }
 
-        $stream = $this->files->disk($organization)->readStream((string) $document->storage_path);
-
-        if (! is_resource($stream)) {
-            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
-        }
-
         $temporary = tmpfile();
         if (! is_resource($temporary)) {
-            fclose($stream);
-
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
 
-        $bytes = 0;
         try {
-            while (! feof($stream)) {
-                $remaining = $maxBytes + 1 - $bytes;
-                if ($remaining <= 0) {
-                    throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_source_too_large', [
-                        'max_file_size_bytes' => $maxBytes,
-                    ]);
-                }
-                $chunk = fread($stream, min(1_048_576, $remaining));
-                if (! is_string($chunk)) {
-                    throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
-                }
-                if ($chunk === '' && ! feof($stream)) {
-                    throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
-                }
-                $chunkBytes = strlen($chunk);
-                $offset = 0;
-                while ($offset < $chunkBytes) {
-                    $written = fwrite($temporary, substr($chunk, $offset));
-                    if (! is_int($written) || $written < 1) {
-                        throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
-                    }
-                    $offset += $written;
-                }
-                $bytes += $chunkBytes;
+            $versionId = is_array($document->meta) ? $document->meta['storage_version_id'] ?? null : null;
+            if (! is_string($versionId) || trim($versionId) === '') {
+                throw new TypedFailureException(FailureCategory::Terminal, 'document_source_provenance_required');
             }
+            $source = $this->reader->read(
+                (int) $organization->getKey(),
+                (string) $document->storage_path,
+                $maxBytes,
+                $declaredBytes,
+                $sourceVersion,
+                $versionId,
+            );
+            $offset = 0;
+            while ($offset < $source->bytes) {
+                $written = fwrite($temporary, substr($source->body, $offset));
+                if (! is_int($written) || $written < 1) {
+                    throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
+                }
+                $offset += $written;
+            }
+            if (! fflush($temporary) || ! rewind($temporary)) {
+                throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
+            }
+        } catch (S3ObjectLocatorException $exception) {
+            fclose($temporary);
+            throw new TypedFailureException(FailureCategory::Terminal, 'document_source_integrity_failed', previous: $exception);
+        } catch (S3ObjectTransportException $exception) {
+            fclose($temporary);
+            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
         } catch (\Throwable $exception) {
             fclose($temporary);
-
             throw $exception;
-        } finally {
-            fclose($stream);
         }
 
-        if ($bytes < 1 || $bytes !== $declaredBytes || ! fflush($temporary) || ! rewind($temporary)) {
-            fclose($temporary);
-
-            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
-        }
-
-        return new SeekableDocumentSource($temporary, $bytes);
+        return new SeekableDocumentSource($temporary, $declaredBytes);
     }
 
     public function put(

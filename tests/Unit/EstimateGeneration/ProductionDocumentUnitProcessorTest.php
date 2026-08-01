@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProvenance;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
@@ -85,7 +86,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
             {
                 public function __construct(private \Throwable $error) {}
 
-                public function extract(string $storageKey, Organization $organization): VectorGeometryData
+                public function extract(DocumentUnitProvenance $source, Organization $organization): VectorGeometryData
                 {
                     throw $this->error;
                 }
@@ -113,6 +114,19 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
         $recording = json_decode(file_get_contents($root.'/tests/Fixtures/EstimateGeneration/benchmarks/recordings/vector-pdf-001-geometry.json'), true, 512, JSON_THROW_ON_ERROR);
         $geometry = VectorGeometryData::fromArray($recording['payload']);
         $files = $this->createMock(FileService::class);
+        $cad = new class($geometry) implements CadGeometryProvider
+        {
+            public ?DocumentUnitProvenance $source = null;
+
+            public function __construct(private VectorGeometryData $geometry) {}
+
+            public function extract(DocumentUnitProvenance $source, Organization $organization): VectorGeometryData
+            {
+                $this->source = $source;
+
+                return $this->geometry;
+            }
+        };
         $processor = new ProductionDocumentUnitProcessor(
             new OcrDocumentUnitProcessor(
                 new class implements DocumentUnitContentReader
@@ -137,15 +151,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
                     throw new \LogicException('Vision must not be called for CAD.');
                 }
             },
-            new class($geometry) implements CadGeometryProvider
-            {
-                public function __construct(private VectorGeometryData $geometry) {}
-
-                public function extract(string $storageKey, Organization $organization): VectorGeometryData
-                {
-                    return $this->geometry;
-                }
-            },
+            $cad,
             new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)),
             new BoundedVersionedS3ObjectReader($files),
         );
@@ -160,6 +166,9 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
         self::assertSame('cad', $output->normalizedPayload['source_kind']);
         self::assertSame($geometry->runtimeVersion, $output->normalizedPayload['provenance']['runtime_version']);
         self::assertNotEmpty($output->normalizedPayload['vector_geometry']['entities']);
+        self::assertSame('org-2/source.dxf', $cad->source?->artifactPath);
+        self::assertSame('source-v1', $cad->source?->artifactVersionId);
+        self::assertSame('sha256:'.str_repeat('a', 64), $cad->source?->artifactSha256);
     }
 
     /** @return array<string, scalar> */

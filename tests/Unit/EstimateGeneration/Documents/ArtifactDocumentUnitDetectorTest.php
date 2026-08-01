@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitData;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ImageDocumentAdapter;
@@ -38,6 +39,53 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
             'source_version' => 'sha256:'.str_repeat('a', 64),
             'coordinate_space' => 'pdf_page_pixels',
         ]);
+    }
+
+    #[Test]
+    #[DataProvider('cadPriorityMatrix')]
+    public function cad_claims_dwg_before_image_for_conflicting_mime_and_extension(
+        string $filename,
+        string $mimeType,
+    ): void {
+        $document = new EstimateGenerationDocument([
+            'filename' => $filename,
+            'mime_type' => $mimeType,
+            'storage_path' => 'org-10/source/plan.dwg',
+            'file_size_bytes' => 256,
+            'meta' => ['storage_version_id' => 'dwg-v1'],
+        ]);
+
+        $units = $this->detector()->detect($document, 'sha256:'.str_repeat('f', 64));
+
+        self::assertSame([DocumentUnitType::CadDrawing], array_column($units, 'type'));
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function cadPriorityMatrix(): array
+    {
+        return [
+            'DWG MIME with image extension' => ['plan.png', 'image/vnd.dwg'],
+            'DWG extension with image MIME' => ['plan.dwg', 'image/png'],
+        ];
+    }
+
+    #[Test]
+    public function ifc_is_rejected_until_a_dedicated_provider_is_available(): void
+    {
+        $document = new EstimateGenerationDocument([
+            'filename' => 'model.ifc',
+            'mime_type' => 'application/x-step',
+            'storage_path' => 'org-10/source/model.ifc',
+            'file_size_bytes' => 256,
+            'meta' => ['storage_version_id' => 'ifc-v1'],
+        ]);
+
+        try {
+            $this->detector()->detect($document, 'sha256:'.str_repeat('a', 64));
+            self::fail('IFC must remain unsupported.');
+        } catch (DocumentManifestNeedsReview $exception) {
+            self::assertSame('document_source_kind_unsupported', $exception->safeCode);
+        }
     }
 
     #[Test]
@@ -144,7 +192,7 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
     {
         $storage = new class implements DocumentSourceManifestStorage
         {
-            public function open(EstimateGenerationDocument $document): SeekableDocumentSource
+            public function open(EstimateGenerationDocument $document, string $sourceVersion): SeekableDocumentSource
             {
                 $stream = tmpfile();
                 fwrite($stream, 'source');

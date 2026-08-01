@@ -17,7 +17,7 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
         CadDocumentAdapter $cad,
         SpreadsheetDocumentAdapter $spreadsheet,
     ) {
-        $this->adapters = [$pdf, $image, $cad, $spreadsheet];
+        $this->adapters = [$pdf, $cad, $image, $spreadsheet];
     }
 
     public function detect(EstimateGenerationDocument $document, string $sourceVersion): array

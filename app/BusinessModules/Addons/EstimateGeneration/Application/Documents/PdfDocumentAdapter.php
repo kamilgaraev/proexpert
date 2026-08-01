@@ -24,7 +24,7 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
 
     public function detect(EstimateGenerationDocument $document, string $sourceVersion): array
     {
-        $source = $this->storage->open($document);
+        $source = $this->storage->open($document, $sourceVersion);
 
         try {
             $geometry = $this->geometryExtractor->extractFile(

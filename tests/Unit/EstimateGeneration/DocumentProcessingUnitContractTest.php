@@ -346,7 +346,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             /** @var list<string> */
             public array $paths = [];
 
-            public function open(EstimateGenerationDocument $document): SeekableDocumentSource
+            public function open(EstimateGenerationDocument $document, string $sourceVersion): SeekableDocumentSource
             {
                 $this->reads++;
                 $stream = tmpfile();
@@ -444,7 +444,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         {
             public int $writes = 0;
 
-            public function open(EstimateGenerationDocument $document): SeekableDocumentSource
+            public function open(EstimateGenerationDocument $document, string $sourceVersion): SeekableDocumentSource
             {
                 $stream = tmpfile();
                 fwrite($stream, 'scanned-pdf');
