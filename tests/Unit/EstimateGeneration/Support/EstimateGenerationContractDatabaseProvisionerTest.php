@@ -220,5 +220,14 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
                 EstimateGenerationContractDatabaseProvisioner::freshInventory(),
             ),
         );
+        $subjectDigests = $reflection->getConstant('SUBJECT_DIGEST');
+        self::assertIsArray($subjectDigests);
+        self::assertSame(
+            $subjectDigests['project-model'],
+            EstimateGenerationContractDatabaseProvisioner::inventoryDigest(
+                $root,
+                EstimateGenerationContractDatabaseProvisioner::subjectInventory('project-model'),
+            ),
+        );
     }
 }
