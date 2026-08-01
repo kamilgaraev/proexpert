@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSheetAnalysisOperation;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use DateTimeImmutable;
@@ -128,9 +131,35 @@ final class SheetAnalysisOperationJournal
     /** @param array<string, mixed> $routing */
     public function persistFinalRouting(string $operationId, DocumentSheetOperationScope $scope, array $routing): void
     {
-        if (EstimateGenerationSheetAnalysisOperation::query()->whereKey($operationId)->where($scope->attributes())
-            ->where('status', 'completed')->update(['final_routing' => $routing, 'updated_at' => now()]) !== 1) {
-            throw new LogicException('Completed sheet analysis operation is unavailable.');
+        DB::transaction(function () use ($operationId, $scope, $routing): void {
+            $now = now()->toDateTimeImmutable();
+            $this->assertOuterUnitLease($scope, $now);
+            $operation = EstimateGenerationSheetAnalysisOperation::query()->whereKey($operationId)->where($scope->attributes())
+                ->lockForUpdate()->first();
+            if (! $operation instanceof EstimateGenerationSheetAnalysisOperation || $operation->status !== 'completed') {
+                throw new LogicException('Completed sheet analysis operation is unavailable.');
+            }
+            $operation->forceFill(['final_routing' => $routing])->save();
+        }, 3);
+    }
+
+    private function assertOuterUnitLease(DocumentSheetOperationScope $scope, DateTimeImmutable $now): void
+    {
+        $unit = EstimateGenerationProcessingUnit::query()
+            ->whereKey($scope->unitId)->where('organization_id', $scope->organizationId)
+            ->where('project_id', $scope->projectId)->where('session_id', $scope->sessionId)
+            ->where('document_id', $scope->documentId)->where('source_version', $scope->sourceVersion)
+            ->lockForUpdate()->find($scope->unitId);
+        $document = EstimateGenerationDocument::query()
+            ->whereKey($scope->documentId)->where('organization_id', $scope->organizationId)
+            ->where('project_id', $scope->projectId)->where('session_id', $scope->sessionId)
+            ->where('source_version', $scope->sourceVersion)->where('status', '<>', 'ignored')
+            ->lockForUpdate()->find($scope->documentId);
+        if (! $unit instanceof EstimateGenerationProcessingUnit || ! $document instanceof EstimateGenerationDocument
+            || $unit->status !== DocumentProcessingUnitStatus::Running
+            || ! is_string($unit->claim_token) || ! hash_equals($unit->claim_token, $scope->claimToken)
+            || $unit->lease_expires_at === null || $unit->lease_expires_at->toDateTimeImmutable() <= $now) {
+            throw new SheetAnalysisOperationBusy('document_unit_lease_lost');
         }
     }
 

@@ -27,6 +27,10 @@ return new class extends Migration {
         $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
+            $this->backfillSafeDefaults();
+            $this->assertIdentityAndScopeBackfillable();
+            $this->ensureIdentityAndScopeColumns($runtime);
+            $this->ensureOperationIdentity($runtime);
             $this->ensureScopeUnique($runtime);
             $runtime->ensureConcurrentIndex('eg_sheet_analysis_claim_idx', 'CREATE INDEX CONCURRENTLY eg_sheet_analysis_claim_idx ON estimate_generation_sheet_analysis_operations (status, lease_expires_at)');
             $this->ensureSessionForeignKey($runtime);
@@ -45,6 +49,8 @@ return new class extends Migration {
         if (DB::getDriverName() === 'pgsql') {
             DB::statement('DROP INDEX CONCURRENTLY IF EXISTS eg_sheet_analysis_audit_transition_uq');
             DB::statement('DROP INDEX CONCURRENTLY IF EXISTS eg_sheet_analysis_claim_idx');
+            DB::statement('ALTER TABLE IF EXISTS estimate_generation_sheet_analysis_operations DROP CONSTRAINT IF EXISTS estimate_generation_sheet_analysis_operations_pkey');
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS eg_sheet_analysis_operation_identity_uq');
         }
         Schema::dropIfExists(self::TABLE);
     }
@@ -101,6 +107,79 @@ return new class extends Migration {
         }
         $runtime->ensureConcurrentIndex('eg_sheet_analysis_scope_kind_idx', 'CREATE UNIQUE INDEX CONCURRENTLY eg_sheet_analysis_scope_kind_idx ON estimate_generation_sheet_analysis_operations (session_id, document_id, unit_id, source_version, kind)');
         DB::statement('ALTER TABLE estimate_generation_sheet_analysis_operations ADD CONSTRAINT eg_sheet_analysis_scope_kind_uq UNIQUE USING INDEX eg_sheet_analysis_scope_kind_idx');
+    }
+
+    private function backfillSafeDefaults(): void
+    {
+        DB::statement(<<<'SQL'
+UPDATE estimate_generation_sheet_analysis_operations
+SET kind = COALESCE(NULLIF(kind, ''), 'primary'),
+    status = COALESCE(NULLIF(status, ''), 'queued'),
+    attempt_count = COALESCE(attempt_count, 0),
+    analysis_payload = COALESCE(analysis_payload, '{}'::jsonb),
+    initial_routing = COALESCE(initial_routing, '{}'::jsonb),
+    final_routing = COALESCE(final_routing, '{}'::jsonb),
+    created_at = COALESCE(created_at, CURRENT_TIMESTAMP),
+    updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+SQL);
+    }
+
+    private function assertIdentityAndScopeBackfillable(): void
+    {
+        $invalid = DB::selectOne(<<<'SQL'
+SELECT 1
+FROM estimate_generation_sheet_analysis_operations
+WHERE operation_id IS NULL
+   OR operation_id::text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+   OR organization_id IS NULL OR project_id IS NULL OR session_id IS NULL OR document_id IS NULL OR unit_id IS NULL
+   OR source_version IS NULL OR btrim(source_version) = '' OR char_length(source_version) > 71
+LIMIT 1
+SQL);
+        if ($invalid !== null) {
+            throw new \RuntimeException('estimate_generation.sheet_analysis_identity_backfill_required');
+        }
+    }
+
+    private function ensureIdentityAndScopeColumns(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
+    {
+        foreach (['operation_id', 'organization_id', 'project_id', 'session_id', 'document_id', 'unit_id', 'source_version'] as $column) {
+            $runtime->ensureConstraint(self::TABLE, 'eg_sheet_analysis_'.$column.'_nn', sprintf('%s IS NOT NULL', $column));
+            $runtime->validateConstraint(self::TABLE, 'eg_sheet_analysis_'.$column.'_nn');
+            DB::statement(sprintf('ALTER TABLE %s ALTER COLUMN %s SET NOT NULL', self::TABLE, $column));
+        }
+        $types = DB::select(<<<'SQL'
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'estimate_generation_sheet_analysis_operations'
+  AND column_name IN ('operation_id', 'organization_id', 'project_id', 'session_id', 'document_id', 'unit_id', 'source_version')
+SQL);
+        $actual = [];
+        foreach ($types as $type) {
+            $actual[(string) $type->column_name] = (string) $type->data_type;
+        }
+        $expected = ['operation_id' => 'uuid', 'organization_id' => 'bigint', 'project_id' => 'bigint', 'session_id' => 'bigint', 'document_id' => 'bigint', 'unit_id' => 'bigint', 'source_version' => 'character'];
+        ksort($actual);
+        ksort($expected);
+        if ($actual !== $expected) {
+            throw new \RuntimeException('estimate_generation.sheet_analysis_identity_scope_type_invalid');
+        }
+    }
+
+    private function ensureOperationIdentity(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
+    {
+        $primary = DB::selectOne(<<<'SQL'
+SELECT pg_get_constraintdef(c.oid, true) AS definition
+FROM pg_constraint c
+JOIN pg_class t ON t.oid = c.conrelid
+WHERE t.relname = 'estimate_generation_sheet_analysis_operations' AND c.contype = 'p'
+SQL);
+        if ($primary !== null && strtolower(trim((string) $primary->definition)) !== 'primary key (operation_id)') {
+            throw new \RuntimeException('estimate_generation.sheet_analysis_primary_key_invalid');
+        }
+        $runtime->ensureConcurrentIndex('eg_sheet_analysis_operation_identity_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_sheet_analysis_operation_identity_uq ON estimate_generation_sheet_analysis_operations (operation_id)');
+        if ($primary === null) {
+            DB::statement('ALTER TABLE estimate_generation_sheet_analysis_operations ADD CONSTRAINT estimate_generation_sheet_analysis_operations_pkey PRIMARY KEY USING INDEX eg_sheet_analysis_operation_identity_uq');
+        }
     }
 
     private function ensureSessionForeignKey(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
