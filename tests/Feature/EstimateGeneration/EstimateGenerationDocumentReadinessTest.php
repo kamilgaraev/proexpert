@@ -107,6 +107,56 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $this->assertSame(2, $payload['data']['documents_summary']['items'][0]['processed_page_count']);
     }
 
+    public function test_status_exposes_canonical_document_lifecycle_with_translation_key(): void
+    {
+        [$user, $project, $session] = $this->makeSession('processing_documents');
+        $this->makeDocument($session, 'ready');
+
+        $response = app(EstimateGenerationSessionController::class)->show(
+            $this->request('/status', 'GET', $user),
+            $project,
+            $session,
+        );
+        $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame([
+            'stage' => 'checking_relationships',
+            'translation_key' => 'estimate_generation.document_lifecycle_checking_relationships',
+        ], $payload['data']['documents_summary']['items'][0]['lifecycle']);
+    }
+
+    public function test_ready_status_without_complete_structure_and_capabilities_blocks_generation(): void
+    {
+        Queue::fake();
+
+        [$user, $project, $session] = $this->makeSession();
+        $this->makeDocument($session, 'ready');
+        $this->makeDocument($session, 'ready', [
+            'filename' => 'replaced-document.pdf',
+            'source_version' => 'sha256:replacement-source',
+            'processed_page_count' => 1,
+            'facts_summary' => [
+                'document_understanding' => [
+                    'role_for_estimation' => 'geometry_source',
+                    'extracted_capabilities' => [],
+                ],
+            ],
+        ]);
+
+        $response = app(EstimateGenerationActionController::class)->generate(
+            $this->request('/generate', 'POST', $user, $session),
+            $project,
+            $session,
+        );
+        $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame(409, $response->getStatusCode());
+        $this->assertSame(1, $payload['documents_summary']['ready_count']);
+        $this->assertSame(1, $payload['documents_summary']['structure_incomplete_count']);
+        $this->assertSame(1, $payload['documents_summary']['capability_incomplete_count']);
+        Queue::assertNotPushed(GenerateEstimateDraftJob::class);
+    }
+
     public function test_empty_session_without_description_or_ready_documents_is_not_generated(): void
     {
         Queue::fake();
@@ -159,9 +209,10 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         return [$user, $project, $session];
     }
 
-    private function makeDocument(EstimateGenerationSession $session, string $status): EstimateGenerationDocument
+    /** @param array<string, mixed> $overrides */
+    private function makeDocument(EstimateGenerationSession $session, string $status, array $overrides = []): EstimateGenerationDocument
     {
-        return EstimateGenerationDocument::query()->create([
+        return EstimateGenerationDocument::query()->create([...[
             'session_id' => $session->id,
             'organization_id' => $session->organization_id,
             'project_id' => $session->project_id,
@@ -172,8 +223,18 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
             'status' => $status,
             'processing_stage' => $status,
             'progress_percent' => $status === 'ready' ? 100 : 30,
+            'source_version' => $status === 'ready' ? 'sha256:document-source' : null,
+            'units_finalized_source_version' => $status === 'ready' ? 'sha256:document-source' : null,
+            'units_reconciled_source_version' => $status === 'ready' ? 'sha256:document-source' : null,
             'page_count' => $status === 'ready' ? 2 : null,
             'processed_page_count' => $status === 'ready' ? 2 : 0,
+            'structured_payload' => $status === 'ready' ? [
+                'source_version' => 'sha256:document-source',
+                'pages' => [
+                    ['page_number' => 1],
+                    ['page_number' => 2],
+                ],
+            ] : [],
             'quality_score' => $status === 'ready' ? 0.92 : null,
             'quality_level' => $status === 'ready' ? 'good' : null,
             'quality_flags' => [],
@@ -181,12 +242,22 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
                 'document_understanding' => [
                     'role_for_estimation' => 'drawing_architecture',
                     'extracted_capabilities' => [
-                        'has_quantities' => true,
+                        'has_room_areas' => true,
+                        'has_dimensions' => true,
+                        'has_axes' => true,
+                        'has_title_block' => true,
+                        'has_pdf_geometry' => true,
+                        'has_quantity_takeoffs' => true,
+                        'has_work_volume_statement_markers' => false,
+                        'has_specification_markers' => false,
+                        'has_estimate_markers' => false,
+                        'has_strong_estimate_markers' => false,
+                        'requires_cad_geometry_pipeline' => false,
                         'requires_manual_review' => false,
                     ],
                 ],
             ] : [],
-        ]);
+        ], ...$overrides]);
     }
 
     private function request(string $uri, string $method, User $user, ?EstimateGenerationSession $session = null): Request

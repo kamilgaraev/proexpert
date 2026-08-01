@@ -41,6 +41,7 @@ final class GeometryReviewPayloadServiceTest extends TestCase
             'per_page' => 50,
             'last_page' => 200,
         ], $payload['sources_meta']);
+        self::assertSame('sha256:document-source', $payload['sources'][0]['source_version']);
         self::assertSame([[7, 9, 11, 7, 50]], $source->calls);
     }
 
@@ -81,6 +82,7 @@ final class GeometryReviewPayloadServiceTest extends TestCase
     {
         return (object) [
             'document_id' => 13,
+            'source_version' => 'sha256:document-source',
             'unit_type' => 'raster_image',
             'page_id' => $index,
             'page_number' => $index,

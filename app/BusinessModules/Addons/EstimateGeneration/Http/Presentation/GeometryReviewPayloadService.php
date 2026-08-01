@@ -35,6 +35,7 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
                 && is_string($locator['artifact_path'] ?? null);
             $source = $this->sources->present([
                 'document_id' => $row->document_id,
+                'source_version' => $row->source_version,
                 'page_id' => $row->page_id,
                 'page_number' => $row->page_number,
                 'filename' => $row->filename,

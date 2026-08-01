@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentLifecycleState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentActionBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\Models\User;
@@ -29,6 +30,7 @@ class EstimateGenerationDocumentResource extends JsonResource
             'mime_type' => $document->mime_type,
             'status' => $document->status ?? 'uploaded',
             'processing_stage' => $document->processing_stage ?? 'stored',
+            'lifecycle' => DocumentLifecycleState::forDocument($document),
             'progress_percent' => (int) ($document->progress_percent ?? 0),
             'page_count' => $document->page_count,
             'processed_page_count' => (int) ($document->processed_page_count ?? 0),

@@ -117,6 +117,15 @@ final readonly class CreateDocumentProcessingUnits
                             'units_reconciled_source_version' => null,
                             'units_reconcile_claim_token' => null,
                             'units_reconcile_lease_expires_at' => null,
+                            'extracted_text' => null,
+                            'structured_payload' => [],
+                            'page_count' => null,
+                            'processed_page_count' => 0,
+                            'quality_score' => null,
+                            'quality_level' => null,
+                            'quality_flags' => [],
+                            'facts_summary' => [],
+                            'ocr_finished_at' => null,
                         ] : []),
                     ])->save();
 

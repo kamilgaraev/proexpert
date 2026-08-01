@@ -22,6 +22,7 @@ final readonly class GeometryReviewSourcePresenter
         string $expectedPath,
     ): ?array {
         $documentId = filter_var($row['document_id'] ?? null, FILTER_VALIDATE_INT);
+        $sourceVersion = $row['source_version'] ?? null;
         $pageId = filter_var($row['page_id'] ?? null, FILTER_VALIDATE_INT);
         $pageNumber = filter_var($row['page_number'] ?? null, FILTER_VALIDATE_INT);
         $width = filter_var($row['width'] ?? null, FILTER_VALIDATE_INT);
@@ -39,6 +40,7 @@ final readonly class GeometryReviewSourcePresenter
         if ($documentId === false || $documentId < 1 || $pageId === false || $pageId < 1
             || $pageNumber === false || $pageNumber < 1 || $width === false || $width < 1
             || $height === false || $height < 1 || ! $safeContentType
+            || ! is_string($sourceVersion) || trim($sourceVersion) === ''
             || ! $safeExpectedPath || $this->hasUnsafePathSegment($path)
             || $this->hasUnsafePathSegment($expectedPath, $sourceKind === 'generated')) {
             return null;
@@ -53,6 +55,7 @@ final readonly class GeometryReviewSourcePresenter
 
         return [
             'document_id' => $documentId,
+            'source_version' => $sourceVersion,
             'page_id' => $pageId,
             'page_number' => $pageNumber,
             'filename' => is_string($row['filename'] ?? null) ? $row['filename'] : '',

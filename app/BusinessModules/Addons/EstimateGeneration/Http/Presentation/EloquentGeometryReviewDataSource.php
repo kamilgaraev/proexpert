@@ -63,7 +63,7 @@ final readonly class EloquentGeometryReviewDataSource implements GeometryReviewD
             ->orderBy('pages.id')
             ->forPage($page, $perPage)
             ->get([
-                'units.document_id', 'units.unit_type', 'pages.id as page_id', 'pages.page_number', 'documents.filename',
+                'units.document_id', 'units.source_version', 'units.unit_type', 'pages.id as page_id', 'pages.page_number', 'documents.filename',
                 'documents.storage_path', 'documents.mime_type', 'pages.width', 'pages.height', 'units.locator', 'pages.normalized_payload',
             ]);
 
