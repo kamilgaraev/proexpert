@@ -136,8 +136,25 @@ final class ProcurementCycleMigrationContractTest extends TestCase
         self::assertIsArray($discovery);
         self::assertEqualsCanonicalizing([
             'procurement-cycle-postgres-contract',
+            'procurement-cycle-r15-candidate-evidence',
             'report-publication-postgres-contract',
         ], $discovery['needs'] ?? null);
+    }
+
+    public function test_ci_generates_a_blocked_r15_candidate_bundle_only_after_the_required_contracts(): void
+    {
+        $workflow = Yaml::parseFile(dirname(__DIR__, 5).'/.github/workflows/notification-concurrency.yml');
+        $job = $workflow['jobs']['procurement-cycle-r15-candidate-evidence'] ?? null;
+
+        self::assertIsArray($job);
+        self::assertSame('procurement-cycle-postgres-contract', $job['needs'] ?? null);
+        $commands = implode("\n", array_map(
+            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
+            $job['steps'] ?? [],
+        ));
+        self::assertStringContainsString('build-r15-publication-candidate.php', $commands);
+        self::assertStringContainsString('build-r15-publication-candidate.php --check', $commands);
+        self::assertContains('Upload R15 candidate evidence', array_column($job['steps'] ?? [], 'name'));
     }
 
     private function migration(): string

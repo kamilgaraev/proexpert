@@ -10,6 +10,7 @@ on:
       - 'tests/Unit/Notifications/**'
       - 'tests/Unit/Broadcasting/UserChannelTest.php'
       - 'app/BusinessModules/Features/Procurement/**'
+      - 'config/RoleDefinitions/**'
       - 'app/BusinessModules/Features/SiteRequests/**'
       - 'app/BusinessModules/Features/BasicWarehouse/**'
       - 'app/BusinessModules/Features/QualityControl/**'
@@ -40,7 +41,13 @@ on:
       - 'app/Helpers/TranslationHelper.php'
       - 'lang/en/reports.php'
       - 'lang/ru/reports.php'
+      - 'lang/ru/permissions.php'
       - 'scripts/issue-report-publication-release.php'
+      - 'scripts/reporting/build-r15-publication-candidate.php'
+      - 'docs/reports/contracts/r15-candidate-manifest.v1.schema.json'
+      - 'docs/reports/contracts/r15-publication-request.v1.schema.json'
+      - 'docs/reports/contracts/r15-candidate-conformance.v1.schema.json'
+      - 'docs/reports/contracts/r15-candidate-proof-template.v1.schema.json'
       - 'build/reports/publication-release-requests/**'
       - 'composer.json'
       - 'composer.lock'
@@ -55,6 +62,7 @@ on:
       - 'tests/Unit/Notifications/**'
       - 'tests/Unit/Broadcasting/UserChannelTest.php'
       - 'app/BusinessModules/Features/Procurement/**'
+      - 'config/RoleDefinitions/**'
       - 'app/BusinessModules/Features/SiteRequests/**'
       - 'app/BusinessModules/Features/BasicWarehouse/**'
       - 'app/BusinessModules/Features/QualityControl/**'
@@ -85,7 +93,13 @@ on:
       - 'app/Helpers/TranslationHelper.php'
       - 'lang/en/reports.php'
       - 'lang/ru/reports.php'
+      - 'lang/ru/permissions.php'
       - 'scripts/issue-report-publication-release.php'
+      - 'scripts/reporting/build-r15-publication-candidate.php'
+      - 'docs/reports/contracts/r15-candidate-manifest.v1.schema.json'
+      - 'docs/reports/contracts/r15-publication-request.v1.schema.json'
+      - 'docs/reports/contracts/r15-candidate-conformance.v1.schema.json'
+      - 'docs/reports/contracts/r15-candidate-proof-template.v1.schema.json'
       - 'build/reports/publication-release-requests/**'
       - 'composer.json'
       - 'composer.lock'
@@ -256,6 +270,41 @@ jobs:
         run: >-
           php artisan test tests/Feature/Procurement/Reporting/Cycle/ProcurementCycleSourcePostgresTest.php
           --group=postgresql --fail-on-skipped
+
+  procurement-cycle-r15-candidate-evidence:
+    needs: procurement-cycle-postgres-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact workflow SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45
+        with:
+          php-version: 8.2
+          extensions: dom, mbstring, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Generate exact R15 candidate evidence
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          php scripts/reporting/build-r15-publication-candidate.php
+          php scripts/reporting/build-r15-publication-candidate.php --check
+
+      - name: Upload R15 candidate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r15-candidate-evidence-${{ github.sha }}
+          path: build/reports/r15-candidate-evidence/
+          if-no-files-found: error
+          retention-days: 30
 
   report-saved-view-version-postgres-contract:
     runs-on: ubuntu-latest
@@ -505,6 +554,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       - procurement-cycle-postgres-contract
+      - procurement-cycle-r15-candidate-evidence
       - report-publication-postgres-contract
     runs-on: ubuntu-latest
     timeout-minutes: 5
