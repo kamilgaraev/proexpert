@@ -86,6 +86,9 @@ final class ProcurementCycleMigrationContractTest extends TestCase
             .'ProcurementCycleSourcePostgresTest.php';
         self::assertStringContainsString($command, $workflow);
         self::assertStringContainsString('--group=postgresql --fail-on-skipped', $workflow);
+        self::assertStringContainsString('Run R15 formula and runtime prerequisites', $workflow);
+        self::assertStringContainsString('ProcurementCycleFormulaTest.php', $workflow);
+        self::assertStringContainsString('ProcurementCycleRuntimeContractTest.php', $workflow);
     }
 
     public function test_ci_pins_exact_source_revision_and_blocks_release_without_r15_gate(): void

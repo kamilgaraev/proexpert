@@ -15,8 +15,11 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementCycleSourceSnapshotWriter;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleLineResult;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleMetric;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleSnapshotRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleSourceRead;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementCycleStage;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReadinessProbe;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReportAdapter;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReportBindingFactory;
@@ -54,13 +57,14 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
             null,
         );
-        $source = new ProcurementCycleSourceRead([], [], 0, null);
+        $source = new ProcurementCycleSourceRead([], 0, 0, 0, null);
         $materializer = new ProcurementCycleSourceSnapshotMaterializer;
 
         $write = $materializer->materialize(
             '01JZZZZZZZZZZZZZZZZZZZZZZZ',
             $request,
             $source,
+            [],
             [],
         );
 
@@ -94,6 +98,74 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
         self::assertSame($adapter, $binding->drillDownProvider);
         self::assertSame($readiness, $binding->readinessProbe);
         self::assertTrue($readiness->supports($definition));
+    }
+
+    public function test_source_snapshot_whitelists_public_row_fields(): void
+    {
+        $scope = (new ReportExecutionContextBuilder)->build()->scope;
+        $request = new ProcurementCycleSnapshotRequest(
+            $scope,
+            [],
+            new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
+            null,
+        );
+        $write = (new ProcurementCycleSourceSnapshotMaterializer)->materialize(
+            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            $request,
+            new ProcurementCycleSourceRead([], 1, 1, 1, '2026-08-01T10:00:00.000000Z'),
+            [$this->publicResult()],
+            [],
+        );
+
+        self::assertSame([
+            'purchase_request_line_id', 'request_number', 'material_name', 'requester_id', 'buyer_id',
+            'priority', 'current_stage', 'outcome', 'total_cycle_seconds', 'open_age_seconds',
+            'awarded_supplier_party_id', 'awarded_amount', 'currency', 'quality_status', 'gap_codes',
+            'cohort_date', 'stage_breakdown', 'audit_timeline',
+        ], array_keys($write->rows[0]->payload));
+        self::assertArrayNotHasKey('policy_hash', $write->rows[0]->payload);
+        self::assertArrayNotHasKey('supplier_snapshot', $write->rows[0]->payload);
+    }
+
+    private function publicResult(): ProcurementCycleLineResult
+    {
+        $stageMetrics = [];
+        foreach (ProcurementCycleStage::cases() as $stage) {
+            $stageMetrics[$stage->value] = new ProcurementCycleMetric(null, null, null, 3600, false, null, null);
+        }
+
+        return new ProcurementCycleLineResult(
+            organizationId: 1,
+            projectId: 1,
+            purchaseRequestId: 2,
+            purchaseRequestLineId: 3,
+            dimensions: [
+                'request_number' => 'PR-1',
+                'material_name' => 'Материал',
+                'requester_id' => 4,
+                'buyer_id' => 5,
+                'priority' => 'normal',
+                'policy_hash' => str_repeat('a', 64),
+                'supplier_snapshot' => 'restricted',
+            ],
+            solicitedSupplierIds: [],
+            awardedSupplierPartyId: 6,
+            awardedAmount: '10.00',
+            currency: 'RUB',
+            outcome: 'open',
+            currentStage: ProcurementCycleStage::REQUEST_APPROVAL,
+            startCohortDate: '2026-08-01',
+            outcomeCohortDate: null,
+            boundaryTimes: [],
+            stageMetrics: $stageMetrics,
+            openAgeSeconds: 1,
+            totalCycleSeconds: null,
+            timeToCancellationSeconds: null,
+            totalSlaEligible: false,
+            totalSlaMet: null,
+            qualityStatus: 'FULL',
+            gapCodes: [],
+        );
     }
 
     private function writer(): ProcurementCycleSourceSnapshotWriter

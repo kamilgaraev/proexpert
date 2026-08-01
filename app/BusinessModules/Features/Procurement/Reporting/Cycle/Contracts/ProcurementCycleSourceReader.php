@@ -9,5 +9,5 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycl
 
 interface ProcurementCycleSourceReader
 {
-    public function read(ProcurementCycleSnapshotRequest $request): ProcurementCycleSourceRead;
+    public function read(ProcurementCycleSnapshotRequest $request, callable $consumeLine): ProcurementCycleSourceRead;
 }

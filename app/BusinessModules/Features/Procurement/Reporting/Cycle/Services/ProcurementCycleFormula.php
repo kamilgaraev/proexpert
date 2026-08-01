@@ -75,15 +75,18 @@ final readonly class ProcurementCycleFormula
         $stageMetrics = $this->stageMetrics($boundaries, $cancelled, $policy);
         $created = $boundaries[ProcurementProcessEventCode::REQUEST_CREATED->value] ?? null;
         $completed = $boundaries[ProcurementProcessEventCode::FULLY_RECEIVED->value] ?? null;
+        $missingRequestCreated = $created === null;
         $cancelledBeforeCompletion = $cancelled !== null
             && ($completed === null || $this->compareEvents($cancelled, $completed) < 0);
-        $outcome = $cancelledBeforeCompletion ? 'cancelled' : ($completed !== null ? 'completed' : 'open');
+        $outcome = $missingRequestCreated
+            ? 'incomplete'
+            : ($cancelledBeforeCompletion ? 'cancelled' : ($completed !== null ? 'completed' : 'open'));
         $currentStage = $outcome === 'open' ? $this->currentStage($boundaries) : null;
-        $openAgeSeconds = $this->openAgeSeconds($currentStage, $boundaries, $asOf, $policy);
-        $totalCycleSeconds = $created !== null && $completed !== null && ! $cancelledBeforeCompletion
+        $openAgeSeconds = $missingRequestCreated ? null : $this->openAgeSeconds($currentStage, $boundaries, $asOf, $policy);
+        $totalCycleSeconds = ! $missingRequestCreated && $completed !== null && ! $cancelledBeforeCompletion
             ? $this->duration($created, $completed, $policy)
             : null;
-        $timeToCancellationSeconds = $created !== null && $cancelledBeforeCompletion
+        $timeToCancellationSeconds = ! $missingRequestCreated && $cancelledBeforeCompletion
             ? $this->duration($created, $cancelled, $policy)
             : null;
         $totalSlaEligible = $totalCycleSeconds !== null;
@@ -193,6 +196,9 @@ final readonly class ProcurementCycleFormula
     private function sourceGaps(array $events, array $boundaries): array
     {
         $gaps = [];
+        if (! isset($boundaries[ProcurementProcessEventCode::REQUEST_CREATED->value])) {
+            $gaps[] = 'missing_request_created_event';
+        }
         foreach ($events as $event) {
             $values = $event->transition->dimensionSnapshot->values;
             if (($values['quality_status'] ?? 'FULL') === 'PARTIAL') {
@@ -364,7 +370,7 @@ final readonly class ProcurementCycleFormula
             currency: $awardDimensions['currency'] ?? null,
             outcome: $outcome,
             currentStage: $currentStage,
-            startCohortDate: $created?->transition->occurredAt->setTimezone($timezone)->format('Y-m-d'),
+            startCohortDate: ($created ?? $events[0])->transition->occurredAt->setTimezone($timezone)->format('Y-m-d'),
             outcomeCohortDate: $outcomeEvent?->transition->occurredAt->setTimezone($timezone)->format('Y-m-d'),
             boundaryTimes: $boundaryTimes,
             stageMetrics: $stageMetrics,

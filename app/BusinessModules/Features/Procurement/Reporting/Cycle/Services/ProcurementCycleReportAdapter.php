@@ -330,6 +330,7 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
             'cancelled_count' => (int) ($header->watermarks['cancelled_count'] ?? 0),
             'complete_count' => (int) ($header->watermarks['complete_count'] ?? 0),
             'invalid_count' => (int) ($header->watermarks['invalid_count'] ?? 0),
+            'incomplete_count' => (int) ($header->watermarks['incomplete_count'] ?? 0),
             'open_count' => (int) ($header->watermarks['open_count'] ?? 0),
             'row_count' => $header->rowCount,
             'sla_eligible_count' => (int) ($header->watermarks['sla_eligible_count'] ?? 0),

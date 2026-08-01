@@ -48,6 +48,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
         ProcurementCycleSnapshotRequest $request,
         ProcurementCycleSourceRead $source,
         array $results,
+        array $eventsByLine,
     ): ReportSourceSnapshotWrite {
         $identity = $this->identity($request, $source);
         $rows = [];
@@ -76,10 +77,6 @@ final class ProcurementCycleSourceSnapshotMaterializer
                     <=> ('procurement-line:'.$right[0]->purchaseRequestLineId);
         });
 
-        $eventsByLine = [];
-        foreach ($source->eventsByLine as $events) {
-            $eventsByLine[$events[0]->transition->purchaseRequestLineId] = $events;
-        }
         foreach (array_values($resultByLine) as $position => [$result, $payload]) {
             $row = new ReportSourceSnapshotRow(
                 $snapshotId,
@@ -100,7 +97,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
                 );
             }
             foreach ($eventsByLine[$result->purchaseRequestLineId] ?? [] as $ordinal => $event) {
-                $drill = $event->auditPayload();
+                $drill = $this->auditPayload($event->auditPayload());
                 $drillRows[] = new ReportSourceSnapshotDrillRow(
                     $snapshotId,
                     $row->rowKey,
@@ -162,14 +159,18 @@ final class ProcurementCycleSourceSnapshotMaterializer
 
     private function payload(ProcurementCycleLineResult $result, array $filters): ?array
     {
-        $payload = $result->row();
+        $sourcePayload = $result->row();
         $cohort = ($filters['cohort_basis'] ?? 'start') === 'outcome'
-            ? ($payload['outcome_cohort_date'] ?? null)
-            : ($payload['start_cohort_date'] ?? null);
+            ? ($sourcePayload['outcome_cohort_date'] ?? null)
+            : ($sourcePayload['start_cohort_date'] ?? null);
         if (! is_string($cohort)) {
             return null;
         }
-        unset($payload['row_key']);
+        $sourcePayload['cohort_date'] = $cohort;
+        if (! $this->matches($sourcePayload, $filters)) {
+            return null;
+        }
+        $payload = $this->publicRowPayload($sourcePayload);
 
         return [
             ...$payload,
@@ -177,6 +178,43 @@ final class ProcurementCycleSourceSnapshotMaterializer
             'stage_breakdown' => true,
             'audit_timeline' => true,
         ];
+    }
+
+    private function publicRowPayload(array $payload): array
+    {
+        $allowed = [
+            'purchase_request_line_id', 'request_number', 'material_name', 'requester_id', 'buyer_id',
+            'priority', 'current_stage', 'outcome', 'total_cycle_seconds', 'open_age_seconds',
+            'awarded_supplier_party_id', 'awarded_amount', 'currency', 'quality_status', 'gap_codes',
+        ];
+
+        $publicPayload = [];
+        foreach ($allowed as $key) {
+            if (array_key_exists($key, $payload)) {
+                $publicPayload[$key] = $payload[$key];
+            }
+        }
+
+        return $publicPayload;
+    }
+
+    private function auditPayload(array $payload): array
+    {
+        $allowed = [
+            'event_id', 'event_code', 'occurred_at', 'actor_id', 'supplier_request_id',
+            'supplier_request_line_id', 'supplier_party_id', 'supplier_proposal_id',
+            'supplier_proposal_version_id', 'supplier_proposal_decision_id', 'purchase_order_id',
+            'purchase_order_item_id', 'purchase_receipt_id', 'purchase_receipt_line_id',
+        ];
+
+        $publicPayload = [];
+        foreach ($allowed as $key) {
+            if (array_key_exists($key, $payload)) {
+                $publicPayload[$key] = $payload[$key];
+            }
+        }
+
+        return $publicPayload;
     }
 
     private function matches(array $row, array $filters): bool
@@ -225,6 +263,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
             'cancelled_count' => 0,
             'complete_count' => 0,
             'gap_count' => 0,
+            'incomplete_count' => 0,
             'invalid_count' => 0,
             'open_count' => 0,
             'sla_eligible_count' => 0,
@@ -238,6 +277,8 @@ final class ProcurementCycleSourceSnapshotMaterializer
                 $counts['cancelled_count']++;
             } elseif ($outcome === 'invalid_source') {
                 $counts['invalid_count']++;
+            } elseif ($outcome === 'incomplete') {
+                $counts['incomplete_count']++;
             } else {
                 $counts['open_count']++;
             }
@@ -259,6 +300,8 @@ final class ProcurementCycleSourceSnapshotMaterializer
             'formula_version' => ProcurementCycleReportAdapter::FORMULA_VERSION,
             'max_event_id' => $source->maxEventId,
             'max_occurred_at' => $source->maxOccurredAt,
+            'source_event_count' => $source->eventCount,
+            'source_line_count' => $source->lineCount,
             'source_schema_version' => ProcurementCycleReportAdapter::SCHEMA_VERSION,
         ];
     }

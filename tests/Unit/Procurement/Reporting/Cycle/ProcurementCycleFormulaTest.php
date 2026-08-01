@@ -142,6 +142,26 @@ final class ProcurementCycleFormulaTest extends TestCase
         self::assertSame(10800, $result->openAgeSeconds);
     }
 
+    public function test_line_without_request_created_is_explicitly_incomplete(): void
+    {
+        $policy = $this->policy();
+        $result = $this->formula()->calculate(
+            events: [
+                $this->event(1, ProcurementProcessEventCode::REQUEST_APPROVED, '2026-08-03T09:00:00+00:00', $policy),
+                $this->event(2, ProcurementProcessEventCode::FULLY_RECEIVED, '2026-08-03T12:00:00+00:00', $policy),
+            ],
+            policy: $policy,
+            asOf: new DateTimeImmutable('2026-08-03T13:00:00+00:00'),
+        );
+
+        self::assertSame('incomplete', $result->outcome);
+        self::assertSame('PARTIAL', $result->qualityStatus);
+        self::assertContains('missing_request_created_event', $result->gapCodes);
+        self::assertNull($result->totalCycleSeconds);
+        self::assertFalse($result->totalSlaEligible);
+        self::assertNull($result->currentStage);
+    }
+
     public function test_business_calendar_excludes_closed_weekend_from_sla_duration(): void
     {
         $policy = $this->policy(stageSlaSeconds: 7200);

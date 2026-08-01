@@ -29,26 +29,28 @@ final readonly class CanonicalProcurementCycleSourceSnapshotWriter implements Pr
             $query->asOf,
             null,
         );
-        $source = $this->reader->read($request);
+        $results = [];
+        $eventsByLine = [];
+        $source = $this->reader->read(
+            $request,
+            function (array $events, $policy) use (&$results, &$eventsByLine, $query): void {
+                $lineId = $events[0]->transition->purchaseRequestLineId;
+                $eventsByLine[$lineId] = $events;
+                $results[] = $this->formula->calculate($events, $policy, $query->asOf);
+            },
+        );
         $identity = $this->materializer->identity($request, $source);
         $ready = $this->store->findReady($identity);
         if ($ready !== null) {
             return $ready;
         }
 
-        $results = [];
-        foreach ($source->eventsByLine as $events) {
-            $policyId = $events[0]->transition->policyVersionId;
-            if ($policyId === null || ! isset($source->policiesById[$policyId])) {
-                continue;
-            }
-            $results[] = $this->formula->calculate($events, $source->policiesById[$policyId], $query->asOf);
-        }
         $write = $this->materializer->materialize(
             Str::ulid()->toBase32(),
             $request,
             $source,
             $results,
+            $eventsByLine,
         );
 
         return $this->store->resolveReady($identity, $write);

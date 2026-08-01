@@ -19,92 +19,137 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementTe
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementCyclePolicyVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent;
 use DateTimeImmutable;
+use Illuminate\Database\Connection;
+use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final class EloquentProcurementCycleSourceReader implements ProcurementCycleSourceReader
 {
-    private const MAX_LINES = 50000;
+    private const MAX_LINES = 5000;
 
-    private const MAX_EVENTS = 500000;
+    private const MAX_EVENTS = 25000;
 
-    public function read(ProcurementCycleSnapshotRequest $request): ProcurementCycleSourceRead
+    public function read(ProcurementCycleSnapshotRequest $request, callable $consumeLine): ProcurementCycleSourceRead
     {
         $projectIds = $request->projectIds();
         if ($projectIds === []) {
-            return new ProcurementCycleSourceRead([], [], 0, null);
+            return new ProcurementCycleSourceRead([], 0, 0, 0, null);
         }
 
         try {
-            $anchorQuery = ProcurementProcessEvent::query()
-                ->where('organization_id', $request->scope->organizationId)
-                ->where('event_code', ProcurementProcessEventCode::REQUEST_CREATED->value)
-                ->whereIn('project_id', $projectIds)
-                ->where('occurred_at', '<=', $request->asOf)
-                ->orderBy('purchase_request_line_id');
-            if ((clone $anchorQuery)->count() > self::MAX_LINES) {
-                throw $this->unavailable();
-            }
-            $lineIds = (clone $anchorQuery)
-                ->pluck('purchase_request_line_id')
-                ->map(static fn (mixed $id): int => (int) $id)
-                ->all();
-            if ($lineIds === []) {
-                return new ProcurementCycleSourceRead([], [], 0, null);
-            }
-
-            $eventQuery = ProcurementProcessEvent::query()
-                ->where('organization_id', $request->scope->organizationId)
-                ->whereIn('purchase_request_line_id', $lineIds)
-                ->where('occurred_at', '<=', $request->asOf)
-                ->orderBy('purchase_request_line_id')
-                ->orderBy('occurred_at')
-                ->orderBy('id');
-            if ((clone $eventQuery)->count() > self::MAX_EVENTS) {
+            $connection = DB::connection();
+            if ($connection->getDriverName() !== 'pgsql') {
                 throw $this->unavailable();
             }
 
-            $eventsByLine = [];
-            $policyIds = [];
-            $maxEventId = 0;
-            $maxOccurredAt = null;
-            foreach ($eventQuery->get() as $record) {
-                $event = $this->event($record);
-                $lineId = $event->transition->purchaseRequestLineId;
-                if (! in_array($event->transition->projectId, $projectIds, true)) {
-                    throw $this->unavailable();
-                }
-                $eventsByLine[$lineId][] = $event;
-                if ($event->transition->policyVersionId !== null) {
-                    $policyIds[$event->transition->policyVersionId] = true;
-                }
-                $maxEventId = max($maxEventId, $event->id);
-                $occurredAt = $event->transition->occurredAtUtc();
-                $maxOccurredAt = $maxOccurredAt === null || $occurredAt > $maxOccurredAt ? $occurredAt : $maxOccurredAt;
-            }
+            return $connection->transaction(function (Connection $connection) use ($request, $consumeLine): ProcurementCycleSourceRead {
+                $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
 
-            $policies = $this->policies(array_keys($policyIds), $request->scope->organizationId, $projectIds);
-            $eligible = [];
-            foreach ($eventsByLine as $events) {
-                $policyId = $events[0]->transition->policyVersionId;
-                if ($policyId === null || ! isset($policies[$policyId])) {
-                    continue;
-                }
-                foreach ($events as $event) {
-                    if ($event->transition->policyVersionId !== $policyId
-                        || ! hash_equals((string) $event->transition->policyHash, $policies[$policyId]->canonicalHash)
-                        || ! hash_equals((string) $event->transition->calendarHash, $policies[$policyId]->definition->calendarHash())) {
-                        throw $this->unavailable();
-                    }
-                }
-                $eligible[] = $events;
-            }
-
-            return new ProcurementCycleSourceRead($eligible, $policies, $maxEventId, $maxOccurredAt);
+                return $this->readConsistent($request, $consumeLine);
+            }, 1);
         } catch (ReportContractException $exception) {
             throw $exception;
         } catch (Throwable $exception) {
             throw $this->unavailable($exception);
         }
+    }
+
+    private function readConsistent(ProcurementCycleSnapshotRequest $request, callable $consumeLine): ProcurementCycleSourceRead
+    {
+        $projectIds = $request->projectIds();
+        $sourceCutoffEventId = (int) (ProcurementProcessEvent::query()
+            ->where('organization_id', $request->scope->organizationId)
+            ->whereIn('project_id', $projectIds)
+            ->where('occurred_at', '<=', $request->asOf)
+            ->max('id') ?? 0);
+        if ($sourceCutoffEventId === 0) {
+            return new ProcurementCycleSourceRead([], 0, 0, 0, null);
+        }
+
+        $lineQuery = ProcurementProcessEvent::query()
+            ->where('organization_id', $request->scope->organizationId)
+            ->whereIn('project_id', $projectIds)
+            ->where('occurred_at', '<=', $request->asOf)
+            ->where('id', '<=', $sourceCutoffEventId)
+            ->select('purchase_request_line_id')
+            ->distinct()
+            ->orderBy('purchase_request_line_id');
+        if ((clone $lineQuery)->count() > self::MAX_LINES) {
+            throw $this->unavailable();
+        }
+        $lineIds = (clone $lineQuery)
+            ->pluck('purchase_request_line_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        if ($lineIds === []) {
+            return new ProcurementCycleSourceRead([], 0, 0, $sourceCutoffEventId, null);
+        }
+
+        $eventQuery = ProcurementProcessEvent::query()
+            ->where('organization_id', $request->scope->organizationId)
+            ->whereIn('purchase_request_line_id', $lineIds)
+            ->where('occurred_at', '<=', $request->asOf)
+            ->where('id', '<=', $sourceCutoffEventId)
+            ->orderBy('purchase_request_line_id')
+            ->orderBy('occurred_at')
+            ->orderBy('id');
+        $eventCount = (clone $eventQuery)->count();
+        if ($eventCount > self::MAX_EVENTS) {
+            throw $this->unavailable();
+        }
+
+        $policyIds = (clone $eventQuery)
+            ->whereNotNull('policy_version_id')
+            ->distinct()
+            ->pluck('policy_version_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        $policies = $this->policies($policyIds, $request->scope->organizationId, $projectIds);
+
+        $lineCount = 0;
+        $maxOccurredAt = null;
+        $currentLineId = null;
+        $currentEvents = [];
+        foreach ($eventQuery->cursor() as $record) {
+            $event = $this->event($record);
+            $lineId = $event->transition->purchaseRequestLineId;
+            if (! in_array($event->transition->projectId, $projectIds, true)) {
+                throw $this->unavailable();
+            }
+            if ($currentLineId !== null && $lineId !== $currentLineId) {
+                if ($this->consumeLine($currentEvents, $policies, $consumeLine)) {
+                    $lineCount++;
+                }
+                $currentEvents = [];
+            }
+            $currentLineId = $lineId;
+            $currentEvents[] = $event;
+            $occurredAt = $event->transition->occurredAtUtc();
+            $maxOccurredAt = $maxOccurredAt === null || $occurredAt > $maxOccurredAt ? $occurredAt : $maxOccurredAt;
+        }
+        if ($currentEvents !== [] && $this->consumeLine($currentEvents, $policies, $consumeLine)) {
+            $lineCount++;
+        }
+
+        return new ProcurementCycleSourceRead($policies, $lineCount, $eventCount, $sourceCutoffEventId, $maxOccurredAt);
+    }
+
+    private function consumeLine(array $events, array $policies, callable $consumeLine): bool
+    {
+        $policyId = $events[0]->transition->policyVersionId;
+        if ($policyId === null || ! isset($policies[$policyId])) {
+            return false;
+        }
+        foreach ($events as $event) {
+            if ($event->transition->policyVersionId !== $policyId
+                || ! hash_equals((string) $event->transition->policyHash, $policies[$policyId]->canonicalHash)
+                || ! hash_equals((string) $event->transition->calendarHash, $policies[$policyId]->definition->calendarHash())) {
+                throw $this->unavailable();
+            }
+        }
+        $consumeLine($events, $policies[$policyId]);
+
+        return true;
     }
 
     private function event(ProcurementProcessEvent $record): ProcurementCycleEvent
@@ -163,7 +208,8 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
         foreach (ProcurementCyclePolicyVersion::query()
             ->where('organization_id', $organizationId)
             ->whereIn('id', $ids)
-            ->get() as $record) {
+            ->orderBy('id')
+            ->cursor() as $record) {
             $projectId = $this->nullableId($record->getAttribute('project_id'));
             if ($projectId !== null && ! in_array($projectId, $projectIds, true)) {
                 throw $this->unavailable();

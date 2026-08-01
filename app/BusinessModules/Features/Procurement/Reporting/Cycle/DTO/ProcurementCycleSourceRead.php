@@ -10,23 +10,14 @@ use InvalidArgumentException;
 final readonly class ProcurementCycleSourceRead
 {
     public function __construct(
-        public array $eventsByLine,
         public array $policiesById,
+        public int $lineCount,
+        public int $eventCount,
         public int $maxEventId,
         public ?string $maxOccurredAt,
     ) {
-        if ($maxEventId < 0 || ! array_is_list($eventsByLine)) {
+        if ($lineCount < 0 || $eventCount < 0 || $maxEventId < 0) {
             throw new InvalidArgumentException('procurement_cycle_source_read_invalid');
-        }
-        foreach ($eventsByLine as $events) {
-            if (! is_array($events) || ! array_is_list($events) || $events === []) {
-                throw new InvalidArgumentException('procurement_cycle_source_read_invalid');
-            }
-            foreach ($events as $event) {
-                if (! $event instanceof ProcurementCycleEvent) {
-                    throw new InvalidArgumentException('procurement_cycle_source_read_invalid');
-                }
-            }
         }
         foreach ($policiesById as $id => $policy) {
             if (! is_int($id) || ! $policy instanceof ProcurementCyclePolicySnapshot || $policy->versionId !== $id) {
@@ -47,6 +38,8 @@ final readonly class ProcurementCycleSourceRead
             'as_of' => $asOf,
             'filters' => $filters,
             'formula_version' => 'procurement-cycle.v1',
+            'event_count' => $this->eventCount,
+            'line_count' => $this->lineCount,
             'max_event_id' => $this->maxEventId,
             'max_occurred_at' => $this->maxOccurredAt,
             'policies' => $policies,

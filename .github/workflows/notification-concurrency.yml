@@ -234,6 +234,13 @@ jobs:
           php -r "if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) { fwrite(STDERR, \"pdo_pgsql is unavailable\\n\"); exit(1); }"
           test -f tests/Feature/Procurement/Reporting/Cycle/ProcurementCycleSourcePostgresTest.php
 
+      - name: Run R15 formula and runtime prerequisites
+        run: >-
+          php vendor/bin/phpunit
+          tests/Unit/Procurement/Reporting/Cycle/ProcurementCycleFormulaTest.php
+          tests/Unit/Procurement/Reporting/Cycle/ProcurementCycleRuntimeContractTest.php
+          --fail-on-skipped
+
       - name: Prepare isolated PostgreSQL schema from exact checkout
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
