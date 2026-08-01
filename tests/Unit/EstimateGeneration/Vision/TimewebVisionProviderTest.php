@@ -123,7 +123,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'schema_version must equal integer 3')
                 && str_contains($system, 'visual_attributes')
                 && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown')
-                && str_contains($system, 'room, wall, opening, dimension, axis, engineering_element, text')
+                && str_contains($system, 'room, wall, opening, axis, dimension_chain, sanitary_fixture, furniture, structural_element, table or cross_sheet_link')
                 && str_contains($system, 'dimension_text, scale_notation, known_object, manual_reference')
                 && str_contains($system, 'scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain')
                 && str_contains($system, 'meters_per_unit is finite in (0, 1000000]')

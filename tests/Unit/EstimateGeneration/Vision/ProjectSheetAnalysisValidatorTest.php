@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Vision;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\DatabaseLessTestCase;
@@ -55,6 +56,48 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
             try {
                 ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
                 self::fail('Expected a strict schema violation for '.$case);
+            } catch (VisionContractException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
+
+    #[Test]
+    public function it_maps_project_sheet_fact_geometry_to_source_once(): void
+    {
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($this->payload(), ['page-1']);
+        $transform = new ProjectiveTransformData(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [[2.0, 0.0, 10.0], [0.0, 3.0, 20.0], [0.0, 0.0, 1.0]],
+            1.0,
+            1.0,
+        );
+
+        $mapped = $analysis->mapPolygonsToSource($transform);
+
+        self::assertSame([10.2, 20.3], $mapped->facts[0]['polygon'][0]);
+        self::assertSame([11.6, 22.4], $mapped->facts[0]['polygon'][1]);
+    }
+
+    #[Test]
+    public function it_rejects_unknown_roles_units_for_unknowns_and_excessive_fact_count(): void
+    {
+        $cases = [];
+        $unknownRole = $this->payload();
+        $unknownRole['sheet_role'] = 'render';
+        $cases[] = $unknownRole;
+        $unknownUnit = $this->payload();
+        $unknownUnit['facts'][0]['value'] = ['type' => 'unknown', 'data' => null];
+        $unknownUnit['facts'][0]['unit'] = 'm';
+        $cases[] = $unknownUnit;
+        $overflow = $this->payload();
+        $overflow['facts'] = array_fill(0, 501, $overflow['facts'][0]);
+        $cases[] = $overflow;
+
+        foreach ($cases as $payload) {
+            try {
+                ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+                self::fail('Expected strict project-sheet contract violation.');
             } catch (VisionContractException) {
                 self::addToAssertionCount(1);
             }
