@@ -48,7 +48,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'geometry' => '740d3b343d86ff7d386546fc9dd63a5d680b79df8f25ecd2d8e1fd46d88f5eab',
         'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
         'training' => 'ff394b33d8717a20622b4895a627e8784d987f0d11611601b5446fd59ee23026',
-        'project-model' => '21bc3233132d23be7e3bd6c3c38feaf4e2954410e3200e076b940a5168d485ec',
+        'project-model' => '018af42ef4c5521a1ecfcd084dc75fcde9fa1d69c840d62e71120907fa888d4b',
     ];
 
     private const CORE = [

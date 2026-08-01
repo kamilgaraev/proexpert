@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRep
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
@@ -195,15 +197,15 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             (int) $organization->id,
             (int) $project->id,
             (int) $session->id,
-            EvidenceType::Extracted,
-            EvidenceSourceType::Document,
+            EvidenceType::Measured,
+            EvidenceSourceType::DocumentUnit,
             'document:1',
             'sha256:'.str_repeat('a', 64),
-            ['document_id' => 1],
-            ['field_key' => 'floor_height', 'field_value' => 2.8, 'unit' => 'm'],
+            ['document_id' => 1, 'unit_index' => 2, 'page' => 2, 'handle' => 'cad:room:1'],
+            ['field_key' => 'dimension_value', 'field_value' => 7.94, 'unit' => 'm2'],
             1,
-            'contract',
-            'contract:abcdef',
+            'pdf_geometry',
+            'extractor:v1',
         ));
         $context = new BuildingModelOperationContext((int) $organization->id, (int) $project->id, (int) $session->id, 'sha256:'.str_repeat('b', 64));
         $model = (new BuildingModelRepository(
@@ -221,6 +223,7 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'source_version' => $model->contentVersion,
             'evidence_id' => $evidence->id,
             'evidence_source_version' => 'sha256:'.str_repeat('a', 64),
+            'locator' => ['document_id' => 1, 'unit_index' => 2, 'page' => 2, 'handle' => 'cad:room:1'],
         ];
     }
 
@@ -284,7 +287,8 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'assertion_id' => $assertionId,
             'correction_id' => null,
             'candidate_source' => 'cad',
-            'candidate_value_fingerprint' => str_repeat('c', 64),
+            'candidate_value_fingerprint' => ProjectModelValueFingerprint::for(['value' => 7.94, 'unit' => 'm2']),
+            'candidate_locator_fingerprint' => ProjectModelLocatorFingerprint::for($fixture['locator']),
             'evidence_source_version' => $fixture['evidence_source_version'],
             'evidence_invalidation_version' => 0,
             'created_at' => now(),
@@ -302,7 +306,7 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'stable_key' => $stableKey,
             'entity_id' => $entityId,
             'assertion_type' => 'height',
-            'payload' => json_encode(['source' => 'cad', 'value' => 2.8, 'unit' => 'm'], JSON_THROW_ON_ERROR),
+            'payload' => json_encode(['source' => 'cad', 'value' => 7.94, 'unit' => 'm2'], JSON_THROW_ON_ERROR),
             'confidence' => 0.9,
             'created_at' => now(),
         ]);

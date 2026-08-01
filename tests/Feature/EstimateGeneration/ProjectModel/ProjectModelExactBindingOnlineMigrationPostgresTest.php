@@ -9,8 +9,11 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRep
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentConfirmedProjectModelValues;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelUnitData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
@@ -130,9 +133,14 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
         $this->requireEnvironment();
         $root = dirname(__DIR__, 4);
         EstimateGenerationContractDatabaseProvisioner::provision(DB::connection(), $root, 'training');
-        foreach (['2026_08_01_000225_add_project_model_correction_scope_unique.php', '2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php', '2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php'] as $migration) {
+        foreach (['2026_08_01_000225_add_project_model_correction_scope_unique.php', '2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php'] as $migration) {
             (require EstimateGenerationContractDatabaseProvisioner::subjectMigration('project-model', $migration, $root))->up();
         }
+        $fixture = $this->fixture();
+        $assertionId = $this->insertCadAssertion($fixture);
+        $this->insertBinding($fixture, $fixture['entity_id'], $assertionId);
+        $migration275 = require EstimateGenerationContractDatabaseProvisioner::subjectMigration('project-model', '2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php', $root);
+        $migration275->up();
         $locator = ['document_id' => 1, 'unit_index' => 2, 'page' => 2, 'region_key' => 'region:'.str_repeat('a', 64), 'element_key' => 'element:'.str_repeat('b', 64), 'bbox' => [1, 2, 3, 4]];
         $reordered = ['bbox' => [1.0, 2.0, 3.0, 4.0], 'element_key' => 'element:'.str_repeat('b', 64), 'page' => 2, 'document_id' => 1, 'region_key' => 'region:'.str_repeat('a', 64), 'unit_index' => 2];
         $wrongLocator = [...$locator, 'element_key' => 'element:'.str_repeat('c', 64)];
@@ -142,6 +150,56 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
         self::assertSame(ProjectModelLocatorFingerprint::for($locator), DB::scalar('SELECT eg_project_model_locator_fingerprint(?::jsonb)', [json_encode($reordered, JSON_THROW_ON_ERROR)]));
         self::assertNotSame(ProjectModelLocatorFingerprint::for($locator), ProjectModelLocatorFingerprint::for($wrongLocator));
         self::assertNotSame(ProjectModelValueFingerprint::for(['value' => 7.94, 'unit' => 'm2']), ProjectModelValueFingerprint::for(['value' => 7.95, 'unit' => 'm2']));
+        $binding = DB::table('estimate_generation_project_model_evidence_bindings')->first();
+        self::assertSame(ProjectModelValueFingerprint::for(['value' => 7.94, 'unit' => 'm2']), $binding->candidate_value_fingerprint);
+        self::assertSame(ProjectModelLocatorFingerprint::for($fixture['locator']), $binding->candidate_locator_fingerprint);
+        $this->assertRejected(fn () => DB::table('estimate_generation_project_model_evidence_bindings')->insert([
+            ...$this->bindingRow($fixture, $fixture['entity_id'], $assertionId),
+            'candidate_locator_fingerprint' => ProjectModelLocatorFingerprint::for($wrongLocator),
+        ]));
+        $this->assertRejected(fn () => DB::table('estimate_generation_project_model_evidence_bindings')->insert([
+            ...$this->bindingRow($fixture, $fixture['entity_id'], $assertionId),
+            'candidate_value_fingerprint' => ProjectModelValueFingerprint::for(['value' => 7.95, 'unit' => 'm2']),
+        ]));
+
+        $this->deleteUncheckedBindings();
+        $migration275->down();
+        self::assertSame(
+            DB::scalar("SELECT eg_project_model_value_fingerprint('{\"unit\":\"m2\",\"value\":7.94}'::jsonb)"),
+            DB::scalar("SELECT eg_project_model_value_fingerprint('{\"value\":7.94,\"unit\":\"m2\"}'::jsonb)"),
+        );
+        $migration275->up();
+    }
+
+    #[Test]
+    public function writer_trigger_and_read_side_preserve_the_canonical_794_candidate(): void
+    {
+        $this->requireEnvironment();
+        $root = dirname(__DIR__, 4);
+        EstimateGenerationContractDatabaseProvisioner::provision(DB::connection(), $root, 'training');
+        foreach (['2026_08_01_000225_add_project_model_correction_scope_unique.php', '2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php', '2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php'] as $migration) {
+            (require EstimateGenerationContractDatabaseProvisioner::subjectMigration('project-model', $migration, $root))->up();
+        }
+        $fixture = $this->fixture();
+        (new ProjectModelEvidenceWriter(DB::connection()))->write($fixture['stored_model'], [new SessionBuildingModelUnitData(
+            1,
+            1,
+            2,
+            'cad_drawing',
+            2,
+            $fixture['evidence_source_version'],
+            0.99,
+            ['project_model_candidates' => [[
+                'entity' => ['kind' => 'dimension', 'value' => 7.94, 'unit' => 'm2'],
+                'assertion' => ['type' => 'dimension', 'source' => 'cad', 'value' => ['value' => 7.94, 'unit' => 'm2']],
+                'locator' => ['handle' => 'cad:room:1', 'page' => 2, 'unit_index' => 2, 'document_id' => 1],
+            ]]],
+        )]);
+
+        $model = DB::table('estimate_generation_building_models')->where('id', $fixture['building_model_id'])->first();
+        $values = (new EloquentConfirmedProjectModelValues(app('db')))->forModel($model);
+        self::assertCount(1, $values);
+        self::assertSame(['value' => 7.94, 'unit' => 'm2'], $values[0]['value']);
     }
 
     private function addFirstAuditColumn(): void
@@ -193,15 +251,15 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
             (int) $organization->id,
             (int) $project->id,
             (int) $session->id,
-            EvidenceType::Extracted,
-            EvidenceSourceType::Document,
+            EvidenceType::Measured,
+            EvidenceSourceType::DocumentUnit,
             'document:1',
             'sha256:'.str_repeat('a', 64),
-            ['document_id' => 1],
-            ['field_key' => 'floor_height', 'field_value' => 2.8, 'unit' => 'm'],
+            ['document_id' => 1, 'unit_index' => 2, 'page' => 2, 'handle' => 'cad:room:1'],
+            ['field_key' => 'dimension_value', 'field_value' => 7.94, 'unit' => 'm2'],
             1,
-            'contract',
-            'contract:abcdef',
+            'pdf_geometry',
+            'extractor:v1',
         ));
         $context = new BuildingModelOperationContext((int) $organization->id, (int) $project->id, (int) $session->id, 'sha256:'.str_repeat('b', 64));
         $model = (new BuildingModelRepository(
@@ -219,6 +277,8 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
             'source_version' => $model->contentVersion,
             'evidence_id' => $evidence->id,
             'evidence_source_version' => 'sha256:'.str_repeat('a', 64),
+            'locator' => ['document_id' => 1, 'unit_index' => 2, 'page' => 2, 'handle' => 'cad:room:1'],
+            'stored_model' => $model,
         ];
         $fixture['entity_id'] = $this->insertEntity($fixture, 'room:initial');
 
@@ -252,7 +312,7 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
             'stable_key' => 'assertion:room:height',
             'entity_id' => $fixture['entity_id'],
             'assertion_type' => 'height',
-            'payload' => json_encode(['source' => 'cad', 'value' => 2.8, 'unit' => 'm'], JSON_THROW_ON_ERROR),
+            'payload' => json_encode(['source' => 'cad', 'value' => 7.94, 'unit' => 'm2'], JSON_THROW_ON_ERROR),
             'confidence' => 0.9,
             'created_at' => now(),
         ]);
@@ -265,7 +325,7 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
 
     private function bindingRow(array $fixture, int $entityId, ?int $assertionId = null): array
     {
-        return [
+        $row = [
             'building_model_id' => $fixture['building_model_id'],
             'organization_id' => $fixture['organization_id'],
             'project_id' => $fixture['project_id'],
@@ -276,11 +336,16 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
             'assertion_id' => $assertionId,
             'correction_id' => null,
             'candidate_source' => $assertionId === null ? null : 'cad',
-            'candidate_value_fingerprint' => $assertionId === null ? null : str_repeat('c', 64),
+            'candidate_value_fingerprint' => $assertionId === null ? null : ProjectModelValueFingerprint::for(['value' => 7.94, 'unit' => 'm2']),
             'evidence_source_version' => $fixture['evidence_source_version'],
             'evidence_invalidation_version' => 0,
             'created_at' => now(),
         ];
+        if (Schema::hasColumn('estimate_generation_project_model_evidence_bindings', 'candidate_locator_fingerprint')) {
+            $row['candidate_locator_fingerprint'] = ProjectModelLocatorFingerprint::for($fixture['locator']);
+        }
+
+        return $row;
     }
 
     private function insertLegacyBinding(array $fixture, int $entityId): void
