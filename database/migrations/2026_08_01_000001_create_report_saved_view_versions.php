@@ -161,7 +161,7 @@ return new class extends Migration
             END;
             $$;
             SQL);
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             ALTER TABLE report_saved_view_versions
                 ADD CONSTRAINT report_saved_view_versions_content_shape_check
                 CHECK (
@@ -186,7 +186,7 @@ return new class extends Migration
                     AND report_saved_view_version_columns_are_valid(content_json -> 'columns') IS TRUE
                 )
             SQL);
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             ALTER TABLE report_saved_view_versions
                 ADD CONSTRAINT report_saved_view_versions_content_schema_binding_check
                 CHECK (
@@ -195,7 +195,7 @@ return new class extends Migration
                     AND ((content_json ->> 'schema_version') = presentation_schema_version::text) IS TRUE
                 )
             SQL);
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             ALTER TABLE report_saved_view_versions
                 ADD CONSTRAINT report_saved_view_versions_content_code_binding_check
                 CHECK (
@@ -204,7 +204,7 @@ return new class extends Migration
                     AND ((content_json ->> 'report_code') = report_code) IS TRUE
                 )
             SQL);
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             ALTER TABLE report_saved_view_versions
                 ADD CONSTRAINT report_saved_view_versions_content_contract_binding_check
                 CHECK (
