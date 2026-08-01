@@ -17,7 +17,7 @@ final class ProcurementCycleReleaseCandidateResolverE2ETest extends TestCase
     {
         $source = getenv('MOST_R15_PUBLICATION_FIXTURE_DIR');
         if (! is_string($source) || $source === '' || ! is_dir($source)) {
-            self::markTestSkipped('MOST_R15_PUBLICATION_FIXTURE_DIR must point to the output of build-r15-publication-candidate.php.');
+            self::fail('MOST_R15_PUBLICATION_FIXTURE_DIR must point to the output of build-r15-publication-candidate.php.');
         }
 
         $this->fixture = sys_get_temp_dir().DIRECTORY_SEPARATOR.'r15-resolver-'.bin2hex(random_bytes(8));
