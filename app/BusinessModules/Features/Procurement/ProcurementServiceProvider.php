@@ -61,6 +61,11 @@ class ProcurementServiceProvider extends ServiceProvider
         );
 
         $this->app->singleton(
+            Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime::class,
+            Reporting\Cycle\Services\LaravelProcurementOwnerWorkflowRuntime::class,
+        );
+
+        $this->app->singleton(
             Reporting\Cycle\Contracts\ProcurementCycleSourceState::class,
             Reporting\Cycle\Services\EloquentProcurementCycleSourceState::class,
         );

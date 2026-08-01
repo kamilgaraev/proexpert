@@ -6,7 +6,12 @@ namespace Tests\Unit\Procurement\Reporting\Cycle;
 
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
@@ -20,6 +25,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequestVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementCycleSourceState;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementProcessEventStore;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementTransactionBoundary;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementProcessDimensionSnapshot;
@@ -59,36 +65,74 @@ use Throwable;
 
 final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
 {
-    public function test_request_owner_contract_commits_line_events_with_typed_terminal_signatures(): void
+    public function test_public_request_approve_uses_owner_transaction_and_records_line_events(): void
     {
         [$request, $lines] = $this->requestGraph();
+        $request->status = PurchaseRequestStatusEnum::PENDING;
         [$journal, $state, $recorder] = $this->source();
-        $service = $this->purchaseRequestService($recorder);
-        $createdAt = new DateTimeImmutable('2026-08-01T08:00:00.123456+00:00');
+        foreach ($lines as $line) {
+            $state->snapshots[(int) $line->id] = $this->pinnedSnapshot((int) $line->id);
+        }
+        $service = $this->purchaseRequestService($recorder, $journal);
 
-        $journal->within(fn () => $service->created($request, 501, $createdAt));
+        try {
+            $service->approve($request, 502);
+        } catch (Throwable $exception) {
+            self::fail(
+                'Public owner workflow is not DB-free contract-testable: '
+                .$exception->getMessage()."\n".$exception->getTraceAsString(),
+            );
+        }
+
+        self::assertSame(PurchaseRequestStatusEnum::APPROVED, $request->status);
+        self::assertCount(2, $journal->events(ProcurementProcessEventCode::REQUEST_APPROVED));
+    }
+
+    public function test_request_owner_contract_commits_line_events_with_typed_terminal_signatures(): void
+    {
+        [$createdRequest, $createdLines] = $this->requestGraph();
+        [$journal, $state, $recorder] = $this->source();
+        $service = $this->purchaseRequestService($recorder, $journal);
+        $createdAt = new DateTimeImmutable('2026-08-01T08:00:00.123456+00:00');
+        $journal->now = $createdAt;
+        $service->createdRequest = $createdRequest;
+
+        $service->create(10, 501, [
+            'lines' => [
+                ['name' => 'Материал 1', 'quantity' => 2.5, 'unit' => 'кг'],
+                ['name' => 'Материал 2', 'quantity' => 2.5, 'unit' => 'кг'],
+            ],
+        ]);
         self::assertCount(2, $journal->events(ProcurementProcessEventCode::REQUEST_CREATED));
         foreach ($journal->events(ProcurementProcessEventCode::REQUEST_CREATED) as $transition) {
             $state->snapshots[$transition->purchaseRequestLineId] = $transition->dimensionSnapshot;
         }
 
-        $journal->within(fn () => $service->approved($request, 502, $createdAt->modify('+1 hour')));
-        $journal->within(fn () => $service->cancelled(
-            $request,
-            503,
-            $createdAt->modify('+2 hours'),
-            ProcurementTerminalReason::REQUEST_REJECTED,
-        ));
+        [$approvedRequest, $approvedLines] = $this->requestGraph();
+        $approvedRequest->status = PurchaseRequestStatusEnum::PENDING;
+        $this->seedSnapshots($state, $approvedRequest, $approvedLines);
+        $journal->now = $createdAt->modify('+1 hour');
+        $service->approve($approvedRequest, 502);
+
+        [$rejectedRequest, $rejectedLines] = $this->requestGraph();
+        $rejectedRequest->status = PurchaseRequestStatusEnum::PENDING;
+        foreach ($rejectedLines as $line) {
+            $state->snapshots[(int) $line->id] = $this->pinnedSnapshot((int) $line->id);
+        }
+        $journal->now = $createdAt->modify('+2 hours');
+        $service->reject($rejectedRequest, 503, 'Не согласовано');
 
         self::assertCount(2, $journal->events(ProcurementProcessEventCode::REQUEST_APPROVED));
         self::assertCount(2, $journal->events(ProcurementProcessEventCode::CANCELLED));
+        self::assertSame(PurchaseRequestStatusEnum::APPROVED, $approvedRequest->status);
+        self::assertSame(PurchaseRequestStatusEnum::REJECTED, $rejectedRequest->status);
         self::assertNull($journal->events(ProcurementProcessEventCode::REQUEST_APPROVED)[0]->terminalReason);
         self::assertSame(
             ProcurementTerminalReason::REQUEST_REJECTED,
             $journal->events(ProcurementProcessEventCode::CANCELLED)[0]->terminalReason,
         );
         self::assertSame(
-            array_map(static fn (PurchaseRequestLine $line): int => (int) $line->id, $lines),
+            array_map(static fn (PurchaseRequestLine $line): int => (int) $line->id, $createdLines),
             array_map(
                 static fn (ProcurementProcessTransition $transition): int => $transition->purchaseRequestLineId,
                 $journal->events(ProcurementProcessEventCode::REQUEST_CREATED),
@@ -100,37 +144,28 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
     {
         [$request, $lines] = $this->requestGraph();
         [$journal, $state, $recorder] = $this->source();
-        $service = $this->purchaseRequestService($recorder);
+        $service = $this->purchaseRequestService($recorder, $journal);
         foreach ($lines as $line) {
             $state->snapshots[(int) $line->id] = $this->pinnedSnapshot((int) $line->id);
         }
         $state->allowedTerminalReasons = [ProcurementTerminalReason::REQUEST_REJECTED];
-        $ownerStatus = 'pending';
-
+        $request->status = PurchaseRequestStatusEnum::PENDING;
+        $journal->failBeforeCommit = true;
         try {
-            $journal->within(function () use ($service, $request, &$ownerStatus, $journal): void {
-                $ownerStatus = 'approved';
-                $journal->afterRollback(static function () use (&$ownerStatus): void {
-                    $ownerStatus = 'pending';
-                });
-                $service->approved($request, 502, new DateTimeImmutable('2026-08-01T09:00:00+00:00'));
-                throw new RuntimeException('owner_mutation_failed');
-            });
+            $service->approve($request, 502);
             self::fail('Expected owner rollback.');
         } catch (RuntimeException $exception) {
             self::assertSame('owner_mutation_failed', $exception->getMessage());
         }
 
-        self::assertSame('pending', $ownerStatus);
+        self::assertSame(PurchaseRequestStatusEnum::PENDING, $request->status);
         self::assertSame([], $journal->committed);
 
+        $journal->failBeforeCommit = false;
+        $request->status = PurchaseRequestStatusEnum::PENDING;
+        $state->allowedTerminalReasons = [];
         try {
-            $journal->within(fn () => $service->cancelled(
-                $request,
-                503,
-                new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
-                ProcurementTerminalReason::REQUEST_CANCELLED,
-            ));
+            $service->reject($request, 503, 'Не согласовано');
             self::fail('Expected pinned terminal policy rejection.');
         } catch (LogicException $exception) {
             self::assertSame('procurement_cycle_terminal_reason_not_allowed', $exception->getMessage());
@@ -145,23 +180,47 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
         [$journal, $state, $recorder] = $this->source();
         $this->seedSnapshots($state, $request, $requestLines);
         [$supplierRequest, $requestVersion, $proposal, $proposalVersion] = $this->supplierGraph($requestLines);
-        $requestService = $this->supplierRequestService($recorder);
-        $proposalService = $this->supplierProposalService($recorder);
+        $requestService = $this->supplierRequestService($recorder, $journal);
+        $proposalService = $this->supplierProposalService($recorder, $journal);
         $sentAt = new DateTimeImmutable('2026-08-02T08:30:00.654321+00:00');
         $respondedAt = new DateTimeImmutable('2026-08-02T11:45:00.987654+00:00');
 
-        $journal->within(fn () => $requestService->sent($supplierRequest, $requestVersion, 501, $sentAt));
-        $journal->within(fn () => $requestService->sent($supplierRequest, $requestVersion, 501, $sentAt));
-        $journal->within(fn () => $proposalService->responded($proposal, $proposalVersion, 502, $respondedAt));
+        $supplierRequest->status = \App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum::DRAFT;
+        self::assertTrue($supplierRequest->canBeSent());
+        $requestService->sentVersion = $requestVersion;
+        $journal->now = $sentAt;
+        $requestService->send($supplierRequest, 501);
+        $supplierRequest->status = \App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum::DRAFT;
+        $requestService->send($supplierRequest, 501);
+        $supplierRequest->status = \App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum::SENT;
+        $supplierRequest->public_token = 'public-token';
+        $proposalService->responseProposal = $proposal;
+        $proposalService->responseProposalVersion = $proposalVersion;
+        $proposalService->responseSupplierRequestVersion = $requestVersion;
+        $journal->now = $respondedAt;
+        $proposalService->createFromSupplierRequest($supplierRequest, [
+            'items' => array_map(
+                static fn (SupplierRequestLine $line): array => [
+                    'supplier_request_line_id' => (int) $line->id,
+                    'name' => 'Материал',
+                    'quantity' => 2.5,
+                    'unit' => 'кг',
+                    'unit_price' => 100,
+                ],
+                $supplierRequest->lines->all(),
+            ),
+        ], 502);
 
         $sent = $journal->events(ProcurementProcessEventCode::SOLICITATION_SENT);
         $responded = $journal->events(ProcurementProcessEventCode::SUPPLIER_RESPONDED);
         self::assertCount(2, $sent);
         self::assertCount(2, $responded);
         self::assertSame((int) $requestVersion->id, $sent[0]->sourceId);
+        self::assertSame($sentAt->format('U.u'), $requestService->persistedSentAt?->format('U.u'));
         self::assertSame((int) $proposalVersion->id, $responded[0]->sourceId);
         self::assertSame($sentAt->format('U.u'), $sent[0]->occurredAt->format('U.u'));
         self::assertSame($respondedAt->format('U.u'), $responded[0]->occurredAt->format('U.u'));
+        self::assertSame($respondedAt->format('U.u'), $proposalService->persistedRespondedAt?->format('U.u'));
     }
 
     public function test_award_owner_contract_keeps_lineage_and_rejects_conflicting_replay(): void
@@ -170,11 +229,23 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
         [$journal, $state, $recorder] = $this->source();
         $this->seedSnapshots($state, $request, $requestLines);
         [, , , $proposalVersion, $decision, $order] = $this->supplierGraph($requestLines);
-        $service = $this->supplierProposalService($recorder);
+        $service = $this->supplierProposalService($recorder, $journal);
         $decidedAt = new DateTimeImmutable('2026-08-03T13:15:00.111222+00:00');
+        $proposal = $this->model(SupplierProposal::class, 80, [
+            'status' => SupplierProposalStatusEnum::SUBMITTED,
+        ]);
+        $decision->status = \App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum::SELECTED;
+        $decision->setRawAttributes([
+            ...$decision->getAttributes(),
+            'selected_at' => $decidedAt,
+        ], true);
+        $service->acceptanceDecision = $decision;
+        $service->acceptanceVersion = $proposalVersion;
+        $service->acceptanceOrder = $order;
 
-        $journal->within(fn () => $service->awarded($decision, $proposalVersion, $order, 503, $decidedAt));
-        $journal->within(fn () => $service->awarded($decision, $proposalVersion, $order, 503, $decidedAt));
+        $service->accept($proposal, 503);
+        $proposal->status = SupplierProposalStatusEnum::SUBMITTED;
+        $service->accept($proposal, 503);
 
         $awards = $journal->events(ProcurementProcessEventCode::AWARD_DECIDED);
         self::assertCount(2, $awards);
@@ -184,13 +255,12 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
         self::assertTrue(in_array($awards[0]->purchaseOrderItemId, [101, 102], true));
 
         try {
-            $journal->within(fn () => $service->awarded(
-                $decision,
-                $proposalVersion,
-                $order,
-                503,
-                $decidedAt->modify('+1 second'),
-            ));
+            $decision->setRawAttributes([
+                ...$decision->getAttributes(),
+                'selected_at' => $decidedAt->modify('+1 second'),
+            ], true);
+            $proposal->status = SupplierProposalStatusEnum::SUBMITTED;
+            $service->accept($proposal, 503);
             self::fail('Expected conflicting owner replay.');
         } catch (LogicException $exception) {
             self::assertSame('procurement_process_event_idempotency_conflict', $exception->getMessage());
@@ -199,20 +269,75 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
         self::assertCount(2, $journal->events(ProcurementProcessEventCode::AWARD_DECIDED));
     }
 
+    public function test_public_proposal_response_rejects_foreign_line_before_cycle_event(): void
+    {
+        [$request, $requestLines] = $this->requestGraph();
+        [$journal, $state, $recorder] = $this->source();
+        $this->seedSnapshots($state, $request, $requestLines);
+        [$supplierRequest] = $this->supplierGraph($requestLines);
+        $supplierRequest->status = \App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum::SENT;
+        $supplierRequest->public_token = 'public-token';
+        $service = $this->supplierProposalService($recorder, $journal);
+
+        try {
+            $service->createFromSupplierRequest($supplierRequest, [
+                'items' => [[
+                    'supplier_request_line_id' => 999999,
+                    'name' => 'Чужая строка',
+                    'quantity' => 1,
+                    'unit' => 'шт',
+                    'unit_price' => 1,
+                ]],
+            ], 502);
+            self::fail('Expected foreign supplier-request line to be rejected.');
+        } catch (LogicException $exception) {
+            self::assertSame('proposal_line_lineage_required', $exception->getMessage());
+        }
+
+        self::assertSame([], $journal->events(ProcurementProcessEventCode::SUPPLIER_RESPONDED));
+    }
+
     public function test_approval_handoff_accepts_submitted_winner_once(): void
     {
-        $proposalService = new RecordingSupplierProposalService();
-        $approvalService = $this->approvalService($proposalService);
-        $proposal = $this->model(SupplierProposal::class, 80, [
-            'status' => SupplierProposalStatusEnum::SUBMITTED,
-        ]);
-        $decision = $this->model(SupplierProposalDecision::class, 90);
+        [$request, $requestLines] = $this->requestGraph();
+        [$journal, $state, $recorder] = $this->source();
+        $this->seedSnapshots($state, $request, $requestLines);
+        [, , $proposal, $proposalVersion, $decision, $order] = $this->supplierGraph($requestLines);
+        $proposal->status = SupplierProposalStatusEnum::SUBMITTED;
+        $decision->status = SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
         $decision->setRelation('winningProposal', $proposal);
+        $proposalService = $this->supplierProposalService($recorder, $journal);
+        $proposalService->acceptanceDecision = $decision;
+        $proposalService->acceptanceVersion = $proposalVersion;
+        $proposalService->acceptanceOrder = $order;
+        $approvalService = $this->approvalService($proposalService, $journal);
+        $approvalService->decision = $decision;
+        $approvalService->blockingApprovals = [true, false, false];
 
-        $approvalService->handoff($decision, 503);
-        $approvalService->handoff($decision, 503);
+        $firstApproval = $this->model(ProcurementApproval::class, 201, [
+            'status' => ProcurementApprovalStatusEnum::PENDING,
+        ]);
+        $secondApproval = $this->model(ProcurementApproval::class, 202, [
+            'status' => ProcurementApprovalStatusEnum::PENDING,
+        ]);
+        $replayApproval = $this->model(ProcurementApproval::class, 203, [
+            'status' => ProcurementApprovalStatusEnum::PENDING,
+        ]);
 
-        self::assertSame([80], $proposalService->acceptedProposalIds);
+        $approvalService->approve($firstApproval, 503);
+        self::assertSame([], $journal->events(ProcurementProcessEventCode::AWARD_DECIDED));
+
+        $resolvedAt = new DateTimeImmutable('2026-08-03T14:15:00.445566+00:00');
+        $proposalService->approvedResolutionAt = $resolvedAt;
+        $approvalService->approve($secondApproval, 503);
+        $approvalService->approve($replayApproval, 503);
+
+        self::assertCount(2, $journal->events(ProcurementProcessEventCode::AWARD_DECIDED));
+        self::assertSame(SupplierProposalStatusEnum::ACCEPTED, $proposal->status);
+        self::assertSame(
+            $resolvedAt->format('U.u'),
+            $journal->events(ProcurementProcessEventCode::AWARD_DECIDED)[0]->occurredAt->format('U.u'),
+        );
     }
 
     public function test_order_and_receipt_owner_contracts_preserve_exact_time_and_milestones(): void
@@ -222,36 +347,54 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
         $this->seedSnapshots($state, $request, $requestLines);
         [, , , , , $order] = $this->supplierGraph($requestLines);
         [$firstReceipt, $secondReceipt] = $this->receiptGraph($order);
-        $service = $this->purchaseOrderService($recorder);
+        $service = $this->purchaseOrderService($recorder, $journal);
         $sentAt = new DateTimeImmutable('2026-08-04T07:00:00.333444+00:00');
+        $order->status = PurchaseOrderStatusEnum::DRAFT;
+        $journal->now = $sentAt;
 
-        $journal->within(fn () => $service->sent($order, 504, $sentAt));
+        $journal->failBeforeCommit = true;
+        try {
+            $service->sendToSupplier($order);
+            self::fail('Expected order send rollback.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('owner_mutation_failed', $exception->getMessage());
+        }
+        self::assertSame(PurchaseOrderStatusEnum::DRAFT, $order->status);
+        self::assertSame([], $journal->events(ProcurementProcessEventCode::ORDER_SENT));
+
+        $journal->failBeforeCommit = false;
+        $service->sendToSupplier($order);
         $state->fullyReceived = false;
-        $journal->within(fn () => $service->received(
+        $journal->now = new DateTimeImmutable('2026-08-05T07:00:00.111111+00:00');
+        $service->receiveMaterials(
             $order,
-            $firstReceipt,
+            1,
+            [],
             505,
-            new DateTimeImmutable('2026-08-05T07:00:00.111111+00:00'),
-        ));
+            ['receipt' => $firstReceipt],
+        );
         foreach ($requestLines as $line) {
             $state->existingEvents[$this->eventKey((int) $line->id, ProcurementProcessEventCode::FIRST_RECEIPT)] = true;
         }
         $state->fullyReceived = true;
-        $journal->within(fn () => $service->received(
+        $journal->now = new DateTimeImmutable('2026-08-06T07:00:00.222222+00:00');
+        $service->receiveMaterials(
             $order,
-            $secondReceipt,
+            1,
+            [],
             505,
-            new DateTimeImmutable('2026-08-06T07:00:00.222222+00:00'),
-        ));
+            ['receipt' => $secondReceipt],
+        );
         foreach ($requestLines as $line) {
             $state->existingEvents[$this->eventKey((int) $line->id, ProcurementProcessEventCode::FULLY_RECEIVED)] = true;
         }
-        $journal->within(fn () => $service->received(
+        $service->receiveMaterials(
             $order,
-            $secondReceipt,
+            1,
+            [],
             505,
-            new DateTimeImmutable('2026-08-06T07:00:00.222222+00:00'),
-        ));
+            ['receipt' => $secondReceipt],
+        );
 
         self::assertCount(2, $journal->events(ProcurementProcessEventCode::ORDER_SENT));
         self::assertCount(2, $journal->events(ProcurementProcessEventCode::FIRST_RECEIPT));
@@ -260,18 +403,7 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
             $sentAt->format('U.u'),
             $journal->events(ProcurementProcessEventCode::ORDER_SENT)[0]->occurredAt->format('U.u'),
         );
-    }
-
-    public function test_real_owner_adapter_cannot_append_outside_transaction(): void
-    {
-        [$request] = $this->requestGraph();
-        [, , $recorder] = $this->source();
-        $service = $this->purchaseRequestService($recorder);
-
-        $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('procurement_process_event_owner_transaction_required');
-
-        $service->created($request, 501, new DateTimeImmutable('2026-08-01T08:00:00+00:00'));
+        self::assertSame($sentAt->format('U.u'), $service->persistedSentAt?->format('U.u'));
     }
 
     private function source(): array
@@ -356,7 +488,7 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
             'purchase_request_id' => 30,
             'supplier_party_id' => 70,
         ]);
-        $supplierRequest->setRelation('lines', new Collection($supplierLines));
+        $supplierRequest->setRelation('lines', new \Illuminate\Database\Eloquent\Collection($supplierLines));
         $requestVersion = $this->model(SupplierRequestVersion::class, 62);
         $proposal = $this->model(SupplierProposal::class, 80, [
             'organization_id' => 10,
@@ -455,16 +587,19 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
 
     private function purchaseRequestService(
         ProcurementCycleOwnerEventRecorder $recorder,
+        OwnerWorkflowTransactionJournal $runtime,
     ): PurchaseRequestOwnerContractHarness {
         return new PurchaseRequestOwnerContractHarness(
             (new ReflectionClass(PurchaseRequestNumberGenerator::class))->newInstanceWithoutConstructor(),
             (new ReflectionClass(ProjectMaterialDeliveryService::class))->newInstanceWithoutConstructor(),
             $recorder,
+            $runtime,
         );
     }
 
     private function supplierRequestService(
         ProcurementCycleOwnerEventRecorder $recorder,
+        OwnerWorkflowTransactionJournal $runtime,
     ): SupplierRequestOwnerContractHarness {
         return new SupplierRequestOwnerContractHarness(
             (new ReflectionClass(SupplierPartyService::class))->newInstanceWithoutConstructor(),
@@ -472,11 +607,13 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
             (new ReflectionClass(SupplierRequestVersionService::class))->newInstanceWithoutConstructor(),
             (new ReflectionClass(ProcurementLifecycleService::class))->newInstanceWithoutConstructor(),
             $recorder,
+            $runtime,
         );
     }
 
     private function supplierProposalService(
         ProcurementCycleOwnerEventRecorder $recorder,
+        OwnerWorkflowTransactionJournal $runtime,
     ): SupplierProposalOwnerContractHarness {
         return new SupplierProposalOwnerContractHarness(
             (new ReflectionClass(ProcurementAuditService::class))->newInstanceWithoutConstructor(),
@@ -487,11 +624,13 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
             (new ReflectionClass(SupplierPartyService::class))->newInstanceWithoutConstructor(),
             $recorder,
             (new ReflectionClass(ProcurementAwardTimeResolver::class))->newInstanceWithoutConstructor(),
+            $runtime,
         );
     }
 
     private function purchaseOrderService(
         ProcurementCycleOwnerEventRecorder $recorder,
+        OwnerWorkflowTransactionJournal $runtime,
     ): PurchaseOrderOwnerContractHarness {
         return new PurchaseOrderOwnerContractHarness(
             (new ReflectionClass(PurchaseOrderPdfService::class))->newInstanceWithoutConstructor(),
@@ -501,11 +640,13 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
             (new ReflectionClass(PurchaseOrderPaymentGateService::class))->newInstanceWithoutConstructor(),
             (new ReflectionClass(ProjectMaterialDeliveryService::class))->newInstanceWithoutConstructor(),
             $recorder,
+            $runtime,
         );
     }
 
     private function approvalService(
-        RecordingSupplierProposalService $proposalService,
+        SupplierProposalService $proposalService,
+        OwnerWorkflowTransactionJournal $runtime,
     ): ProcurementApprovalOwnerContractHarness {
         return new ProcurementApprovalOwnerContractHarness(
             (new ReflectionClass(ProcurementAuditService::class))->newInstanceWithoutConstructor(),
@@ -513,6 +654,7 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
             (new ReflectionClass(ProcurementDutySeparationService::class))->newInstanceWithoutConstructor(),
             (new ReflectionClass(AuthorizationService::class))->newInstanceWithoutConstructor(),
             $proposalService,
+            $runtime,
         );
     }
 
@@ -533,103 +675,365 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
 
 final class PurchaseRequestOwnerContractHarness extends PurchaseRequestService
 {
-    public function created(PurchaseRequest $request, int $actorId, DateTimeImmutable $occurredAt): void
-    {
-        $this->recordRequestCreatedCycleEvent($request, $actorId, $occurredAt);
+    public ?PurchaseRequest $createdRequest = null;
+
+    public function __construct(
+        PurchaseRequestNumberGenerator $numberGenerator,
+        ProjectMaterialDeliveryService $deliveryService,
+        ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
+        private readonly OwnerWorkflowTransactionJournal $runtime,
+    ) {
+        parent::__construct($numberGenerator, $deliveryService, $cycleEventRecorder, $runtime);
     }
 
-    public function approved(PurchaseRequest $request, int $actorId, DateTimeImmutable $occurredAt): void
+    protected function checkLimits(int $organizationId): void
     {
-        $this->recordRequestApprovedCycleEvent($request, $actorId, $occurredAt);
     }
 
-    public function cancelled(
-        PurchaseRequest $request,
-        int $actorId,
+    protected function persistCreatedPurchaseRequest(
+        int $organizationId,
+        array $data,
+        ?SiteRequest $siteRequest,
+        ?int $siteRequestId,
         DateTimeImmutable $occurredAt,
-        ProcurementTerminalReason $reason,
-    ): void {
-        $this->recordRequestCancelledCycleEvent($request, $actorId, $occurredAt, $reason);
+    ): PurchaseRequest {
+        if (! $this->createdRequest instanceof PurchaseRequest) {
+            throw new LogicException('created_request_fixture_required');
+        }
+
+        $request = $this->createdRequest;
+        $this->createdRequest = null;
+
+        return $request;
     }
+
+    protected function dispatchCreatedAfterCommit(PurchaseRequest $purchaseRequest): void
+    {
+    }
+
+    protected function lockPurchaseRequestForOwnerWorkflow(PurchaseRequest $request): PurchaseRequest
+    {
+        return $request;
+    }
+
+    protected function persistApprovedPurchaseRequest(
+        PurchaseRequest $request,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $previousStatus = $request->status;
+        $request->status = PurchaseRequestStatusEnum::APPROVED;
+        $this->runtime->afterRollback(static function () use ($request, $previousStatus): void {
+            $request->status = $previousStatus;
+        });
+    }
+
+    protected function persistRejectedPurchaseRequest(
+        PurchaseRequest $request,
+        string $reason,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $previousStatus = $request->status;
+        $request->status = PurchaseRequestStatusEnum::REJECTED;
+        $this->runtime->afterRollback(static function () use ($request, $previousStatus): void {
+            $request->status = $previousStatus;
+        });
+    }
+
+    protected function afterPurchaseRequestApproved(PurchaseRequest $request, int $userId): void
+    {
+    }
+
+    protected function afterPurchaseRequestRejected(PurchaseRequest $request): void
+    {
+    }
+
+    protected function freshPurchaseRequest(PurchaseRequest $request): PurchaseRequest
+    {
+        return $request;
+    }
+
 }
 
 final class SupplierRequestOwnerContractHarness extends SupplierRequestService
 {
-    public function sent(
-        SupplierRequest $request,
-        SupplierRequestVersion $version,
+    public ?SupplierRequestVersion $sentVersion = null;
+
+    public ?DateTimeImmutable $persistedSentAt = null;
+
+    protected function lockSupplierRequestForSend(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest;
+    }
+
+    protected function syncSupplierRequestForSend(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest;
+    }
+
+    protected function persistSupplierRequestSent(
+        SupplierRequest $supplierRequest,
         ?int $actorId,
         DateTimeImmutable $occurredAt,
+    ): array {
+        if (! $this->sentVersion instanceof SupplierRequestVersion) {
+            throw new LogicException('sent_version_fixture_required');
+        }
+
+        $previousStatus = $supplierRequest->status->value;
+        $supplierRequest->status = \App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum::SENT;
+        $this->persistedSentAt = $occurredAt;
+
+        return [
+            'supplier_request' => $supplierRequest,
+            'version' => $this->sentVersion,
+            'previous_status' => $previousStatus,
+            'snapshot' => [],
+            'email_queued_to' => null,
+        ];
+    }
+
+    protected function recordSupplierRequestSentAudit(
+        SupplierRequest $supplierRequest,
+        SupplierRequestVersion $version,
+        ?int $actorId,
+        string $previousStatus,
+        array $snapshot,
+        ?string $emailQueuedTo,
     ): void {
-        $this->recordSolicitationSentCycleEvent($request, $version, $actorId, $occurredAt);
+    }
+
+    protected function freshSentSupplierRequest(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest;
     }
 }
 
 final class SupplierProposalOwnerContractHarness extends SupplierProposalService
 {
-    public function responded(
-        SupplierProposal $proposal,
-        SupplierProposalVersion $version,
-        ?int $actorId,
-        DateTimeImmutable $occurredAt,
-    ): void {
-        $this->recordSupplierRespondedCycleEvent($proposal, $version, $actorId, $occurredAt);
+    public ?SupplierProposal $responseProposal = null;
+
+    public ?SupplierProposalVersion $responseProposalVersion = null;
+
+    public ?SupplierRequestVersion $responseSupplierRequestVersion = null;
+
+    public ?DateTimeImmutable $persistedRespondedAt = null;
+
+    public ?SupplierProposalDecision $acceptanceDecision = null;
+
+    public ?SupplierProposalVersion $acceptanceVersion = null;
+
+    public ?PurchaseOrder $acceptanceOrder = null;
+
+    public ?DateTimeImmutable $approvedResolutionAt = null;
+
+    protected function lockSupplierRequestForProposalResponse(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest;
     }
 
-    public function awarded(
-        SupplierProposalDecision $decision,
-        SupplierProposalVersion $version,
-        PurchaseOrder $order,
+    protected function proposalLineLineageRequiredMessage(): string
+    {
+        return 'Строка запроса поставщику не принадлежит заявке.';
+    }
+
+    protected function throwProposalLineLineageValidation(): never
+    {
+        throw new LogicException('proposal_line_lineage_required');
+    }
+
+    protected function syncSupplierRequestForProposalResponse(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest;
+    }
+
+    protected function loadSupplierRequestForProposalResponse(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest;
+    }
+
+    protected function persistSupplierProposalResponse(
+        SupplierRequest $supplierRequest,
+        array $data,
         ?int $actorId,
-        DateTimeImmutable $occurredAt,
+        DateTimeImmutable $respondedAt,
+        string &$stage,
+    ): array {
+        if (
+            ! $this->responseProposal instanceof SupplierProposal
+            || ! $this->responseProposalVersion instanceof SupplierProposalVersion
+            || ! $this->responseSupplierRequestVersion instanceof SupplierRequestVersion
+        ) {
+            throw new LogicException('proposal_response_fixture_required');
+        }
+
+        $this->persistedRespondedAt = $respondedAt;
+        $supplierRequest->status = \App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum::RESPONDED;
+
+        return [
+            'supplier_request_version' => $this->responseSupplierRequestVersion,
+            'proposal' => $this->responseProposal,
+            'proposal_version' => $this->responseProposalVersion,
+        ];
+    }
+
+    protected function finishSupplierProposalResponse(
+        SupplierRequest $supplierRequest,
+        SupplierRequestVersion $supplierRequestVersion,
+        SupplierProposal $proposal,
+        SupplierProposalVersion $proposalVersion,
+        array $data,
+        ?int $actorId,
+        string &$stage,
+    ): SupplierProposal {
+        return $proposal;
+    }
+
+    protected function reportSupplierProposalCreationFailure(
+        SupplierRequest $supplierRequest,
+        array $data,
+        string $stage,
+        Throwable $exception,
     ): void {
-        $this->recordAwardDecidedCycleEvent($decision, $version, $order, $actorId, $occurredAt);
+    }
+
+    protected function acceptProposalOwnerWorkflow(
+        SupplierProposal $proposal,
+        ?int $actorId,
+        callable $onAccepted,
+    ): SupplierProposal {
+        if (
+            ! $this->acceptanceDecision instanceof SupplierProposalDecision
+            || ! $this->acceptanceVersion instanceof SupplierProposalVersion
+            || ! $this->acceptanceOrder instanceof PurchaseOrder
+        ) {
+            throw new LogicException('proposal_acceptance_fixture_required');
+        }
+
+        $proposal->status = SupplierProposalStatusEnum::ACCEPTED;
+        $proposal->purchase_order_id = (int) $this->acceptanceOrder->id;
+        $onAccepted(
+            $this->acceptanceDecision,
+            $this->acceptanceVersion,
+            $this->acceptanceOrder,
+            $this->decisionOccurredAt($this->acceptanceDecision),
+        );
+
+        return $proposal;
+    }
+
+    protected function latestApprovedDecisionResolutionAt(
+        SupplierProposalDecision $decision,
+    ): ?DateTimeImmutable {
+        return $this->approvedResolutionAt;
     }
 }
 
 final class PurchaseOrderOwnerContractHarness extends PurchaseOrderService
 {
-    public function sent(PurchaseOrder $order, ?int $actorId, DateTimeImmutable $occurredAt): void
-    {
-        $this->recordOrderSentCycleEvent($order, $actorId, $occurredAt);
+    public ?DateTimeImmutable $persistedSentAt = null;
+
+    public function __construct(
+        PurchaseOrderPdfService $pdfService,
+        SupplierPartyService $supplierPartyService,
+        ProcurementAuditService $auditService,
+        ProcurementLifecycleService $lifecycleService,
+        PurchaseOrderPaymentGateService $paymentGateService,
+        ProjectMaterialDeliveryService $deliveryService,
+        ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
+        private readonly OwnerWorkflowTransactionJournal $runtime,
+    ) {
+        parent::__construct(
+            $pdfService,
+            $supplierPartyService,
+            $auditService,
+            $lifecycleService,
+            $paymentGateService,
+            $deliveryService,
+            $cycleEventRecorder,
+            $runtime,
+        );
     }
 
-    public function received(
+    protected function sendToSupplierOwnerWorkflow(PurchaseOrder $order, callable $onSent): PurchaseOrder
+    {
+        if (! $order->canBeSent()) {
+            throw new LogicException('purchase_order_send_status_invalid');
+        }
+
+        $previousStatus = $order->status;
+        $occurredAt = $this->runtime->occurredAt();
+        $order->status = PurchaseOrderStatusEnum::SENT;
+        $this->persistedSentAt = $occurredAt;
+        $this->runtime->afterRollback(static function () use ($order, $previousStatus): void {
+            $order->status = $previousStatus;
+        });
+        $onSent($order, 504, $occurredAt);
+
+        return $order;
+    }
+
+    protected function receiveMaterialsOwnerWorkflow(
         PurchaseOrder $order,
-        PurchaseReceipt $receipt,
-        int $actorId,
-        DateTimeImmutable $occurredAt,
-    ): void {
-        $this->recordReceiptMilestonesCycleEvent($order, $receipt, $actorId, $occurredAt);
+        int $warehouseId,
+        array $items,
+        int $userId,
+        array $receiptData,
+        callable $onReceived,
+    ): PurchaseOrder {
+        $receipt = $receiptData['receipt'] ?? null;
+        if (! $receipt instanceof PurchaseReceipt) {
+            throw new LogicException('purchase_receipt_fixture_required');
+        }
+
+        $onReceived($order, $receipt, $userId, $this->runtime->occurredAt());
+
+        return $order;
     }
 }
 
 final class ProcurementApprovalOwnerContractHarness extends ProcurementApprovalService
 {
-    public function handoff(SupplierProposalDecision $decision, int $actorId): void
+    public ?SupplierProposalDecision $decision = null;
+
+    public array $blockingApprovals = [];
+
+    protected function resolveApprovedOwnerState(
+        ProcurementApproval $approval,
+        int $actorId,
+        ?string $comment,
+    ): array {
+        if (! $this->decision instanceof SupplierProposalDecision) {
+            throw new LogicException('approval_decision_fixture_required');
+        }
+
+        $approval->status = ProcurementApprovalStatusEnum::APPROVED;
+
+        return [
+            'approval' => $approval,
+            'decision' => $this->decision,
+            'blocking_approvals_exist' => array_shift($this->blockingApprovals) ?? false,
+        ];
+    }
+
+    protected function markProposalDecisionApproved(SupplierProposalDecision $decision): void
     {
-        $this->acceptApprovedWinningProposal($decision, $actorId);
+        $decision->status = SupplierProposalDecisionEnum::APPROVED;
+    }
+
+    protected function finishApprovedOwnerState(
+        ProcurementApproval $lockedApproval,
+        SupplierProposalDecision $decision,
+        int $actorId,
+        ?string $comment,
+    ): ProcurementApproval {
+        return $lockedApproval;
     }
 }
 
-final class RecordingSupplierProposalService extends SupplierProposalService
-{
-    public array $acceptedProposalIds = [];
-
-    public function __construct()
-    {
-    }
-
-    public function accept(SupplierProposal $proposal, ?int $actorId = null): SupplierProposal
-    {
-        $this->acceptedProposalIds[] = (int) $proposal->id;
-        $proposal->status = SupplierProposalStatusEnum::ACCEPTED;
-
-        return $proposal;
-    }
-}
-
-final class OwnerWorkflowTransactionJournal implements ProcurementProcessEventStore, ProcurementTransactionBoundary
+final class OwnerWorkflowTransactionJournal implements
+    ProcurementProcessEventStore,
+    ProcurementTransactionBoundary,
+    ProcurementOwnerWorkflowRuntime
 {
     public array $committed = [];
 
@@ -639,31 +1043,63 @@ final class OwnerWorkflowTransactionJournal implements ProcurementProcessEventSt
 
     private bool $active = false;
 
+    private int $depth = 0;
+
+    private array $commitCallbacks = [];
+
+    public bool $failBeforeCommit = false;
+
+    public DateTimeImmutable $now;
+
+    public function __construct()
+    {
+        $this->now = new DateTimeImmutable('2026-08-01T09:00:00.123456+00:00');
+    }
+
     public function within(callable $workflow): mixed
     {
-        if ($this->active) {
-            throw new LogicException('owner_workflow_nested_transaction_not_supported');
+        $outermost = $this->depth === 0;
+        if ($outermost) {
+            $this->active = true;
+            $this->pending = [];
+            $this->rollbackCallbacks = [];
+            $this->commitCallbacks = [];
         }
-
-        $this->active = true;
-        $this->pending = [];
-        $this->rollbackCallbacks = [];
+        $this->depth++;
         try {
             $result = $workflow();
-            foreach ($this->pending as $identity => $transition) {
-                $this->committed[$identity] = $transition;
+            $this->depth--;
+            if ($outermost) {
+                if ($this->failBeforeCommit) {
+                    throw new RuntimeException('owner_mutation_failed');
+                }
+                foreach ($this->pending as $identity => $transition) {
+                    $this->committed[$identity] = $transition;
+                }
+                foreach ($this->commitCallbacks as $callback) {
+                    $callback();
+                }
             }
 
             return $result;
         } catch (Throwable $exception) {
-            foreach (array_reverse($this->rollbackCallbacks) as $callback) {
-                $callback();
+            if ($this->depth > 0) {
+                $this->depth--;
+            }
+            if ($outermost) {
+                foreach (array_reverse($this->rollbackCallbacks) as $callback) {
+                    $callback();
+                }
             }
             throw $exception;
         } finally {
-            $this->pending = [];
-            $this->rollbackCallbacks = [];
-            $this->active = false;
+            if ($outermost) {
+                $this->pending = [];
+                $this->rollbackCallbacks = [];
+                $this->commitCallbacks = [];
+                $this->active = false;
+                $this->depth = 0;
+            }
         }
     }
 
@@ -674,6 +1110,22 @@ final class OwnerWorkflowTransactionJournal implements ProcurementProcessEventSt
         }
 
         $this->rollbackCallbacks[] = $callback;
+    }
+
+    public function occurredAt(): DateTimeImmutable
+    {
+        return $this->now;
+    }
+
+    public function afterCommit(callable $callback): void
+    {
+        if (! $this->active) {
+            $callback();
+
+            return;
+        }
+
+        $this->commitCallbacks[] = $callback;
     }
 
     public function append(ProcurementProcessTransition $transition): void

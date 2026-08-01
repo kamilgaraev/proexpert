@@ -13,6 +13,8 @@ use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequestVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
+use Carbon\CarbonImmutable;
 use DateTimeImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -28,6 +30,7 @@ class SupplierRequestService
         private readonly SupplierRequestVersionService $versionService,
         private readonly ProcurementLifecycleService $lifecycleService,
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
+        private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
     ) {
     }
 
@@ -145,12 +148,9 @@ class SupplierRequestService
 
     public function send(SupplierRequest $supplierRequest, ?int $actorId = null): SupplierRequest
     {
-        return DB::transaction(function () use ($supplierRequest, $actorId): SupplierRequest {
-            $supplierRequest = SupplierRequest::query()
-                ->whereKey($supplierRequest->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
-            $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+        return $this->ownerWorkflowRuntime->within(function () use ($supplierRequest, $actorId): SupplierRequest {
+            $supplierRequest = $this->lockSupplierRequestForSend($supplierRequest);
+            $supplierRequest = $this->syncSupplierRequestForSend($supplierRequest);
 
             if (!$supplierRequest->canBeSent()) {
                 throw ValidationException::withMessages([
@@ -158,39 +158,90 @@ class SupplierRequestService
                 ]);
             }
 
-            $previousStatus = $supplierRequest->status->value;
-            $occurredAt = now('UTC');
-
-            $supplierRequest->update([
-                'status' => SupplierRequestStatusEnum::SENT,
-                'sent_at' => $occurredAt,
-                'public_token' => $supplierRequest->public_token ?? $this->generatePublicToken(),
-                'public_token_expires_at' => $occurredAt->copy()
-                    ->addDays((int) config('procurement.supplier_request_public_link_ttl_days', 14)),
-                'public_opened_at' => null,
-            ]);
-
-            $requestedParty = $this->supplierPartyService->markRequested($supplierRequest->supplier_party_id);
-
-            if ($requestedParty instanceof SupplierParty) {
-                $supplierRequest->update([
-                    'supplier_snapshot' => $this->supplierPartyService->snapshotForDocument($requestedParty),
-                ]);
-            }
-
-            $supplierRequest->loadMissing('purchaseRequest');
-            $version = $this->versionService->createSentVersion($supplierRequest->refresh(), $actorId);
-            $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
-            $emailQueuedTo = $this->queuePublicLinkEmail($supplierRequest);
+            $occurredAt = $this->ownerWorkflowRuntime->occurredAt();
+            $context = $this->persistSupplierRequestSent($supplierRequest, $actorId, $occurredAt);
+            $supplierRequest = $context['supplier_request'];
+            $version = $context['version'];
 
             $this->recordSolicitationSentCycleEvent(
                 $supplierRequest,
                 $version,
                 $actorId,
-                $occurredAt->toDateTimeImmutable(),
+                $occurredAt,
             );
 
-            $this->auditService->record(
+            $this->recordSupplierRequestSentAudit(
+                $supplierRequest,
+                $version,
+                $actorId,
+                $context['previous_status'],
+                $context['snapshot'],
+                $context['email_queued_to'],
+            );
+
+            return $this->freshSentSupplierRequest($supplierRequest);
+        });
+    }
+
+    protected function lockSupplierRequestForSend(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return SupplierRequest::query()
+            ->whereKey($supplierRequest->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    protected function syncSupplierRequestForSend(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+    }
+
+    protected function persistSupplierRequestSent(
+        SupplierRequest $supplierRequest,
+        ?int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): array {
+        $previousStatus = $supplierRequest->status->value;
+        $occurredAtValue = CarbonImmutable::instance($occurredAt);
+
+        $supplierRequest->update([
+            'status' => SupplierRequestStatusEnum::SENT,
+            'sent_at' => $occurredAtValue,
+            'public_token' => $supplierRequest->public_token ?? $this->generatePublicToken(),
+            'public_token_expires_at' => $occurredAtValue
+                ->addDays((int) config('procurement.supplier_request_public_link_ttl_days', 14)),
+            'public_opened_at' => null,
+        ]);
+
+        $requestedParty = $this->supplierPartyService->markRequested($supplierRequest->supplier_party_id);
+        if ($requestedParty instanceof SupplierParty) {
+            $supplierRequest->update([
+                'supplier_snapshot' => $this->supplierPartyService->snapshotForDocument($requestedParty),
+            ]);
+        }
+
+        $supplierRequest->loadMissing('purchaseRequest');
+        $version = $this->versionService->createSentVersion($supplierRequest->refresh(), $actorId);
+        $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
+
+        return [
+            'supplier_request' => $supplierRequest,
+            'version' => $version,
+            'previous_status' => $previousStatus,
+            'snapshot' => $snapshot,
+            'email_queued_to' => $this->queuePublicLinkEmail($supplierRequest),
+        ];
+    }
+
+    protected function recordSupplierRequestSentAudit(
+        SupplierRequest $supplierRequest,
+        SupplierRequestVersion $version,
+        ?int $actorId,
+        string $previousStatus,
+        array $snapshot,
+        ?string $emailQueuedTo,
+    ): void {
+        $this->auditService->record(
                 ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_SENT->value,
                 $supplierRequest,
                 (int) $supplierRequest->organization_id,
@@ -209,10 +260,19 @@ class SupplierRequestService
                     'purchase_request_number' => $supplierRequest->purchaseRequest?->request_number,
                     'supplier_name' => $this->supplierName($snapshot),
                 ]
-            );
+        );
+    }
 
-            return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'currentVersion']);
-        });
+    protected function freshSentSupplierRequest(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest->refresh()->load([
+            'lines',
+            'supplier',
+            'externalSupplierContact',
+            'supplierParty',
+            'purchaseRequest',
+            'currentVersion',
+        ]);
     }
 
     public function cancel(SupplierRequest $supplierRequest, ?int $actorId = null): SupplierRequest

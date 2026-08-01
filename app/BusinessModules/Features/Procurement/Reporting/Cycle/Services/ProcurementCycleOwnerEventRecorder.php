@@ -300,12 +300,13 @@ final readonly class ProcurementCycleOwnerEventRecorder
         ProcurementProcessDimensionSnapshot $snapshot,
         ProcurementTerminalReason $terminalReason,
     ): bool {
-        if (($snapshot->values['policy_version_id'] ?? null) !== null) {
-            return $this->sourceState->policyAllows($snapshot, $terminalReason);
+        foreach (['policy_version_id', 'policy_hash', 'calendar_version', 'calendar_hash'] as $pin) {
+            if (($snapshot->values[$pin] ?? null) === null) {
+                return false;
+            }
         }
 
-        return $terminalReason === ProcurementTerminalReason::REQUEST_REJECTED
-            && in_array('missing_policy_version', (array) ($snapshot->values['gap_codes'] ?? []), true);
+        return $this->sourceState->policyAllows($snapshot, $terminalReason);
     }
 
     private function recordReceiptEvent(

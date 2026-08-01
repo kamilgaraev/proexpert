@@ -471,11 +471,7 @@ BEGIN
     END IF;
 
     IF NEW.event_code = 'cancelled'
-       AND NEW.policy_version_id IS NULL
-       AND (
-           NEW.terminal_reason IS DISTINCT FROM 'request_rejected'
-           OR (NEW.dimension_snapshot->'gap_codes' ? 'missing_policy_version') IS NOT TRUE
-       ) THEN
+       AND NEW.policy_version_id IS NULL THEN
         RAISE EXCEPTION 'procurement process unpinned terminal reason is not permitted' USING ERRCODE = '23514';
     END IF;
 

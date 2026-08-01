@@ -13,10 +13,13 @@ final class ProcurementCycleMigrationContractTest extends TestCase
         $migration = $this->migration();
 
         self::assertStringContainsString(
+            "IF NEW.event_code = 'cancelled'\n       AND NEW.policy_version_id IS NULL THEN",
+            $migration,
+        );
+        self::assertStringNotContainsString(
             "NEW.terminal_reason IS DISTINCT FROM 'request_rejected'",
             $migration,
         );
-        self::assertStringContainsString("'missing_policy_version'", $migration);
         self::assertStringContainsString(
             'pinned_policy.terminal_cancellation_policy @> jsonb_build_array(NEW.terminal_reason)',
             $migration,

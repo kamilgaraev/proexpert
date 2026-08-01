@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementTerminalReason;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -42,6 +43,7 @@ class PurchaseRequestService
         private readonly PurchaseRequestNumberGenerator $numberGenerator,
         private readonly ProjectMaterialDeliveryService $deliveryService,
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
+        private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
     ) {}
 
     public function find(int $id, int $organizationId): ?PurchaseRequest
@@ -190,10 +192,38 @@ class PurchaseRequestService
             throw new \DomainException(trans_message('procurement.purchase_requests.duplicate_site_request'));
         }
 
-        DB::beginTransaction();
+        $purchaseRequest = $this->ownerWorkflowRuntime->within(function () use (
+            $organizationId,
+            $actorId,
+            $data,
+            $siteRequest,
+            $siteRequestId,
+        ): PurchaseRequest {
+            $occurredAt = $this->ownerWorkflowRuntime->occurredAt();
+            $purchaseRequest = $this->persistCreatedPurchaseRequest(
+                $organizationId,
+                $data,
+                $siteRequest,
+                $siteRequestId,
+                $occurredAt,
+            );
 
-        try {
-            $occurredAt = now('UTC');
+            $this->recordRequestCreatedCycleEvent($purchaseRequest, $actorId, $occurredAt);
+            $this->dispatchCreatedAfterCommit($purchaseRequest);
+
+            return $purchaseRequest;
+        });
+
+        return $this->freshPurchaseRequest($purchaseRequest);
+    }
+
+    protected function persistCreatedPurchaseRequest(
+        int $organizationId,
+        array $data,
+        ?SiteRequest $siteRequest,
+        ?int $siteRequestId,
+        DateTimeImmutable $occurredAt,
+    ): PurchaseRequest {
             $requestNumber = $this->numberGenerator->generate($organizationId, $siteRequest?->request_type);
 
             $purchaseRequest = new PurchaseRequest([
@@ -228,99 +258,107 @@ class PurchaseRequestService
                 $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
             }
 
-            $this->recordRequestCreatedCycleEvent(
-                $purchaseRequest,
-                $actorId,
-                $occurredAt->toDateTimeImmutable(),
-            );
-
-            $this->dispatchCreatedAfterCommit($purchaseRequest);
-            DB::commit();
-
-            return $purchaseRequest->fresh(self::RESOURCE_RELATIONS);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+            return $purchaseRequest;
     }
 
     public function approve(PurchaseRequest $request, int $userId): PurchaseRequest
     {
-        DB::beginTransaction();
-
-        try {
-            $request = PurchaseRequest::query()
-                ->whereKey($request->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+        $request = $this->ownerWorkflowRuntime->within(function () use ($request, $userId): PurchaseRequest {
+            $request = $this->lockPurchaseRequestForOwnerWorkflow($request);
 
             if (! $request->canBeApproved()) {
                 throw new \DomainException(trans_message('procurement.purchase_requests.approve_invalid_status'));
             }
 
-            $occurredAt = now('UTC');
-            $request->status = PurchaseRequestStatusEnum::APPROVED;
-            $request->setUpdatedAt($occurredAt);
-            $request->save();
+            $occurredAt = $this->ownerWorkflowRuntime->occurredAt();
+            $this->persistApprovedPurchaseRequest($request, $occurredAt);
 
             $this->recordRequestApprovedCycleEvent(
                 $request,
                 $userId,
-                $occurredAt->toDateTimeImmutable(),
+                $occurredAt,
             );
 
-            DB::commit();
+            return $request;
+        });
 
-            $this->invalidateCache($request->organization_id);
+        $this->afterPurchaseRequestApproved($request, $userId);
 
-            event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestApproved($request, $userId));
+        return $this->freshPurchaseRequest($request);
+    }
 
-            return $request->fresh(self::RESOURCE_RELATIONS);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+    protected function lockPurchaseRequestForOwnerWorkflow(PurchaseRequest $request): PurchaseRequest
+    {
+        return PurchaseRequest::query()
+            ->whereKey($request->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    protected function persistApprovedPurchaseRequest(
+        PurchaseRequest $request,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $request->status = PurchaseRequestStatusEnum::APPROVED;
+        $request->setUpdatedAt($occurredAt);
+        $request->save();
+    }
+
+    protected function afterPurchaseRequestApproved(PurchaseRequest $request, int $userId): void
+    {
+        $this->invalidateCache((int) $request->organization_id);
+        event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestApproved($request, $userId));
+    }
+
+    protected function freshPurchaseRequest(PurchaseRequest $request): PurchaseRequest
+    {
+        return $request->fresh(self::RESOURCE_RELATIONS);
     }
 
     public function reject(PurchaseRequest $request, int $userId, string $reason): PurchaseRequest
     {
-        DB::beginTransaction();
-
-        try {
-            $request = PurchaseRequest::query()
-                ->whereKey($request->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+        $request = $this->ownerWorkflowRuntime->within(function () use ($request, $userId, $reason): PurchaseRequest {
+            $request = $this->lockPurchaseRequestForOwnerWorkflow($request);
 
             if (! $request->canBeRejected()) {
                 throw new \DomainException(trans_message('procurement.purchase_requests.reject_invalid_status'));
             }
 
-            $occurredAt = now('UTC');
-            $request->status = PurchaseRequestStatusEnum::REJECTED;
-            $request->notes = ($request->notes ? $request->notes."\n\n" : '').trans_message(
-                'procurement.purchase_requests.rejection_note',
-                ['reason' => $reason],
-            );
-            $request->setUpdatedAt($occurredAt);
-            $request->save();
+            $occurredAt = $this->ownerWorkflowRuntime->occurredAt();
+            $this->persistRejectedPurchaseRequest($request, $reason, $occurredAt);
 
             $this->recordRequestCancelledCycleEvent(
                 $request,
                 $userId,
-                $occurredAt->toDateTimeImmutable(),
+                $occurredAt,
                 ProcurementTerminalReason::REQUEST_REJECTED,
             );
 
-            DB::commit();
+            return $request;
+        });
 
-            $this->invalidateCache($request->organization_id);
+        $this->afterPurchaseRequestRejected($request);
 
-            return $request->fresh(self::RESOURCE_RELATIONS);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+        return $this->freshPurchaseRequest($request);
+    }
+
+    protected function persistRejectedPurchaseRequest(
+        PurchaseRequest $request,
+        string $reason,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $request->status = PurchaseRequestStatusEnum::REJECTED;
+        $request->notes = ($request->notes ? $request->notes."\n\n" : '').trans_message(
+            'procurement.purchase_requests.rejection_note',
+            ['reason' => $reason],
+        );
+        $request->setUpdatedAt($occurredAt);
+        $request->save();
+    }
+
+    protected function afterPurchaseRequestRejected(PurchaseRequest $request): void
+    {
+        $this->invalidateCache((int) $request->organization_id);
     }
 
     public function assignToSupplier(PurchaseRequest $request, int $supplierId): PurchaseOrder
@@ -361,7 +399,7 @@ class PurchaseRequestService
         $this->cycleEventRecorder->recordRequestCancelled($request, $actorId, $occurredAt, $reason);
     }
 
-    private function checkLimits(int $organizationId): void
+    protected function checkLimits(int $organizationId): void
     {
         $module = app(\App\BusinessModules\Features\Procurement\ProcurementModule::class);
         $limits = $module->getLimits();
@@ -447,12 +485,12 @@ class PurchaseRequestService
         Cache::forget("procurement_purchase_requests_{$organizationId}");
     }
 
-    private function dispatchCreatedAfterCommit(PurchaseRequest $purchaseRequest): void
+    protected function dispatchCreatedAfterCommit(PurchaseRequest $purchaseRequest): void
     {
         $purchaseRequestId = (int) $purchaseRequest->id;
         $organizationId = (int) $purchaseRequest->organization_id;
 
-        DB::afterCommit(function () use ($purchaseRequestId, $organizationId): void {
+        $this->ownerWorkflowRuntime->afterCommit(function () use ($purchaseRequestId, $organizationId): void {
             $this->invalidateCache($organizationId);
 
             $createdPurchaseRequest = PurchaseRequest::query()->find($purchaseRequestId);

@@ -14,6 +14,7 @@ use App\DTOs\Contract\ContractDossierCreationResult;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\Models\Contract;
 use App\Models\Supplier;
 use App\Models\User;
@@ -35,6 +36,7 @@ class PurchaseOrderService
         private readonly PurchaseOrderPaymentGateService $paymentGateService,
         private readonly ProjectMaterialDeliveryService $deliveryService,
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
+        private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
     ) {}
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
@@ -131,6 +133,20 @@ class PurchaseOrderService
 
     public function sendToSupplier(PurchaseOrder $order): PurchaseOrder
     {
+        return $this->ownerWorkflowRuntime->within(fn (): PurchaseOrder => $this->sendToSupplierOwnerWorkflow(
+            $order,
+            function (
+                PurchaseOrder $sentOrder,
+                ?int $actorId,
+                DateTimeImmutable $occurredAt,
+            ): void {
+                $this->recordOrderSentCycleEvent($sentOrder, $actorId, $occurredAt);
+            },
+        ));
+    }
+
+    protected function sendToSupplierOwnerWorkflow(PurchaseOrder $order, callable $onSent): PurchaseOrder
+    {
         DB::beginTransaction();
 
         try {
@@ -150,7 +166,7 @@ class PurchaseOrderService
 
             $pdfPath = $this->pdfService->store($order);
             $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
-            $sentAt = now('UTC');
+            $sentAt = $this->ownerWorkflowRuntime->occurredAt();
             $actorId = auth()->id();
 
             \Illuminate\Support\Facades\Mail::to($order->supplier->email)
@@ -171,10 +187,10 @@ class PurchaseOrderService
                 ]),
             ]);
 
-            $this->recordOrderSentCycleEvent(
+            $onSent(
                 $order,
                 $actorId,
-                $sentAt->toDateTimeImmutable(),
+                $sentAt,
             );
 
             DB::commit();
@@ -229,6 +245,31 @@ class PurchaseOrderService
         int $userId,
         array $receiptData = []
     ): PurchaseOrder {
+        return $this->ownerWorkflowRuntime->within(fn (): PurchaseOrder => $this->receiveMaterialsOwnerWorkflow(
+            $order,
+            $warehouseId,
+            $items,
+            $userId,
+            $receiptData,
+            function (
+                PurchaseOrder $receivedOrder,
+                PurchaseReceipt $receipt,
+                int $actorId,
+                DateTimeImmutable $occurredAt,
+            ): void {
+                $this->recordReceiptMilestonesCycleEvent($receivedOrder, $receipt, $actorId, $occurredAt);
+            },
+        ));
+    }
+
+    protected function receiveMaterialsOwnerWorkflow(
+        PurchaseOrder $order,
+        int $warehouseId,
+        array $items,
+        int $userId,
+        array $receiptData,
+        callable $onReceived,
+    ): PurchaseOrder {
         DB::beginTransaction();
 
         try {
@@ -242,7 +283,7 @@ class PurchaseOrderService
 
             $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
             $orderItems = $this->resolveOrderItems($order, $items);
-            $receivedAt = now('UTC');
+            $receivedAt = $this->ownerWorkflowRuntime->occurredAt();
             $receiptNumber = $this->generateReceiptNumber();
             $receiptDate = $receiptData['receipt_date'] ?? now()->toDateString();
             $receiptMetadata = is_array($receiptData['metadata'] ?? null) ? $receiptData['metadata'] : [];
@@ -292,11 +333,11 @@ class PurchaseOrderService
             $receipt->loadMissing('lines');
             $order->loadMissing('items');
 
-            $this->recordReceiptMilestonesCycleEvent(
+            $onReceived(
                 $order,
                 $receipt,
                 $userId,
-                $receivedAt->toDateTimeImmutable(),
+                $receivedAt,
             );
 
             $this->auditService->record(

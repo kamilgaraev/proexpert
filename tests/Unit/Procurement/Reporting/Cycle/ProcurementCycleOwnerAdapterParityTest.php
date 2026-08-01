@@ -48,7 +48,19 @@ final class ProcurementCycleOwnerAdapterParityTest extends TestCase
         $occurredAt = new DateTimeImmutable('2026-08-01T10:00:00.123456+00:00');
 
         $owner->recordRequestCreated($request, 50, $occurredAt);
-        $state->requestCreated = $store->transitions[0]->dimensionSnapshot;
+        $state->requestCreated = ProcurementProcessDimensionSnapshot::fromArray([
+            'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
+            'organization_id' => 10,
+            'project_id' => 20,
+            'purchase_request_id' => 30,
+            'purchase_request_line_id' => 40,
+            'policy_version_id' => 90,
+            'policy_hash' => str_repeat('a', 64),
+            'calendar_version' => 'procurement-business-calendar.v1',
+            'calendar_hash' => str_repeat('b', 64),
+            'quality_status' => 'FULL',
+            'gap_codes' => [],
+        ]);
         $owner->recordRequestApproved($request, 50, $occurredAt->modify('+1 second'));
         $owner->recordRequestCancelled(
             $request,
@@ -246,7 +258,7 @@ final class ProcurementCycleOwnerAdapterParityTest extends TestCase
         ], $transition->dimensionSnapshot->values);
     }
 
-    public function test_request_rejected_without_published_policy_is_recorded_as_partial_rollout_evidence(): void
+    public function test_request_rejected_without_published_policy_is_rejected_without_event(): void
     {
         [$request] = $this->requestGraph();
         $store = new OwnerParityStore();
@@ -266,17 +278,19 @@ final class ProcurementCycleOwnerAdapterParityTest extends TestCase
             $state,
         );
 
-        $owner->recordRequestCancelled(
-            $request,
-            50,
-            new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
-            ProcurementTerminalReason::REQUEST_REJECTED,
-        );
+        try {
+            $owner->recordRequestCancelled(
+                $request,
+                50,
+                new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
+                ProcurementTerminalReason::REQUEST_REJECTED,
+            );
+            self::fail('Expected an unpinned terminal reason to be rejected.');
+        } catch (\LogicException $exception) {
+            self::assertSame('procurement_cycle_terminal_reason_not_allowed', $exception->getMessage());
+        }
 
-        self::assertCount(1, $store->transitions);
-        self::assertSame(ProcurementTerminalReason::REQUEST_REJECTED, $store->transitions[0]->terminalReason);
-        self::assertNull($store->transitions[0]->policyVersionId);
-        self::assertContains('missing_policy_version', $store->transitions[0]->dimensionSnapshot->values['gap_codes']);
+        self::assertSame([], $store->transitions);
     }
 
     public function test_missing_request_created_uses_quarantine_without_current_project_reconstruction(): void

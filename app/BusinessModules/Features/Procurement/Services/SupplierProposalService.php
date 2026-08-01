@@ -20,6 +20,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementAwardTimeResolver;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -39,6 +40,7 @@ class SupplierProposalService
         private readonly SupplierPartyService $supplierPartyService,
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
         private readonly ProcurementAwardTimeResolver $awardTimeResolver,
+        private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
     ) {}
 
     public function createFromSupplierRequest(
@@ -49,13 +51,15 @@ class SupplierProposalService
         $stage = 'start';
 
         try {
-            return DB::transaction(function () use ($supplierRequest, $data, $actorId, &$stage): SupplierProposal {
+            return $this->ownerWorkflowRuntime->within(function () use (
+                $supplierRequest,
+                $data,
+                $actorId,
+                &$stage,
+            ): SupplierProposal {
                 $stage = 'sync_expiry';
-                $supplierRequest = SupplierRequest::query()
-                    ->whereKey($supplierRequest->getKey())
-                    ->lockForUpdate()
-                    ->firstOrFail();
-                $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+                $supplierRequest = $this->lockSupplierRequestForProposalResponse($supplierRequest);
+                $supplierRequest = $this->syncSupplierRequestForProposalResponse($supplierRequest);
 
                 if (! $supplierRequest->canReceivePublicProposal()) {
                     throw ValidationException::withMessages([
@@ -64,7 +68,7 @@ class SupplierProposalService
                 }
 
                 $stage = 'resolve_request_version';
-                $supplierRequest->loadMissing(['lines', 'supplierParty']);
+                $supplierRequest = $this->loadSupplierRequestForProposalResponse($supplierRequest);
                 $items = $data['items'] ?? [];
                 $allowedLineIds = $supplierRequest->lines->modelKeys();
                 if ($items === [] || collect($items)->contains(
@@ -74,15 +78,80 @@ class SupplierProposalService
                         true,
                     ),
                 )) {
-                    throw ValidationException::withMessages([
-                        'items' => trans_message('procurement.proposals.line_lineage_required'),
-                    ]);
+                    $this->throwProposalLineLineageValidation();
                 }
-                $supplierRequestVersion = $this->requestVersionService->resolveForProposal($supplierRequest, $actorId);
-                $amounts = $this->commercialAmounts($data);
+                $respondedAt = $this->ownerWorkflowRuntime->occurredAt();
+                $context = $this->persistSupplierProposalResponse(
+                    $supplierRequest,
+                    $data,
+                    $actorId,
+                    $respondedAt,
+                    $stage,
+                );
+                $proposal = $context['proposal'];
+                $proposalVersion = $context['proposal_version'];
 
-                $stage = 'create_proposal';
-                $proposal = SupplierProposal::query()->create([
+                $this->recordSupplierRespondedCycleEvent($proposal, $proposalVersion, $actorId, $respondedAt);
+
+                return $this->finishSupplierProposalResponse(
+                    $supplierRequest,
+                    $context['supplier_request_version'],
+                    $proposal,
+                    $proposalVersion,
+                    $data,
+                    $actorId,
+                    $stage,
+                );
+            });
+        } catch (Throwable $exception) {
+            $this->reportSupplierProposalCreationFailure($supplierRequest, $data, $stage, $exception);
+
+            throw $exception;
+        }
+    }
+
+    protected function lockSupplierRequestForProposalResponse(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return SupplierRequest::query()
+            ->whereKey($supplierRequest->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    protected function proposalLineLineageRequiredMessage(): string
+    {
+        return trans_message('procurement.proposals.line_lineage_required');
+    }
+
+    protected function throwProposalLineLineageValidation(): never
+    {
+        throw ValidationException::withMessages([
+            'items' => $this->proposalLineLineageRequiredMessage(),
+        ]);
+    }
+
+    protected function syncSupplierRequestForProposalResponse(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+    }
+
+    protected function loadSupplierRequestForProposalResponse(SupplierRequest $supplierRequest): SupplierRequest
+    {
+        return $supplierRequest->loadMissing(['lines', 'supplierParty']);
+    }
+
+    protected function persistSupplierProposalResponse(
+        SupplierRequest $supplierRequest,
+        array $data,
+        ?int $actorId,
+        DateTimeImmutable $respondedAt,
+        string &$stage,
+    ): array {
+        $supplierRequestVersion = $this->requestVersionService->resolveForProposal($supplierRequest, $actorId);
+        $amounts = $this->commercialAmounts($data);
+
+        $stage = 'create_proposal';
+        $proposal = SupplierProposal::query()->create([
                     'organization_id' => $supplierRequest->organization_id,
                     'supplier_request_id' => $supplierRequest->id,
                     'supplier_request_version_id' => $supplierRequestVersion->id,
@@ -111,7 +180,7 @@ class SupplierProposalService
                     'metadata' => $data['metadata'] ?? null,
                 ]);
 
-                foreach ($data['items'] ?? [] as $item) {
+        foreach ($data['items'] ?? [] as $item) {
                     $quantity = (float) $item['quantity'];
                     $unitPrice = (float) $item['unit_price'];
 
@@ -128,43 +197,48 @@ class SupplierProposalService
                     ]);
                 }
 
-                $stage = 'record_intake';
-                $proposal->load(['supplierParty', 'lines']);
-                $this->intakeService->recordForProposal($proposal, $data, $actorId);
-                $stage = 'create_version';
-                $proposal->load('intake');
-                $proposalVersion = $this->versionService->createInitialVersion($proposal, $actorId);
+        $stage = 'record_intake';
+        $proposal->load(['supplierParty', 'lines']);
+        $this->intakeService->recordForProposal($proposal, $data, $actorId);
+        $stage = 'create_version';
+        $proposal->load('intake');
+        $proposalVersion = $this->versionService->createInitialVersion($proposal, $actorId);
 
-                $stage = 'mark_request_responded';
-                $respondedAt = now('UTC');
-                $supplierRequest->update([
-                    'status' => SupplierRequestStatusEnum::RESPONDED,
-                    'responded_at' => $respondedAt,
-                ]);
+        $stage = 'mark_request_responded';
+        $supplierRequest->update([
+            'status' => SupplierRequestStatusEnum::RESPONDED,
+            'responded_at' => $respondedAt,
+        ]);
 
-                $stage = 'mark_party_responded';
-                $respondedParty = $this->supplierPartyService->markResponded($supplierRequest->supplier_party_id);
+        $stage = 'mark_party_responded';
+        $respondedParty = $this->supplierPartyService->markResponded($supplierRequest->supplier_party_id);
+        if ($respondedParty !== null) {
+            $respondedSnapshot = $this->supplierPartyService->snapshotForDocument($respondedParty);
+            $supplierRequest->update(['supplier_snapshot' => $respondedSnapshot]);
+            $proposal->update(['supplier_snapshot' => $respondedSnapshot]);
+        }
 
-                if ($respondedParty !== null) {
-                    $respondedSnapshot = $this->supplierPartyService->snapshotForDocument($respondedParty);
-                    $supplierRequest->update(['supplier_snapshot' => $respondedSnapshot]);
-                    $proposal->update(['supplier_snapshot' => $respondedSnapshot]);
-                }
+        return [
+            'supplier_request_version' => $supplierRequestVersion,
+            'proposal' => $proposal,
+            'proposal_version' => $proposalVersion,
+        ];
+    }
 
-                $this->recordSupplierRespondedCycleEvent(
-                    $proposal,
-                    $proposalVersion,
-                    $actorId,
-                    $respondedAt->toDateTimeImmutable(),
-                );
-
-                $stage = 'dispatch_event';
-                event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
-
-                $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
-
-                $stage = 'record_audit';
-                $this->auditService->record(
+    protected function finishSupplierProposalResponse(
+        SupplierRequest $supplierRequest,
+        \App\BusinessModules\Features\Procurement\Models\SupplierRequestVersion $supplierRequestVersion,
+        SupplierProposal $proposal,
+        SupplierProposalVersion $proposalVersion,
+        array $data,
+        ?int $actorId,
+        string &$stage,
+    ): SupplierProposal {
+        $stage = 'dispatch_event';
+        event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
+        $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
+        $stage = 'record_audit';
+        $this->auditService->record(
                     ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_CREATED->value,
                     $proposal,
                     (int) $proposal->organization_id,
@@ -183,9 +257,9 @@ class SupplierProposalService
                         'valid_until' => $proposal->valid_until?->format('Y-m-d'),
                         'lines_count' => count($data['items'] ?? []),
                     ]
-                );
+        );
 
-                return $proposal->fresh([
+        return $proposal->fresh([
                     'supplier',
                     'externalSupplierContact',
                     'supplierParty',
@@ -194,10 +268,16 @@ class SupplierProposalService
                     'lines',
                     'intake',
                     'currentVersion',
-                ]);
-            });
-        } catch (Throwable $exception) {
-            Log::error('procurement.supplier_proposals.create_from_request.error', [
+        ]);
+    }
+
+    protected function reportSupplierProposalCreationFailure(
+        SupplierRequest $supplierRequest,
+        array $data,
+        string $stage,
+        Throwable $exception,
+    ): void {
+        Log::error('procurement.supplier_proposals.create_from_request.error', [
                 'stage' => $stage,
                 'supplier_request_id' => $supplierRequest->id,
                 'organization_id' => $supplierRequest->organization_id,
@@ -208,15 +288,38 @@ class SupplierProposalService
                 'exception_class' => $exception::class,
                 'exception_file' => $exception->getFile(),
                 'exception_line' => $exception->getLine(),
-            ]);
-
-            throw $exception;
-        }
+        ]);
     }
 
     public function accept(SupplierProposal $proposal, ?int $actorId = null): SupplierProposal
     {
-        $acceptedProposal = DB::transaction(function () use ($proposal, $actorId): SupplierProposal {
+        return $this->ownerWorkflowRuntime->within(fn (): SupplierProposal => $this->acceptProposalOwnerWorkflow(
+            $proposal,
+            $actorId,
+            function (
+                SupplierProposalDecision $decision,
+                SupplierProposalVersion $version,
+                PurchaseOrder $order,
+                DateTimeImmutable $occurredAt,
+            ) use ($actorId): void {
+                $this->recordAwardDecidedCycleEvent(
+                    $decision,
+                    $version,
+                    $order,
+                    $actorId,
+                    $occurredAt,
+                );
+            },
+        ));
+    }
+
+    protected function acceptProposalOwnerWorkflow(
+        SupplierProposal $proposal,
+        ?int $actorId,
+        callable $onAccepted,
+    ): SupplierProposal
+    {
+        $acceptedProposal = DB::transaction(function () use ($proposal, $actorId, $onAccepted): SupplierProposal {
             $lockedProposal = SupplierProposal::query()
                 ->whereKey($proposal->id)
                 ->lockForUpdate()
@@ -371,11 +474,10 @@ class SupplierProposalService
                 $order->update(['supplier_snapshot' => $selectedSnapshot]);
             }
 
-            $this->recordAwardDecidedCycleEvent(
+            $onAccepted(
                 $decision,
                 $acceptedVersion,
                 $order,
-                $actorId,
                 $decisionOccurredAt,
             );
 
@@ -645,24 +747,30 @@ class SupplierProposalService
         ];
     }
 
-    private function decisionOccurredAt(SupplierProposalDecision $decision): DateTimeImmutable
+    protected function decisionOccurredAt(SupplierProposalDecision $decision): DateTimeImmutable
     {
-        $resolvedAt = null;
-        if ($decision->status === SupplierProposalDecisionEnum::APPROVED) {
-            $value = $decision->approvals()
-                ->where('status', ProcurementApprovalStatusEnum::APPROVED->value)
-                ->whereNotNull('resolved_at')
-                ->orderByDesc('resolved_at')
-                ->orderByDesc('id')
-                ->value('resolved_at');
-            $resolvedAt = $value === null ? null : new DateTimeImmutable((string) $value);
-        }
+        $resolvedAt = $decision->status === SupplierProposalDecisionEnum::APPROVED
+            ? $this->latestApprovedDecisionResolutionAt($decision)
+            : null;
 
         return $this->awardTimeResolver->resolve(
             $decision->status,
             $decision->selected_at,
             $resolvedAt,
         );
+    }
+
+    protected function latestApprovedDecisionResolutionAt(
+        SupplierProposalDecision $decision,
+    ): ?DateTimeImmutable {
+        $value = $decision->approvals()
+            ->where('status', ProcurementApprovalStatusEnum::APPROVED->value)
+            ->whereNotNull('resolved_at')
+            ->orderByDesc('resolved_at')
+            ->orderByDesc('id')
+            ->value('resolved_at');
+
+        return $value === null ? null : new DateTimeImmutable((string) $value);
     }
 
     private function supplierName(SupplierProposal $proposal, array $snapshot): ?string
