@@ -35,7 +35,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
     public function current(string $code): ?PublishedReportDefinition
     {
         $this->assertCode($code);
-        $row = $this->connection->table('report_publications')
+        $row = $this->connection->table('public.report_publications')
             ->where('code', $code)
             ->where('status', ReportPublicationStatus::PUBLISHED->value)
             ->first();
@@ -50,7 +50,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
                 ['report-publication:'.$publication->candidate->code],
             );
-            $existing = $this->connection->table('report_publications')
+            $existing = $this->connection->table('public.report_publications')
                 ->where('code', $publication->candidate->code)
                 ->where('status', ReportPublicationStatus::PUBLISHED->value)
                 ->first();
@@ -65,7 +65,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             }
             $previous = $existingRecord;
             if ($previous === null) {
-                $previousRow = $this->connection->table('report_publications')
+                $previousRow = $this->connection->table('public.report_publications')
                     ->where('code', $publication->candidate->code)
                     ->orderByDesc('published_at')
                     ->orderByDesc('id')
@@ -164,7 +164,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
     public function history(string $code): iterable
     {
         $this->assertCode($code);
-        foreach ($this->connection->table('report_publications')
+        foreach ($this->connection->table('public.report_publications')
             ->where('code', $code)
             ->orderBy('published_at')
             ->orderBy('id')

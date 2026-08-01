@@ -24,7 +24,7 @@ final class EloquentReportPublicationFeatureStore implements ReportPublicationFe
         if (preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $code) !== 1) {
             throw new InvalidArgumentException('report_publication_feature_code_invalid');
         }
-        $row = $this->connection->table('report_publication_features')->where('code', $code)->first();
+        $row = $this->connection->table('public.report_publication_features')->where('code', $code)->first();
 
         return $row === null ? null : $this->hydrate((array) $row);
     }

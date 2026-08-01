@@ -38,6 +38,8 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             $source = file_get_contents($file);
             self::assertIsString($source);
             self::assertStringNotContainsString('->lockForUpdate()', $source, $class);
+            self::assertStringNotContainsString("table('report_publication", $source, $class);
+            self::assertStringContainsString("table('public.report_publication", $source, $class);
         }
     }
 
