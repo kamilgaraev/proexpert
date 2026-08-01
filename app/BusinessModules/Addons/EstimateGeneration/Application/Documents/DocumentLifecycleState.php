@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use DomainException;
 
 final class DocumentLifecycleState
 {
@@ -16,9 +17,7 @@ final class DocumentLifecycleState
             'pdf_text_layer', 'ocr_request', 'ocr_polling', 'spreadsheet_extraction' => 'reading_structure',
             'normalization', 'fact_extraction' => 'understanding_content',
             'quality_check', 'completed' => 'checking_relationships',
-            default => in_array((string) $document->status, ['uploaded', 'queued'], true)
-                ? 'preparing_file'
-                : 'checking_relationships',
+            default => throw new DomainException('estimate_generation_document_processing_stage_unknown'),
         };
 
         return [

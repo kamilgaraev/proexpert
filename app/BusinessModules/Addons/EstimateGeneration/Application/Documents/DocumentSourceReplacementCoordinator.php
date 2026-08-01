@@ -17,7 +17,7 @@ final readonly class DocumentSourceReplacementCoordinator
         int $projectId,
         int $sessionId,
         int $documentId,
-        string $previousSourceVersion,
+        ?string $previousSourceVersion,
         string $acceptedSourceVersion,
         callable $accept,
     ): mixed {
@@ -30,7 +30,7 @@ final readonly class DocumentSourceReplacementCoordinator
             $acceptedSourceVersion,
             $accept,
         ): mixed {
-            if ($previousSourceVersion !== '' && $previousSourceVersion !== $acceptedSourceVersion) {
+            if ($previousSourceVersion !== $acceptedSourceVersion) {
                 $this->pages->removeStalePages(
                     $organizationId,
                     $projectId,
@@ -38,13 +38,15 @@ final readonly class DocumentSourceReplacementCoordinator
                     $documentId,
                     $acceptedSourceVersion,
                 );
-                $this->invalidator->invalidateReplacedDocumentSource(
-                    $organizationId,
-                    $projectId,
-                    $sessionId,
-                    $documentId,
-                    $previousSourceVersion,
-                );
+                if ($previousSourceVersion !== null && $previousSourceVersion !== '') {
+                    $this->invalidator->invalidateReplacedDocumentSource(
+                        $organizationId,
+                        $projectId,
+                        $sessionId,
+                        $documentId,
+                        $previousSourceVersion,
+                    );
+                }
             }
 
             return $accept();

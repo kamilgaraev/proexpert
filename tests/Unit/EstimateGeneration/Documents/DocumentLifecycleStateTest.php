@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentLifecycleState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use DomainException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -41,5 +42,20 @@ final class DocumentLifecycleStateTest extends TestCase
             'stage' => $expectedLifecycleStage,
             'translation_key' => 'estimate_generation.document_lifecycle_'.$expectedLifecycleStage,
         ], DocumentLifecycleState::forDocument($document));
+    }
+
+    #[Test]
+    public function unknown_processing_stage_is_rejected(): void
+    {
+        $document = new EstimateGenerationDocument;
+        $document->forceFill([
+            'status' => 'processing',
+            'processing_stage' => 'future_stage',
+        ]);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('estimate_generation_document_processing_stage_unknown');
+
+        DocumentLifecycleState::forDocument($document);
     }
 }
