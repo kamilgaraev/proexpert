@@ -136,6 +136,7 @@ final readonly class PayrollReadinessPolicyDefinition
         $normalizedBlockerCodes = array_values(array_unique($normalizedBlockerCodes));
         $blockerCodesValid = $invalidBlockerCodes === []
             && $normalizedBlockerCodes === $blockerCodes
+            && count($blockerCodes) <= 64
             && count($blockerCodes) <= $blockerCount
             && ($blockerCount === 0) === ($blockerCodes === []);
         $sourceRowsValid = match ($rule['source_rows']) {

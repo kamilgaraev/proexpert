@@ -404,6 +404,10 @@ final class PayrollReadinessSnapshotBuilderTest extends TestCase
             'duplicate code' => [2, ['same_code', 'same_code']],
             'unsorted codes' => [2, ['second_code', 'first_code']],
             'invalid code shape' => [1, ['Invalid code']],
+            'more than closed maximum' => [65, array_map(
+                static fn (int $index): string => sprintf('blocker_%02d', $index),
+                range(0, 64),
+            )],
         ];
     }
 
