@@ -85,7 +85,7 @@ final class BudgetPlanFactExportEvidenceFixture
             new ReportSnapshotSeal(
                 'budget-plan-fact-evidence-key',
                 'ed25519-sha256',
-                new Sha256Hash(hash('sha256', 'budget-plan-fact-export-evidence-seal')),
+                $sourceHash,
                 rtrim(strtr(base64_encode(str_repeat("\0", 64)), '+/', '-_'), '='),
                 $generatedAt,
             ),
