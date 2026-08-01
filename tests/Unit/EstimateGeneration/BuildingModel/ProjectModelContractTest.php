@@ -80,6 +80,9 @@ final class ProjectModelContractTest extends TestCase
         $source = (string) file_get_contents(
             dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php'
         );
+        $indexMigration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000150_add_project_model_projection_scope_indexes.php'
+        );
 
         foreach ([
             'estimate_generation_project_model_entities',
@@ -96,6 +99,7 @@ final class ProjectModelContractTest extends TestCase
             'evidence_invalidation_version',
             'eg_project_model_evidence_binding_guard',
             'estimate_generation.project_model_evidence_snapshot_invalid',
+            'estimate_generation.project_model_entity_payload_invalid',
             'estimate_generation.project_model_update_forbidden',
             'estimate_generation.project_model_delete_forbidden',
             "WHEN 'room' THEN",
@@ -105,12 +109,38 @@ final class ProjectModelContractTest extends TestCase
             "WHEN 'table' THEN",
             "WHEN 'structural_element' THEN",
             "WHEN 'quantity' THEN",
+            'CREATE TRIGGER eg_project_model_entity_payload_guard_trg BEFORE INSERT OR UPDATE',
+            'FOR UPDATE;',
+            'PERFORM 1',
+            'FROM estimate_generation_building_model_evidence',
             "Schema::dropIfExists('estimate_generation_project_model_evidence_bindings')",
+            "DROP FUNCTION IF EXISTS eg_project_model_entity_payload_guard()",
             "DROP FUNCTION IF EXISTS eg_project_model_append_guard()",
         ] as $required) {
             self::assertStringContainsString($required, $source);
         }
         self::assertStringNotContainsString('$table->jsonb(\'evidence\')', $source);
+        self::assertStringNotContainsString('eg_project_model_entities_payload_ck', $source);
+
+        $entitiesConstraintSection = substr(
+            $source,
+            (int) strpos($source, 'ALTER TABLE estimate_generation_project_model_entities'),
+            (int) strpos($source, 'ALTER TABLE estimate_generation_project_model_assertions') - (int) strpos($source, 'ALTER TABLE estimate_generation_project_model_entities'),
+        );
+        self::assertStringNotContainsString('SELECT ', $entitiesConstraintSection);
+        self::assertStringNotContainsString('EXISTS ', $entitiesConstraintSection);
+
+        foreach ([
+            'public $withinTransaction = false;',
+            'assertNoDuplicateKeys',
+            'configureSessionTimeouts',
+            'CREATE UNIQUE INDEX CONCURRENTLY eg_building_models_projection_scope_uq',
+            'CREATE UNIQUE INDEX CONCURRENTLY eg_building_model_evidence_projection_scope_uq',
+            'DROP INDEX CONCURRENTLY IF EXISTS eg_building_model_evidence_projection_scope_uq',
+            'DROP INDEX CONCURRENTLY IF EXISTS eg_building_models_projection_scope_uq',
+        ] as $required) {
+            self::assertStringContainsString($required, $indexMigration);
+        }
     }
 
     private function sourceVersion(): string

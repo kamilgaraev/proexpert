@@ -13,19 +13,6 @@ return new class extends Migration
 
     public function up(): void
     {
-        Schema::table('estimate_generation_building_models', function (Blueprint $table): void {
-            $table->unique(
-                ['id', 'organization_id', 'project_id', 'session_id', 'content_version'],
-                'eg_building_models_projection_scope_uq',
-            );
-        });
-        Schema::table('estimate_generation_building_model_evidence', function (Blueprint $table): void {
-            $table->unique(
-                ['building_model_id', 'evidence_id', 'organization_id', 'project_id', 'session_id'],
-                'eg_building_model_evidence_projection_scope_uq',
-            );
-        });
-
         Schema::create('estimate_generation_project_model_entities', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('building_model_id');
@@ -164,18 +151,7 @@ ALTER TABLE estimate_generation_project_model_entities
     ADD CONSTRAINT eg_project_model_entities_source_version_ck CHECK (source_version ~ '^sha256:[a-f0-9]{64}$'),
     ADD CONSTRAINT eg_project_model_entities_stable_key_ck CHECK (stable_key ~ '^[a-z][a-z0-9:_-]{0,191}$'),
     ADD CONSTRAINT eg_project_model_entities_kind_ck CHECK (entity_kind IN ('room', 'wall', 'opening', 'dimension', 'table', 'structural_element', 'quantity')),
-    ADD CONSTRAINT eg_project_model_entities_payload_ck CHECK (
-        jsonb_typeof(payload) = 'object' AND payload->>'kind' = entity_kind AND payload->>'key' = stable_key
-        AND CASE entity_kind
-            WHEN 'room' THEN (jsonb_typeof(payload->'polygon') = 'array' AND jsonb_array_length(payload->'polygon') >= 3 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'polygon') point WHERE jsonb_typeof(point) <> 'array' OR jsonb_array_length(point) <> 2 OR EXISTS (SELECT 1 FROM jsonb_array_elements(point) coordinate WHERE jsonb_typeof(coordinate) <> 'number'))) OR (jsonb_typeof(payload->'area_m2') = 'number' AND (payload->>'area_m2')::numeric > 0)
-            WHEN 'wall' THEN jsonb_typeof(payload->'start') = 'array' AND jsonb_array_length(payload->'start') = 2 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'start') coordinate WHERE jsonb_typeof(coordinate) <> 'number') AND jsonb_typeof(payload->'end') = 'array' AND jsonb_array_length(payload->'end') = 2 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'end') coordinate WHERE jsonb_typeof(coordinate) <> 'number')
-            WHEN 'opening' THEN payload->>'wall_key' ~ '^[a-z][a-z0-9:_-]{0,191}$' AND payload->>'type' IN ('door','window','gate') AND jsonb_typeof(payload->'width_m') = 'number' AND (payload->>'width_m')::numeric > 0 AND jsonb_typeof(payload->'height_m') = 'number' AND (payload->>'height_m')::numeric > 0
-            WHEN 'dimension' THEN jsonb_typeof(payload->'value') = 'number' AND (payload->>'value')::numeric > 0 AND payload->>'unit' IN ('m','m2','m3','pcs','kg','t','h')
-            WHEN 'table' THEN jsonb_typeof(payload->'columns') = 'array' AND jsonb_array_length(payload->'columns') > 0 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'columns') column_value WHERE jsonb_typeof(column_value) <> 'string' OR btrim(column_value #>> '{}') = '') AND jsonb_typeof(payload->'rows') = 'array' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'rows') row_value WHERE jsonb_typeof(row_value) <> 'object')
-            WHEN 'structural_element' THEN btrim(COALESCE(payload->>'type', '')) <> '' AND ((jsonb_typeof(payload->'location') = 'array' AND jsonb_array_length(payload->'location') = 2 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'location') coordinate WHERE jsonb_typeof(coordinate) <> 'number')) OR (jsonb_typeof(payload->'length_m') = 'number' AND (payload->>'length_m')::numeric > 0))
-            WHEN 'quantity' THEN jsonb_typeof(payload->'value') = 'number' AND (payload->>'value')::numeric > 0 AND payload->>'unit' IN ('m','m2','m3','pcs','kg','t','h')
-        END
-    ),
+    ADD CONSTRAINT eg_project_model_entities_payload_shape_ck CHECK (jsonb_typeof(payload) = 'object' AND payload->>'kind' = entity_kind AND payload->>'key' = stable_key),
     ADD CONSTRAINT eg_project_model_entities_confidence_ck CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1),
     ADD CONSTRAINT eg_project_model_entities_size_ck CHECK (octet_length(payload::text) <= 1048576);
 
@@ -208,6 +184,35 @@ ALTER TABLE estimate_generation_project_model_evidence_bindings
     ADD CONSTRAINT eg_project_model_evidence_source_snapshot_ck CHECK (length(btrim(evidence_source_version)) > 0),
     ADD CONSTRAINT eg_project_model_evidence_invalidation_ck CHECK (evidence_invalidation_version >= 0);
 
+CREATE FUNCTION eg_project_model_entity_payload_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT COALESCE(
+        jsonb_typeof(NEW.payload) = 'object'
+        AND NEW.payload->>'kind' = NEW.entity_kind
+        AND NEW.payload->>'key' = NEW.stable_key
+        AND CASE NEW.entity_kind
+            WHEN 'room' THEN (
+                (CASE WHEN jsonb_typeof(NEW.payload->'polygon') = 'array' THEN jsonb_array_length(NEW.payload->'polygon') >= 3 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.payload->'polygon') point WHERE jsonb_typeof(point) <> 'array' OR jsonb_array_length(point) <> 2 OR EXISTS (SELECT 1 FROM jsonb_array_elements(point) coordinate WHERE jsonb_typeof(coordinate) <> 'number')) ELSE false END)
+                OR (CASE WHEN jsonb_typeof(NEW.payload->'area_m2') = 'number' THEN (NEW.payload->>'area_m2')::numeric > 0 ELSE false END)
+            )
+            WHEN 'wall' THEN (
+                CASE WHEN jsonb_typeof(NEW.payload->'start') = 'array' AND jsonb_typeof(NEW.payload->'end') = 'array' THEN jsonb_array_length(NEW.payload->'start') = 2 AND jsonb_array_length(NEW.payload->'end') = 2 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.payload->'start') coordinate WHERE jsonb_typeof(coordinate) <> 'number') AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.payload->'end') coordinate WHERE jsonb_typeof(coordinate) <> 'number') ELSE false END
+            )
+            WHEN 'opening' THEN NEW.payload->>'wall_key' ~ '^[a-z][a-z0-9:_-]{0,191}$' AND NEW.payload->>'type' IN ('door','window','gate') AND (CASE WHEN jsonb_typeof(NEW.payload->'width_m') = 'number' THEN (NEW.payload->>'width_m')::numeric > 0 ELSE false END) AND (CASE WHEN jsonb_typeof(NEW.payload->'height_m') = 'number' THEN (NEW.payload->>'height_m')::numeric > 0 ELSE false END)
+            WHEN 'dimension' THEN (CASE WHEN jsonb_typeof(NEW.payload->'value') = 'number' THEN (NEW.payload->>'value')::numeric > 0 ELSE false END) AND NEW.payload->>'unit' IN ('m','m2','m3','pcs','kg','t','h')
+            WHEN 'table' THEN (CASE WHEN jsonb_typeof(NEW.payload->'columns') = 'array' THEN jsonb_array_length(NEW.payload->'columns') > 0 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.payload->'columns') column_value WHERE jsonb_typeof(column_value) <> 'string' OR btrim(column_value #>> '{}') = '') ELSE false END) AND (CASE WHEN jsonb_typeof(NEW.payload->'rows') = 'array' THEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.payload->'rows') row_value WHERE jsonb_typeof(row_value) <> 'object') ELSE false END)
+            WHEN 'structural_element' THEN btrim(COALESCE(NEW.payload->>'type', '')) <> '' AND ((CASE WHEN jsonb_typeof(NEW.payload->'location') = 'array' THEN jsonb_array_length(NEW.payload->'location') = 2 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.payload->'location') coordinate WHERE jsonb_typeof(coordinate) <> 'number') ELSE false END) OR (CASE WHEN jsonb_typeof(NEW.payload->'length_m') = 'number' THEN (NEW.payload->>'length_m')::numeric > 0 ELSE false END))
+            WHEN 'quantity' THEN (CASE WHEN jsonb_typeof(NEW.payload->'value') = 'number' THEN (NEW.payload->>'value')::numeric > 0 ELSE false END) AND NEW.payload->>'unit' IN ('m','m2','m3','pcs','kg','t','h')
+            ELSE false
+        END,
+        false
+    ) THEN
+        RAISE EXCEPTION 'estimate_generation.project_model_entity_payload_invalid';
+    END IF;
+    RETURN NEW;
+END; $$;
+CREATE TRIGGER eg_project_model_entity_payload_guard_trg BEFORE INSERT OR UPDATE ON estimate_generation_project_model_entities FOR EACH ROW EXECUTE FUNCTION eg_project_model_entity_payload_guard();
+
 CREATE FUNCTION eg_project_model_evidence_binding_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     actual_source_version text;
@@ -218,8 +223,18 @@ BEGIN
     INTO actual_source_version, actual_invalidation_version, actual_invalidated_at
     FROM estimate_generation_evidence
     WHERE id = NEW.evidence_id AND organization_id = NEW.organization_id AND project_id = NEW.project_id AND session_id = NEW.session_id
-    FOR KEY SHARE;
+    FOR UPDATE;
     IF NOT FOUND OR actual_invalidated_at IS NOT NULL OR actual_source_version <> NEW.evidence_source_version OR actual_invalidation_version <> NEW.evidence_invalidation_version THEN
+        RAISE EXCEPTION 'estimate_generation.project_model_evidence_snapshot_invalid';
+    END IF;
+    PERFORM 1
+    FROM estimate_generation_building_model_evidence
+    WHERE building_model_id = NEW.building_model_id
+      AND evidence_id = NEW.evidence_id
+      AND organization_id = NEW.organization_id
+      AND project_id = NEW.project_id
+      AND session_id = NEW.session_id;
+    IF NOT FOUND THEN
         RAISE EXCEPTION 'estimate_generation.project_model_evidence_snapshot_invalid';
     END IF;
     RETURN NEW;
@@ -253,9 +268,11 @@ SQL);
             DB::statement('DROP TRIGGER IF EXISTS eg_project_model_relation_append_trg ON estimate_generation_project_model_relations');
             DB::statement('DROP TRIGGER IF EXISTS eg_project_model_assertion_append_trg ON estimate_generation_project_model_assertions');
             DB::statement('DROP TRIGGER IF EXISTS eg_project_model_entity_append_trg ON estimate_generation_project_model_entities');
+            DB::statement('DROP TRIGGER IF EXISTS eg_project_model_entity_payload_guard_trg ON estimate_generation_project_model_entities');
             DB::statement('DROP TRIGGER IF EXISTS eg_project_model_evidence_binding_guard_trg ON estimate_generation_project_model_evidence_bindings');
             DB::statement('DROP FUNCTION IF EXISTS eg_project_model_append_guard()');
             DB::statement('DROP FUNCTION IF EXISTS eg_project_model_evidence_binding_guard()');
+            DB::statement('DROP FUNCTION IF EXISTS eg_project_model_entity_payload_guard()');
         }
 
         Schema::dropIfExists('estimate_generation_project_model_evidence_bindings');
@@ -263,11 +280,5 @@ SQL);
         Schema::dropIfExists('estimate_generation_project_model_relations');
         Schema::dropIfExists('estimate_generation_project_model_assertions');
         Schema::dropIfExists('estimate_generation_project_model_entities');
-        Schema::table('estimate_generation_building_model_evidence', function (Blueprint $table): void {
-            $table->dropUnique('eg_building_model_evidence_projection_scope_uq');
-        });
-        Schema::table('estimate_generation_building_models', function (Blueprint $table): void {
-            $table->dropUnique('eg_building_models_projection_scope_uq');
-        });
     }
 };
