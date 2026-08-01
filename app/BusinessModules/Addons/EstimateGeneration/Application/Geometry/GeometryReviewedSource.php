@@ -29,4 +29,14 @@ final readonly class GeometryReviewedSource
 
         return new self($data['document_id'], $data['page_id'], $data['source_version']);
     }
+
+    /** @return array{document_id: int, page_id: int, source_version: string} */
+    public function toArray(): array
+    {
+        return [
+            'document_id' => $this->documentId,
+            'page_id' => $this->pageId,
+            'source_version' => $this->sourceVersion,
+        ];
+    }
 }

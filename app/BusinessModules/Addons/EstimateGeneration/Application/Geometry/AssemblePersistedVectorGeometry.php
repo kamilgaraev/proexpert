@@ -6,7 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Geometry;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
@@ -22,7 +21,7 @@ final readonly class AssemblePersistedVectorGeometry
         private BuildingModelAssembler $assembler,
     ) {}
 
-    public function handle(GeometryConfirmationCommand $command, ?int $confirmationEvidenceId = null): NormalizedBuildingModelData
+    public function handle(GeometryConfirmationCommand $command, ?int $confirmationEvidenceId = null): PersistedVectorGeometryResult
     {
         if ($command->sourceConfirmation === null) {
             throw new InvalidArgumentException('Geometry source confirmation is required.');
@@ -36,37 +35,36 @@ final readonly class AssemblePersistedVectorGeometry
             ->where('id', $reviewedSource->documentId)
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
             ->where('session_id', $command->sessionId)->where('status', '<>', 'ignored')
-            ->lockForUpdate()->first(['source_version']);
+            ->lockForUpdate()->first(['id', 'source_version']);
         if ($document === null || ! is_string($document->source_version)
-            || ! hash_equals($command->expectedInputVersion, $reviewedSource->sourceVersion)
             || ! hash_equals($document->source_version, $reviewedSource->sourceVersion)) {
             throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
         }
-        $rows = $this->database->table('estimate_generation_processing_units')
+        $page = $this->database->table('estimate_generation_document_pages')
+            ->where('id', $reviewedSource->pageId)->where('document_id', (int) $document->id)
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
-            ->where('session_id', $command->sessionId)->where('source_version', $command->expectedInputVersion)
-            ->where('document_id', $reviewedSource->documentId)
-            ->where('status', 'completed')->whereIn('unit_type', ['pdf_page', 'cad_drawing'])
-            ->whereExists(function ($query) use ($command, $reviewedSource): void {
-                $query->selectRaw('1')->from('estimate_generation_document_pages')
-                    ->whereColumn('processing_unit_id', 'estimate_generation_processing_units.id')
-                    ->where('id', $reviewedSource->pageId)
-                    ->where('document_id', $reviewedSource->documentId)
-                    ->where('organization_id', $command->organizationId)
-                    ->where('project_id', $command->projectId)
-                    ->where('session_id', $command->sessionId)
-                    ->where('source_version', $reviewedSource->sourceVersion);
-            })
-            ->lockForUpdate()->limit(2)->get(['id', 'document_id', 'metadata']);
-        if ($rows->count() === 0) {
+            ->where('session_id', $command->sessionId)
+            ->lockForUpdate()->first(['id', 'processing_unit_id', 'source_version']);
+        if ($page === null || ! is_numeric($page->processing_unit_id) || (int) $page->processing_unit_id < 1
+            || ! is_string($page->source_version)
+            || ! hash_equals($document->source_version, $page->source_version)) {
             throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
         }
-        if ($rows->count() !== 1 || ! is_string($rows[0]->metadata)) {
+        $unit = $this->database->table('estimate_generation_processing_units')
+            ->where('id', (int) $page->processing_unit_id)
+            ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
+            ->where('session_id', $command->sessionId)->where('document_id', (int) $document->id)
+            ->where('status', 'completed')->whereIn('unit_type', ['pdf_page', 'cad_drawing'])
+            ->lockForUpdate()->first(['id', 'document_id', 'metadata', 'source_version']);
+        if ($unit === null || ! is_string($unit->source_version)
+            || ! hash_equals($document->source_version, $unit->source_version)) {
+            throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
+        }
+        if (! is_string($unit->metadata)) {
             throw new InvalidArgumentException('Confirmed geometry source was not found.');
         }
-        $row = $rows[0];
         try {
-            $value = json_decode($row->metadata, true, 64, JSON_THROW_ON_ERROR);
+            $value = json_decode($unit->metadata, true, 64, JSON_THROW_ON_ERROR);
         } catch (JsonException) {
             throw new InvalidArgumentException('Confirmed geometry source is invalid.');
         }
@@ -75,8 +73,8 @@ final readonly class AssemblePersistedVectorGeometry
         }
         $evidenceRows = $this->database->table('estimate_generation_evidence')
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
-            ->where('session_id', $command->sessionId)->where('source_version', $command->expectedInputVersion)
-            ->where('source_ref', 'document:'.(int) $row->document_id)->where('producer_name', 'pdf_geometry')
+            ->where('session_id', $command->sessionId)->where('source_version', $document->source_version)
+            ->where('source_ref', 'document:'.(int) $unit->document_id)->where('producer_name', 'pdf_geometry')
             ->whereNull('invalidated_at')->limit(2)->get(['id']);
         if ($evidenceRows->count() !== 1) {
             throw new InvalidArgumentException('Confirmed geometry evidence is ambiguous or missing.');
@@ -102,6 +100,9 @@ final readonly class AssemblePersistedVectorGeometry
             throw new InvalidArgumentException('Confirmed geometry remains incomplete.');
         }
 
-        return $result->model;
+        return new PersistedVectorGeometryResult(
+            $result->model,
+            new GeometryReviewedSource((int) $document->id, (int) $page->id, $document->source_version),
+        );
     }
 }

@@ -160,7 +160,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         try {
             $preview = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\AssemblePersistedVectorGeometry::class)
                 ->handle($this->sourceCommand($fixture));
-            self::assertSame('room-1', $preview->floors[0]->rooms[0]->key);
+            self::assertSame('room-1', $preview->model->floors[0]->rooms[0]->key);
             $payloadTypes = DB::select("SELECT attname, format_type(atttypid, atttypmod) AS type FROM pg_attribute WHERE attrelid = 'estimate_generation_sessions'::regclass AND attname IN ('input_payload','analysis_payload','draft_payload','problem_flags')");
             self::assertSame(['jsonb'], array_values(array_unique(array_column($payloadTypes, 'type'))));
             $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
@@ -192,7 +192,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             self::assertTrue(DB::table('estimate_generation_evidence')->where('id', $audit->evidence_id)
                 ->where('session_id', $fixture['session']->id)->exists());
             self::assertNotEmpty($audit->confirmed_at);
-            self::assertEquals($this->sourceConfirmation(), json_decode((string) $audit->semantic_payload, true, flags: JSON_THROW_ON_ERROR));
+            self::assertEquals($this->semanticConfirmationPayload($fixture), json_decode((string) $audit->semantic_payload, true, flags: JSON_THROW_ON_ERROR));
             foreach ([
                 ['extra' => true],
                 ['privacy' => ['approved' => true]],
@@ -204,8 +204,8 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                 ['elements' => [['key' => 'room-1', 'type' => 'room', 'boundary_handle' => str_repeat('x', 513)]]],
                 ['elements' => [['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['H1']], ['key' => 'opening-1', 'type' => 'opening', 'wall_key' => 'wall-1', 'opening_type' => 'door', 'boundary_handles' => ['H1', 'H1'], 'dimension_handle' => 'D1']]],
             ] as $mutation) {
-                $invalid = [...$this->sourceConfirmation(), ...$mutation];
-                $valid = DB::selectOne('SELECT eg_geometry_confirmation_semantic_valid_v1(CAST(? AS jsonb)) AS valid', [json_encode($invalid, JSON_THROW_ON_ERROR)]);
+                $invalid = [...$this->semanticConfirmationPayload($fixture), ...$mutation];
+                $valid = DB::selectOne('SELECT eg_geometry_confirmation_semantic_valid_v2(CAST(? AS jsonb)) AS valid', [json_encode($invalid, JSON_THROW_ON_ERROR)]);
                 self::assertFalse((bool) $valid->valid);
             }
             foreach ([
@@ -761,22 +761,23 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             'dependency_versions' => '{}', 'output_version' => 'sha256:'.str_repeat('c', 64), 'output_payload' => '{}',
             'artifact_bytes' => 2, 'status' => 'completed', 'metrics' => '{}', 'warnings' => '[]', 'attempt_count' => 1,
             'started_at' => now(), 'completed_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+        $documentSourceVersion = 'sha256:'.str_repeat('d', 64);
         $documentId = DB::table('estimate_generation_documents')->insertGetId(['session_id' => $session->id, 'organization_id' => $organization->id,
             'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'geometry.pdf', 'status' => 'ready',
-            'source_version' => $inputVersion, 'created_at' => now(), 'updated_at' => now()]);
+            'source_version' => $documentSourceVersion, 'created_at' => now(), 'updated_at' => now()]);
         $unitId = DB::table('estimate_generation_processing_units')->insertGetId(['organization_id' => $organization->id, 'project_id' => $project->id,
             'session_id' => $session->id, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1,
-            'source_version' => $inputVersion, 'status' => 'pending', 'locator' => '{}', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
+            'source_version' => $documentSourceVersion, 'status' => 'pending', 'locator' => '{}', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
         $pageId = DB::table('estimate_generation_document_pages')->insertGetId([
             'document_id' => $documentId, 'organization_id' => $organization->id, 'project_id' => $project->id,
-            'session_id' => $session->id, 'processing_unit_id' => $unitId, 'source_version' => $inputVersion,
+            'session_id' => $session->id, 'processing_unit_id' => $unitId, 'source_version' => $documentSourceVersion,
             'page_number' => 1, 'created_at' => now(), 'updated_at' => now(),
         ]);
         $estimateId = DB::table('estimates')->insertGetId(['organization_id' => $organization->id, 'project_id' => $project->id,
             'number' => 'GEOMETRY-SENTINEL-'.\Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(8)), 'name' => 'Контрольная смета',
             'estimate_date' => now()->toDateString(), 'total_amount' => 123.45, 'created_at' => now(), 'updated_at' => now()]);
 
-        return compact('organization', 'project', 'user', 'session', 'inputVersion') + [
+        return compact('organization', 'project', 'user', 'session', 'inputVersion', 'documentSourceVersion') + [
             'model_id' => $stored->id, 'old_model' => $model->contentVersion(), 'model_version' => $model->contentVersion(),
             'estimate_id' => $estimateId, 'estimate_sentinel' => ['name' => 'Контрольная смета', 'total_amount' => '123.45'],
             'source_evidence_id' => $evidence->id, 'derived_root_id' => $derivedRoot->id, 'derived_child_id' => $derivedChild->id,
@@ -795,13 +796,13 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     {
         $payload = $this->vectorPayload();
         DB::table('estimate_generation_processing_units')->where('id', $fixture['unit_id'])->update([
-            'status' => 'completed', 'output_version' => $fixture['inputVersion'], 'output_count' => 1,
+            'status' => 'completed', 'output_version' => $fixture['documentSourceVersion'], 'output_count' => 1,
             'completed_at' => now(), 'metadata' => json_encode(['vector_geometry' => $payload], JSON_THROW_ON_ERROR),
             'updated_at' => now(),
         ]);
         $evidence = (new EloquentEvidenceRepository(DB::connection()))->insertOrGet(new EvidenceData(
             (int) $fixture['organization']->id, (int) $fixture['project']->id, (int) $fixture['session']->id,
-            EvidenceType::Extracted, EvidenceSourceType::Document, 'document:'.$fixture['document_id'], $fixture['inputVersion'],
+            EvidenceType::Extracted, EvidenceSourceType::Document, 'document:'.$fixture['document_id'], $fixture['documentSourceVersion'],
             ['document_id' => $fixture['document_id']], ['field_key' => 'area', 'field_value' => 12], 1,
             'pdf_geometry', 'model:v1',
         ));
@@ -828,8 +829,13 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         return [
             'document_id' => $fixture['document_id'],
             'page_id' => $fixture['page_id'],
-            'source_version' => $fixture['inputVersion'],
+            'source_version' => $fixture['documentSourceVersion'],
         ];
+    }
+
+    private function semanticConfirmationPayload(array $fixture): array
+    {
+        return [...$this->sourceConfirmation(), 'source_confirmation_context' => $this->sourceConfirmationContext($fixture)];
     }
 
     private function sourceConfirmation(): array
