@@ -12,6 +12,8 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardOwnerEventWriter;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -22,7 +24,9 @@ class SupplierProposalComparisonService
     public function __construct(
         private readonly ProcurementApprovalService $approvalService,
         private readonly ProcurementAuditService $auditService,
-        private readonly SupplierProposalService $proposalService
+        private readonly SupplierProposalService $proposalService,
+        private readonly ProcurementAwardOwnerEventWriter $awardOwnerRecorder,
+        private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
     ) {}
 
     public function comparisonForRequest(SupplierRequest $supplierRequest, bool $includeDecision = true): array
@@ -195,7 +199,8 @@ class SupplierProposalComparisonService
         ?string $reason,
         ?int $actorId
     ): SupplierProposalDecision {
-        return DB::transaction(function () use ($supplierRequest, $proposalId, $reason, $actorId): SupplierProposalDecision {
+        return $this->ownerWorkflowRuntime->within(function () use ($supplierRequest, $proposalId, $reason, $actorId): SupplierProposalDecision {
+            $selectionAt = $this->ownerWorkflowRuntime->occurredAt();
             $lockedSupplierRequest = SupplierRequest::query()
                 ->whereKey($supplierRequest->id)
                 ->lockForUpdate()
@@ -239,6 +244,12 @@ class SupplierProposalComparisonService
                 ]);
             }
 
+            $preparedAward = $this->awardOwnerRecorder->prepareForSupplierRequest(
+                $lockedSupplierRequest,
+                (int) $proposal->id,
+                $selectionAt,
+            );
+
             if ($decision === null) {
                 $decision = new SupplierProposalDecision([
                     'supplier_request_id' => $lockedSupplierRequest->id,
@@ -248,7 +259,7 @@ class SupplierProposalComparisonService
             $decision->fill([
                 'organization_id' => $lockedSupplierRequest->organization_id,
                 'winning_supplier_proposal_id' => $proposal->id,
-                'winning_supplier_proposal_version_id' => $proposal->currentVersion?->id,
+                'winning_supplier_proposal_version_id' => $preparedAward->manifest->selectedProposalVersionId,
                 'cheapest_supplier_proposal_id' => $cheapestProposalId,
                 'cheapest_supplier_proposal_version_id' => $cheapestProposalVersionId,
                 'status' => SupplierProposalDecisionEnum::SELECTED,
@@ -256,7 +267,7 @@ class SupplierProposalComparisonService
                 'decision_reason' => $normalizedReason,
                 'comparison_snapshot' => $comparison,
                 'selected_by' => $actorId,
-                'selected_at' => now(),
+                'selected_at' => $selectionAt,
             ]);
 
             $risks = $this->approvalService->evaluateForDecision($decision, $proposal, $comparison);
@@ -264,6 +275,13 @@ class SupplierProposalComparisonService
                 ? SupplierProposalDecisionEnum::SELECTED
                 : SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
             $decision->save();
+            $this->awardOwnerRecorder->selected(
+                $preparedAward,
+                $decision,
+                $selectionAt,
+                $actorId,
+                $normalizedReason,
+            );
 
             $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
 
@@ -310,7 +328,8 @@ class SupplierProposalComparisonService
         ?string $reason,
         ?int $actorId
     ): SupplierProposalDecision {
-        return DB::transaction(function () use ($purchaseRequest, $proposalId, $reason, $actorId): SupplierProposalDecision {
+        return $this->ownerWorkflowRuntime->within(function () use ($purchaseRequest, $proposalId, $reason, $actorId): SupplierProposalDecision {
+            $selectionAt = $this->ownerWorkflowRuntime->occurredAt();
             $lockedPurchaseRequest = PurchaseRequest::query()
                 ->whereKey($purchaseRequest->id)
                 ->lockForUpdate()
@@ -365,6 +384,12 @@ class SupplierProposalComparisonService
                 ]);
             }
 
+            $preparedAward = $this->awardOwnerRecorder->prepareForPurchaseRequest(
+                $lockedPurchaseRequest,
+                (int) $proposal->id,
+                $selectionAt,
+            );
+
             if ($decision === null) {
                 $decision = new SupplierProposalDecision([
                     'supplier_request_id' => $supplierRequest->id,
@@ -375,7 +400,7 @@ class SupplierProposalComparisonService
                 'organization_id' => $lockedPurchaseRequest->organization_id,
                 'supplier_request_id' => $supplierRequest->id,
                 'winning_supplier_proposal_id' => $proposal->id,
-                'winning_supplier_proposal_version_id' => $proposal->currentVersion?->id,
+                'winning_supplier_proposal_version_id' => $preparedAward->manifest->selectedProposalVersionId,
                 'cheapest_supplier_proposal_id' => $cheapestProposalId,
                 'cheapest_supplier_proposal_version_id' => $cheapestProposalVersionId,
                 'status' => SupplierProposalDecisionEnum::SELECTED,
@@ -383,7 +408,7 @@ class SupplierProposalComparisonService
                 'decision_reason' => $normalizedReason,
                 'comparison_snapshot' => $comparison,
                 'selected_by' => $actorId,
-                'selected_at' => now(),
+                'selected_at' => $selectionAt,
             ]);
 
             $risks = $this->approvalService->evaluateForDecision($decision, $proposal, $comparison);
@@ -391,6 +416,13 @@ class SupplierProposalComparisonService
                 ? SupplierProposalDecisionEnum::SELECTED
                 : SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
             $decision->save();
+            $this->awardOwnerRecorder->selected(
+                $preparedAward,
+                $decision,
+                $selectionAt,
+                $actorId,
+                $normalizedReason,
+            );
 
             $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
 

@@ -18,6 +18,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardOwnerEventWriter;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementAwardTimeResolver;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
@@ -40,6 +41,7 @@ class SupplierProposalService
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
         private readonly ProcurementAwardTimeResolver $awardTimeResolver,
         private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
+        private readonly ProcurementAwardOwnerEventWriter $awardOwnerRecorder,
     ) {}
 
     public function createFromSupplierRequest(
@@ -304,14 +306,22 @@ class SupplierProposalService
                     SupplierProposalDecision $decision,
                     SupplierProposalVersion $version,
                     PurchaseOrder $order,
-                    DateTimeImmutable $occurredAt,
+                    DateTimeImmutable $decisionOccurredAt,
+                    DateTimeImmutable $acceptedAt,
                 ) use ($actorId): void {
+                    $this->awardOwnerRecorder->committed(
+                        $decision,
+                        $version,
+                        $order,
+                        $acceptedAt,
+                        $actorId,
+                    );
                     $this->recordAwardDecidedCycleEvent(
                         $decision,
                         $version,
                         $order,
                         $actorId,
-                        $occurredAt,
+                        $decisionOccurredAt,
                     );
                 },
             ),
@@ -378,7 +388,7 @@ class SupplierProposalService
         $order = $this->persistAcceptedSupplierProposal($lockedProposal, $acceptedVersion, $acceptedAt);
         $this->markAcceptedSupplierParty($lockedProposal, $order);
 
-        $onAccepted($decision, $acceptedVersion, $order, $decisionOccurredAt);
+        $onAccepted($decision, $acceptedVersion, $order, $decisionOccurredAt, $acceptedAt);
         $this->recordAcceptedSupplierProposalAudit($lockedProposal, $order, $actorId);
         $this->dispatchAcceptedPurchaseOrderAfterCommit($order);
 

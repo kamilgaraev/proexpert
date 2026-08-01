@@ -1,0 +1,106 @@
+name: Procurement Award PostgreSQL Contract
+
+on:
+  pull_request:
+    paths:
+      - 'app/BusinessModules/Features/Procurement/**'
+      - 'tests/Feature/Procurement/Reporting/Award/**'
+      - 'tests/Feature/Procurement/SupplierProposalDecisionTest.php'
+      - 'tests/Feature/Procurement/ProcurementApprovalTest.php'
+      - 'tests/Support/Procurement/Reporting/Award/**'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/procurement-award-postgres-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/BusinessModules/Features/Procurement/**'
+      - 'tests/Feature/Procurement/Reporting/Award/**'
+      - 'tests/Feature/Procurement/SupplierProposalDecisionTest.php'
+      - 'tests/Feature/Procurement/ProcurementApprovalTest.php'
+      - 'tests/Support/Procurement/Reporting/Award/**'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/procurement-award-postgres-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  procurement-award-postgres-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: most_procurement_award_testing
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d most_procurement_award_testing"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      APP_DEBUG: false
+      CI: true
+      DB_CONNECTION: pgsql
+      DB_URL: ''
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: most_procurement_award_testing
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      MAIL_MAILER: array
+      PROCUREMENT_AWARD_POSTGRES_TESTS: 1
+    steps:
+      - name: Checkout exact workflow SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, pdo_pgsql, pgsql, pcntl, posix
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Verify exact checkout and PostgreSQL prerequisites
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          php -r "if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) { fwrite(STDERR, \"pdo_pgsql is unavailable\\n\"); exit(1); }"
+          test -f tests/Feature/Procurement/Reporting/Award/ProcurementAwardSourcePostgresTest.php
+          test -f tests/Feature/Procurement/SupplierProposalDecisionTest.php
+          test -f tests/Feature/Procurement/ProcurementApprovalTest.php
+          test -f tests/Support/Procurement/Reporting/Award/ProcurementAwardPostgresFixture.php
+
+      - name: Prepare isolated PostgreSQL schema
+        run: php artisan migrate:fresh --force
+
+      - name: Run procurement-award PostgreSQL contract
+        run: >-
+          php vendor/bin/phpunit tests/Feature/Procurement/Reporting/Award/ProcurementAwardSourcePostgresTest.php
+          --group=postgresql
+          --fail-on-skipped
+
+      - name: Run production procurement-award owner workflows
+        run: |
+          php vendor/bin/phpunit tests/Feature/Procurement/SupplierProposalDecisionTest.php \
+            --filter '/(test_selecting_winner_automatically_creates_purchase_order_when_approval_is_not_required|test_comparison_payload_includes_saved_decision)/' \
+            --fail-on-skipped
+          php vendor/bin/phpunit tests/Feature/Procurement/ProcurementApprovalTest.php \
+            --filter '/(test_approved_decision_automatically_creates_purchase_order|test_rejected_decision_cannot_be_accepted)/' \
+            --fail-on-skipped

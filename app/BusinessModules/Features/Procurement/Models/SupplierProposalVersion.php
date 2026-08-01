@@ -21,6 +21,8 @@ class SupplierProposalVersion extends Model
         'version_number',
         'commercial_snapshot',
         'attachment_snapshot',
+        'content_hash',
+        'integrity_status',
         'created_by',
     ];
 

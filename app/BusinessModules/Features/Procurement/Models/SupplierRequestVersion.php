@@ -21,6 +21,8 @@ class SupplierRequestVersion extends Model
         'request_snapshot',
         'line_snapshot',
         'supplier_snapshot',
+        'content_hash',
+        'integrity_status',
         'sent_by',
         'sent_at',
     ];
