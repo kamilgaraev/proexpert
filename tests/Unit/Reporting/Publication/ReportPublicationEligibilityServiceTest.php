@@ -108,6 +108,44 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
         );
     }
 
+    public function test_later_release_cannot_be_backdated_to_the_previous_publication(): void
+    {
+        $scenario = $this->subsequentReleaseScenario();
+        $payload = $scenario['proof']->payload();
+        $ciPayload = [
+            'checks' => array_fill_keys(self::requiredChecks(), 'passed'),
+            'commit_sha' => str_repeat('b', 40),
+            'completed_at_utc' => '2026-08-01T02:00:00.000000Z',
+            'run_id' => 'ci-2002',
+        ];
+        $scenario['ci_artifact'] = CanonicalJson::encode($ciPayload);
+        $payload['ci']['completed_at_utc'] = $ciPayload['completed_at_utc'];
+        $payload['ci']['suite_sha256'] = hash('sha256', $scenario['ci_artifact']);
+        $payload['release']['created_at_utc'] = '2026-08-01T02:03:04.654321Z';
+        $scenario['proof'] = ReportPublicationProof::fromArray($payload);
+        $scenario['release'] = new ReportPublicationReleaseIdentity(
+            str_repeat('b', 40),
+            new DateTimeImmutable('2026-08-01T02:03:04.654321+00:00'),
+            'release-bot@most',
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_ineligible');
+
+        $this->service()->evaluate(
+            $scenario['candidate'],
+            $scenario['document'],
+            $scenario['binding'],
+            $scenario['evidence'],
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $scenario['ci_artifact'],
+            $scenario['previous'],
+        );
+    }
+
     #[DataProvider('mismatchProvider')]
     public function test_any_unsealed_contract_mismatch_fails_closed(callable $mutate): void
     {

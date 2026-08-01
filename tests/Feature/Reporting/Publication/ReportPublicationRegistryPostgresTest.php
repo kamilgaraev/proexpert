@@ -174,6 +174,27 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         self::assertSame(1, DB::table('report_publications')->count());
     }
 
+    public function test_raw_backdated_publication_is_rejected(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $oldPublicationId = (string) $published->publicationIdentity?->publicationId;
+        $registry->disable($oldPublicationId, 'source_contract_revoked', 'release-bot@most');
+        $row = (array) DB::table('report_publications')->where('id', $oldPublicationId)->first();
+        $row['id'] = (string) Str::ulid();
+        $row['status'] = 'published';
+        $row['disabled_at'] = null;
+        $row['disabled_reason'] = null;
+        $row['disabled_by'] = null;
+
+        $exception = $this->queryException(static function () use ($row): void {
+            DB::table('report_publications')->insert($row);
+        });
+
+        self::assertSame('23514', $exception->errorInfo[0] ?? null);
+        self::assertSame(1, DB::table('report_publications')->count());
+    }
+
     public function test_feature_state_is_bound_to_publication_and_proof(): void
     {
         [$registry, $eligible] = $this->registry();
@@ -273,6 +294,60 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
                 ->where('payload_json->mode', 'canary')
                 ->count(),
         );
+    }
+
+    public function test_feature_update_fails_fast_while_publication_is_locked(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $publicationId = (string) $published->publicationIdentity?->publicationId;
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-publication-'.bin2hex(random_bytes(8));
+        $harness = new PostgresProcessRaceHarness($directory);
+        $lockConnection = $harness->independentConnection('report-publication-disable-lock');
+        $children = [];
+        try {
+            $lockConnection->beginTransaction();
+            $lockConnection->select(
+                'SELECT id FROM report_publications WHERE id = ? FOR UPDATE',
+                [$publicationId],
+            );
+            $children[] = $harness->spawn(2, static function () use ($publicationId): array {
+                try {
+                    DB::table('report_publication_features')->where('publication_id', $publicationId)->update([
+                        'mode' => 'canary',
+                        'canary_organization_ids' => '[10]',
+                        'canary_user_ids' => '[]',
+                        'updated_at' => now()->addMicrosecond(),
+                    ]);
+
+                    return ['status' => 'updated'];
+                } catch (QueryException $exception) {
+                    return [
+                        'status' => 'lock_rejected',
+                        'sqlstate' => $exception->errorInfo[0] ?? null,
+                    ];
+                }
+            });
+            $harness->release(2);
+            $harness->waitForChildren($children, 5.0);
+            $result = $harness->result(2);
+
+            self::assertSame('lock_rejected', $result['status']);
+            self::assertSame('55P03', $result['sqlstate']);
+            $lockConnection->rollBack();
+            $registry->disable($publicationId, 'source_contract_revoked', 'release-bot@most');
+            self::assertSame(
+                'disabled',
+                DB::table('report_publication_features')->where('publication_id', $publicationId)->value('mode'),
+            );
+        } finally {
+            if ($lockConnection->transactionLevel() > 0) {
+                $lockConnection->rollBack();
+            }
+            $harness->terminateAndReap($children);
+            $harness->cleanup();
+            DB::purge('report-publication-disable-lock');
+        }
     }
 
     public function test_identical_feature_retry_is_a_no_op(): void

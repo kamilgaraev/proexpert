@@ -132,7 +132,20 @@ final class ReportPublicationEligibilityService
         $this->assertComponents($evidence, $payload);
         $this->assertPermissions($candidate, $payload);
         $this->assertDeliveryContracts($candidate, $evidence, $payload);
+        $this->assertReleaseSequence($proof, $release, $previous);
         $this->assertCi($candidate->code, $evidence, $payload, $release, $ciArtifactBytes, $previous);
+    }
+
+    private function assertReleaseSequence(
+        ReportPublicationProof $proof,
+        ReportPublicationReleaseIdentity $release,
+        ?ReportPublicationRecord $previous,
+    ): void {
+        if ($previous !== null
+            && ! hash_equals($previous->identity->proofHash->value, $proof->digest()->value)
+            && $release->createdAt <= $previous->publishedAt) {
+            $this->ineligible();
+        }
     }
 
     private function assertVersions(CandidateReportDefinition $candidate, array $payload): void

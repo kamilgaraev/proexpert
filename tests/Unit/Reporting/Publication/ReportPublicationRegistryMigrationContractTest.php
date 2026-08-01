@@ -32,6 +32,7 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('report_publication_events_append_only', $source);
         self::assertStringContainsString('report_publication_event_insert_guard', $source);
         self::assertStringContainsString('report_publication_append_transition_artifacts', $source);
+        self::assertStringContainsString('report_publication_timestamp_not_monotonic', $source);
         self::assertStringContainsString('report_publication_feature_transition_required', $source);
         self::assertStringContainsString('report_publication_feature_required', $source);
         self::assertStringContainsString('report_publication_feature_delete_forbidden', $source);
@@ -40,6 +41,7 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString("NEW.mode = 'disabled'", $source);
         self::assertStringContainsString('WHERE id = NEW.publication_id', $source);
         self::assertStringContainsString('AND proof_sha256 = NEW.proof_sha256', $source);
+        self::assertStringContainsString('FOR KEY SHARE NOWAIT', $source);
         self::assertStringContainsString('report_publication_outbox_guard', $source);
         self::assertStringContainsString('DROP FUNCTION IF EXISTS report_publication_require_event()', $source);
         self::assertStringNotContainsString('superseded', $source);
@@ -75,7 +77,9 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('test_migration_round_trip_preserves_registry_contract', $source);
         self::assertStringContainsString('test_preseeded_event_cannot_authorize_a_later_state_transition', $source);
         self::assertStringContainsString('test_raw_publication_insert_without_exact_feature_row_is_rejected_at_commit', $source);
+        self::assertStringContainsString('test_raw_backdated_publication_is_rejected', $source);
         self::assertStringContainsString('test_raw_feature_mutation_writes_transactional_outbox', $source);
+        self::assertStringContainsString('test_feature_update_fails_fast_while_publication_is_locked', $source);
         self::assertStringContainsString('test_persisted_canary_allowlist_denies_other_tenants', $source);
     }
 

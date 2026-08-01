@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Architecture\Reporting;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator;
+use InvalidArgumentException;
 use Opis\JsonSchema\CompliantValidator;
 use PHPUnit\Framework\TestCase;
 
@@ -50,6 +52,34 @@ final class ReportPublicationProofSchemaTest extends TestCase
         self::assertFalse($this->validator()->validate($proof, $this->schema())->isValid());
     }
 
+    public function test_schema_and_canonical_dto_form_one_fail_closed_admission_contract(): void
+    {
+        self::assertTrue($this->canonicalProofIsValid($this->fixture()));
+
+        $duplicateClass = $this->fixture();
+        $component = clone $duplicateClass->components[0];
+        $component->sha256 = str_repeat('f', 64);
+        $duplicateClass->components[] = $component;
+        self::assertFalse($this->canonicalProofIsValid($duplicateClass));
+
+        $unsorted = $this->fixture();
+        $earlierComponent = clone $unsorted->components[0];
+        $earlierComponent->class = 'App\\AComponent';
+        $earlierComponent->sha256 = str_repeat('c', 64);
+        $unsorted->components[] = $earlierComponent;
+        self::assertFalse($this->canonicalProofIsValid($unsorted));
+
+        $hyphenatedManage = $this->fixture();
+        $hyphenatedManage->permissions->run = ['reports-manage'];
+        self::assertFalse($this->validator()->validate($hyphenatedManage, $this->schema())->isValid());
+        self::assertFalse($this->canonicalProofIsValid($hyphenatedManage));
+
+        $impossibleDate = $this->fixture();
+        $impossibleDate->ci->completed_at_utc = '2026-02-31T01:02:03.123456Z';
+        self::assertFalse($this->validator()->validate($impossibleDate, $this->schema())->isValid());
+        self::assertFalse($this->canonicalProofIsValid($impossibleDate));
+    }
+
     private function validator(): Draft202012SchemaValidator
     {
         return new Draft202012SchemaValidator(new CompliantValidator);
@@ -68,5 +98,22 @@ final class ReportPublicationProofSchemaTest extends TestCase
     private function json(string $path): object
     {
         return json_decode((string) file_get_contents($path), false, 512, JSON_THROW_ON_ERROR);
+    }
+
+    private function canonicalProofIsValid(object $proof): bool
+    {
+        if (! $this->validator()->validate($proof, $this->schema())->isValid()) {
+            return false;
+        }
+
+        try {
+            ReportPublicationProof::fromArray(
+                json_decode(json_encode($proof, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR),
+            );
+        } catch (InvalidArgumentException) {
+            return false;
+        }
+
+        return true;
     }
 }

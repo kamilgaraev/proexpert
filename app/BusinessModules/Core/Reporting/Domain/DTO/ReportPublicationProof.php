@@ -153,7 +153,8 @@ final readonly class ReportPublicationProof
             foreach ($group as $permission) {
                 if ($permission === 'manage'
                     || str_ends_with($permission, '.manage')
-                    || str_ends_with($permission, '_manage')) {
+                    || str_ends_with($permission, '_manage')
+                    || str_ends_with($permission, '-manage')) {
                     self::invalid();
                 }
             }

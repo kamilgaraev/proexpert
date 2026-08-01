@@ -286,6 +286,15 @@ return new class extends Migration
                     IF NEW.status <> 'published' THEN
                         RAISE EXCEPTION 'report_publication_initial_state_invalid' USING ERRCODE = '23514';
                     END IF;
+                    IF EXISTS (
+                        SELECT 1
+                        FROM report_publications AS previous
+                        WHERE previous.code = NEW.code
+                            AND previous.id <> NEW.id
+                            AND previous.published_at >= NEW.published_at
+                    ) THEN
+                        RAISE EXCEPTION 'report_publication_timestamp_not_monotonic' USING ERRCODE = '23514';
+                    END IF;
                     transition_type := 'promoted';
                     outbox_type := 'report_publication_promoted';
                     actor_identity := NEW.published_by;
@@ -540,7 +549,7 @@ return new class extends Migration
                 FROM report_publications
                 WHERE id = NEW.publication_id
                     AND proof_sha256 = NEW.proof_sha256
-                FOR KEY SHARE;
+                FOR KEY SHARE NOWAIT;
 
                 IF NOT FOUND OR publication.code <> NEW.code THEN
                     RAISE EXCEPTION 'report_publication_feature_identity_mismatch' USING ERRCODE = '23503';

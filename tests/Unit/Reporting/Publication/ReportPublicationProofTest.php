@@ -54,6 +54,9 @@ final class ReportPublicationProofTest extends TestCase
         yield 'manage permission' => [static function (array &$payload): void {
             $payload['permissions']['run'] = ['reports.manage'];
         }];
+        yield 'hyphenated manage permission' => [static function (array &$payload): void {
+            $payload['permissions']['run'] = ['reports-manage'];
+        }];
         yield 'unknown export assertion result' => [static function (array &$payload): void {
             $payload['export_contracts'][0]['assertion_codes'][0] = 'export.xlsx.schema.skipped';
         }];
