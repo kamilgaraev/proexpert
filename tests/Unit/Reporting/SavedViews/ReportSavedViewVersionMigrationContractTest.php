@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\SavedViews;
 
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Yaml\Yaml;
 
 final class ReportSavedViewVersionMigrationContractTest extends TestCase
 {
@@ -21,6 +22,14 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString('DROP TRIGGER IF EXISTS report_saved_view_versions_immutable_guard', $source);
         self::assertStringContainsString('DROP FUNCTION IF EXISTS reject_report_saved_view_version_mutation()', $source);
         self::assertStringNotContainsString('report_saved_view_versions_content_unique', $source);
+        self::assertStringContainsString("(jsonb_typeof(content_json) = 'object') IS TRUE", $source);
+        self::assertStringContainsString("content_json ?& ARRAY['schema_version', 'report_code', 'contract_version'", $source);
+        self::assertStringContainsString("(jsonb_typeof(content_json -> 'schema_version') = 'number') IS TRUE", $source);
+        self::assertStringContainsString("((content_json ->> 'schema_version') = presentation_schema_version::text) IS TRUE", $source);
+        self::assertStringContainsString("(jsonb_typeof(content_json -> 'report_code') = 'string') IS TRUE", $source);
+        self::assertStringContainsString("((content_json ->> 'report_code') = report_code) IS TRUE", $source);
+        self::assertStringContainsString("(jsonb_typeof(content_json -> 'contract_version') = 'string') IS TRUE", $source);
+        self::assertStringContainsString("((content_json ->> 'contract_version') = contract_version) IS TRUE", $source);
     }
 
     public function test_postgres_gate_is_opt_in_before_any_connection_and_covers_real_persistence(): void
@@ -39,5 +48,40 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString('test_version_owner_must_match_its_head', $source);
         self::assertStringContainsString('test_restore_can_append_a_previously_seen_content_hash', $source);
         self::assertStringContainsString('test_append_and_find_preserve_microseconds', $source);
+        self::assertStringContainsString('test_invalid_content_binding_is_rejected_before_it_can_be_frozen', $source);
+    }
+
+    public function test_existing_postgres_workflow_executes_the_saved_view_version_gate_fail_closed(): void
+    {
+        $workflow = Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/notification-concurrency.yml');
+        self::assertIsArray($workflow);
+
+        $job = $workflow['jobs']['report-saved-view-version-postgres-contract'] ?? null;
+        self::assertIsArray($job);
+        self::assertSame(
+            'most_report_saved_view_version_testing',
+            $job['services']['postgres']['env']['POSTGRES_DB'] ?? null,
+        );
+        self::assertSame('testing', $job['env']['APP_ENV'] ?? null);
+        self::assertSame(true, $job['env']['CI'] ?? null);
+        self::assertSame(
+            'most_report_saved_view_version_testing',
+            $job['env']['DB_DATABASE'] ?? null,
+        );
+        self::assertSame(1, $job['env']['REPORT_SAVED_VIEW_VERSION_POSTGRES_TESTS'] ?? null);
+
+        $steps = $job['steps'] ?? null;
+        self::assertIsArray($steps);
+        $commands = implode("\n", array_map(
+            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
+            $steps,
+        ));
+
+        self::assertStringContainsString('git rev-parse HEAD', $commands);
+        self::assertStringContainsString('$GITHUB_SHA', $commands);
+        self::assertStringContainsString('php artisan migrate:fresh --force', $commands);
+        self::assertStringContainsString('ReportSavedViewVersionPostgresTest.php', $commands);
+        self::assertStringContainsString('--group=postgresql', $commands);
+        self::assertStringContainsString('--fail-on-skipped', $commands);
     }
 }

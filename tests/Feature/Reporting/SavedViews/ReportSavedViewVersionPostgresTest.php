@@ -18,6 +18,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\TestCase;
@@ -135,6 +136,55 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
             $appended->createdAt->format('Y-m-d H:i:s.uP'),
             $loaded->createdAt->format('Y-m-d H:i:s.uP'),
         );
+    }
+
+    #[DataProvider('invalidContentBindings')]
+    public function test_invalid_content_binding_is_rejected_before_it_can_be_frozen(string $contentJson): void
+    {
+        $savedViewId = $this->insertHead(10, 20);
+
+        $exception = $this->captureQueryException(static function () use ($savedViewId, $contentJson): void {
+            DB::table('report_saved_view_versions')->insert([
+                'id' => (string) Str::ulid(),
+                'saved_view_id' => $savedViewId,
+                'organization_id' => 10,
+                'owner_id' => 20,
+                'revision' => 1,
+                'report_code' => 'procurement_cycle',
+                'contract_version' => 'v7',
+                'presentation_schema_version' => 1,
+                'content_json' => $contentJson,
+                'content_hash' => str_repeat('a', 64),
+                'report_definition_hash' => str_repeat('b', 64),
+                'created_at' => now('UTC'),
+            ]);
+        });
+
+        self::assertSame('23514', $exception->errorInfo[0] ?? null);
+        self::assertSame(
+            0,
+            DB::table('report_saved_view_versions')->where('saved_view_id', $savedViewId)->count(),
+        );
+    }
+
+    public static function invalidContentBindings(): iterable
+    {
+        $validTail = '"name":"A","visibility":"private","filters":{},"comparison":{},'
+            .'"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]';
+
+        yield 'JSON null' => ['null'];
+        yield 'missing schema version' => ['{"report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
+        yield 'null schema version' => ['{"schema_version":null,"report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
+        yield 'string schema version' => ['{"schema_version":"1","report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
+        yield 'mismatched schema version' => ['{"schema_version":2,"report_code":"procurement_cycle","contract_version":"v7",'.$validTail.'}'];
+        yield 'missing report code' => ['{"schema_version":1,"contract_version":"v7",'.$validTail.'}'];
+        yield 'null report code' => ['{"schema_version":1,"report_code":null,"contract_version":"v7",'.$validTail.'}'];
+        yield 'non-string report code' => ['{"schema_version":1,"report_code":7,"contract_version":"v7",'.$validTail.'}'];
+        yield 'mismatched report code' => ['{"schema_version":1,"report_code":"other_report","contract_version":"v7",'.$validTail.'}'];
+        yield 'missing contract version' => ['{"schema_version":1,"report_code":"procurement_cycle",'.$validTail.'}'];
+        yield 'null contract version' => ['{"schema_version":1,"report_code":"procurement_cycle","contract_version":null,'.$validTail.'}'];
+        yield 'non-string contract version' => ['{"schema_version":1,"report_code":"procurement_cycle","contract_version":7,'.$validTail.'}'];
+        yield 'mismatched contract version' => ['{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v8",'.$validTail.'}'];
     }
 
     private function insertHead(int $organizationId, int $ownerId): string

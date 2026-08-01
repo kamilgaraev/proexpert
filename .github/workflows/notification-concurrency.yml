@@ -15,6 +15,9 @@ on:
       - 'database/migrations/**'
       - 'tests/Feature/Procurement/Reporting/**'
       - 'tests/Support/Procurement/Reporting/**'
+      - 'app/BusinessModules/Core/Reporting/**'
+      - 'tests/Feature/Reporting/SavedViews/**'
+      - 'tests/Unit/Reporting/SavedViews/**'
       - 'composer.json'
       - 'composer.lock'
       - '.github/workflows/notification-concurrency.yml'
@@ -33,6 +36,9 @@ on:
       - 'database/migrations/**'
       - 'tests/Feature/Procurement/Reporting/**'
       - 'tests/Support/Procurement/Reporting/**'
+      - 'app/BusinessModules/Core/Reporting/**'
+      - 'tests/Feature/Reporting/SavedViews/**'
+      - 'tests/Unit/Reporting/SavedViews/**'
       - 'composer.json'
       - 'composer.lock'
       - '.github/workflows/notification-concurrency.yml'
@@ -182,3 +188,77 @@ jobs:
         run: >-
           php artisan test tests/Feature/Procurement/Reporting/Cycle/ProcurementCycleSourcePostgresTest.php
           --group=postgresql
+
+  report-saved-view-version-postgres-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: most_report_saved_view_version_testing
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d most_report_saved_view_version_testing"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      APP_DEBUG: false
+      CI: true
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: most_report_saved_view_version_testing
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      MAIL_MAILER: array
+      REPORT_SAVED_VIEW_VERSION_POSTGRES_TESTS: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, pdo_pgsql, pgsql
+          coverage: none
+          tools: composer:v2
+
+      - name: Resolve Composer cache
+        id: saved-view-version-composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.saved-view-version-composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Verify checked-out SHA and PostgreSQL prerequisites
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          php -r "if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) { fwrite(STDERR, \"pdo_pgsql is unavailable\\n\"); exit(1); }"
+          test -f tests/Feature/Reporting/SavedViews/ReportSavedViewVersionPostgresTest.php
+
+      - name: Prepare isolated PostgreSQL schema
+        run: php artisan migrate:fresh --force
+
+      - name: Run saved-view version PostgreSQL contract
+        run: >-
+          php vendor/bin/phpunit tests/Feature/Reporting/SavedViews/ReportSavedViewVersionPostgresTest.php
+          --group=postgresql
+          --fail-on-skipped
