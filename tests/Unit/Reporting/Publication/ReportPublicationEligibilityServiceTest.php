@@ -63,6 +63,9 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
         self::assertSame($scenario['proof']->digest()->value, $result->publication()->proofHash->value);
         self::assertSame('project_portfolio_health', $result->publication()->candidate->code);
         self::assertSame($scenario['official_manifest_hash']->value, $result->publication()->officialManifestHash->value);
+        self::assertSame($scenario['binding'], $result->publication()->binding);
+        self::assertSame($scenario['evidence'], $result->publication()->evidence);
+        self::assertSame($scenario['ci_artifact'], $result->publication()->ciArtifactBytes);
     }
 
     public function test_later_release_can_reuse_evidence_only_from_the_exact_previous_publication(): void
@@ -140,6 +143,11 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
         yield 'source evidence changed' => [static function (array &$scenario): void {
             $payload = $scenario['proof']->payload();
             $payload['source']['rows_sha256'] = str_repeat('f', 64);
+            $scenario['proof'] = ReportPublicationProof::fromArray($payload);
+        }];
+        yield 'proof semantic fingerprint differs from the candidate and evidence' => [static function (array &$scenario): void {
+            $payload = $scenario['proof']->payload();
+            $payload['semantic_fingerprints']['source'] = str_repeat('f', 64);
             $scenario['proof'] = ReportPublicationProof::fromArray($payload);
         }];
         yield 'run permission differs from definition' => [static function (array &$scenario): void {
@@ -352,7 +360,6 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
             new DateTimeImmutable('2026-08-01T02:03:04.654321+00:00'),
             new DateTimeImmutable('2026-08-01T02:30:00.000000+00:00'),
             'release_replaced',
-            null,
         );
         $payload = $scenario['proof']->payload();
         $ciPayload = [

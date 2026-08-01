@@ -138,7 +138,7 @@ final class ReportPublicationFixtureFactory
             ],
         ]);
         $candidate = new CandidateReportDefinition($definition);
-        $eligible = (new ReportPublicationEligibilityService(
+        $eligibilityService = new ReportPublicationEligibilityService(
             new ReportPermissionCatalog,
             new ReportDefinitionVersionPolicy,
             new ReportPublicationBindingHasher,
@@ -154,7 +154,8 @@ final class ReportPublicationFixtureFactory
                     ],
                 ],
             ],
-        ))->evaluate(
+        );
+        $eligible = $eligibilityService->evaluate(
             $candidate,
             $row,
             $binding,
@@ -169,6 +170,7 @@ final class ReportPublicationFixtureFactory
         return [
             'candidate' => $candidate,
             'eligible' => $eligible,
+            'eligibility_service' => $eligibilityService,
             'registry' => new SingleCandidatePublicationRegistry($candidate),
         ];
     }

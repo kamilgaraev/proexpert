@@ -121,7 +121,21 @@
                         "uniqueItems": true,
                         "items": {"type": "string", "pattern": "^export\\.(csv|pdf|xlsx)\\.[a-z][a-z0-9_]*\\.passed$"}
                     }
-                }
+                },
+                "allOf": [
+                    {
+                        "if": {"properties": {"format": {"const": "csv"}}, "required": ["format"]},
+                        "then": {"properties": {"assertion_codes": {"items": {"pattern": "^export\\.csv\\.[a-z][a-z0-9_]*\\.passed$"}}}}
+                    },
+                    {
+                        "if": {"properties": {"format": {"const": "pdf"}}, "required": ["format"]},
+                        "then": {"properties": {"assertion_codes": {"items": {"pattern": "^export\\.pdf\\.[a-z][a-z0-9_]*\\.passed$"}}}}
+                    },
+                    {
+                        "if": {"properties": {"format": {"const": "xlsx"}}, "required": ["format"]},
+                        "then": {"properties": {"assertion_codes": {"items": {"pattern": "^export\\.xlsx\\.[a-z][a-z0-9_]*\\.passed$"}}}}
+                    }
+                ]
             }
         },
         "drill_down_contract": {

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Publication;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\EligibleReportPublication;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
@@ -15,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationRecord;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use Illuminate\Database\ConnectionInterface;
@@ -26,7 +27,8 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
 {
     public function __construct(
         private readonly ConnectionInterface $connection,
-        private readonly CandidateReportDefinitionRegistry $candidates,
+        private readonly ReportPublicationEligibilityService $eligibility,
+        private readonly ReportDefinitionFactory $definitions,
     ) {}
 
     public function current(string $code): ?PublishedReportDefinition
@@ -52,6 +54,25 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 ->where('status', ReportPublicationStatus::PUBLISHED->value)
                 ->lockForUpdate()
                 ->first();
+            $previousRow = $existing ?? $this->connection->table('report_publications')
+                ->where('code', $publication->candidate->code)
+                ->orderByDesc('published_at')
+                ->orderByDesc('id')
+                ->lockForUpdate()
+                ->first();
+            $previous = $previousRow === null ? null : $this->record((array) $previousRow);
+            $publication = $this->eligibility->evaluate(
+                $publication->candidate,
+                $publication->candidateDocument,
+                $publication->binding,
+                $publication->evidence,
+                $publication->proof,
+                $publication->candidateManifestHash,
+                $publication->officialManifestHash,
+                $publication->release,
+                $publication->ciArtifactBytes,
+                $previous,
+            )->publication();
             if ($existing !== null) {
                 $record = $this->record((array) $existing);
                 if (! hash_equals($record->identity->proofHash->value, $publication->proofHash->value)
@@ -85,19 +106,11 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 'formula_version' => $proof['versions']['formula'],
                 'renderer_version' => $proof['versions']['renderer'],
                 'release_git_sha' => $publication->release->gitSha,
+                'published_by' => $publication->release->approverIdentity,
                 'published_at' => $publishedAt,
                 'disabled_at' => null,
                 'disabled_reason' => null,
-                'superseded_by' => null,
             ]);
-            $this->event(
-                $id,
-                'promoted',
-                $publication->release->approverIdentity,
-                $publication->release->gitSha,
-                $publication->proofHash->value,
-                $publishedAt,
-            );
             $feature = $this->connection->table('report_publication_features')
                 ->where('code', $publication->candidate->code)
                 ->lockForUpdate()
@@ -121,7 +134,6 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                     ->where('code', $publication->candidate->code)
                     ->update($featureValues);
             }
-            $this->outbox($id, 'report_publication_promoted', $publication->proofHash->value, $publishedAt);
 
             return $this->published(new ReportPublicationRecord(
                 new ReportPublicationIdentity(
@@ -134,7 +146,6 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 $publication->proof,
                 $publication->candidateDocument,
                 $publishedAt,
-                null,
                 null,
                 null,
             ));
@@ -158,32 +169,12 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                 throw new LogicException('report_publication_not_active');
             }
             $disabledAt = new DateTimeImmutable('now');
-            $eventHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
-                'actor_identity' => $actorIdentity,
-                'disabled_at_utc' => $disabledAt->format('Y-m-d\TH:i:s.u\Z'),
-                'publication_id' => $publicationId,
-                'reason' => $reason,
-            ])));
             $this->connection->table('report_publications')->where('id', $publicationId)->update([
                 'status' => ReportPublicationStatus::DISABLED->value,
                 'disabled_at' => $disabledAt,
                 'disabled_reason' => $reason,
+                'disabled_by' => $actorIdentity,
             ]);
-            $this->event(
-                $publicationId,
-                'disabled',
-                $actorIdentity,
-                (string) $row->release_git_sha,
-                $eventHash->value,
-                $disabledAt,
-            );
-            $this->connection->table('report_publication_features')->where('code', $row->code)->update([
-                'mode' => 'disabled',
-                'canary_organization_ids' => '[]',
-                'canary_user_ids' => '[]',
-                'updated_at' => $disabledAt,
-            ]);
-            $this->outbox($publicationId, 'report_publication_disabled', $eventHash->value, $disabledAt);
         });
     }
 
@@ -201,15 +192,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
 
     private function published(ReportPublicationRecord $record): PublishedReportDefinition
     {
-        $candidate = $this->candidates->candidate($record->identity->code);
-        if (! hash_equals($candidate->definitionHash->value, $record->proof->payload()['candidate_definition_sha256'])
-            || ! hash_equals(
-                $candidate->definitionHash->value,
-                hash('sha256', CanonicalJson::encode($record->candidateDocument)),
-            )) {
-            throw new LogicException('report_publication_candidate_drift');
-        }
-        $definition = $candidate->definition;
+        $definition = $this->definition($record);
 
         return new PublishedReportDefinition(new ReportDefinition(
             $definition->code,
@@ -241,7 +224,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             throw new LogicException('report_publication_persisted_proof_drift');
         }
 
-        return new ReportPublicationRecord(
+        $record = new ReportPublicationRecord(
             new ReportPublicationIdentity(
                 (string) $row['id'],
                 (string) $row['code'],
@@ -254,47 +237,24 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             new DateTimeImmutable((string) $row['published_at']),
             $row['disabled_at'] === null ? null : new DateTimeImmutable((string) $row['disabled_at']),
             $row['disabled_reason'] === null ? null : (string) $row['disabled_reason'],
-            $row['superseded_by'] === null ? null : (string) $row['superseded_by'],
         );
+        $this->definition($record);
+
+        return $record;
     }
 
-    private function event(
-        string $publicationId,
-        string $type,
-        string $actor,
-        string $releaseSha,
-        string $payloadHash,
-        DateTimeImmutable $occurredAt,
-    ): void {
-        $this->connection->table('report_publication_events')->insert([
-            'id' => (string) Str::ulid(),
-            'publication_id' => $publicationId,
-            'event_type' => $type,
-            'actor_identity' => $actor,
-            'release_git_sha' => $releaseSha,
-            'payload_sha256' => $payloadHash,
-            'occurred_at' => $occurredAt,
-        ]);
-    }
+    private function definition(ReportPublicationRecord $record): ReportDefinition
+    {
+        $definition = $this->definitions->fromManifest($record->candidateDocument);
+        if (! hash_equals($definition->code, $record->identity->code)
+            || ! hash_equals(
+                $definition->definitionHash->value,
+                $record->proof->payload()['candidate_definition_sha256'],
+            )) {
+            throw new LogicException('report_publication_candidate_drift');
+        }
 
-    private function outbox(
-        string $publicationId,
-        string $type,
-        string $payloadHash,
-        DateTimeImmutable $createdAt,
-    ): void {
-        $this->connection->table('report_publication_outbox')->insert([
-            'id' => (string) Str::ulid(),
-            'publication_id' => $publicationId,
-            'event_type' => $type,
-            'deduplication_key' => $publicationId.':'.$type.':'.$payloadHash,
-            'payload_json' => CanonicalJson::encode([
-                'publication_id' => $publicationId,
-                'payload_sha256' => $payloadHash,
-            ]),
-            'created_at' => $createdAt,
-            'delivered_at' => null,
-        ]);
+        return $definition;
     }
 
     private function decodeMap(mixed $value): array

@@ -19,6 +19,12 @@ on:
       - 'tests/Feature/Reporting/Execution/**'
       - 'tests/Feature/Reporting/SavedViews/**'
       - 'tests/Unit/Reporting/SavedViews/**'
+      - 'tests/Feature/Reporting/Publication/**'
+      - 'tests/Unit/Reporting/Publication/**'
+      - 'tests/Support/Reporting/Publication/**'
+      - 'tests/Architecture/Reporting/ReportPublicationProofSchemaTest.php'
+      - 'tests/Fixtures/Reporting/Publication/**'
+      - 'docs/reports/contracts/report-publication-proof.v1.schema.json'
       - 'composer.json'
       - 'composer.lock'
       - '.github/workflows/notification-concurrency.yml'
@@ -41,6 +47,12 @@ on:
       - 'tests/Feature/Reporting/Execution/**'
       - 'tests/Feature/Reporting/SavedViews/**'
       - 'tests/Unit/Reporting/SavedViews/**'
+      - 'tests/Feature/Reporting/Publication/**'
+      - 'tests/Unit/Reporting/Publication/**'
+      - 'tests/Support/Reporting/Publication/**'
+      - 'tests/Architecture/Reporting/ReportPublicationProofSchemaTest.php'
+      - 'tests/Fixtures/Reporting/Publication/**'
+      - 'docs/reports/contracts/report-publication-proof.v1.schema.json'
       - 'composer.json'
       - 'composer.lock'
       - '.github/workflows/notification-concurrency.yml'
@@ -363,6 +375,7 @@ jobs:
       APP_DEBUG: false
       CI: true
       DB_CONNECTION: pgsql
+      DB_URL: ''
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
       DB_DATABASE: most_report_publication_testing

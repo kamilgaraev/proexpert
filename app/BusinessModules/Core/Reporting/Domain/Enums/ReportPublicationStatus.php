@@ -8,5 +8,4 @@ enum ReportPublicationStatus: string
 {
     case PUBLISHED = 'published';
     case DISABLED = 'disabled';
-    case SUPERSEDED = 'superseded';
 }

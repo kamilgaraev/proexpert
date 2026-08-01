@@ -60,6 +60,27 @@ final class ReportPublicationProofTest extends TestCase
         yield 'duplicate component class' => [static function (array &$payload): void {
             $payload['components'][] = $payload['components'][0];
         }];
+        yield 'duplicate component class with another hash' => [static function (array &$payload): void {
+            $payload['components'][] = [
+                'class' => $payload['components'][0]['class'],
+                'sha256' => str_repeat('f', 64),
+            ];
+        }];
+        yield 'unsorted component classes' => [static function (array &$payload): void {
+            [$payload['components'][0], $payload['components'][1]] = [
+                $payload['components'][1],
+                $payload['components'][0],
+            ];
+        }];
+        yield 'export assertion for another format' => [static function (array &$payload): void {
+            $payload['export_contracts'][0]['assertion_codes'][0] = 'export.csv.fixture.passed';
+        }];
+        yield 'unsorted assertion codes' => [static function (array &$payload): void {
+            $payload['source']['assertion_codes'] = [
+                'source.snapshot.passed',
+                'source.identity.passed',
+            ];
+        }];
         yield 'non-canonical required checks' => [static function (array &$payload): void {
             $payload['ci']['required_checks'] = ['rbac_contract', 'binding_contract'];
         }];

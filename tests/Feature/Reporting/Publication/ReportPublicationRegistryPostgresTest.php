@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reporting\Publication;
 
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationFeatureGate;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationIdentity;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use LogicException;
 use PHPUnit\Framework\Attributes\Group;
@@ -22,6 +25,8 @@ use Throwable;
 #[Group('postgresql')]
 final class ReportPublicationRegistryPostgresTest extends TestCase
 {
+    private bool $registryDatabaseInitialized = false;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -34,20 +39,21 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         if (config('database.default') !== 'pgsql') {
             $this->markTestSkipped('Requires an explicitly configured isolated PostgreSQL database.');
         }
-        $database = config('database.connections.pgsql.database');
-        if (! is_string($database) || preg_match('/_(?:test|testing)$/D', $database) !== 1) {
+        if (! $this->safeDatabase()) {
             $this->markTestSkipped('PostgreSQL database name must end with _test or _testing.');
         }
 
         self::assertSame('pgsql', DB::connection()->getDriverName());
         $this->truncateRegistry();
+        $this->registryDatabaseInitialized = true;
     }
 
     protected function tearDown(): void
     {
-        if (getenv('REPORT_PUBLICATION_POSTGRES_TESTS') === '1'
-            && config('database.default') === 'pgsql') {
+        if ($this->registryDatabaseInitialized) {
+            self::assertTrue($this->safeDatabase(), 'Refusing to clean a non-test PostgreSQL database.');
             $this->truncateRegistry();
+            $this->registryDatabaseInitialized = false;
         }
         parent::tearDown();
     }
@@ -93,25 +99,79 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         self::assertSame(1, DB::table('report_publications')->where('status', 'published')->count());
     }
 
-    public function test_state_transition_requires_matching_event_at_commit(): void
+    public function test_state_transition_writes_matching_event_and_outbox_at_commit(): void
     {
         [$registry, $eligible] = $this->registry();
         $published = $registry->promote($eligible);
         $publicationId = (string) $published->publicationIdentity?->publicationId;
 
-        $exception = $this->queryException(static function () use ($publicationId): void {
-            DB::transaction(static function () use ($publicationId): void {
-                DB::table('report_publications')->where('id', $publicationId)->update([
-                    'status' => 'disabled',
-                    'disabled_at' => now(),
-                    'disabled_reason' => 'manual_disable',
-                ]);
-                DB::statement('SET CONSTRAINTS report_publications_event_required IMMEDIATE');
-            });
+        DB::transaction(static function () use ($publicationId): void {
+            DB::table('report_publications')->where('id', $publicationId)->update([
+                'status' => 'disabled',
+                'disabled_at' => now(),
+                'disabled_reason' => 'manual_disable',
+                'disabled_by' => 'release-bot@most',
+            ]);
+            DB::statement('SET CONSTRAINTS report_publications_event_required IMMEDIATE');
+        });
+
+        self::assertSame('disabled', DB::table('report_publications')->where('id', $publicationId)->value('status'));
+        self::assertSame(1, DB::table('report_publication_events')->where('publication_id', $publicationId)->where('event_type', 'disabled')->count());
+        self::assertSame(1, DB::table('report_publication_outbox')->where('publication_id', $publicationId)->where('event_type', 'report_publication_disabled')->count());
+    }
+
+    public function test_preseeded_event_cannot_authorize_a_later_state_transition(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $publicationId = (string) $published->publicationIdentity?->publicationId;
+        $exception = $this->queryException(static function () use ($publicationId, $published): void {
+            DB::table('report_publication_events')->insert([
+                'id' => (string) Str::ulid(),
+                'publication_id' => $publicationId,
+                'event_type' => 'disabled',
+                'actor_identity' => 'release-bot@most',
+                'release_git_sha' => $published->publicationIdentity?->releaseGitSha,
+                'payload_sha256' => str_repeat('f', 64),
+                'occurred_at' => now(),
+            ]);
         });
 
         self::assertSame('23514', $exception->errorInfo[0] ?? null);
         self::assertSame('published', DB::table('report_publications')->where('id', $publicationId)->value('status'));
+        self::assertSame(0, DB::table('report_publication_events')->where('publication_id', $publicationId)->where('event_type', 'disabled')->count());
+
+        DB::table('report_publications')->where('id', $publicationId)->update([
+            'status' => 'disabled',
+            'disabled_at' => now(),
+            'disabled_reason' => 'manual_disable',
+            'disabled_by' => 'release-bot@most',
+        ]);
+        self::assertSame(1, DB::table('report_publication_events')->where('publication_id', $publicationId)->where('event_type', 'disabled')->count());
+    }
+
+    public function test_raw_publication_insert_without_exact_feature_row_is_rejected_at_commit(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $oldPublicationId = (string) $published->publicationIdentity?->publicationId;
+        $registry->disable($oldPublicationId, 'source_contract_revoked', 'release-bot@most');
+        $row = (array) DB::table('report_publications')->where('id', $oldPublicationId)->first();
+        $row['id'] = (string) Str::ulid();
+        $row['status'] = 'published';
+        $row['published_at'] = now();
+        $row['disabled_at'] = null;
+        $row['disabled_reason'] = null;
+        $row['disabled_by'] = null;
+
+        $exception = $this->queryException(static function () use ($row): void {
+            DB::transaction(static function () use ($row): void {
+                DB::table('report_publications')->insert($row);
+            });
+        });
+
+        self::assertSame('23514', $exception->errorInfo[0] ?? null);
+        self::assertSame(1, DB::table('report_publications')->count());
     }
 
     public function test_feature_state_is_bound_to_publication_and_proof(): void
@@ -187,6 +247,69 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         $store->configure($stale, ReportPublicationFeatureMode::ON, [], []);
     }
 
+    public function test_raw_feature_mutation_writes_transactional_outbox(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $publicationId = (string) $published->publicationIdentity?->publicationId;
+        $before = DB::table('report_publication_outbox')->where('publication_id', $publicationId)->count();
+
+        DB::table('report_publication_features')->where('publication_id', $publicationId)->update([
+            'mode' => 'canary',
+            'canary_organization_ids' => '[10]',
+            'canary_user_ids' => '[]',
+            'updated_at' => now()->addMicrosecond(),
+        ]);
+
+        self::assertSame(
+            $before + 1,
+            DB::table('report_publication_outbox')->where('publication_id', $publicationId)->count(),
+        );
+        self::assertSame(
+            1,
+            DB::table('report_publication_outbox')
+                ->where('publication_id', $publicationId)
+                ->where('event_type', 'report_feature_configured')
+                ->where('payload_json->mode', 'canary')
+                ->count(),
+        );
+    }
+
+    public function test_identical_feature_retry_is_a_no_op(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $identity = $published->publicationIdentity;
+        self::assertNotNull($identity);
+        $store = new EloquentReportPublicationFeatureStore(DB::connection());
+        $store->configure($identity, ReportPublicationFeatureMode::CANARY, [10], [20]);
+        $updatedAt = DB::table('report_publication_features')->where('code', $identity->code)->value('updated_at');
+        $outboxCount = DB::table('report_publication_outbox')->where('publication_id', $identity->publicationId)->count();
+
+        $store->configure($identity, ReportPublicationFeatureMode::CANARY, [10], [20]);
+
+        self::assertSame($updatedAt, DB::table('report_publication_features')->where('code', $identity->code)->value('updated_at'));
+        self::assertSame($outboxCount, DB::table('report_publication_outbox')->where('publication_id', $identity->publicationId)->count());
+    }
+
+    public function test_persisted_canary_allowlist_denies_other_tenants(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $identity = $published->publicationIdentity;
+        self::assertNotNull($identity);
+        $store = new EloquentReportPublicationFeatureStore(DB::connection());
+        $store->configure($identity, ReportPublicationFeatureMode::CANARY, [10], [20]);
+        $configuration = $store->current($identity->code);
+        self::assertNotNull($configuration);
+        $gate = new ReportPublicationFeatureGate;
+
+        self::assertTrue($gate->allows($configuration, $identity, 10, 999, 'run'));
+        self::assertTrue($gate->allows($configuration, $identity, 999, 20, 'export'));
+        self::assertFalse($gate->allows($configuration, $identity, 11, 21, 'run'));
+        self::assertFalse($gate->allows($configuration, $identity, 10, 20, 'subscription'));
+    }
+
     public function test_disable_writes_event_feature_state_and_outbox_atomically(): void
     {
         [$registry, $eligible] = $this->registry();
@@ -200,6 +323,62 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         self::assertSame(1, DB::table('report_publication_events')->where('publication_id', $publicationId)->where('event_type', 'disabled')->count());
         self::assertSame(1, DB::table('report_publication_outbox')->where('publication_id', $publicationId)->where('event_type', 'report_publication_disabled')->count());
         self::assertNull($registry->current($eligible->candidate->code));
+    }
+
+    public function test_raw_disable_writes_exact_event_feature_state_and_outbox_atomically(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $publicationId = (string) $published->publicationIdentity?->publicationId;
+        $identity = $published->publicationIdentity;
+        self::assertNotNull($identity);
+        $store = new EloquentReportPublicationFeatureStore(DB::connection());
+        $store->configure($identity, ReportPublicationFeatureMode::ON, [], []);
+
+        DB::transaction(static function () use ($publicationId): void {
+            DB::table('report_publications')->where('id', $publicationId)->update([
+                'status' => 'disabled',
+                'disabled_at' => now(),
+                'disabled_reason' => 'manual_disable',
+                'disabled_by' => 'release-bot@most',
+            ]);
+        });
+
+        $publication = DB::table('report_publications')->where('id', $publicationId)->first();
+        $event = DB::table('report_publication_events')
+            ->where('publication_id', $publicationId)
+            ->where('event_type', 'disabled')
+            ->first();
+        $outbox = DB::table('report_publication_outbox')
+            ->where('publication_id', $publicationId)
+            ->where('event_type', 'report_publication_disabled')
+            ->first();
+        $expectedPayload = DB::connection()->selectOne(<<<'SQL'
+            SELECT encode(
+                sha256(convert_to(jsonb_build_object(
+                    'actor_identity', disabled_by,
+                    'disabled_at_utc', to_char(disabled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                    'publication_id', id,
+                    'reason', disabled_reason
+                )::text, 'UTF8')),
+                'hex'
+            ) AS payload_sha256
+            FROM report_publications
+            WHERE id = ?
+            SQL, [$publicationId]);
+        self::assertNotNull($publication);
+        self::assertNotNull($event);
+        self::assertNotNull($outbox);
+        self::assertNotNull($expectedPayload);
+        self::assertSame('release-bot@most', $event->actor_identity);
+        self::assertSame($publication->release_git_sha, $event->release_git_sha);
+        self::assertSame($publication->disabled_at, $event->occurred_at);
+        self::assertSame($expectedPayload->payload_sha256, $event->payload_sha256);
+        $outboxPayload = json_decode((string) $outbox->payload_json, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame($event->payload_sha256, $outboxPayload['payload_sha256'] ?? null);
+        self::assertSame(1, DB::table('report_publication_events')->where('publication_id', $publicationId)->where('event_type', 'disabled')->count());
+        self::assertSame(1, DB::table('report_publication_outbox')->where('publication_id', $publicationId)->where('event_type', 'report_publication_disabled')->count());
+        self::assertSame('disabled', DB::table('report_publication_features')->where('publication_id', $publicationId)->value('mode'));
     }
 
     public function test_disabled_record_cannot_be_reenabled_and_new_proof_rebinds_feature_state(): void
@@ -227,6 +406,13 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
             $next->publicationIdentity?->proofHash->value,
             DB::table('report_publication_features')->value('proof_sha256'),
         );
+        self::assertSame(
+            1,
+            DB::table('report_publication_outbox')
+                ->where('publication_id', $next->publicationIdentity?->publicationId)
+                ->where('event_type', 'report_feature_configured')
+                ->count(),
+        );
     }
 
     public function test_concurrent_promotions_choose_exactly_one_active_proof(): void
@@ -234,33 +420,54 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-publication-'.bin2hex(random_bytes(8));
         $harness = new PostgresProcessRaceHarness($directory);
         $children = [];
+        $lockConnection = DB::connection();
         try {
+            $lockConnection->beginTransaction();
+            $lockConnection->select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ['report-publication:project_portfolio_health'],
+            );
             foreach ([0 => 'e', 1 => 'f'] as $index => $digit) {
                 $children[] = $harness->spawn($index, static function () use ($digit): array {
                     $fixture = ReportPublicationFixtureFactory::eligible($digit);
                     $registry = new EloquentReportPublicationRegistry(
                         DB::connection(),
-                        $fixture['registry'],
+                        $fixture['eligibility_service'],
+                        new ReportDefinitionFactory,
                     );
                     try {
                         $published = $registry->promote($fixture['eligible']);
 
                         return ['status' => 'promoted', 'id' => $published->publicationIdentity?->publicationId];
                     } catch (Throwable $exception) {
-                        return ['status' => 'conflict', 'error' => $exception::class];
+                        return [
+                            'status' => 'conflict',
+                            'error' => $exception::class,
+                            'message' => $exception->getMessage(),
+                        ];
                     }
                 });
             }
             $harness->release(0);
             $harness->release(1);
+            $harness->waitForPostgresWait($lockConnection, $harness->waitForWorkerBackendPid(0), 'advisory');
+            $harness->waitForPostgresWait($lockConnection, $harness->waitForWorkerBackendPid(1), 'advisory');
+            $lockConnection->commit();
             $harness->waitForChildren($children, 30.0);
-            $statuses = [$harness->result(0)['status'], $harness->result(1)['status']];
+            $results = [$harness->result(0), $harness->result(1)];
+            $statuses = array_column($results, 'status');
             sort($statuses, SORT_STRING);
 
             self::assertSame(['conflict', 'promoted'], $statuses);
+            $conflict = array_values(array_filter($results, static fn (array $result): bool => $result['status'] === 'conflict'))[0];
+            self::assertSame(LogicException::class, $conflict['error']);
+            self::assertSame('report_publication_promotion_conflict', $conflict['message']);
             self::assertSame(1, DB::table('report_publications')->where('status', 'published')->count());
             self::assertSame(1, DB::table('report_publication_events')->where('event_type', 'promoted')->count());
         } finally {
+            if ($lockConnection->transactionLevel() > 0) {
+                $lockConnection->rollBack();
+            }
             $harness->terminateAndReap($children);
             $harness->cleanup();
         }
@@ -271,25 +478,39 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-publication-'.bin2hex(random_bytes(8));
         $harness = new PostgresProcessRaceHarness($directory);
         $children = [];
+        $lockConnection = DB::connection();
         try {
+            $lockConnection->beginTransaction();
+            $lockConnection->select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ['report-publication:project_portfolio_health'],
+            );
             foreach ([0, 1] as $index) {
                 $children[] = $harness->spawn($index, static function (): array {
                     $fixture = ReportPublicationFixtureFactory::eligible();
                     $registry = new EloquentReportPublicationRegistry(
                         DB::connection(),
-                        $fixture['registry'],
+                        $fixture['eligibility_service'],
+                        new ReportDefinitionFactory,
                     );
                     try {
                         $published = $registry->promote($fixture['eligible']);
 
                         return ['status' => 'promoted', 'id' => $published->publicationIdentity?->publicationId];
                     } catch (Throwable $exception) {
-                        return ['status' => 'conflict', 'error' => $exception::class];
+                        return [
+                            'status' => 'conflict',
+                            'error' => $exception::class,
+                            'message' => $exception->getMessage(),
+                        ];
                     }
                 });
             }
             $harness->release(0);
             $harness->release(1);
+            $harness->waitForPostgresWait($lockConnection, $harness->waitForWorkerBackendPid(0), 'advisory');
+            $harness->waitForPostgresWait($lockConnection, $harness->waitForWorkerBackendPid(1), 'advisory');
+            $lockConnection->commit();
             $harness->waitForChildren($children, 30.0);
             $first = $harness->result(0);
             $second = $harness->result(1);
@@ -300,9 +521,25 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
             self::assertSame(1, DB::table('report_publications')->where('status', 'published')->count());
             self::assertSame(1, DB::table('report_publication_events')->where('event_type', 'promoted')->count());
         } finally {
+            if ($lockConnection->transactionLevel() > 0) {
+                $lockConnection->rollBack();
+            }
             $harness->terminateAndReap($children);
             $harness->cleanup();
         }
+    }
+
+    public function test_migration_round_trip_preserves_registry_contract(): void
+    {
+        $migration = require database_path('migrations/2026_08_01_000020_create_report_publication_registry.php');
+
+        $migration->down();
+        self::assertFalse(Schema::hasTable('report_publications'));
+        self::assertFalse(Schema::hasTable('report_publication_features'));
+
+        $migration->up();
+        self::assertTrue(Schema::hasTable('report_publications'));
+        self::assertTrue(Schema::hasTable('report_publication_features'));
     }
 
     private function registry(): array
@@ -310,7 +547,11 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         $fixture = ReportPublicationFixtureFactory::eligible();
 
         return [
-            new EloquentReportPublicationRegistry(DB::connection(), $fixture['registry']),
+            new EloquentReportPublicationRegistry(
+                DB::connection(),
+                $fixture['eligibility_service'],
+                new ReportDefinitionFactory,
+            ),
             $fixture['eligible'],
         ];
     }
@@ -324,6 +565,17 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         }
 
         self::fail('Expected a PostgreSQL contract violation.');
+    }
+
+    private function safeDatabase(): bool
+    {
+        if (config('database.default') !== 'pgsql') {
+            return false;
+        }
+        $row = DB::connection()->selectOne('SELECT current_database() AS database_name');
+        $database = is_object($row) ? ($row->database_name ?? null) : null;
+
+        return is_string($database) && preg_match('/_(?:test|testing)$/D', $database) === 1;
     }
 
     private function truncateRegistry(): void

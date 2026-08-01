@@ -42,6 +42,14 @@ final class ReportPublicationProofSchemaTest extends TestCase
         self::assertFalse($this->validator()->validate($permission, $this->schema())->isValid());
     }
 
+    public function test_export_assertions_are_bound_to_the_declared_format(): void
+    {
+        $proof = $this->fixture();
+        $proof->export_contracts[0]->assertion_codes[0] = 'export.csv.fixture.passed';
+
+        self::assertFalse($this->validator()->validate($proof, $this->schema())->isValid());
+    }
+
     private function validator(): Draft202012SchemaValidator
     {
         return new Draft202012SchemaValidator(new CompliantValidator);

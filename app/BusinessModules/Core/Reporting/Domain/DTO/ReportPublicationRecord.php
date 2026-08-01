@@ -18,15 +18,12 @@ final readonly class ReportPublicationRecord
         public DateTimeImmutable $publishedAt,
         public ?DateTimeImmutable $disabledAt,
         public ?string $disabledReason,
-        public ?string $supersededBy,
     ) {
         if (! hash_equals($identity->proofHash->value, $proof->digest()->value)
             || ($status === ReportPublicationStatus::PUBLISHED
-                && ($disabledAt !== null || $disabledReason !== null || $supersededBy !== null))
+                && ($disabledAt !== null || $disabledReason !== null))
             || ($status === ReportPublicationStatus::DISABLED
-                && ($disabledAt === null || $disabledReason === null || $supersededBy !== null))
-            || ($status === ReportPublicationStatus::SUPERSEDED
-                && ($disabledAt === null || $disabledReason !== null || $supersededBy === null))) {
+                && ($disabledAt === null || $disabledReason === null))) {
             throw new InvalidArgumentException('report_publication_record_invalid');
         }
     }

@@ -12,13 +12,18 @@ final readonly class EligibleReportPublication
     public function __construct(
         public CandidateReportDefinition $candidate,
         public array $candidateDocument,
+        public ReportDefinitionBinding $binding,
+        public ReportDefinitionConformanceEvidence $evidence,
         public ReportPublicationProof $proof,
         public Sha256Hash $proofHash,
         public Sha256Hash $candidateManifestHash,
         public Sha256Hash $officialManifestHash,
         public ReportPublicationReleaseIdentity $release,
+        public string $ciArtifactBytes,
     ) {
         if (! hash_equals($candidate->code, $proof->payload()['code'])
+            || ! hash_equals($candidate->code, $binding->code)
+            || ! hash_equals($candidate->code, $evidence->code)
             || ! hash_equals($proofHash->value, $proof->digest()->value)
             || ! hash_equals($candidateManifestHash->value, $proof->payload()['candidate_manifest_sha256'])
             || ! hash_equals($release->gitSha, $proof->payload()['release']['git_sha'])) {

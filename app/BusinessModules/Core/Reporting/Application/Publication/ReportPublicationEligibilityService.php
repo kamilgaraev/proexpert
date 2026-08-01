@@ -28,6 +28,7 @@ final class ReportPublicationEligibilityService
         private readonly ReportPublicationBindingHasher $bindings,
         private readonly array $requiredChecksByCode,
         private readonly array $deliveryContractsByCode,
+        private readonly ReportDefinitionSemanticFingerprint $fingerprints = new ReportDefinitionSemanticFingerprint,
     ) {}
 
     public function evaluate(
@@ -58,11 +59,14 @@ final class ReportPublicationEligibilityService
             return new ReportPublicationEligibilityResult(new EligibleReportPublication(
                 $candidate,
                 $candidateDocument,
+                $binding,
+                $evidence,
                 $proof,
                 $proof->digest(),
                 $candidateManifestHash,
                 $officialManifestHash,
                 $release,
+                $ciArtifactBytes,
             ));
         } catch (Throwable $exception) {
             if ($exception instanceof InvalidArgumentException
@@ -123,6 +127,7 @@ final class ReportPublicationEligibilityService
             $this->versions->assertAllowed($previous->candidateDocument, $candidateDocument, $evidence);
         }
         $this->assertVersions($candidate, $payload);
+        $this->assertSemanticFingerprints($candidateDocument, $evidence, $payload);
         $this->assertEvidence($evidence, $payload);
         $this->assertComponents($evidence, $payload);
         $this->assertPermissions($candidate, $payload);
@@ -141,6 +146,24 @@ final class ReportPublicationEligibilityService
         ];
         if ($payload['versions'] !== $expected
             || ! hash_equals($payload['contract_version'], $definition->contractVersion)) {
+            $this->ineligible();
+        }
+    }
+
+    private function assertSemanticFingerprints(
+        array $candidateDocument,
+        ReportDefinitionConformanceEvidence $evidence,
+        array $payload,
+    ): void {
+        $candidateFingerprints = $candidateDocument['semantic_fingerprints'] ?? null;
+        $expected = [
+            'source' => $this->fingerprints->source($candidateDocument, $evidence),
+            'formula' => $this->fingerprints->formula($evidence),
+        ];
+        if (! is_array($candidateFingerprints)
+            || ($candidateFingerprints['source'] ?? null) !== $expected['source']
+            || ($candidateFingerprints['formula'] ?? null) !== $expected['formula']
+            || $payload['semantic_fingerprints'] !== $expected) {
             $this->ineligible();
         }
     }
@@ -346,10 +369,28 @@ final class ReportPublicationEligibilityService
             'export_contracts',
             'drill_down_contract',
         ] as $field) {
-            if (($previousPayload[$field] ?? null) !== ($payload[$field] ?? null)) {
+            if (! $this->sameSealedValue(
+                $previousPayload[$field] ?? null,
+                $payload[$field] ?? null,
+            )) {
                 $this->ineligible();
             }
         }
+    }
+
+    private function sameSealedValue(mixed $previous, mixed $candidate): bool
+    {
+        if (is_string($previous) && is_string($candidate)) {
+            return hash_equals($previous, $candidate);
+        }
+        if (is_array($previous) && is_array($candidate)) {
+            return hash_equals(
+                CanonicalJson::encode($previous),
+                CanonicalJson::encode($candidate),
+            );
+        }
+
+        return $previous === $candidate;
     }
 
     private function readinessIsCandidate(array $document): bool
