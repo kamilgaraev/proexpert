@@ -199,7 +199,7 @@ return new class extends Migration
                     AND ((candidate_definition_json -> 'readiness' ->> 'publication') = 'candidate') IS TRUE
                 )
             SQL);
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             ALTER TABLE report_publications
                 ADD CONSTRAINT report_publications_proof_shape_check
                 CHECK (
@@ -235,7 +235,7 @@ return new class extends Migration
                     AND ((proof_json -> 'ci' ->> 'commit_sha') = release_git_sha) IS TRUE
                 )
             SQL);
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             ALTER TABLE report_publications
                 ADD CONSTRAINT report_publications_release_artifact_shape_check
                 CHECK ((
