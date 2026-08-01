@@ -168,6 +168,35 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
         self::assertNotNull($this->store()->find(10, $savedViewId, $version->revision));
     }
 
+    public function test_recursive_json_contract_accepts_php_maximum_finite_positive_number(): void
+    {
+        $savedViewId = $this->insertHead(10, 20);
+        $contentJson = '{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v7","name":"A","visibility":"private","filters":{"nested":{"values":[1.7976931348623158e308]}},"comparison":[],"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]}';
+
+        DB::table('report_saved_view_versions')->insert([
+            'id' => (string) Str::ulid(),
+            'saved_view_id' => $savedViewId,
+            'organization_id' => 10,
+            'owner_id' => 20,
+            'revision' => 1,
+            'report_code' => 'procurement_cycle',
+            'contract_version' => 'v7',
+            'presentation_schema_version' => 1,
+            'content_json' => $contentJson,
+            'content_hash' => str_repeat('a', 64),
+            'report_definition_hash' => str_repeat('b', 64),
+            'created_at' => now('UTC'),
+        ]);
+
+        $storedJson = DB::table('report_saved_view_versions')
+            ->where('saved_view_id', $savedViewId)
+            ->value('content_json');
+        self::assertIsString($storedJson);
+        $storedContent = json_decode($storedJson, true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($storedContent);
+        self::assertSame(PHP_FLOAT_MAX, $storedContent['filters']['nested']['values'][0]);
+    }
+
     #[DataProvider('invalidContentBindings')]
     public function test_invalid_content_binding_is_rejected_before_it_can_be_frozen(
         string $contentJson,
@@ -267,6 +296,9 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
         ];
         yield 'nested huge comparison number' => [
             '{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v7","name":"A","visibility":"private","filters":[],"comparison":{"groups":[{"ratio":-1e400}]},"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]}',
+        ];
+        yield 'nested first negative PHP overflow' => [
+            '{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v7","name":"A","visibility":"private","filters":[],"comparison":{"groups":[{"ratio":-1.7976931348623159e308}]},"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]}',
         ];
         yield 'non-object sort' => [self::encodeContent([...$valid, 'sort' => []])];
         yield 'sort missing field' => [self::encodeContent([...$valid, 'sort' => ['direction' => 'asc']])];
