@@ -17,7 +17,7 @@ use RuntimeException;
 
 final class ProjectReportPublicationReleaseRequestRegistryFactory
 {
-    public function create(Container $container, string $trustedDirectory, string $projectRoot): ProjectReportPublicationReleaseRequestRegistry
+    public function create(Container $container, string $trustedDirectory, string $evidenceRoot): ProjectReportPublicationReleaseRequestRegistry
     {
         $manifestPath = dirname(__DIR__, 2).'/resources/official-document-catalog.v1.yaml';
         $manifestBytes = file_get_contents($manifestPath);
@@ -33,7 +33,7 @@ final class ProjectReportPublicationReleaseRequestRegistryFactory
         }
 
         $evidence = new FilesystemReportConformanceEvidenceRepository(
-            $projectRoot,
+            $evidenceRoot,
             $container->make(Draft202012SchemaValidator::class),
         );
 

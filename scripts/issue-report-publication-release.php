@@ -46,11 +46,23 @@ try {
             throw new RuntimeException('report_publication_release_trusted_root_incomplete');
         }
     }
+    $trustedRequest = (new ReportPublicationReleaseRequestFileLoader)->load(
+        $trustedRootReal.DIRECTORY_SEPARATOR.'r15_release_request.json',
+        $trustedRootReal,
+    );
+    if ($trustedRequest->requestId !== $request->requestId
+        || $trustedRequest->code !== $request->code
+        || $trustedRequest->commitSha !== $request->commitSha
+        || $trustedRequest->proofSha256 !== $request->proofSha256
+        || $trustedRequest->schemaVersion !== $request->schemaVersion
+        || $trustedRequest->artifactPaths !== $request->artifactPaths) {
+        throw new RuntimeException('report_publication_release_request_identity_mismatch');
+    }
 
     $registry = $application->make(ProjectReportPublicationReleaseRequestRegistryFactory::class)->create(
         $application,
         $trustedRootReal,
-        dirname(__DIR__),
+        $trustedRootReal,
     );
     $resolvedRequest = $registry->resolve($request);
     $resolvedRequest->admission->assertProductionSafe();
