@@ -53,11 +53,13 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
+use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistryFactory;
 
 final class ReportingCatalogServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->singleton(ProjectReportPublicationReleaseRequestRegistryFactory::class);
         $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class, fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService(
             new \App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog,
             new \App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy,

@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 use App\BusinessModules\Core\Reporting\Application\Publication\Ed25519ReportPublicationReleaseArtifactSigner;
 use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory;
-use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistry;
+use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistryFactory;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseArtifactIssuer;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleWriter;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\ProcurementCycleReleaseCandidateResolver;
 
 require dirname(__DIR__).'/vendor/autoload.php';
+$application = require dirname(__DIR__).'/bootstrap/app.php';
+$application->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 $options = getopt('', [
     'output-directory:',
@@ -46,8 +47,12 @@ try {
         }
     }
 
-    (new ProcurementCycleReleaseCandidateResolver)->resolve($trustedRootReal, $request->commitSha);
-    throw new RuntimeException('report_publication_release_composition_not_wired');
+    $registry = $application->make(ProjectReportPublicationReleaseRequestRegistryFactory::class)->create(
+        $application,
+        $trustedRootReal,
+        dirname(__DIR__),
+    );
+    $resolvedRequest = $registry->resolve($request);
     $resolvedRequest->admission->assertProductionSafe();
     $repository = getenv('GITHUB_REPOSITORY');
     $workflowRef = getenv('GITHUB_WORKFLOW_REF');
