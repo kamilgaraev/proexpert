@@ -35,6 +35,22 @@ final class ReportRunHydratorTest extends TestCase
         self::assertSame('snapshot_one', $source->snapshot->id);
     }
 
+    public function test_export_source_fails_closed_for_official_snapshot_without_trusted_verifier(): void
+    {
+        $keyPair = sodium_crypto_sign_keypair();
+        $record = $this->officialReadyRecord(sodium_crypto_sign_secretkey($keyPair));
+
+        try {
+            (new ReportRunHydrator)->exportSource($record, 1250);
+            self::fail('Expected an official export without a trusted verifier to fail closed.');
+        } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+            self::assertSame(
+                \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED,
+                $exception->errorCode,
+            );
+        }
+    }
+
     public function test_export_source_rejects_tampered_persisted_official_seal_before_returning_source(): void
     {
         $keyPair = sodium_crypto_sign_keypair();
@@ -138,7 +154,7 @@ final class ReportRunHydratorTest extends TestCase
         self::assertSame($expected, $methods);
     }
 
-    public function test_store_constructor_and_dependency_free_hydrator_surface_are_exact(): void
+    public function test_store_and_hydrator_constructor_contracts_are_exact(): void
     {
         $storeConstructor = (new ReflectionClass(EloquentReportRunStore::class))->getConstructor();
         self::assertNotNull($storeConstructor);
@@ -155,13 +171,33 @@ final class ReportRunHydratorTest extends TestCase
         ));
 
         $hydrator = new ReflectionClass(ReportRunHydrator::class);
-        self::assertNull($hydrator->getConstructor());
+        $hydratorConstructor = $hydrator->getConstructor();
+        self::assertNotNull($hydratorConstructor);
+        self::assertSame(
+            [[
+                'sealVerifier',
+                '?App\\BusinessModules\\Core\\Reporting\\Application\\Contracts\\Execution\\ReportSnapshotSealVerifier',
+                true,
+                true,
+                null,
+            ]],
+            array_map(
+                static fn ($parameter): array => [
+                    $parameter->getName(),
+                    (string) $parameter->getType(),
+                    $parameter->isOptional(),
+                    $parameter->isDefaultValueAvailable(),
+                    $parameter->getDefaultValue(),
+                ],
+                $hydratorConstructor->getParameters(),
+            ),
+        );
         $methods = array_map(
             static fn ($method): string => $method->getName(),
             $hydrator->getMethods(\ReflectionMethod::IS_PUBLIC),
         );
         sort($methods);
-        self::assertSame(['exportSource', 'hydrate', 'query', 'retrySource'], $methods);
+        self::assertSame(['__construct', 'exportSource', 'hydrate', 'query', 'retrySource'], $methods);
         self::assertSame(
             [
                 ['record', 'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord'],
@@ -237,7 +273,7 @@ final class ReportRunHydratorTest extends TestCase
             ->once()
             ->with("'[]'::jsonb")
             ->andReturn(new Expression("'[]'::jsonb"));
-        $database->shouldReceive('statement')->times(24)->andReturnTrue();
+        $database->shouldReceive('statement')->times(25)->andReturnTrue();
         $schema->shouldReceive('create')
             ->once()
             ->with('report_runs', Mockery::on(static function (callable $callback) use (&$blueprint): bool {
@@ -275,6 +311,7 @@ final class ReportRunHydratorTest extends TestCase
                 'created_at' => 6,
                 'updated_at' => 6,
                 'expires_at' => 6,
+                'retention_next_attempt_at' => 6,
             ], $timestampColumns);
         } finally {
             Facade::clearResolvedInstances();
@@ -650,7 +687,7 @@ final class ReportRunHydratorTest extends TestCase
             'core_access_mode' => 'reporting_workspace',
         ];
         $queryData = [
-            'as_of' => '2026-07-26T00:00:00+00:00',
+            'as_of' => '2026-07-26T00:00:00.000000Z',
             'comparison' => [],
             'definition_hash' => $definitionHash,
             'filters' => ['period' => 'month'],
