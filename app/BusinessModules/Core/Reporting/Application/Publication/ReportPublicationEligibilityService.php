@@ -191,7 +191,7 @@ final class ReportPublicationEligibilityService
             'contract' => $definition->contractVersion,
             'renderer' => $definition->rendererVersion,
         ];
-        if ($payload['versions'] !== $expected
+        if (! $this->sameCanonicalMap($payload['versions'], $expected)
             || ! hash_equals($payload['contract_version'], $definition->contractVersion)) {
             $this->ineligible();
         }
@@ -208,27 +208,26 @@ final class ReportPublicationEligibilityService
             'formula' => $this->fingerprints->formula($evidence),
         ];
         if (! is_array($candidateFingerprints)
-            || ($candidateFingerprints['source'] ?? null) !== $expected['source']
-            || ($candidateFingerprints['formula'] ?? null) !== $expected['formula']
-            || $payload['semantic_fingerprints'] !== $expected) {
+            || ! $this->sameCanonicalMap($candidateFingerprints, $expected)
+            || ! $this->sameCanonicalMap($payload['semantic_fingerprints'], $expected)) {
             $this->ineligible();
         }
     }
 
     private function assertEvidence(ReportDefinitionConformanceEvidence $evidence, array $payload): void
     {
-        if ($payload['source'] !== [
+        if (! $this->sameCanonicalMap($payload['source'], [
             'snapshot_kind' => $evidence->source->snapshotKind,
             'snapshot_id' => $evidence->source->snapshotId,
             'source_sha256' => $evidence->source->sourceHash->value,
             'rows_sha256' => $evidence->source->rowsHash->value,
             'row_count' => $evidence->source->rowCount,
             'assertion_codes' => $evidence->source->assertionCodes,
-        ] || $payload['formula'] !== [
+        ]) || ! $this->sameCanonicalMap($payload['formula'], [
             'formula_version' => $evidence->formula->formulaVersion,
             'totals_sha256' => $evidence->formula->totalsHash->value,
             'assertion_codes' => $evidence->formula->assertionCodes,
-        ]) {
+        ])) {
             $this->ineligible();
         }
     }
@@ -255,7 +254,7 @@ final class ReportPublicationEligibilityService
             'sensitive' => $policy->sensitivePermissions,
             'audit' => $policy->auditPermissions,
         ];
-        if ($payload['permissions'] !== $expected) {
+        if (! $this->sameCanonicalMap($payload['permissions'], $expected)) {
             $this->ineligible();
         }
         foreach ($expected as $permissions) {
@@ -462,18 +461,29 @@ final class ReportPublicationEligibilityService
         return $previous === $candidate;
     }
 
+    /** @param array<string, mixed> $left @param array<string, mixed> $right */
+    private function sameCanonicalMap(mixed $left, array $right): bool
+    {
+        return is_array($left)
+            && ! array_is_list($left)
+            && hash_equals(CanonicalJson::encode($left), CanonicalJson::encode($right));
+    }
+
     private function readinessIsCandidate(array $document): bool
     {
         $readiness = $document['readiness'] ?? null;
 
-        return is_array($readiness)
-            && ! array_is_list($readiness)
-            && $readiness === [
-                'source' => 'ready',
-                'formula' => 'ready',
-                'delivery' => 'verified',
-                'publication' => 'candidate',
-            ];
+        if (! is_array($readiness) || array_is_list($readiness)) {
+            return false;
+        }
+        ksort($readiness, SORT_STRING);
+
+        return $readiness === [
+            'delivery' => 'verified',
+            'formula' => 'ready',
+            'publication' => 'candidate',
+            'source' => 'ready',
+        ];
     }
 
     private function ineligible(): never

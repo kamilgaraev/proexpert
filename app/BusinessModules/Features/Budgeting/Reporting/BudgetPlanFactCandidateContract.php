@@ -135,6 +135,20 @@ final readonly class BudgetPlanFactCandidateContract
             || ($permissions['audit'] ?? null) !== []) {
             throw new InvalidArgumentException('budget_plan_fact_candidate_definition_invalid');
         }
+
+        $readiness = $definition['readiness'] ?? null;
+        if (! is_array($readiness) || array_is_list($readiness)) {
+            throw new InvalidArgumentException('budget_plan_fact_candidate_definition_invalid');
+        }
+        ksort($readiness, SORT_STRING);
+        if ($readiness !== [
+            'delivery' => 'verified',
+            'formula' => 'ready',
+            'publication' => 'candidate',
+            'source' => 'ready',
+        ]) {
+            throw new InvalidArgumentException('budget_plan_fact_candidate_definition_invalid');
+        }
     }
 
     public function assertSnapshotRequest(

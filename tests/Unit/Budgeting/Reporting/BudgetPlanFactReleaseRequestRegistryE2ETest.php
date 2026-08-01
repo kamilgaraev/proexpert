@@ -4,16 +4,19 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Budgeting\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog;
 use App\BusinessModules\Core\Reporting\Application\Publication\BudgetPlanFactReleaseCandidateResolverAdapter;
+use App\BusinessModules\Core\Reporting\Application\Publication\EligibilityServiceReportPublicationReleaseGate;
 use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistry;
 use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistryFactory;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionSemanticFingerprint;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationDeliveryContractHasher;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBindingFactory;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseDispatch;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseDispatchProfileCatalog;
-use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseEligibilityGate;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequest;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
@@ -41,6 +44,7 @@ use Opis\JsonSchema\CompliantValidator;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use Tests\Support\Budgeting\BudgetPlanFactCandidateFixture;
+use Tests\Support\Reporting\Publication\ReportPublicationReleaseArtifactTestFactory;
 
 final class BudgetPlanFactReleaseRequestRegistryE2ETest extends TestCase
 {
@@ -61,13 +65,15 @@ final class BudgetPlanFactReleaseRequestRegistryE2ETest extends TestCase
 
     public function test_resolves_a_common_proof_and_filesystem_evidence_for_the_sealed_close(): void
     {
-        [$registry, $request] = $this->registryAndRequest();
+        [$registry, $request, $issuer] = $this->registryAndRequest();
 
         $resolved = $registry->resolve($request);
+        $bundle = $issuer->issue($resolved->admission, $this->releaseContext());
 
         self::assertSame(BudgetPlanFactCandidateContract::CODE, $resolved->admission->candidate->code);
         self::assertSame(BudgetPlanFactCandidateFixture::closeId(), $resolved->admission->evidence->source->snapshotId);
         self::assertSame(['csv', 'xlsx'], $resolved->admission->candidate->definition->formats);
+        self::assertSame(BudgetPlanFactCandidateContract::CODE, $bundle->proof->payload()['code']);
     }
 
     public function test_rejects_missing_tampered_wrong_close_and_cross_code_requests(): void
@@ -90,7 +96,7 @@ final class BudgetPlanFactReleaseRequestRegistryE2ETest extends TestCase
         ])));
     }
 
-    /** @return array{ProjectReportPublicationReleaseRequestRegistry, ReportPublicationReleaseRequest} */
+    /** @return array{ProjectReportPublicationReleaseRequestRegistry, ReportPublicationReleaseRequest, \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseArtifactIssuer} */
     private function registryAndRequest(?string $closeId = null): array
     {
         $this->delete($this->root);
@@ -151,6 +157,7 @@ final class BudgetPlanFactReleaseRequestRegistryE2ETest extends TestCase
                 }
             }),
         ]);
+        $eligibility = $this->eligibility();
         $registry = new ProjectReportPublicationReleaseRequestRegistry(
             $this->root,
             '{}',
@@ -158,11 +165,11 @@ final class BudgetPlanFactReleaseRequestRegistryE2ETest extends TestCase
             $dispatches,
             $factory,
             $repository,
-            $this->createStub(ReportPublicationReleaseEligibilityGate::class),
+            new EligibilityServiceReportPublicationReleaseGate($eligibility),
             $this->createStub(ReportPublicationRegistry::class),
         );
 
-        return [$registry, ReportPublicationReleaseRequest::fromArray($documents[BudgetPlanFactReleaseCandidateLayout::REQUEST_FILE])];
+        return [$registry, ReportPublicationReleaseRequest::fromArray($documents[BudgetPlanFactReleaseCandidateLayout::REQUEST_FILE]), ReportPublicationReleaseArtifactTestFactory::issuer($eligibility)];
     }
 
     private function proof(ReportDefinition $definition, ReportDefinitionBinding $binding, ReportDefinitionConformanceEvidence $evidence, array $candidate): ReportPublicationProof
@@ -208,7 +215,39 @@ final class BudgetPlanFactReleaseRequestRegistryE2ETest extends TestCase
     {
         $contract = new BudgetPlanFactCandidateContract;
 
-        return ['capabilities' => ['supports_subscriptions' => false], 'code' => BudgetPlanFactCandidateContract::CODE, 'columns' => $contract->columns(), 'filters' => $contract->filters(), 'formats' => $contract->formats(), 'permissions' => ['audit' => [], 'export' => ['budgeting.plan_fact.export'], 'sensitive' => [], 'view' => ['budgeting.plan_fact.view']], 'readiness' => ['delivery' => 'verified', 'formula' => 'verified', 'publication' => 'candidate', 'source' => 'verified'], 'sorts' => $contract->sorts(), 'versions' => ['contract' => '1.0.0', 'formula' => BudgetPlanFactCandidateContract::FORMULA_VERSION, 'renderer' => '1.0.0', 'source_schema' => $contract->sourceSchemaVersion]];
+        return ['capabilities' => ['supports_subscriptions' => false], 'code' => BudgetPlanFactCandidateContract::CODE, 'columns' => $contract->columns(), 'filters' => $contract->filters(), 'formats' => $contract->formats(), 'permissions' => ['audit' => [], 'export' => ['budgeting.plan_fact.export'], 'sensitive' => [], 'view' => ['budgeting.plan_fact.view']], 'readiness' => ['delivery' => 'verified', 'formula' => 'ready', 'publication' => 'candidate', 'source' => 'ready'], 'sorts' => $contract->sorts(), 'versions' => ['contract' => '1.0.0', 'formula' => BudgetPlanFactCandidateContract::FORMULA_VERSION, 'renderer' => '1.0.0', 'source_schema' => $contract->sourceSchemaVersion]];
+    }
+
+    private function eligibility(): ReportPublicationEligibilityService
+    {
+        return new ReportPublicationEligibilityService(
+            new ReportPermissionCatalog,
+            new ReportDefinitionVersionPolicy,
+            new ReportPublicationBindingHasher,
+            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements::profileCatalog(),
+            ReportPublicationReleaseArtifactTestFactory::verifier(),
+            new ReportDefinitionSemanticFingerprint,
+            new ReportPublicationDeliveryContractHasher,
+            static fn (): DateTimeImmutable => new DateTimeImmutable('2026-08-02T00:00:00.000000Z'),
+        );
+    }
+
+    /** @return array<string, int|string> */
+    private function releaseContext(): array
+    {
+        return [
+            'actor_identity' => 'release-bot@most',
+            'commit_sha' => $this->commit(),
+            'completed_at_utc' => '2026-08-01T01:00:00.000000Z',
+            'environment' => 'report-publication-release',
+            'event_name' => 'push',
+            'job' => 'report-publication-release-artifact',
+            'ref' => 'refs/heads/main',
+            'repository' => 'kamilgaraev/proexpert',
+            'run_attempt' => 1,
+            'run_id' => 'budget-plan-fact-ci',
+            'workflow_ref' => '.github/workflows/notification-concurrency.yml@refs/heads/main',
+        ];
     }
 
     private function assertUntrusted(\Closure $operation): void

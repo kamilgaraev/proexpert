@@ -171,7 +171,7 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
                 'sensitive' => [],
                 'view' => ['budgeting.plan_fact.view'],
             ],
-            'readiness' => ['delivery' => 'verified', 'formula' => 'verified', 'publication' => 'candidate', 'source' => 'verified'],
+            'readiness' => ['delivery' => 'verified', 'formula' => 'ready', 'publication' => 'candidate', 'source' => 'ready'],
             'sorts' => $this->canonicalItems($contract->sorts()),
             'versions' => [
                 'contract' => '1.0.0',
