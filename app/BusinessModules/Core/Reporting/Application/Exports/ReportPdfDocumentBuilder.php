@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunk;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeZone;
 use Throwable;
 
@@ -170,6 +171,13 @@ final readonly class ReportPdfDocumentBuilder
         }
         if (is_float($value) && is_finite($value)) {
             return json_encode($value, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+        }
+        if (is_array($value)) {
+            try {
+                return CanonicalJson::encode($value);
+            } catch (Throwable) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED);
+            }
         }
         throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED);
     }

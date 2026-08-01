@@ -421,6 +421,31 @@ final class CsvReportExportRendererTest extends ReportExportRendererTestCase
         );
     }
 
+    public function test_streams_structured_cells_as_canonical_json_without_formula_neutralization(): void
+    {
+        [$source] = $this->source(1);
+        $stream = new InMemoryReportArtifactStream;
+
+        $count = (new CsvReportExportRenderer)->render(
+            $source,
+            $this->data('csv', ['name', 'amount'], 'en-US'),
+            [$this->chunk($source, [[
+                'name' => ['z' => 1, 'a' => ['formula' => '=1+1']],
+                'amount' => ['items' => [null, 2.0]],
+                'date' => '2026-07-29',
+            ]])],
+            $stream,
+        );
+
+        self::assertSame(1, $count);
+        self::assertSame(
+            "\xEF\xBB\xBFName,Amount\r\n"
+            .'"{""a"":{""formula"":""=1+1""},""z"":1}"'
+            .",\"{\"\"items\"\":[null,2.0]}\"\r\n",
+            $stream->bytes(),
+        );
+    }
+
     public function test_checksum_is_stable_and_cancellation_is_checked_between_chunks(): void
     {
         [$source] = $this->source(2);

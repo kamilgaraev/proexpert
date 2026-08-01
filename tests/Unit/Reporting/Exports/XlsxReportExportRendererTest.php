@@ -40,6 +40,34 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
         self::assertStringContainsString('<t>Total</t>', $entries['xl/worksheets/sheet1.xml']);
     }
 
+    public function test_streams_structured_cells_as_canonical_json(): void
+    {
+        [$source] = $this->source(1);
+        $stream = new InMemoryReportArtifactStream;
+
+        $count = (new XlsxReportExportRenderer)->render(
+            $source,
+            $this->data('xlsx', ['name', 'amount'], 'en-US'),
+            [$this->chunk($source, [[
+                'name' => ['z' => 1, 'a' => ['formula' => '=1+1']],
+                'amount' => ['items' => [null, 2.0]],
+                'date' => '2026-07-29',
+            ]])],
+            $stream,
+        );
+
+        self::assertSame(1, $count);
+        $entries = $this->archiveEntries($stream->bytes());
+        self::assertStringContainsString(
+            '<t>{&quot;a&quot;:{&quot;formula&quot;:&quot;=1+1&quot;},&quot;z&quot;:1}</t>',
+            $entries['xl/worksheets/sheet1.xml'],
+        );
+        self::assertStringContainsString(
+            '<t>{&quot;items&quot;:[null,2.0]}</t>',
+            $entries['xl/worksheets/sheet1.xml'],
+        );
+    }
+
     public function test_archive_checksum_is_stable_and_cancellation_stops_before_next_chunk(): void
     {
         [$source] = $this->source(2);
