@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
@@ -20,8 +21,11 @@ use InvalidArgumentException;
 final class PlanFactSourceSnapshotMaterializer
 {
     public const SOURCE_KIND = 'budgeting.plan_fact';
+
     public const REPORT_CODE = 'budget_plan_fact';
+
     public const SCHEMA_VERSION = '1.0.0';
+
     public const DRILL_COLUMN_ID = 'sources';
 
     public function materialize(
@@ -34,10 +38,7 @@ final class PlanFactSourceSnapshotMaterializer
         ?DateTimeImmutable $staleAt,
         BudgetingReportSourceClose $close,
     ): ReportSourceSnapshotWrite {
-        $queryHash = $this->hash([
-            'filters' => $this->canonicalFilters($filters),
-            'scope' => $scope->canonicalIdentity(),
-        ]);
+        $identity = $this->identity($scope, $filters, $close->closeId);
         $rows = $this->rows($snapshotId, $report['rows'] ?? []);
         $drillRows = $this->drillRows($snapshotId, $rows, $drillsByKey);
         $watermarks = $this->watermarks($report, $rows, $close);
@@ -52,7 +53,7 @@ final class PlanFactSourceSnapshotMaterializer
             self::REPORT_CODE,
             self::SCHEMA_VERSION,
             $scope,
-            $queryHash,
+            $identity->queryHash,
             $asOf,
             $sourceHash,
             $watermarks,
@@ -89,15 +90,33 @@ final class PlanFactSourceSnapshotMaterializer
         return new ReportSourceSnapshotWrite($header, $rows, $drillRows);
     }
 
+    public function identity(
+        ReportScope $scope,
+        array $filters,
+        string $sourceVersion,
+    ): ReportSourceSnapshotIdentity {
+        return new ReportSourceSnapshotIdentity(
+            self::SOURCE_KIND,
+            self::REPORT_CODE,
+            self::SCHEMA_VERSION,
+            $scope,
+            $this->hash([
+                'filters' => $this->canonicalFilters($filters),
+                'scope' => $scope->canonicalIdentity(),
+            ]),
+            $sourceVersion,
+        );
+    }
+
     private function rows(string $snapshotId, mixed $reportRows): array
     {
-        if (!is_array($reportRows) || !array_is_list($reportRows)) {
+        if (! is_array($reportRows) || ! array_is_list($reportRows)) {
             throw new InvalidArgumentException('plan_fact_source_snapshot_rows_invalid');
         }
 
         $rows = [];
         foreach ($reportRows as $reportRow) {
-            if (!is_array($reportRow) || !is_string($reportRow['drill_down_key'] ?? null)) {
+            if (! is_array($reportRow) || ! is_string($reportRow['drill_down_key'] ?? null)) {
                 throw new InvalidArgumentException('plan_fact_source_snapshot_rows_invalid');
             }
 
@@ -129,7 +148,7 @@ final class PlanFactSourceSnapshotMaterializer
         $drillRows = [];
         $drillsByReference = [];
         foreach ($drillsByKey as $drillKey => $items) {
-            if (!is_string($drillKey)) {
+            if (! is_string($drillKey)) {
                 throw new InvalidArgumentException('plan_fact_source_snapshot_drill_invalid');
             }
             $drillsByReference[hash('sha256', $drillKey)] = $items;
@@ -138,7 +157,7 @@ final class PlanFactSourceSnapshotMaterializer
         foreach ($rows as $row) {
             $drillReference = $row->payload['drill']['key'];
             $items = $drillsByReference[$drillReference] ?? null;
-            if (!is_array($items) || !array_is_list($items)) {
+            if (! is_array($items) || ! array_is_list($items)) {
                 throw new InvalidArgumentException('plan_fact_source_snapshot_drill_invalid');
             }
 
@@ -162,7 +181,7 @@ final class PlanFactSourceSnapshotMaterializer
     private function redactRow(array $row): array
     {
         $group = $row['group'] ?? null;
-        if (!is_array($group)) {
+        if (! is_array($group)) {
             throw new InvalidArgumentException('plan_fact_source_snapshot_rows_invalid');
         }
 
@@ -185,7 +204,7 @@ final class PlanFactSourceSnapshotMaterializer
 
     private function redactDrill(mixed $item): array
     {
-        if (!is_array($item) || !is_string($item['source_type'] ?? null) || !array_key_exists('source_id', $item)) {
+        if (! is_array($item) || ! is_string($item['source_type'] ?? null) || ! array_key_exists('source_id', $item)) {
             throw new InvalidArgumentException('plan_fact_source_snapshot_drill_invalid');
         }
 
@@ -240,7 +259,7 @@ final class PlanFactSourceSnapshotMaterializer
     {
         $result = [];
         foreach ($value as $key => $item) {
-            if (!is_string($key) || (!is_scalar($item) && $item !== null)) {
+            if (! is_string($key) || (! is_scalar($item) && $item !== null)) {
                 throw new InvalidArgumentException('plan_fact_source_snapshot_rows_invalid');
             }
             $result[$key] = $item;
@@ -251,7 +270,7 @@ final class PlanFactSourceSnapshotMaterializer
 
     private function string(mixed $value): string
     {
-        if (!is_string($value) || $value === '') {
+        if (! is_string($value) || $value === '') {
             throw new InvalidArgumentException('plan_fact_source_snapshot_invalid');
         }
 
@@ -260,7 +279,7 @@ final class PlanFactSourceSnapshotMaterializer
 
     private function number(mixed $value): float|int
     {
-        if (!is_int($value) && !is_float($value)) {
+        if (! is_int($value) && ! is_float($value)) {
             throw new InvalidArgumentException('plan_fact_source_snapshot_invalid');
         }
 

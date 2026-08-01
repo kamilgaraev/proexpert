@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
@@ -33,7 +34,8 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
 {
     public function test_writer_persists_only_after_an_approved_matching_close_is_validated(): void
     {
-        $report = new class implements ProjectMarginSourceSnapshotReport {
+        $report = new class implements ProjectMarginSourceSnapshotReport
+        {
             public int $calls = 0;
 
             public function reportForProjectScope(array $input, array $projectIds): array
@@ -45,12 +47,12 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
 
             public function drillDownForProjectScope(array $input, array $projectIds): array
             {
-                throw new LogicException();
+                throw new LogicException;
             }
         };
         $store = $this->snapshotStore();
 
-        (new ProjectMarginSourceSnapshotWriter($report, new ProjectMarginSourceSnapshotMaterializer(), $store, $this->closeService($this->close())))->persist($this->request());
+        (new ProjectMarginSourceSnapshotWriter($report, new ProjectMarginSourceSnapshotMaterializer, $store, $this->closeService($this->close())))->persist($this->request());
 
         self::assertSame(1, $report->calls);
         self::assertSame('01JZZZZZZZZZZZZZZZZZZZZZZZ', $store->write?->header->watermarks['close_id']);
@@ -64,24 +66,25 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
             $this->close(status: BudgetingReportSourceCloseStatus::RESTATED),
             $this->close(identity: new BudgetingReportSourceCloseIdentity(2, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1')),
         ] as $close) {
-            $report = new class implements ProjectMarginSourceSnapshotReport {
+            $report = new class implements ProjectMarginSourceSnapshotReport
+            {
                 public int $calls = 0;
 
                 public function reportForProjectScope(array $input, array $projectIds): array
                 {
                     $this->calls++;
 
-                    throw new LogicException();
+                    throw new LogicException;
                 }
 
                 public function drillDownForProjectScope(array $input, array $projectIds): array
                 {
-                    throw new LogicException();
+                    throw new LogicException;
                 }
             };
 
             try {
-                (new ProjectMarginSourceSnapshotWriter($report, new ProjectMarginSourceSnapshotMaterializer(), $this->snapshotStore(), $this->closeService($close)))->persist($this->request());
+                (new ProjectMarginSourceSnapshotWriter($report, new ProjectMarginSourceSnapshotMaterializer, $this->snapshotStore(), $this->closeService($close)))->persist($this->request());
                 self::fail('Expected the invalid close to be rejected.');
             } catch (DomainException) {
                 self::assertSame(0, $report->calls);
@@ -134,14 +137,13 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
 
     private function closeService(BudgetingReportSourceClose $close): BudgetingReportSourceCloseService
     {
-        return new BudgetingReportSourceCloseService(new class($close) implements BudgetingReportSourceCloseStore {
-            public function __construct(private readonly BudgetingReportSourceClose $close)
-            {
-            }
+        return new BudgetingReportSourceCloseService(new class($close) implements BudgetingReportSourceCloseStore
+        {
+            public function __construct(private readonly BudgetingReportSourceClose $close) {}
 
             public function createApproved(CreateBudgetingReportSourceClose $request): BudgetingReportSourceClose
             {
-                throw new LogicException();
+                throw new LogicException;
             }
 
             public function find(string $closeId): ?BudgetingReportSourceClose
@@ -153,7 +155,8 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
 
     private function snapshotStore(): ReportSourceSnapshotStore
     {
-        return new class implements ReportSourceSnapshotStore {
+        return new class implements ReportSourceSnapshotStore
+        {
             public ?ReportSourceSnapshotWrite $write = null;
 
             public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
@@ -163,19 +166,31 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
                 return $snapshot->header;
             }
 
+            public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader
+            {
+                return null;
+            }
+
+            public function resolveReady(
+                ReportSourceSnapshotIdentity $identity,
+                ReportSourceSnapshotWrite $snapshot,
+            ): ReportSourceSnapshotHeader {
+                return $this->persistReady($snapshot);
+            }
+
             public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
             {
-                throw new LogicException();
+                throw new LogicException;
             }
 
             public function page(ReportSourceSnapshotReadRequest $request, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotPage
             {
-                throw new LogicException();
+                throw new LogicException;
             }
 
             public function drillPage(ReportSourceSnapshotReadRequest $request, string $rowKey, string $columnId, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotDrillPage
             {
-                throw new LogicException();
+                throw new LogicException;
             }
         };
     }

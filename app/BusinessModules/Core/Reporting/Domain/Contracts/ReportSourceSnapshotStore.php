@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Domain\Contracts;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
@@ -14,6 +15,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 interface ReportSourceSnapshotStore
 {
     public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader;
+
+    public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader;
+
+    public function resolveReady(
+        ReportSourceSnapshotIdentity $identity,
+        ReportSourceSnapshotWrite $snapshot,
+    ): ReportSourceSnapshotHeader;
 
     public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader;
 

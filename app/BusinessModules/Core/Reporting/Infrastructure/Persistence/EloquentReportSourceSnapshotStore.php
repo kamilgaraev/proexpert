@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
@@ -25,18 +26,83 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportS
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSourceSnapshotRowRecord;
 use DateTimeImmutable;
 use DateTimeZone;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStore
 {
+    private const READY_IDENTITY_UNIQUE = 'report_source_snapshots_ready_source_identity_unique';
+
     public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
     {
         ReportSourceSnapshotIntegrity::assertWrite($snapshot);
 
-        return DB::transaction(function () use ($snapshot): ReportSourceSnapshotHeader {
+        return $this->persist($snapshot, null);
+    }
+
+    public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader
+    {
+        $record = ReportSourceSnapshotRecord::query()
+            ->where('source_kind', $identity->sourceKind)
+            ->where('report_code', $identity->reportCode)
+            ->where('schema_version', $identity->schemaVersion)
+            ->where('organization_id', $identity->scope->organizationId)
+            ->where('scope_identity_hash', $identity->scopeIdentityHash()->value)
+            ->where('query_hash', $identity->queryHash->value)
+            ->where('source_version', $identity->sourceVersion)
+            ->where('status', ReportSourceSnapshotStatus::READY->value)
+            ->first();
+
+        if (! $record instanceof ReportSourceSnapshotRecord) {
+            return null;
+        }
+
+        $header = $this->headerFromRecord($record);
+        if (! $identity->matches($header)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
+        return $header;
+    }
+
+    public function resolveReady(
+        ReportSourceSnapshotIdentity $identity,
+        ReportSourceSnapshotWrite $snapshot,
+    ): ReportSourceSnapshotHeader {
+        ReportSourceSnapshotIntegrity::assertWrite($snapshot);
+        if (! $identity->matches($snapshot->header)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
+        $ready = $this->findReady($identity);
+        if ($ready !== null) {
+            return $this->assertCompatible($ready, $snapshot);
+        }
+
+        try {
+            return $this->persist($snapshot, $identity);
+        } catch (QueryException $exception) {
+            if (! $this->isReadyIdentityUniqueViolation($exception)) {
+                throw $exception;
+            }
+
+            $winner = $this->findReady($identity);
+            if ($winner === null) {
+                throw $exception;
+            }
+
+            return $this->assertCompatible($winner, $snapshot, $exception);
+        }
+    }
+
+    private function persist(
+        ReportSourceSnapshotWrite $snapshot,
+        ?ReportSourceSnapshotIdentity $identity,
+    ): ReportSourceSnapshotHeader {
+        return DB::transaction(function () use ($snapshot, $identity): ReportSourceSnapshotHeader {
             $header = $snapshot->header;
-            ReportSourceSnapshotRecord::query()->create($this->headerAttributes($header));
+            ReportSourceSnapshotRecord::query()->create($this->headerAttributes($header, $identity));
             ReportSourceSnapshotRowRecord::query()->insert(array_map(fn (ReportSourceSnapshotRow $row): array => [
                 'snapshot_id' => $row->snapshotId, 'ordinal' => $row->ordinal, 'row_key' => $row->rowKey,
                 'payload' => json_encode($row->payload, JSON_THROW_ON_ERROR), 'payload_hash' => $row->payloadHash->value,
@@ -122,18 +188,47 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotSto
         return $cursor?->afterOrdinal ?? 0;
     }
 
-    private function headerAttributes(ReportSourceSnapshotHeader $header): array
-    {
+    private function headerAttributes(
+        ReportSourceSnapshotHeader $header,
+        ?ReportSourceSnapshotIdentity $identity,
+    ): array {
         return [
             'id' => $header->id, 'source_kind' => $header->sourceKind, 'report_code' => $header->reportCode,
             'schema_version' => $header->schemaVersion, 'organization_id' => $header->scope->organizationId,
             'scope_identity' => $header->scopeIdentity(), 'query_hash' => $header->queryHash->value,
+            'scope_identity_hash' => $identity?->scopeIdentityHash()->value,
+            'source_version' => $identity?->sourceVersion,
             'as_of' => $header->asOf, 'source_hash' => $header->sourceHash->value,
             'watermarks' => $header->watermarks, 'generated_at' => $header->generatedAt,
             'stale_at' => $header->staleAt, 'status' => $header->status->value, 'row_count' => $header->rowCount,
             'drill_row_count' => $header->drillRowCount, 'snapshot_hash' => $header->snapshotHash->value,
             'ready_at' => null, 'expired_at' => null, 'created_at' => $header->generatedAt, 'updated_at' => $header->generatedAt,
         ];
+    }
+
+    private function assertCompatible(
+        ReportSourceSnapshotHeader $ready,
+        ReportSourceSnapshotWrite $candidate,
+        ?Throwable $previous = null,
+    ): ReportSourceSnapshotHeader {
+        if (! hash_equals($ready->sourceHash->value, $candidate->header->sourceHash->value)
+            || $ready->rowCount !== $candidate->header->rowCount
+            || $ready->drillRowCount !== $candidate->header->drillRowCount) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT,
+                previous: $previous,
+            );
+        }
+
+        return $ready;
+    }
+
+    private function isReadyIdentityUniqueViolation(QueryException $exception): bool
+    {
+        $sqlState = $exception->errorInfo[0] ?? null;
+        $details = (string) ($exception->errorInfo[2] ?? $exception->getMessage());
+
+        return $sqlState === '23505' && str_contains($details, self::READY_IDENTITY_UNIQUE);
     }
 
     private function headerFromRecord(ReportSourceSnapshotRecord $record): ReportSourceSnapshotHeader

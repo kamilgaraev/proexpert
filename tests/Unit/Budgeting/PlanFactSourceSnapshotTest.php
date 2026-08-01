@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
@@ -61,13 +62,13 @@ final class PlanFactSourceSnapshotTest extends TestCase
 
     public function test_writer_uses_only_scoped_real_service_contract_and_persists_materialized_snapshot(): void
     {
-        $report = new class($this->report()) implements PlanFactSourceSnapshotReport {
+        $report = new class($this->report()) implements PlanFactSourceSnapshotReport
+        {
             public array $reportCalls = [];
+
             public array $drillCalls = [];
 
-            public function __construct(private array $payload)
-            {
-            }
+            public function __construct(private array $payload) {}
 
             public function reportForProjectScope(array $input, array $projectIds): array
             {
@@ -102,7 +103,8 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 ];
             }
         };
-        $store = new class implements ReportSourceSnapshotStore {
+        $store = new class implements ReportSourceSnapshotStore
+        {
             public ?ReportSourceSnapshotWrite $write = null;
 
             public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
@@ -112,22 +114,34 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 return $snapshot->header;
             }
 
+            public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader
+            {
+                return null;
+            }
+
+            public function resolveReady(
+                ReportSourceSnapshotIdentity $identity,
+                ReportSourceSnapshotWrite $snapshot,
+            ): ReportSourceSnapshotHeader {
+                return $this->persistReady($snapshot);
+            }
+
             public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
 
             public function page(ReportSourceSnapshotReadRequest $request, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotPage
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
 
             public function drillPage(ReportSourceSnapshotReadRequest $request, string $rowKey, string $columnId, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotDrillPage
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
         };
-        $writer = new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer(), $store, $this->closeService());
+        $writer = new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer, $store, $this->closeService());
 
         $header = $writer->persist($this->request([10, 20]));
 
@@ -163,7 +177,8 @@ final class PlanFactSourceSnapshotTest extends TestCase
 
     public function test_empty_project_scope_is_forwarded_as_empty_set_not_legacy_scope(): void
     {
-        $report = new class implements PlanFactSourceSnapshotReport {
+        $report = new class implements PlanFactSourceSnapshotReport
+        {
             public array $projectIds = [];
 
             public function reportForProjectScope(array $input, array $projectIds): array
@@ -175,10 +190,11 @@ final class PlanFactSourceSnapshotTest extends TestCase
 
             public function drillDownForProjectScope(array $input, array $projectIds): array
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
         };
-        $store = new class implements ReportSourceSnapshotStore {
+        $store = new class implements ReportSourceSnapshotStore
+        {
             public ?ReportSourceSnapshotWrite $write = null;
 
             public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
@@ -188,23 +204,35 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 return $snapshot->header;
             }
 
+            public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader
+            {
+                return null;
+            }
+
+            public function resolveReady(
+                ReportSourceSnapshotIdentity $identity,
+                ReportSourceSnapshotWrite $snapshot,
+            ): ReportSourceSnapshotHeader {
+                return $this->persistReady($snapshot);
+            }
+
             public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
 
             public function page(ReportSourceSnapshotReadRequest $request, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotPage
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
 
             public function drillPage(ReportSourceSnapshotReadRequest $request, string $rowKey, string $columnId, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotDrillPage
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
         };
 
-        (new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer(), $store, $this->closeService()))->persist($this->request([]));
+        (new PlanFactSourceSnapshotWriter($report, new PlanFactSourceSnapshotMaterializer, $store, $this->closeService()))->persist($this->request([]));
 
         self::assertSame([], $report->projectIds);
         self::assertSame(0, $store->write?->header->rowCount);
@@ -231,7 +259,7 @@ final class PlanFactSourceSnapshotTest extends TestCase
 
     private function materialize(array $report, ?BudgetingReportSourceClose $close = null): ReportSourceSnapshotWrite
     {
-        return (new PlanFactSourceSnapshotMaterializer())->materialize(
+        return (new PlanFactSourceSnapshotMaterializer)->materialize(
             '01ARZ3NDEKTSV4RRFFQ69G5FAV',
             $this->scope([10, 20]),
             $this->filters(),
@@ -303,14 +331,13 @@ final class PlanFactSourceSnapshotTest extends TestCase
 
     private function closeService(): BudgetingReportSourceCloseService
     {
-        return new BudgetingReportSourceCloseService(new class($this->close()) implements BudgetingReportSourceCloseStore {
-            public function __construct(private readonly BudgetingReportSourceClose $close)
-            {
-            }
+        return new BudgetingReportSourceCloseService(new class($this->close()) implements BudgetingReportSourceCloseStore
+        {
+            public function __construct(private readonly BudgetingReportSourceClose $close) {}
 
             public function createApproved(\App\BusinessModules\Features\Budgeting\DTOs\CreateBudgetingReportSourceClose $request): BudgetingReportSourceClose
             {
-                throw new \LogicException();
+                throw new \LogicException;
             }
 
             public function find(string $closeId): ?BudgetingReportSourceClose

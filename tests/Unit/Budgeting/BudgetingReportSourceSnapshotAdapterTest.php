@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Budgeting;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursorKeyset;
@@ -19,6 +20,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
@@ -42,7 +44,6 @@ use App\BusinessModules\Features\Budgeting\Services\ProjectMarginReportSourceSna
 use App\BusinessModules\Features\Budgeting\Services\ProjectMarginSourceSnapshotMaterializer;
 use App\BusinessModules\Features\Budgeting\Services\ProjectMarginSourceSnapshotWriter;
 use DateTimeImmutable;
-use DateTimeZone;
 use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -51,6 +52,30 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
 {
+    #[DataProvider('adapters')]
+    public function test_reuses_close_bound_ready_snapshot_before_reading_mutated_live_source(
+        string $code,
+        string $sourceKind,
+        string $drillColumn,
+        object $adapter,
+        object $source,
+        InMemoryReportSourceSnapshotStore $store,
+    ): void {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $query = $this->query($code, $context->scope);
+
+        $snapshotA = $adapter->materialize($context, $query, new ReportProgress(0));
+        $callsAfterA = $source->calls;
+        $source->revision = 2;
+
+        $snapshotAfterMutation = $adapter->materialize($context, $query, new ReportProgress(0));
+
+        self::assertSame($snapshotA->id, $snapshotAfterMutation->id);
+        self::assertSame($snapshotA->sourceHash->value, $snapshotAfterMutation->sourceHash->value);
+        self::assertSame($callsAfterA, $source->calls);
+        self::assertSame(1, $store->persistCalls);
+    }
+
     #[DataProvider('adapters')]
     public function test_materializes_approved_close_and_replays_only_the_persisted_snapshot(
         string $code,
@@ -211,13 +236,13 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
     {
         return [
             'G09 project margin' => (static function (): array {
-                $store = new InMemoryReportSourceSnapshotStore();
-                $source = new ProjectMarginSnapshotSource();
+                $store = new InMemoryReportSourceSnapshotStore;
+                $source = new ProjectMarginSnapshotSource;
                 $closeService = self::closeService();
                 $adapter = new ProjectMarginReportSourceSnapshotAdapter(
                     new ProjectMarginSourceSnapshotWriter(
                         $source,
-                        new ProjectMarginSourceSnapshotMaterializer(),
+                        new ProjectMarginSourceSnapshotMaterializer,
                         $store,
                         $closeService,
                     ),
@@ -228,13 +253,13 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
                 return ['project_margin', 'budgeting.project_margin', 'attributions', $adapter, $source, $store];
             })(),
             'G10 plan fact' => (static function (): array {
-                $store = new InMemoryReportSourceSnapshotStore();
-                $source = new PlanFactSnapshotSource();
+                $store = new InMemoryReportSourceSnapshotStore;
+                $source = new PlanFactSnapshotSource;
                 $closeService = self::closeService();
                 $adapter = new PlanFactReportSourceSnapshotAdapter(
                     new PlanFactSourceSnapshotWriter(
                         $source,
-                        new PlanFactSourceSnapshotMaterializer(),
+                        new PlanFactSourceSnapshotMaterializer,
                         $store,
                         $closeService,
                     ),
@@ -252,8 +277,7 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         ReportScope $scope,
         string $formulaVersion = 'margin-v1',
         string $sourceSchemaVersion = '1.0.0',
-    ): ReportQuery
-    {
+    ): ReportQuery {
         return new ReportQuery(
             (new ReportDefinitionBuilder)
                 ->code($code)
@@ -306,12 +330,13 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
             null,
         );
 
-        return new BudgetingReportSourceCloseService(new class($close) implements BudgetingReportSourceCloseStore {
+        return new BudgetingReportSourceCloseService(new class($close) implements BudgetingReportSourceCloseStore
+        {
             public function __construct(private readonly BudgetingReportSourceClose $close) {}
 
             public function createApproved(CreateBudgetingReportSourceClose $request): BudgetingReportSourceClose
             {
-                throw new LogicException();
+                throw new LogicException;
             }
 
             public function find(string $closeId): ?BudgetingReportSourceClose
@@ -326,14 +351,19 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotSto
 {
     public ?ReportSourceSnapshotHeader $headerValue = null;
 
+    public int $persistCalls = 0;
+
     /** @var list<\App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotRow> */
     private array $rows = [];
 
     /** @var list<\App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow> */
     private array $drillRows = [];
 
+    private ?ReportSourceSnapshotIdentity $identityValue = null;
+
     public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
     {
+        $this->persistCalls++;
         ReportSourceSnapshotIntegrity::assertWrite($snapshot);
         $header = $snapshot->header;
         $this->headerValue = new ReportSourceSnapshotHeader(
@@ -348,9 +378,41 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotSto
         return $this->headerValue;
     }
 
+    public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader
+    {
+        if ($this->headerValue === null) {
+            return null;
+        }
+
+        if ($this->identityValue === null
+            || $this->identityValue->sourceVersion !== $identity->sourceVersion) {
+            return null;
+        }
+
+        return $identity->matches($this->headerValue) ? $this->headerValue : null;
+    }
+
+    public function resolveReady(
+        ReportSourceSnapshotIdentity $identity,
+        ReportSourceSnapshotWrite $snapshot,
+    ): ReportSourceSnapshotHeader {
+        $ready = $this->findReady($identity);
+        if ($ready === null) {
+            $this->identityValue = $identity;
+
+            return $this->persistReady($snapshot);
+        }
+
+        if (! hash_equals($ready->sourceHash->value, $snapshot->header->sourceHash->value)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT);
+        }
+
+        return $ready;
+    }
+
     public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
     {
-        $header = $this->headerValue ?? throw new LogicException();
+        $header = $this->headerValue ?? throw new LogicException;
         ReportSourceSnapshotIntegrity::assertReadable($header, $request);
 
         return $header;
@@ -361,7 +423,7 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotSto
         $header = $this->header($request);
         $after = $cursor?->afterOrdinal ?? 0;
         if ($cursor !== null && $cursor->snapshotId !== $header->id) {
-            throw new LogicException();
+            throw new LogicException;
         }
         $rows = array_values(array_filter($this->rows, static fn ($row): bool => $row->ordinal > $after));
         $items = array_slice($rows, 0, $limit);
@@ -385,6 +447,8 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotSto
 final class ProjectMarginSnapshotSource implements ProjectMarginSourceSnapshotReport
 {
     public int $calls = 0;
+
+    public int $revision = 1;
 
     public function reportForProjectScope(array $input, array $projectIds): array
     {
@@ -411,7 +475,12 @@ final class ProjectMarginSnapshotSource implements ProjectMarginSourceSnapshotRe
 
     private function row(string $drillKey, string $article): array
     {
-        $money = ['cost' => 2.0, 'gross_margin' => 8.0, 'margin_percent' => 80.0, 'revenue' => 10.0];
+        $money = [
+            'cost' => 2.0 * $this->revision,
+            'gross_margin' => 8.0 * $this->revision,
+            'margin_percent' => 80.0,
+            'revenue' => 10.0 * $this->revision,
+        ];
 
         return [
             'actual' => $money, 'currency' => 'RUB', 'drill_down_key' => $drillKey,
@@ -425,6 +494,8 @@ final class ProjectMarginSnapshotSource implements ProjectMarginSourceSnapshotRe
 final class PlanFactSnapshotSource implements PlanFactSourceSnapshotReport
 {
     public int $calls = 0;
+
+    public int $revision = 1;
 
     public function reportForProjectScope(array $input, array $projectIds): array
     {
@@ -449,9 +520,16 @@ final class PlanFactSnapshotSource implements PlanFactSourceSnapshotReport
     private function row(string $drillKey, string $article): array
     {
         return [
-            'actual_amount' => 8.0, 'committed_amount' => 1.0, 'currency' => 'RUB', 'drill_down_key' => $drillKey,
-            'forecast_amount' => 9.0, 'group' => ['article' => $article], 'plan_amount' => 10.0,
-            'risk_level' => 'low', 'variance_amount' => 2.0, 'variance_percent' => 20.0,
+            'actual_amount' => 8.0 * $this->revision,
+            'committed_amount' => 1.0 * $this->revision,
+            'currency' => 'RUB',
+            'drill_down_key' => $drillKey,
+            'forecast_amount' => 9.0 * $this->revision,
+            'group' => ['article' => $article],
+            'plan_amount' => 10.0 * $this->revision,
+            'risk_level' => 'low',
+            'variance_amount' => 2.0 * $this->revision,
+            'variance_percent' => 20.0,
             'project' => ['name' => 'Sensitive project'],
         ];
     }

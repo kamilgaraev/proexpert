@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reporting\Persistence;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotRow;
@@ -38,10 +41,10 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
 
     public function test_persists_and_reads_only_ready_snapshot_bound_rows_and_drill_rows(): void
     {
-        $store = new EloquentReportSourceSnapshotStore();
+        $store = new EloquentReportSourceSnapshotStore;
         $write = $this->write();
         $request = new ReportSourceSnapshotReadRequest(
-            (new ReportExecutionContextBuilder())->build(),
+            (new ReportExecutionContextBuilder)->build(),
             $write->header->id,
             $write->header->sourceKind,
             $write->header->reportCode,
@@ -67,7 +70,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
 
     public function test_database_rejects_mutating_a_ready_snapshot_row(): void
     {
-        $store = new EloquentReportSourceSnapshotStore();
+        $store = new EloquentReportSourceSnapshotStore;
         $write = $this->write();
         $store->persistReady($write);
 
@@ -76,24 +79,89 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
             ->update(['payload' => json_encode(['amount' => 999], JSON_THROW_ON_ERROR)]);
     }
 
-    private function write(): ReportSourceSnapshotWrite
+    public function test_close_bound_resolve_reuses_one_ready_snapshot_and_rejects_source_drift(): void
     {
-        $id = '01J00000000000000000000001';
+        $store = new EloquentReportSourceSnapshotStore;
+        $first = $this->write('01J00000000000000000000001', 100);
+        $identity = new ReportSourceSnapshotIdentity(
+            $first->header->sourceKind,
+            $first->header->reportCode,
+            $first->header->schemaVersion,
+            $first->header->scope,
+            $first->header->queryHash,
+            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+        );
+
+        $ready = $store->resolveReady($identity, $first);
+        $sameContent = $store->resolveReady(
+            $identity,
+            $this->write('01J00000000000000000000002', 100),
+        );
+
+        self::assertSame($ready->id, $sameContent->id);
+        self::assertSame($ready->id, $store->findReady($identity)?->id);
+        self::assertSame(1, DB::table('report_source_snapshots')
+            ->where('source_version', '01JZZZZZZZZZZZZZZZZZZZZZZZ')
+            ->where('status', ReportSourceSnapshotStatus::READY->value)
+            ->count());
+
+        try {
+            $store->resolveReady($identity, $this->write('01J00000000000000000000003', 999));
+            self::fail('Source drift for one close-bound identity must be rejected.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT, $exception->errorCode);
+        }
+    }
+
+    public function test_database_rejects_a_second_ready_snapshot_for_close_bound_identity(): void
+    {
+        $store = new EloquentReportSourceSnapshotStore;
+        $write = $this->write();
+        $identity = new ReportSourceSnapshotIdentity(
+            $write->header->sourceKind,
+            $write->header->reportCode,
+            $write->header->schemaVersion,
+            $write->header->scope,
+            $write->header->queryHash,
+            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+        );
+        $store->resolveReady($identity, $write);
+        $duplicate = (array) DB::table('report_source_snapshots')->where('id', $write->header->id)->first();
+        $duplicate['id'] = '01J00000000000000000000004';
+
+        $this->expectException(QueryException::class);
+        DB::table('report_source_snapshots')->insert($duplicate);
+    }
+
+    private function write(
+        string $id = '01J00000000000000000000001',
+        int $firstAmount = 100,
+    ): ReportSourceSnapshotWrite {
         $rows = [
-            new ReportSourceSnapshotRow($id, 1, 'project:1', ['amount' => 100], $this->hash(['amount' => 100])),
+            new ReportSourceSnapshotRow(
+                $id,
+                1,
+                'project:1',
+                ['amount' => $firstAmount],
+                $this->hash(['amount' => $firstAmount]),
+            ),
             new ReportSourceSnapshotRow($id, 2, 'project:2', ['amount' => 200], $this->hash(['amount' => 200])),
         ];
         $drillRows = [new ReportSourceSnapshotDrillRow($id, 'project:1', 'amount', 1, ['document_id' => 11], $this->hash(['document_id' => 11]))];
-        $scope = (new ReportExecutionContextBuilder())->build()->scope;
+        $scope = (new ReportExecutionContextBuilder)->build()->scope;
         $header = new ReportSourceSnapshotHeader(
             $id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]),
-            new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3],
+            new DateTimeImmutable('2026-07-31T00:00:00+00:00'),
+            $this->hash(['source' => $firstAmount]),
+            ['portfolio_version' => 3],
             new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'),
             ReportSourceSnapshotStatus::WRITING, 2, 1, $this->hash(['placeholder' => 1]), null, null,
         );
         $header = new ReportSourceSnapshotHeader(
             $id, 'portfolio.source', 'project_margin', '1', $scope, $this->hash(['query' => 1]),
-            new DateTimeImmutable('2026-07-31T00:00:00+00:00'), $this->hash(['source' => 1]), ['portfolio_version' => 3],
+            new DateTimeImmutable('2026-07-31T00:00:00+00:00'),
+            $this->hash(['source' => $firstAmount]),
+            ['portfolio_version' => 3],
             new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'),
             ReportSourceSnapshotStatus::WRITING, 2, 1, ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows), null, null,
         );
