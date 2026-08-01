@@ -13,10 +13,11 @@ final readonly class ProcurementCycleSourceRead
         public array $policiesById,
         public int $lineCount,
         public int $eventCount,
+        public int $unscopedQuarantineLineCount,
         public int $maxEventId,
         public ?string $maxOccurredAt,
     ) {
-        if ($lineCount < 0 || $eventCount < 0 || $maxEventId < 0) {
+        if ($lineCount < 0 || $eventCount < 0 || $unscopedQuarantineLineCount < 0 || $maxEventId < 0) {
             throw new InvalidArgumentException('procurement_cycle_source_read_invalid');
         }
         foreach ($policiesById as $id => $policy) {
@@ -42,6 +43,7 @@ final readonly class ProcurementCycleSourceRead
             'line_count' => $this->lineCount,
             'max_event_id' => $this->maxEventId,
             'max_occurred_at' => $this->maxOccurredAt,
+            'unscoped_quarantine_line_count' => $this->unscopedQuarantineLineCount,
             'policies' => $policies,
             'scope' => $scope,
             'source_schema_version' => '1.0.0',

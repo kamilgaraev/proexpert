@@ -33,7 +33,7 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
     {
         $projectIds = $request->projectIds();
         if ($projectIds === []) {
-            return new ProcurementCycleSourceRead([], 0, 0, 0, null);
+            return new ProcurementCycleSourceRead([], 0, 0, 0, 0, null);
         }
 
         try {
@@ -63,7 +63,7 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
             ->where('occurred_at', '<=', $request->asOf)
             ->max('id') ?? 0);
         if ($sourceCutoffEventId === 0) {
-            return new ProcurementCycleSourceRead([], 0, 0, 0, null);
+            return new ProcurementCycleSourceRead([], 0, 0, 0, 0, null);
         }
 
         $lineQuery = ProcurementProcessEvent::query()
@@ -82,7 +82,7 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
             ->map(static fn (mixed $id): int => (int) $id)
             ->all();
         if ($lineIds === []) {
-            return new ProcurementCycleSourceRead([], 0, 0, $sourceCutoffEventId, null);
+            return new ProcurementCycleSourceRead([], 0, 0, $this->unscopedQuarantineLineCount($request), $sourceCutoffEventId, null);
         }
 
         $eventQuery = ProcurementProcessEvent::query()
@@ -131,7 +131,26 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
             $lineCount++;
         }
 
-        return new ProcurementCycleSourceRead($policies, $lineCount, $eventCount, $sourceCutoffEventId, $maxOccurredAt);
+        return new ProcurementCycleSourceRead(
+            $policies,
+            $lineCount,
+            $eventCount,
+            $this->unscopedQuarantineLineCount($request),
+            $sourceCutoffEventId,
+            $maxOccurredAt,
+        );
+    }
+
+    private function unscopedQuarantineLineCount(ProcurementCycleSnapshotRequest $request): int
+    {
+        return ProcurementProcessEvent::query()
+            ->where('organization_id', $request->scope->organizationId)
+            ->whereNull('project_id')
+            ->where('occurred_at', '<=', $request->asOf)
+            ->where('dimension_snapshot->quality_status', 'PARTIAL')
+            ->whereJsonContains('dimension_snapshot->gap_codes', 'missing_request_created_event')
+            ->distinct()
+            ->count('purchase_request_line_id');
     }
 
     private function consumeLine(array $events, array $policies, callable $consumeLine): bool

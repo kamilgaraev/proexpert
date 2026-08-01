@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Tests\Unit\Procurement\Reporting\Cycle;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
@@ -14,6 +18,10 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementCycleSourceSnapshotWriter;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleLineResult;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleMetric;
@@ -57,7 +65,7 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
             null,
         );
-        $source = new ProcurementCycleSourceRead([], 0, 0, 0, null);
+        $source = new ProcurementCycleSourceRead([], 0, 0, 0, 0, null);
         $materializer = new ProcurementCycleSourceSnapshotMaterializer;
 
         $write = $materializer->materialize(
@@ -100,7 +108,7 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
         self::assertTrue($readiness->supports($definition));
     }
 
-    public function test_source_snapshot_whitelists_public_row_fields(): void
+    public function test_page_export_and_drill_whitelist_technical_source_fields(): void
     {
         $scope = (new ReportExecutionContextBuilder)->build()->scope;
         $request = new ProcurementCycleSnapshotRequest(
@@ -112,9 +120,23 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
         $write = (new ProcurementCycleSourceSnapshotMaterializer)->materialize(
             '01JZZZZZZZZZZZZZZZZZZZZZZZ',
             $request,
-            new ProcurementCycleSourceRead([], 1, 1, 1, '2026-08-01T10:00:00.000000Z'),
+            new ProcurementCycleSourceRead([], 1, 1, 1, 1, '2026-08-01T10:00:00.000000Z'),
             [$this->publicResult()],
-            [],
+            [3 => [new class
+            {
+                public function auditPayload(): array
+                {
+                    return [
+                        'event_id' => 1,
+                        'event_code' => 'request_created',
+                        'occurred_at' => '2026-08-01T10:00:00.000000Z',
+                        'policy_hash' => str_repeat('a', 64),
+                        'calendar_hash' => str_repeat('b', 64),
+                        'calendar_version' => 'calendar.v1',
+                        'source_kind' => 'internal',
+                    ];
+                }
+            }]],
         );
 
         self::assertSame([
@@ -123,8 +145,56 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             'awarded_supplier_party_id', 'awarded_amount', 'currency', 'quality_status', 'gap_codes',
             'cohort_date', 'stage_breakdown', 'audit_timeline',
         ], array_keys($write->rows[0]->payload));
-        self::assertArrayNotHasKey('policy_hash', $write->rows[0]->payload);
-        self::assertArrayNotHasKey('supplier_snapshot', $write->rows[0]->payload);
+        $context = (new ReportExecutionContextBuilder)->build();
+        $snapshot = new ReportSnapshotRef(
+            ProcurementCycleReportAdapter::SOURCE_KIND,
+            $write->header->id,
+            $context->scope,
+            new Sha256Hash(str_repeat('c', 64)),
+            ProcurementCycleReportAdapter::FORMULA_VERSION,
+            $write->header->sourceHash,
+            $write->header->generatedAt,
+            $write->header->staleAt,
+            [
+                ...$write->header->watermarks,
+                'report_query_hash' => str_repeat('d', 64),
+                'source_snapshot_query_hash' => $write->header->queryHash->value,
+            ],
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+        );
+        $adapter = new ProcurementCycleReportAdapter($this->writer(), $this->storeFor($write));
+        $result = $adapter->result($context, $snapshot);
+        $page = $adapter->page(
+            $context,
+            $snapshot,
+            new ReportWindowSort(ProcurementCycleReportAdapter::SORT_FIELD, ReportSortDirection::ASC),
+            null,
+            100,
+        );
+        $export = iterator_to_array($adapter->cursor(
+            $context,
+            $snapshot,
+            new ReportWindowSort(ProcurementCycleReportAdapter::SORT_FIELD, ReportSortDirection::ASC),
+            100,
+        ));
+        $drill = $adapter->drillDown(
+            $context,
+            $snapshot,
+            new ReportDrillDownInput(
+                new ReportDrillDownCell('procurement-line:3', ProcurementCycleReportAdapter::AUDIT_DRILL_COLUMN),
+                null,
+                100,
+            ),
+        );
+        foreach ([$page->rows[0], $export[0]['values'], $drill->rows[0]] as $payload) {
+            foreach (['policy_hash', 'calendar_hash', 'calendar_version', 'supplier_snapshot'] as $key) {
+                self::assertArrayNotHasKey($key, $payload);
+            }
+        }
+        self::assertSame(1, $write->header->watermarks['unscoped_quarantine_line_count']);
+        self::assertSame(ReportQualityStatus::PARTIAL, $result->quality->status);
+        self::assertSame('2', $result->quality->coverage?->denominator);
     }
 
     private function publicResult(): ProcurementCycleLineResult
@@ -146,6 +216,8 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
                 'buyer_id' => 5,
                 'priority' => 'normal',
                 'policy_hash' => str_repeat('a', 64),
+                'calendar_hash' => str_repeat('b', 64),
+                'calendar_version' => 'calendar.v1',
                 'supplier_snapshot' => 'restricted',
             ],
             solicitedSupplierIds: [],
@@ -211,6 +283,47 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             public function drillPage(ReportSourceSnapshotReadRequest $request, string $rowKey, string $columnId, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotDrillPage
             {
                 throw new LogicException;
+            }
+        };
+    }
+
+    private function storeFor(ReportSourceSnapshotWrite $write): ReportSourceSnapshotStore
+    {
+        return new class($write) implements ReportSourceSnapshotStore
+        {
+            public function __construct(private ReportSourceSnapshotWrite $write) {}
+
+            public function persistReady(ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
+            {
+                throw new LogicException;
+            }
+
+            public function findReady(ReportSourceSnapshotIdentity $identity): ?ReportSourceSnapshotHeader
+            {
+                throw new LogicException;
+            }
+
+            public function resolveReady(ReportSourceSnapshotIdentity $identity, ReportSourceSnapshotWrite $snapshot): ReportSourceSnapshotHeader
+            {
+                throw new LogicException;
+            }
+
+            public function header(ReportSourceSnapshotReadRequest $request): ReportSourceSnapshotHeader
+            {
+                return $this->write->header;
+            }
+
+            public function page(ReportSourceSnapshotReadRequest $request, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotPage
+            {
+                return new ReportSourceSnapshotPage($this->write->rows, null);
+            }
+
+            public function drillPage(ReportSourceSnapshotReadRequest $request, string $rowKey, string $columnId, ?ReportSourceSnapshotCursor $cursor, int $limit): ReportSourceSnapshotDrillPage
+            {
+                return new ReportSourceSnapshotDrillPage(array_values(array_filter(
+                    $this->write->drillRows,
+                    static fn ($row): bool => $row->columnId === $columnId,
+                )), null);
             }
         };
     }

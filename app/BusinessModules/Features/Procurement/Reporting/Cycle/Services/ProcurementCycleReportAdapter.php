@@ -342,13 +342,15 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
     {
         $invalid = (int) ($header->watermarks['invalid_count'] ?? 0);
         $gaps = (int) ($header->watermarks['gap_count'] ?? 0);
+        $unscopedQuarantine = (int) ($header->watermarks['unscoped_quarantine_line_count'] ?? 0);
         $complete = max(0, $header->rowCount - $invalid - $gaps);
-        $partial = $invalid > 0 || $gaps > 0;
+        $partial = $invalid > 0 || $gaps > 0 || $unscopedQuarantine > 0;
+        $coverageTotal = $header->rowCount + $unscopedQuarantine;
 
         return new ReportQuality(
             $partial ? ReportQualityStatus::PARTIAL : ReportQualityStatus::COMPLETE,
-            new ReportCoverage((string) $complete, (string) $header->rowCount, $header->rowCount === 0 ? null : (string) round($complete / $header->rowCount, 8)),
-            $partial ? [new ReportWarning('PROCUREMENT_CYCLE_SOURCE_GAPS', ReportWarningSeverity::WARNING, null, $invalid + $gaps)] : [],
+            new ReportCoverage((string) $complete, (string) $coverageTotal, $coverageTotal === 0 ? null : (string) round($complete / $coverageTotal, 8)),
+            $partial ? [new ReportWarning('PROCUREMENT_CYCLE_SOURCE_GAPS', ReportWarningSeverity::WARNING, null, $invalid + $gaps + $unscopedQuarantine)] : [],
             $invalid,
             $partial ? ReportReconciliationStatus::MISMATCH : ReportReconciliationStatus::MATCHED,
             $partial ? ['stage_duration'] : [],
