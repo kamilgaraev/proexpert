@@ -288,6 +288,7 @@ jobs:
       APP_DEBUG: false
       CI: true
       DB_CONNECTION: pgsql
+      DB_URL: ''
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
       DB_DATABASE: most_report_source_mode_auth_testing
