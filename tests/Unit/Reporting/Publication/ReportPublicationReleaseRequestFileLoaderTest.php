@@ -119,10 +119,17 @@ final class ReportPublicationReleaseRequestFileLoaderTest extends TestCase
         (new ReportPublicationReleaseRequestFileLoader)->load($path, $this->directory);
     }
 
-    public function test_rejects_wrong_code_and_sha_formats(): void
+    public function test_accepts_a_structurally_valid_code_for_later_profile_selection(): void
+    {
+        $path = $this->directory.DIRECTORY_SEPARATOR.'release_one.json';
+        file_put_contents($path, json_encode($this->payload(['code' => 'other_cycle']), JSON_THROW_ON_ERROR));
+
+        self::assertSame('other_cycle', (new ReportPublicationReleaseRequestFileLoader)->load($path, $this->directory)->code);
+    }
+
+    public function test_rejects_invalid_sha_formats(): void
     {
         foreach ([
-            ['code' => 'other_cycle'],
             ['commit_sha' => str_repeat('A', 40)],
             ['commit_sha' => str_repeat('a', 39)],
             ['proof_sha256' => str_repeat('c', 63)],

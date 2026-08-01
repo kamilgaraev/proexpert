@@ -4,12 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Publication;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportConformanceEvidenceRepository;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
-use App\BusinessModules\Core\Reporting\Infrastructure\Conformance\FilesystemReportConformanceEvidenceRepository;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
+use App\BusinessModules\Core\Reporting\Infrastructure\Conformance\FilesystemReportConformanceEvidenceRepository;
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\ProcurementCycleReleaseCandidateResolver;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReportBindingFactory;
@@ -42,14 +41,36 @@ final class ProjectReportPublicationReleaseRequestRegistryFactory
             $trustedDirectory,
             $manifestBytes,
             new Sha256Hash(hash('sha256', $manifestBytes)),
-            $container->make(ProcurementCycleReleaseCandidateResolver::class),
+            $this->dispatches($container),
             $container->make(ReportDefinitionFactory::class),
-            $container->make(ProcurementCycleReportBindingFactory::class),
             $evidence,
             new EligibilityServiceReportPublicationReleaseGate(
                 $container->make(ReportPublicationEligibilityService::class),
             ),
             $container->make(ReportPublicationRegistry::class),
         );
+    }
+
+    public function dispatches(Container $container): ReportPublicationReleaseDispatchProfileCatalog
+    {
+        return new ReportPublicationReleaseDispatchProfileCatalog([
+            new ReportPublicationReleaseDispatch(
+                new ReportPublicationReleaseDispatchProfile(
+                    'procurement_cycle',
+                    'r15_release_request',
+                    [
+                        'candidate_manifest' => 'r15-candidate-manifest.json',
+                        'conformance_evidence' => 'r15-conformance-evidence.json',
+                        'proof_template' => 'r15-proof-template.json',
+                    ],
+                ),
+                new ProcurementCycleReleaseCandidateResolverAdapter(
+                    $container->make(ProcurementCycleReleaseCandidateResolver::class),
+                ),
+                new ProcurementCycleReleaseBindingFactoryAdapter(
+                    $container->make(ProcurementCycleReportBindingFactory::class),
+                ),
+            ),
+        ]);
     }
 }

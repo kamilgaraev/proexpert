@@ -10,8 +10,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\ProcurementCycleReleaseCandidateResolver;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReportBindingFactory;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
 
@@ -21,9 +19,8 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry implements R
         private string $trustedDirectory,
         private string $officialManifestBytes,
         private Sha256Hash $officialManifestHash,
-        private ProcurementCycleReleaseCandidateResolver $candidateResolver,
+        private ReportPublicationReleaseDispatchProfileCatalog $dispatches,
         private ReportDefinitionFactory $definitions,
-        private ProcurementCycleReportBindingFactory $bindings,
         private ReportConformanceEvidenceRepository $evidence,
         private ReportPublicationReleaseEligibilityGate $gate,
         private ReportPublicationRegistry $publications,
@@ -38,7 +35,9 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry implements R
 
     public function resolve(ReportPublicationReleaseRequest $request): ReportPublicationResolvedReleaseRequest
     {
-        $documents = $this->candidateResolver->resolve($this->trustedDirectory, $request->commitSha);
+        $dispatch = $this->dispatches->forCode($request->code);
+        $dispatch->profile->assertRequest($request);
+        $documents = $dispatch->candidateResolver->resolve($this->trustedDirectory, $request);
         $candidateManifest = $documents['r15-candidate-manifest.json'];
         $definitionDocument = $candidateManifest['candidate_definition'] ?? null;
         if (! is_array($definitionDocument)) {
@@ -46,8 +45,11 @@ final readonly class ProjectReportPublicationReleaseRequestRegistry implements R
         }
         $definition = $this->definitions->fromManifest($definitionDocument);
         $candidate = new CandidateReportDefinition($definition);
+        if (! hash_equals($dispatch->profile->code, $candidate->code)) {
+            throw new InvalidArgumentException('report_publication_release_request_untrusted');
+        }
         $previous = $this->publications->currentRecord($candidate->code);
-        $binding = $this->bindings->create($definition);
+        $binding = $dispatch->bindings->create($definition);
         $proof = ReportPublicationProof::fromArray($documents['r15-proof-template.json']);
         $fixtureHash = new Sha256Hash($proof->payload()['fixture_sha256']);
         $evidence = $this->evidence->get($candidate->code, $candidate->definitionHash, $fixtureHash);

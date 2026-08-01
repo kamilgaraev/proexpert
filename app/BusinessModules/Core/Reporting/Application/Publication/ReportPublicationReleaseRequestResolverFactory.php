@@ -7,4 +7,6 @@ namespace App\BusinessModules\Core\Reporting\Application\Publication;
 interface ReportPublicationReleaseRequestResolverFactory
 {
     public function create(string $trustedDirectory): ReportPublicationReleaseRequestResolver;
+
+    public function dispatchForArtifactName(string $artifactName): ReportPublicationReleaseDispatch;
 }

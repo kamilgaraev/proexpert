@@ -29,24 +29,22 @@ final readonly class ProductionReportPublicationReleaseIngestion
     ): PublishedReportDefinition {
         $bundleRoot = $this->roots->bundleRoot;
         $candidateRoot = $this->roots->candidateRoot;
-        if (preg_match('/^report-publication-[a-z][a-z0-9_]*-[a-f0-9]{64}$/D', $artifactName) !== 1) {
-            $this->invalid();
-        }
+        $dispatch = $this->resolvers->dispatchForArtifactName($artifactName);
+        $profile = $dispatch->profile;
         $proofPath = $bundleRoot.DIRECTORY_SEPARATOR.$artifactName.'.proof.json';
         $artifactPath = $bundleRoot.DIRECTORY_SEPARATOR.$artifactName.'.json';
         $this->assertTrustedFile($proofPath, $bundleRoot);
         $this->assertTrustedFile($artifactPath, $bundleRoot);
         $bundle = $this->bundles->load($proofPath, $artifactPath, $bundleRoot);
         $this->artifacts->verify($bundle->artifactBytes);
-        foreach ([
-            'r15-candidate-manifest.json',
-            'r15-conformance-evidence.json',
-            'r15-proof-template.json',
-            'r15_release_request.json',
-        ] as $requiredFile) {
+        foreach (array_merge(array_values($profile->artifactPaths), [$profile->requestFileName()]) as $requiredFile) {
             $this->assertTrustedFile($candidateRoot.DIRECTORY_SEPARATOR.$requiredFile, $candidateRoot);
         }
-        $request = $this->requests->load($candidateRoot.DIRECTORY_SEPARATOR.'r15_release_request.json', $candidateRoot);
+        $request = $this->requests->load($candidateRoot.DIRECTORY_SEPARATOR.$profile->requestFileName(), $candidateRoot);
+        $profile->assertRequest($request);
+        if (! hash_equals($profile->artifactName($request->proofSha256), $artifactName)) {
+            $this->invalid();
+        }
         $resolved = $this->resolvers->create($candidateRoot)->resolve($request);
         $resolved->admission->assertProductionSafe();
 

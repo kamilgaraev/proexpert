@@ -17,4 +17,11 @@ final readonly class ProjectReportPublicationReleaseRequestResolverFactory imple
     {
         return $this->registryFactory->create($this->container, $trustedDirectory, $trustedDirectory);
     }
+
+    public function dispatchForArtifactName(string $artifactName): ReportPublicationReleaseDispatch
+    {
+        return $this->registryFactory
+            ->dispatches($this->container)
+            ->forArtifactName($artifactName);
+    }
 }

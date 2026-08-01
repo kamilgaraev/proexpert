@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBindingFactory;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleFileLoader;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseCandidateResolver;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseDispatch;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseDispatchProfile;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestor;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolver;
@@ -43,6 +47,7 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
         $resolver = $this->createMock(ReportPublicationReleaseRequestResolver::class);
         $resolver->expects(self::once())->method('resolve')->willReturn(new ReportPublicationResolvedReleaseRequest($admission, $this->createMock(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseEligibilityGate::class)));
         $resolvers = $this->createMock(ReportPublicationReleaseRequestResolverFactory::class);
+        $resolvers->expects(self::once())->method('dispatchForArtifactName')->with($artifactName)->willReturn($this->dispatch($fixture['eligible']->candidate->code));
         $resolvers->expects(self::once())->method('create')->with(self::callback(
             static fn (string $root): bool => realpath($root) === realpath($candidateRoot),
         ))->willReturn($resolver);
@@ -71,6 +76,7 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
         [$bundleRoot, $candidateRoot, $artifactName] = $this->writeTrustedInputs($fixture['eligible']->proof->canonicalBytes(), $fixture['eligible']->releaseArtifactBytes, $fixture['eligible']->release->gitSha);
         unlink($bundleRoot.DIRECTORY_SEPARATOR.$artifactName.'.json');
         $resolvers = $this->createMock(ReportPublicationReleaseRequestResolverFactory::class);
+        $resolvers->expects(self::once())->method('dispatchForArtifactName')->with($artifactName)->willReturn($this->dispatch());
         $resolvers->expects(self::never())->method('create');
         $ingestor = $this->createMock(ReportPublicationReleaseIngestor::class);
         $ingestor->expects(self::never())->method('ingest');
@@ -93,6 +99,7 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
         [$bundleRoot, $candidateRoot, $artifactName] = $this->writeTrustedInputs($fixture['eligible']->proof->canonicalBytes(), $fixture['eligible']->releaseArtifactBytes, $fixture['eligible']->release->gitSha);
         file_put_contents($bundleRoot.DIRECTORY_SEPARATOR.$artifactName.'.proof.json', '{}');
         $resolvers = $this->createMock(ReportPublicationReleaseRequestResolverFactory::class);
+        $resolvers->expects(self::once())->method('dispatchForArtifactName')->with($artifactName)->willReturn($this->dispatch());
         $resolvers->expects(self::never())->method('create');
         $ingestor = $this->createMock(ReportPublicationReleaseIngestor::class);
         $ingestor->expects(self::never())->method('ingest');
@@ -118,7 +125,7 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
         file_put_contents($candidateRoot.DIRECTORY_SEPARATOR.'r15_release_request.json', json_encode([
             'request_id' => 'r15_release_request',
             'schema_version' => '1.0.0',
-            'code' => 'procurement_cycle',
+            'code' => $proofData['code'],
             'commit_sha' => $commit,
             'proof_sha256' => hash('sha256', $proof),
             'artifact_paths' => [
@@ -169,6 +176,35 @@ final class ProductionReportPublicationReleaseIngestionTest extends TestCase
             $ingestor,
             new ReportPublicationReleaseBundleFileLoader,
             ReportPublicationReleaseArtifactTestFactory::verifier(),
+        );
+    }
+
+    private function dispatch(string $code = 'procurement_cycle'): ReportPublicationReleaseDispatch
+    {
+        return new ReportPublicationReleaseDispatch(
+            new ReportPublicationReleaseDispatchProfile(
+                $code,
+                'r15_release_request',
+                [
+                    'candidate_manifest' => 'r15-candidate-manifest.json',
+                    'conformance_evidence' => 'r15-conformance-evidence.json',
+                    'proof_template' => 'r15-proof-template.json',
+                ],
+            ),
+            new class implements ReportPublicationReleaseCandidateResolver
+            {
+                public function resolve(string $trustedDirectory, \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequest $request): array
+                {
+                    return [];
+                }
+            },
+            new class implements ReportPublicationReleaseBindingFactory
+            {
+                public function create(\App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $definition): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding
+                {
+                    throw new \LogicException('not_called');
+                }
+            },
         );
     }
 
