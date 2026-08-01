@@ -65,7 +65,7 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
             null,
         );
-        $source = new ProcurementCycleSourceRead([], 0, 0, 0, 0, null);
+        $source = new ProcurementCycleSourceRead([], 0, 0, 0, 0, null, 0, null);
         $materializer = new ProcurementCycleSourceSnapshotMaterializer;
 
         $write = $materializer->materialize(
@@ -120,7 +120,7 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
         $write = (new ProcurementCycleSourceSnapshotMaterializer)->materialize(
             '01JZZZZZZZZZZZZZZZZZZZZZZZ',
             $request,
-            new ProcurementCycleSourceRead([], 1, 1, 1, 1, '2026-08-01T10:00:00.000000Z'),
+            new ProcurementCycleSourceRead([], 1, 1, 1, 101, '2026-08-01T10:00:00.000000Z', 1, '2026-08-01T10:00:00.000000Z'),
             [$this->publicResult()],
             [3 => [new class
             {
@@ -195,6 +195,30 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
         self::assertSame(1, $write->header->watermarks['unscoped_quarantine_line_count']);
         self::assertSame(ReportQualityStatus::PARTIAL, $result->quality->status);
         self::assertSame('2', $result->quality->coverage?->denominator);
+    }
+
+    public function test_only_quarantine_source_has_a_distinct_deterministic_watermark(): void
+    {
+        $scope = (new ReportExecutionContextBuilder)->build()->scope;
+        $request = new ProcurementCycleSnapshotRequest(
+            $scope,
+            [],
+            new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
+            null,
+        );
+        $materializer = new ProcurementCycleSourceSnapshotMaterializer;
+        $first = new ProcurementCycleSourceRead([], 0, 0, 1, 101, '2026-08-01T09:00:00.000000Z', 0, null);
+        $next = new ProcurementCycleSourceRead([], 0, 0, 1, 102, '2026-08-01T09:01:00.000000Z', 0, null);
+
+        self::assertNotSame(
+            $materializer->identity($request, $first)->sourceVersion,
+            $materializer->identity($request, $next)->sourceVersion,
+        );
+        $write = $materializer->materialize('01JZZZZZZZZZZZZZZZZZZZZZZZ', $request, $first, [], []);
+
+        self::assertSame(1, $write->header->watermarks['unscoped_quarantine_line_count']);
+        self::assertSame(101, $write->header->watermarks['unscoped_quarantine_max_event_id']);
+        self::assertSame('2026-08-01T09:00:00.000000Z', $write->header->watermarks['unscoped_quarantine_max_occurred_at']);
     }
 
     private function publicResult(): ProcurementCycleLineResult

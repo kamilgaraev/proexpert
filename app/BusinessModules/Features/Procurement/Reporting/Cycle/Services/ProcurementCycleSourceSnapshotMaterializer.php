@@ -303,6 +303,8 @@ final class ProcurementCycleSourceSnapshotMaterializer
             'source_event_count' => $source->eventCount,
             'source_line_count' => $source->lineCount,
             'unscoped_quarantine_line_count' => $source->unscopedQuarantineLineCount,
+            'unscoped_quarantine_max_event_id' => $source->unscopedQuarantineMaxEventId,
+            'unscoped_quarantine_max_occurred_at' => $source->unscopedQuarantineMaxOccurredAt,
             'source_schema_version' => ProcurementCycleReportAdapter::SCHEMA_VERSION,
         ];
     }

@@ -33,7 +33,7 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
     {
         $projectIds = $request->projectIds();
         if ($projectIds === []) {
-            return new ProcurementCycleSourceRead([], 0, 0, 0, 0, null);
+            return new ProcurementCycleSourceRead([], 0, 0, 0, 0, null, 0, null);
         }
 
         try {
@@ -57,13 +57,23 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
     private function readConsistent(ProcurementCycleSnapshotRequest $request, callable $consumeLine): ProcurementCycleSourceRead
     {
         $projectIds = $request->projectIds();
+        $unscopedQuarantine = $this->unscopedQuarantineWatermark($request);
         $sourceCutoffEventId = (int) (ProcurementProcessEvent::query()
             ->where('organization_id', $request->scope->organizationId)
             ->whereIn('project_id', $projectIds)
             ->where('occurred_at', '<=', $request->asOf)
             ->max('id') ?? 0);
         if ($sourceCutoffEventId === 0) {
-            return new ProcurementCycleSourceRead([], 0, 0, 0, 0, null);
+            return new ProcurementCycleSourceRead(
+                [],
+                0,
+                0,
+                $unscopedQuarantine['line_count'],
+                $unscopedQuarantine['max_event_id'],
+                $unscopedQuarantine['max_occurred_at'],
+                0,
+                null,
+            );
         }
 
         $lineQuery = ProcurementProcessEvent::query()
@@ -82,7 +92,16 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
             ->map(static fn (mixed $id): int => (int) $id)
             ->all();
         if ($lineIds === []) {
-            return new ProcurementCycleSourceRead([], 0, 0, $this->unscopedQuarantineLineCount($request), $sourceCutoffEventId, null);
+            return new ProcurementCycleSourceRead(
+                [],
+                0,
+                0,
+                $unscopedQuarantine['line_count'],
+                $unscopedQuarantine['max_event_id'],
+                $unscopedQuarantine['max_occurred_at'],
+                $sourceCutoffEventId,
+                null,
+            );
         }
 
         $eventQuery = ProcurementProcessEvent::query()
@@ -135,22 +154,34 @@ final class EloquentProcurementCycleSourceReader implements ProcurementCycleSour
             $policies,
             $lineCount,
             $eventCount,
-            $this->unscopedQuarantineLineCount($request),
+            $unscopedQuarantine['line_count'],
+            $unscopedQuarantine['max_event_id'],
+            $unscopedQuarantine['max_occurred_at'],
             $sourceCutoffEventId,
             $maxOccurredAt,
         );
     }
 
-    private function unscopedQuarantineLineCount(ProcurementCycleSnapshotRequest $request): int
+    private function unscopedQuarantineWatermark(ProcurementCycleSnapshotRequest $request): array
     {
-        return ProcurementProcessEvent::query()
+        $query = ProcurementProcessEvent::query()
             ->where('organization_id', $request->scope->organizationId)
             ->whereNull('project_id')
             ->where('occurred_at', '<=', $request->asOf)
             ->where('dimension_snapshot->quality_status', 'PARTIAL')
-            ->whereJsonContains('dimension_snapshot->gap_codes', 'missing_request_created_event')
-            ->distinct()
-            ->count('purchase_request_line_id');
+            ->whereJsonContains('dimension_snapshot->gap_codes', 'missing_request_created_event');
+        $maxOccurredAt = (clone $query)->max('occurred_at');
+        if (is_string($maxOccurredAt)) {
+            $maxOccurredAt = new DateTimeImmutable($maxOccurredAt);
+        }
+
+        return [
+            'line_count' => (int) (clone $query)->distinct()->count('purchase_request_line_id'),
+            'max_event_id' => (int) ((clone $query)->max('id') ?? 0),
+            'max_occurred_at' => $maxOccurredAt instanceof \DateTimeInterface
+                ? $maxOccurredAt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s.u\\Z')
+                : null,
+        ];
     }
 
     private function consumeLine(array $events, array $policies, callable $consumeLine): bool
