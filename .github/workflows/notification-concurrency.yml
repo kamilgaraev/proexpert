@@ -634,7 +634,13 @@ jobs:
 
   report-publication-release-artifact:
     if: needs.report-publication-release-request-discovery.outputs.has_requests == 'true'
-    needs: report-publication-release-request-discovery
+    needs:
+      - report-publication-release-request-discovery
+      - procurement-cycle-r15-candidate-evidence
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: report-publication-release
@@ -643,6 +649,28 @@ jobs:
     steps:
       - name: Checkout trusted main commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download exact same-run R15 candidate evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: r15-candidate-evidence-${{ github.sha }}
+          path: build/reports/r15-release-trusted-root
+
+      - name: Verify same-run R15 evidence root
+        env:
+          R15_TRUSTED_ROOT: ${{ github.workspace }}/build/reports/r15-release-trusted-root
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -d "$R15_TRUSTED_ROOT"
+          test -f "$R15_TRUSTED_ROOT/r15-candidate-manifest.json"
+          test -f "$R15_TRUSTED_ROOT/r15-conformance-evidence.json"
+          test -f "$R15_TRUSTED_ROOT/r15-proof-template.json"
+          test -f "$R15_TRUSTED_ROOT/r15_release_request.json"
+          test ! -L "$R15_TRUSTED_ROOT/r15-candidate-manifest.json"
+          test ! -L "$R15_TRUSTED_ROOT/r15-conformance-evidence.json"
+          test ! -L "$R15_TRUSTED_ROOT/r15-proof-template.json"
+          test ! -L "$R15_TRUSTED_ROOT/r15_release_request.json"
+          printf 'MOST_R15_RELEASE_TRUSTED_ROOT=%s\n' "$R15_TRUSTED_ROOT" >> "$GITHUB_ENV"
 
       - name: Set up PHP
         uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45
