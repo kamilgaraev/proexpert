@@ -1085,8 +1085,6 @@ return new class extends Migration
             END;
             $$;
             SQL);
-        DB::statement('SET ROLE most_report_publication_owner');
-
         try {
             DB::statement('DROP FUNCTION IF EXISTS report_publication_mark_outbox_delivered(text, timestamptz)');
             DB::statement('DROP FUNCTION IF EXISTS report_publication_configure_feature(text, text, text, text, jsonb, jsonb)');
@@ -1114,7 +1112,6 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS report_publication_positive_unique_ids(jsonb)');
             DB::statement('DROP FUNCTION IF EXISTS report_publication_release_checks_match(jsonb, jsonb)');
         } finally {
-            DB::statement('RESET ROLE');
             DB::unprepared(<<<'SQL'
                 DO $$
                 BEGIN
