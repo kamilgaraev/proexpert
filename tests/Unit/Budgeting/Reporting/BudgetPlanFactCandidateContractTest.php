@@ -81,9 +81,7 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
         $contract->assertSnapshotRequest(
             BudgetPlanFactCandidateFixture::scope(),
             $filters,
-            BudgetPlanFactCandidateFixture::closeId(),
-            new BudgetingReportSourceCloseIdentity(2, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1'),
-            BudgetPlanFactCandidateContract::FORMULA_VERSION,
+            BudgetPlanFactCandidateFixture::close(new BudgetingReportSourceCloseIdentity(2, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1')),
         );
     }
 
@@ -95,9 +93,7 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
         $contract->assertSnapshotRequest(
             BudgetPlanFactCandidateFixture::scope(),
             BudgetPlanFactCandidateFixture::filters(),
-            BudgetPlanFactCandidateFixture::closeId(),
-            new BudgetingReportSourceCloseIdentity(1, '2026-02-01', '2026-02-28', 'scenario-1', 'budget-1'),
-            BudgetPlanFactCandidateContract::FORMULA_VERSION,
+            BudgetPlanFactCandidateFixture::close(new BudgetingReportSourceCloseIdentity(1, '2026-02-01', '2026-02-28', 'scenario-1', 'budget-1')),
         );
     }
 
@@ -107,9 +103,7 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
         BudgetPlanFactCandidateFixture::contract()->assertSnapshotRequest(
             BudgetPlanFactCandidateFixture::scope(),
             BudgetPlanFactCandidateFixture::filters(),
-            BudgetPlanFactCandidateFixture::closeId(),
-            BudgetPlanFactCandidateFixture::closeIdentity(),
-            'other-formula',
+            BudgetPlanFactCandidateFixture::close(formulaVersion: 'other-formula'),
         );
     }
 
@@ -122,9 +116,7 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
         BudgetPlanFactCandidateFixture::contract()->assertSnapshotRequest(
             BudgetPlanFactCandidateFixture::scope(),
             $filters,
-            BudgetPlanFactCandidateFixture::closeId(),
-            BudgetPlanFactCandidateFixture::closeIdentity(),
-            BudgetPlanFactCandidateContract::FORMULA_VERSION,
+            BudgetPlanFactCandidateFixture::close(),
         );
     }
 

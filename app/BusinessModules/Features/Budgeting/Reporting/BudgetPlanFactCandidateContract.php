@@ -7,7 +7,7 @@ namespace App\BusinessModules\Features\Budgeting\Reporting;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
-use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceCloseIdentity;
+use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactSourceSnapshotRequest;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactCalculator;
@@ -99,9 +99,7 @@ final readonly class BudgetPlanFactCandidateContract
     public function assertSnapshotRequest(
         ReportScope $scope,
         array $filters,
-        string $closeId,
-        BudgetingReportSourceCloseIdentity $closeIdentity,
-        string $closeFormulaVersion,
+        BudgetingReportSourceClose $close,
     ): void {
         $allowed = array_column($this->filters(), 'id');
         unset($allowed[array_search('close_id', $allowed, true)]);
@@ -116,7 +114,7 @@ final readonly class BudgetPlanFactCandidateContract
             }
         }
 
-        if ($closeFormulaVersion !== $this->formulaVersion) {
+        if ($close->formulaVersion !== $this->formulaVersion) {
             throw new InvalidArgumentException('budget_plan_fact_candidate_formula_version_invalid');
         }
 
@@ -127,8 +125,8 @@ final readonly class BudgetPlanFactCandidateContract
         new PlanFactSourceSnapshotRequest(
             $scope,
             $filters,
-            $closeId,
-            $closeIdentity,
+            $close->closeId,
+            $close->identity,
             new \DateTimeImmutable('2026-01-31T00:00:00+00:00'),
             null,
         );

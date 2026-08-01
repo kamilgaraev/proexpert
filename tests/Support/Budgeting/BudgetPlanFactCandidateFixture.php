@@ -57,7 +57,7 @@ final class BudgetPlanFactCandidateFixture
     public static function snapshot(): ReportSourceSnapshotWrite
     {
         $close = self::close();
-        self::contract()->assertSnapshotRequest(self::scope(), self::filters(), self::closeId(), self::closeIdentity(), $close->formulaVersion);
+        self::contract()->assertSnapshotRequest(self::scope(), self::filters(), $close);
         $report = self::report();
         $drills = [];
         foreach ($report['rows'] as $row) {
@@ -78,13 +78,15 @@ final class BudgetPlanFactCandidateFixture
         );
     }
 
-    private static function close(): BudgetingReportSourceClose
-    {
+    public static function close(
+        ?BudgetingReportSourceCloseIdentity $identity = null,
+        ?string $formulaVersion = null,
+    ): BudgetingReportSourceClose {
         return new BudgetingReportSourceClose(
             self::closeId(),
-            self::closeIdentity(),
+            $identity ?? self::closeIdentity(),
             [new BudgetingReportSourceWatermark('budget', new DateTimeImmutable('2026-01-31T00:00:00+00:00'), 'budget:1', 'budget-v1')],
-            'plan-fact-v1',
+            $formulaVersion ?? BudgetPlanFactCandidateContract::FORMULA_VERSION,
             ['budget' => ['version' => 'budget:1']],
             str_repeat('a', 64),
             1,
