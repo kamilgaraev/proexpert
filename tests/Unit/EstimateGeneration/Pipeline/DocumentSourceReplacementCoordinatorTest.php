@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceReplacementCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceReplacementPageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceReplacementTransaction;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EvidenceSourceReplacementInvalidator;
 use PHPUnit\Framework\Attributes\Test;
@@ -42,6 +43,63 @@ final class FailingOnceEvidenceSourceInvalidator implements EvidenceSourceReplac
     }
 }
 
+final class InMemoryDocumentSourceReplacementPageStore implements DocumentSourceReplacementPageStore
+{
+    /** @var list<array{organization_id: int, project_id: int, session_id: int, document_id: int, page_number: int, source_version: ?string, processing_unit_id: ?int}> */
+    public array $pages;
+
+    /** @var list<string> */
+    public array $events = [];
+
+    /** @param list<array{organization_id: int, project_id: int, session_id: int, document_id: int, page_number: int, source_version: ?string, processing_unit_id: ?int}> $pages */
+    public function __construct(array $pages = [])
+    {
+        $this->pages = $pages;
+    }
+
+    public function removeStalePages(int $organizationId, int $projectId, int $sessionId, int $documentId, string $acceptedSourceVersion): int
+    {
+        $this->events[] = 'remove_stale_pages';
+        $removed = 0;
+        $this->pages = array_values(array_filter($this->pages, static function (array $page) use ($organizationId, $projectId, $sessionId, $documentId, $acceptedSourceVersion, &$removed): bool {
+            $belongsToDocument = $page['organization_id'] === $organizationId
+                && $page['project_id'] === $projectId
+                && $page['session_id'] === $sessionId
+                && $page['document_id'] === $documentId;
+
+            if ($belongsToDocument && $page['source_version'] !== $acceptedSourceVersion) {
+                ++$removed;
+
+                return false;
+            }
+
+            return true;
+        }));
+
+        return $removed;
+    }
+
+    public function reservePage(int $documentId, int $pageNumber, string $sourceVersion, int $processingUnitId): void
+    {
+        foreach ($this->pages as $page) {
+            if ($page['document_id'] === $documentId && $page['page_number'] === $pageNumber) {
+                throw new RuntimeException('page_number_reserved');
+            }
+        }
+
+        $this->events[] = 'enqueue_processing_unit';
+        $this->pages[] = [
+            'organization_id' => 1,
+            'project_id' => 10,
+            'session_id' => 100,
+            'document_id' => $documentId,
+            'page_number' => $pageNumber,
+            'source_version' => $sourceVersion,
+            'processing_unit_id' => $processingUnitId,
+        ];
+    }
+}
+
 final class DocumentSourceReplacementCoordinatorTest extends TestCase
 {
     #[Test]
@@ -49,7 +107,7 @@ final class DocumentSourceReplacementCoordinatorTest extends TestCase
     {
         $transaction = new InMemoryDocumentSourceReplacementTransaction;
         $invalidator = new FailingOnceEvidenceSourceInvalidator;
-        $coordinator = new DocumentSourceReplacementCoordinator($transaction, $invalidator);
+        $coordinator = new DocumentSourceReplacementCoordinator($transaction, $invalidator, new InMemoryDocumentSourceReplacementPageStore);
         $accept = function () use ($transaction): string {
             $transaction->sourceVersion = 'new';
 
@@ -67,5 +125,51 @@ final class DocumentSourceReplacementCoordinatorTest extends TestCase
         self::assertSame('accepted', $coordinator->commit(1, 10, 100, 44, 'old', 'new', $accept));
         self::assertSame('new', $transaction->sourceVersion);
         self::assertSame(2, $invalidator->calls);
+    }
+
+    #[Test]
+    public function source_replacement_frees_document_page_numbers_before_new_units_are_enqueued(): void
+    {
+        $pages = new InMemoryDocumentSourceReplacementPageStore([
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 44, 'page_number' => 1, 'source_version' => 'old', 'processing_unit_id' => 501],
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 44, 'page_number' => 2, 'source_version' => 'old', 'processing_unit_id' => 502],
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 45, 'page_number' => 1, 'source_version' => 'old', 'processing_unit_id' => 503],
+        ]);
+        $invalidator = new class implements EvidenceSourceReplacementInvalidator
+        {
+            /** @var list<array{organization_id: int, project_id: int, session_id: int, document_id: int, source_version: string}> */
+            public array $calls = [];
+
+            public function invalidateReplacedDocumentSource(int $organizationId, int $projectId, int $sessionId, int $documentId, string $previousSourceVersion): int
+            {
+                $this->calls[] = [
+                    'organization_id' => $organizationId,
+                    'project_id' => $projectId,
+                    'session_id' => $sessionId,
+                    'document_id' => $documentId,
+                    'source_version' => $previousSourceVersion,
+                ];
+
+                return 1;
+            }
+        };
+        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages);
+
+        $coordinator->commit(1, 10, 100, 44, 'old', 'new', function () use ($pages): void {
+            $pages->reservePage(44, 1, 'new', 601);
+        });
+
+        self::assertSame(['remove_stale_pages', 'enqueue_processing_unit'], $pages->events);
+        self::assertSame([
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 45, 'page_number' => 1, 'source_version' => 'old', 'processing_unit_id' => 503],
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 44, 'page_number' => 1, 'source_version' => 'new', 'processing_unit_id' => 601],
+        ], $pages->pages);
+        self::assertSame([[
+            'organization_id' => 1,
+            'project_id' => 10,
+            'session_id' => 100,
+            'document_id' => 44,
+            'source_version' => 'old',
+        ]], $invalidator->calls);
     }
 }
