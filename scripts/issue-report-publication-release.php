@@ -24,7 +24,7 @@ try {
     }
     $requestRoot = dirname(__DIR__).'/build/reports/publication-release-requests';
     $request = (new ReportPublicationReleaseRequestFileLoader)->load($options['request'], $requestRoot);
-    $resolvedRequest = (new ProjectReportPublicationReleaseRequestRegistry)->resolve($request);
+    throw new RuntimeException('report_publication_release_composition_not_wired');
     $resolvedRequest->admission->assertProductionSafe();
     $repository = getenv('GITHUB_REPOSITORY');
     $workflowRef = getenv('GITHUB_WORKFLOW_REF');
