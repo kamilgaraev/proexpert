@@ -412,7 +412,7 @@ class ProcurementApprovalService
         }
     }
 
-    private function acceptApprovedWinningProposal(SupplierProposalDecision $decision, int $actorId): void
+    protected function acceptApprovedWinningProposal(SupplierProposalDecision $decision, int $actorId): void
     {
         $decision->loadMissing('winningProposal');
         $proposal = $decision->winningProposal;

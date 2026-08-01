@@ -11,7 +11,9 @@ use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Models\SupplierRequestVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use DateTimeImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -181,7 +183,7 @@ class SupplierRequestService
             $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
             $emailQueuedTo = $this->queuePublicLinkEmail($supplierRequest);
 
-            $this->cycleEventRecorder->recordSolicitationSent(
+            $this->recordSolicitationSentCycleEvent(
                 $supplierRequest,
                 $version,
                 $actorId,
@@ -261,6 +263,15 @@ class SupplierRequestService
             ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines', 'currentVersion'])
             ->withCount('lines')
             ->latest('id');
+    }
+
+    protected function recordSolicitationSentCycleEvent(
+        SupplierRequest $request,
+        SupplierRequestVersion $version,
+        ?int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $this->cycleEventRecorder->recordSolicitationSent($request, $version, $actorId, $occurredAt);
     }
 
     private function resolveExternalSupplierContact(int $organizationId, array $data): ?ExternalSupplierContact

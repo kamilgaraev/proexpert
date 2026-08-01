@@ -148,8 +148,12 @@ final class ProcurementCycleOwnerAdapterParityTest extends TestCase
             'project_id' => 20,
             'purchase_request_id' => 30,
             'purchase_request_line_id' => 40,
-            'quality_status' => 'PARTIAL',
-            'gap_codes' => ['missing_policy_version'],
+            'policy_version_id' => 90,
+            'policy_hash' => str_repeat('a', 64),
+            'calendar_version' => 'procurement-business-calendar.v1',
+            'calendar_hash' => str_repeat('b', 64),
+            'quality_status' => 'FULL',
+            'gap_codes' => [],
         ]);
         $state->allowedTerminalReasons = [];
         $owner = new ProcurementCycleOwnerEventRecorder(
@@ -170,6 +174,76 @@ final class ProcurementCycleOwnerAdapterParityTest extends TestCase
         }
 
         self::assertSame([], $store->transitions);
+    }
+
+    public function test_award_without_request_created_appends_minimal_quarantine_transition(): void
+    {
+        [, $requestLine] = $this->requestGraph();
+        $store = new OwnerParityStore();
+        $owner = new ProcurementCycleOwnerEventRecorder(
+            new ProcurementProcessEventRecorder($store, new OwnerParityTransactionBoundary()),
+            new OwnerParitySourceState(),
+        );
+        $supplierLine = $this->model(SupplierRequestLine::class, 61, [
+            'supplier_request_id' => 60,
+            'purchase_request_line_id' => 40,
+        ]);
+        $supplierLine->setRelation('purchaseRequestLine', $requestLine);
+        $orderItem = $this->model(PurchaseOrderItem::class, 101, [
+            'purchase_order_id' => 100,
+            'purchase_request_line_id' => 40,
+            'supplier_request_line_id' => 61,
+            'supplier_proposal_line_id' => 81,
+            'quantity' => '2.500',
+            'total_price' => '250.00',
+        ]);
+        $orderItem->setRelation('purchaseRequestLine', $requestLine);
+        $orderItem->setRelation('supplierRequestLine', $supplierLine);
+        $order = $this->model(PurchaseOrder::class, 100, [
+            'organization_id' => 10,
+            'purchase_request_id' => 30,
+            'supplier_party_id' => 70,
+            'accepted_supplier_proposal_id' => 80,
+            'accepted_supplier_proposal_version_id' => 82,
+            'currency' => 'RUB',
+        ]);
+        $order->setRelation('items', new Collection([$orderItem]));
+        $decision = $this->model(SupplierProposalDecision::class, 90, [
+            'organization_id' => 10,
+            'supplier_request_id' => 60,
+            'winning_supplier_proposal_id' => 80,
+            'winning_supplier_proposal_version_id' => 82,
+        ]);
+        $version = $this->model(SupplierProposalVersion::class, 82);
+
+        $owner->recordAwardDecided(
+            $decision,
+            $version,
+            $order,
+            50,
+            new DateTimeImmutable('2026-08-01T10:00:00.123456+00:00'),
+        );
+
+        self::assertCount(1, $store->transitions);
+        $transition = $store->transitions[0];
+        self::assertSame(ProcurementProcessEventCode::AWARD_DECIDED, $transition->eventCode);
+        self::assertSame(90, $transition->supplierProposalDecisionId);
+        self::assertSame(82, $transition->supplierProposalVersionId);
+        self::assertSame(100, $transition->purchaseOrderId);
+        self::assertSame(101, $transition->purchaseOrderItemId);
+        self::assertSame([
+            'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
+            'organization_id' => 10,
+            'project_id' => null,
+            'purchase_request_id' => 30,
+            'purchase_request_line_id' => 40,
+            'quality_status' => 'PARTIAL',
+            'gap_codes' => [
+                'missing_policy_version',
+                'missing_project_lineage',
+                'missing_request_created_event',
+            ],
+        ], $transition->dimensionSnapshot->values);
     }
 
     public function test_request_rejected_without_published_policy_is_recorded_as_partial_rollout_evidence(): void

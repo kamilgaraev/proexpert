@@ -154,11 +154,13 @@ final readonly class ProcurementCycleOwnerEventRecorder
                 throw new LogicException('procurement_award_request_line_lineage_required');
             }
             $snapshot = $this->existingOrGapSnapshot($line, ['missing_request_created_event']);
-            $snapshot = $this->withDimensions($snapshot, [
-                'awarded_supplier_party_id' => $this->positive($order->supplier_party_id),
-                'awarded_amount' => $this->sumDecimal($lineItems->pluck('total_price')->all(), 2),
-                'currency' => (string) $order->currency,
-            ]);
+            if (! $this->isMissingCreatedEventQuarantine($snapshot)) {
+                $snapshot = $this->withDimensions($snapshot, [
+                    'awarded_supplier_party_id' => $this->positive($order->supplier_party_id),
+                    'awarded_amount' => $this->sumDecimal($lineItems->pluck('total_price')->all(), 2),
+                    'currency' => (string) $order->currency,
+                ]);
+            }
             $this->recordLine(
                 $line,
                 ProcurementProcessEventCode::AWARD_DECIDED,
@@ -506,6 +508,16 @@ final readonly class ProcurementCycleOwnerEventRecorder
             ...$snapshot->values,
             ...array_filter($dimensions, static fn (mixed $value): bool => $value !== null),
         ]);
+    }
+
+    private function isMissingCreatedEventQuarantine(
+        ProcurementProcessDimensionSnapshot $snapshot,
+    ): bool {
+        return in_array(
+            'missing_request_created_event',
+            (array) ($snapshot->values['gap_codes'] ?? []),
+            true,
+        );
     }
 
     private function lineageItems(PurchaseOrder $order, bool $strict): Collection

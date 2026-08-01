@@ -16,6 +16,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalLine;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementAwardTimeResolver;
@@ -150,7 +151,7 @@ class SupplierProposalService
                     $proposal->update(['supplier_snapshot' => $respondedSnapshot]);
                 }
 
-                $this->cycleEventRecorder->recordSupplierResponded(
+                $this->recordSupplierRespondedCycleEvent(
                     $proposal,
                     $proposalVersion,
                     $actorId,
@@ -370,7 +371,7 @@ class SupplierProposalService
                 $order->update(['supplier_snapshot' => $selectedSnapshot]);
             }
 
-            $this->cycleEventRecorder->recordAwardDecided(
+            $this->recordAwardDecidedCycleEvent(
                 $decision,
                 $acceptedVersion,
                 $order,
@@ -441,6 +442,25 @@ class SupplierProposalService
         ]);
 
         return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'supplierRequestVersion', 'lines']);
+    }
+
+    protected function recordSupplierRespondedCycleEvent(
+        SupplierProposal $proposal,
+        SupplierProposalVersion $version,
+        ?int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $this->cycleEventRecorder->recordSupplierResponded($proposal, $version, $actorId, $occurredAt);
+    }
+
+    protected function recordAwardDecidedCycleEvent(
+        SupplierProposalDecision $decision,
+        SupplierProposalVersion $version,
+        PurchaseOrder $order,
+        ?int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $this->cycleEventRecorder->recordAwardDecided($decision, $version, $order, $actorId, $occurredAt);
     }
 
     private function resolveLineMaterialId(SupplierRequest $supplierRequest, ?int $supplierRequestLineId): ?int

@@ -17,6 +17,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\Procuremen
 use App\Models\Contract;
 use App\Models\Supplier;
 use App\Models\User;
+use DateTimeImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -170,7 +171,7 @@ class PurchaseOrderService
                 ]),
             ]);
 
-            $this->cycleEventRecorder->recordOrderSent(
+            $this->recordOrderSentCycleEvent(
                 $order,
                 $actorId,
                 $sentAt->toDateTimeImmutable(),
@@ -291,7 +292,7 @@ class PurchaseOrderService
             $receipt->loadMissing('lines');
             $order->loadMissing('items');
 
-            $this->cycleEventRecorder->recordReceiptMilestones(
+            $this->recordReceiptMilestonesCycleEvent(
                 $order,
                 $receipt,
                 $userId,
@@ -408,6 +409,23 @@ class PurchaseOrderService
             trans_message('procurement.receipt_document.pending_number'),
             $receiptDate ?: now()->toDateString()
         );
+    }
+
+    protected function recordOrderSentCycleEvent(
+        PurchaseOrder $order,
+        ?int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $this->cycleEventRecorder->recordOrderSent($order, $actorId, $occurredAt);
+    }
+
+    protected function recordReceiptMilestonesCycleEvent(
+        PurchaseOrder $order,
+        PurchaseReceipt $receipt,
+        int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $this->cycleEventRecorder->recordReceiptMilestones($order, $receipt, $actorId, $occurredAt);
     }
 
     private function resolveReceiptWarehouse(PurchaseOrder $order, int $warehouseId): OrganizationWarehouse

@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementTe
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\User;
+use DateTimeImmutable;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -150,7 +151,7 @@ class PurchaseRequestService
             }
 
             $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest, $quantityOverride, $metadata);
-            $this->cycleEventRecorder->recordRequestCreated(
+            $this->recordRequestCreatedCycleEvent(
                 $purchaseRequest,
                 $actorId,
                 $occurredAt->toDateTimeImmutable(),
@@ -227,7 +228,7 @@ class PurchaseRequestService
                 $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
             }
 
-            $this->cycleEventRecorder->recordRequestCreated(
+            $this->recordRequestCreatedCycleEvent(
                 $purchaseRequest,
                 $actorId,
                 $occurredAt->toDateTimeImmutable(),
@@ -262,7 +263,7 @@ class PurchaseRequestService
             $request->setUpdatedAt($occurredAt);
             $request->save();
 
-            $this->cycleEventRecorder->recordRequestApproved(
+            $this->recordRequestApprovedCycleEvent(
                 $request,
                 $userId,
                 $occurredAt->toDateTimeImmutable(),
@@ -304,7 +305,7 @@ class PurchaseRequestService
             $request->setUpdatedAt($occurredAt);
             $request->save();
 
-            $this->cycleEventRecorder->recordRequestCancelled(
+            $this->recordRequestCancelledCycleEvent(
                 $request,
                 $userId,
                 $occurredAt->toDateTimeImmutable(),
@@ -333,6 +334,31 @@ class PurchaseRequestService
         }
 
         return app(PurchaseOrderService::class)->create($request, $supplierId, []);
+    }
+
+    protected function recordRequestCreatedCycleEvent(
+        PurchaseRequest $request,
+        int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $this->cycleEventRecorder->recordRequestCreated($request, $actorId, $occurredAt);
+    }
+
+    protected function recordRequestApprovedCycleEvent(
+        PurchaseRequest $request,
+        int $actorId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $this->cycleEventRecorder->recordRequestApproved($request, $actorId, $occurredAt);
+    }
+
+    protected function recordRequestCancelledCycleEvent(
+        PurchaseRequest $request,
+        int $actorId,
+        DateTimeImmutable $occurredAt,
+        ProcurementTerminalReason $reason,
+    ): void {
+        $this->cycleEventRecorder->recordRequestCancelled($request, $actorId, $occurredAt, $reason);
     }
 
     private function checkLimits(int $organizationId): void
