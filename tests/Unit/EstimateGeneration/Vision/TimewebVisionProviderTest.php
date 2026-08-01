@@ -201,6 +201,27 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function effective_element_limit_also_caps_project_sheet_facts(): void
+    {
+        config()->set('estimate-generation.vision.max_elements', 1);
+        $response = $this->response();
+        $analysis = json_decode($response['choices'][0]['message']['content'], true, 16, JSON_THROW_ON_ERROR);
+        $fact = $analysis['project_sheet_analysis']['facts'][0];
+        $secondFact = $fact;
+        $secondFact['key'] = 'room-2';
+        $analysis['project_sheet_analysis']['facts'] = [$fact, $secondFact];
+        $response['choices'][0]['message']['content'] = json_encode($analysis, JSON_THROW_ON_ERROR);
+        Http::fake(['*' => Http::response($response)]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Configured fact limit was not enforced.');
+        } catch (VisionContractException) {
+            self::assertSame('malformed_response', $this->attempts[0]->status);
+        }
+    }
+
+    #[Test]
     public function contract_hash_changes_with_the_effective_element_limit(): void
     {
         self::assertNotSame(TimewebVisionProvider::promptHash(1), TimewebVisionProvider::promptHash(100));

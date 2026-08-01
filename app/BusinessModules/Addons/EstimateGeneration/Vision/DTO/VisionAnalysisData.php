@@ -107,8 +107,9 @@ final readonly class VisionAnalysisData
     }
 
     /** @param array<string, mixed> $data */
-    public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements): self
+    public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements, ?int $maxFacts = null): self
     {
+        $maxFacts ??= $maxElements;
         $schemaVersion = $data['schema_version'] ?? null;
         $expectedKeys = match ($schemaVersion) {
             self::PROJECT_SHEET_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes', 'project_sheet_analysis'],
@@ -121,6 +122,8 @@ final readonly class VisionAnalysisData
             || ! is_array($data['evidence']) || ! is_array($data['elements']) || ! is_array($data['scale_candidates']) || ! is_array($data['warnings'])
             || ($schemaVersion === self::CURRENT_SCHEMA_VERSION && ! is_array($data['visual_attributes']))
             || ($schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION && (! is_array($data['visual_attributes']) || ! is_array($data['project_sheet_analysis'])))
+            || $maxElements < 1 || $maxElements > 500
+            || $maxFacts < 1 || $maxFacts > 500
             || count($data['elements']) > $maxElements) {
             throw new VisionContractException('invalid_analysis_schema');
         }
@@ -129,7 +132,7 @@ final readonly class VisionAnalysisData
         $elements = array_map(static fn (mixed $item): VisionElementData => is_array($item) ? VisionElementData::fromArray($item) : throw new VisionContractException('invalid_element'), $data['elements']);
         $scales = array_map(static fn (mixed $item): VisionScaleCandidateData => is_array($item) ? VisionScaleCandidateData::fromArray($item) : throw new VisionContractException('invalid_scale_candidate'), $data['scale_candidates']);
         $projectSheetAnalysis = $schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION
-            ? ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence))
+            ? ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence), $maxFacts)
             : null;
         foreach ($data['warnings'] as $warning) {
             if (! is_string($warning)) {

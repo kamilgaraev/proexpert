@@ -18,9 +18,9 @@ final readonly class ProjectSheetAnalysisData
     }
 
     /** @param array<string, mixed> $data @param list<string> $evidenceKeys */
-    public static function fromProviderArray(array $data, array $evidenceKeys): self
+    public static function fromProviderArray(array $data, array $evidenceKeys, int $maxFacts = 500): self
     {
-        ProjectSheetAnalysisValidator::assertValid($data, $evidenceKeys);
+        ProjectSheetAnalysisValidator::assertValid($data, $evidenceKeys, $maxFacts);
 
         return new self($data['sheet_role'], $data['facts']);
     }

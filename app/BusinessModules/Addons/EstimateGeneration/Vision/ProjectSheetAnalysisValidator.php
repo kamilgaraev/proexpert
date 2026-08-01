@@ -13,12 +13,15 @@ final class ProjectSheetAnalysisValidator
     private const FACT_TYPES = ['room', 'wall', 'opening', 'axis', 'dimension_chain', 'sanitary_fixture', 'furniture', 'structural_element', 'table', 'cross_sheet_link'];
 
     /** @param array<string, mixed> $data @param list<string> $evidenceKeys */
-    public static function assertValid(array $data, array $evidenceKeys): void
+    public static function assertValid(array $data, array $evidenceKeys, int $maxFacts = 500): void
     {
+        if ($maxFacts < 1 || $maxFacts > 500) {
+            throw new VisionContractException('invalid_project_sheet_analysis');
+        }
         if (! self::hasExactKeys($data, ['schema_version', 'sheet_role', 'facts'])
             || ($data['schema_version'] ?? null) !== ProjectSheetAnalysisData::SCHEMA_VERSION
             || ! is_string($data['sheet_role'] ?? null) || ! in_array($data['sheet_role'], self::SHEET_ROLES, true)
-            || ! is_array($data['facts'] ?? null) || ! array_is_list($data['facts']) || count($data['facts']) > 500) {
+            || ! is_array($data['facts'] ?? null) || ! array_is_list($data['facts']) || count($data['facts']) > $maxFacts) {
             throw new VisionContractException('invalid_project_sheet_analysis');
         }
 
@@ -86,7 +89,7 @@ final class ProjectSheetAnalysisValidator
             return;
         }
         $valid = match ($value['type']) {
-            'number' => is_numeric($value['data']) && is_finite((float) $value['data']),
+            'number' => (is_int($value['data']) || is_float($value['data'])) && is_finite((float) $value['data']),
             'string', 'enum' => is_string($value['data']) && mb_strlen($value['data']) <= 500 && preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u', $value['data']) !== 1,
             'boolean' => is_bool($value['data']),
         };

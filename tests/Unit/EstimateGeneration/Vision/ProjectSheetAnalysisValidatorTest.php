@@ -42,6 +42,16 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function it_rejects_numeric_strings_for_typed_number_facts(): void
+    {
+        $payload = $this->payload();
+        $payload['facts'][0]['value'] = ['type' => 'number', 'data' => '7.94'];
+
+        $this->expectException(VisionContractException::class);
+        ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+    }
+
+    #[Test]
     public function it_rejects_unknown_keys_dangling_evidence_and_non_normalized_geometry(): void
     {
         foreach (['unknown_key', 'dangling_evidence', 'geometry'] as $case) {

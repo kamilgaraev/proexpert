@@ -120,7 +120,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         $analysisPayload, self::PROVIDER, $model, $reportedModel,
                         $modelVersion.':'.str_replace(':', '-', self::PROMPT_VERSION).':'.substr($contractHash, 7, 12),
                         $usage['status'], $usage['input'], $usage['output'],
-                        $maxElements,
+                        $maxElements, $maxElements,
                     )->assertProvenance($input, 'normalized_derivative_v1')
                         ->mapPolygonsToSource($input->sourceTransform)
                         ->assertProvenance($input, 'normalized_source_v1');
