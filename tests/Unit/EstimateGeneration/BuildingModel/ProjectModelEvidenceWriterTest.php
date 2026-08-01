@@ -14,7 +14,7 @@ use ReflectionMethod;
 final class ProjectModelEvidenceWriterTest extends TestCase
 {
     #[Test]
-    public function room_six_is_recorded_as_an_ai_candidate_with_its_source_locator(): void
+    public function room_six_requires_typed_evidence_before_it_can_be_confirmed(): void
     {
         $candidates = $this->candidates($this->unit(501, 1, [
             'vision_analysis' => ['elements' => [[
@@ -24,9 +24,10 @@ final class ProjectModelEvidenceWriterTest extends TestCase
         ]));
 
         self::assertCount(1, $candidates);
-        self::assertSame('ai_candidate', $candidates[0]['source']);
+        self::assertSame('explicit_dimension', $candidates[0]['source']);
         self::assertSame(['value' => 7.94, 'unit' => 'm2'], $candidates[0]['value']);
-        self::assertSame(0, $candidates[0]['locator']['element_index']);
+        self::assertSame(501, $candidates[0]['locator']['document_id']);
+        self::assertSame(1, $candidates[0]['locator']['unit_index']);
     }
 
     #[Test]

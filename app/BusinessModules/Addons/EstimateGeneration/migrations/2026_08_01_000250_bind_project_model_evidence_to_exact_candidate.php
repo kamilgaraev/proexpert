@@ -17,6 +17,7 @@ return new class extends Migration
     public function up(): void
     {
         if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE EXTENSION IF NOT EXISTS pgcrypto');
             $this->replaceExactBindingGuard();
             $this->ensureExactBindingGuardTrigger();
         }
@@ -74,6 +75,7 @@ return new class extends Migration
             DB::statement('LOCK TABLE '.self::TABLE.' IN ACCESS EXCLUSIVE MODE');
             $this->assertNoExactBindingAuditData();
             $this->replaceLegacyBindingGuard();
+            DB::statement('DROP FUNCTION IF EXISTS eg_project_model_value_fingerprint(jsonb)');
 
             DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_project_model_evidence_bindings
@@ -273,6 +275,8 @@ WHERE NOT COALESCE(
     AND ((binding.assertion_id IS NOT NULL AND binding.correction_id IS NULL) OR (binding.assertion_id IS NULL AND binding.correction_id IS NOT NULL))
     AND binding.candidate_source IN ('manual_correction', 'cad', 'table', 'explicit_dimension', 'reconciled_geometry')
     AND binding.candidate_value_fingerprint ~ '^[a-f0-9]{64}$'
+    AND evidence.source_ref ~ '^document:[1-9][0-9]*$'
+    AND (evidence.locator->>'document_id')::text = split_part(evidence.source_ref, ':', 2)
     AND binding.source_version ~ '^sha256:[a-f0-9]{64}$'
     AND length(btrim(binding.evidence_source_version)) > 0
     AND binding.evidence_invalidation_version >= 0
@@ -281,11 +285,13 @@ WHERE NOT COALESCE(
             binding.assertion_id IS NOT NULL
             AND assertion.entity_id = binding.entity_id
             AND assertion.payload->>'source' = binding.candidate_source
+            AND eg_project_model_value_fingerprint(assertion.payload - 'source') = binding.candidate_value_fingerprint
         )
         OR (
             binding.correction_id IS NOT NULL
             AND correction_assertion.entity_id = binding.entity_id
             AND (CASE correction.correction_type WHEN 'manual' THEN 'manual_correction' WHEN 'source_reconciliation' THEN 'reconciled_geometry' END) = binding.candidate_source
+            AND eg_project_model_value_fingerprint(correction_assertion.payload - 'source') = binding.candidate_value_fingerprint
         )
     ), false)
 ORDER BY binding.id
@@ -403,6 +409,19 @@ SQL);
     private function replaceExactBindingGuard(): void
     {
         DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION eg_project_model_value_fingerprint(value_payload jsonb) RETURNS text LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+    normalized_number text;
+BEGIN
+    IF value_payload IS NULL OR jsonb_typeof(value_payload) <> 'object'
+        OR NOT (value_payload ? 'value') OR NOT (value_payload ? 'unit')
+        OR jsonb_typeof(value_payload->'value') <> 'number' OR jsonb_typeof(value_payload->'unit') <> 'string' THEN
+        RETURN NULL;
+    END IF;
+    normalized_number := rtrim(rtrim(to_char((value_payload->>'value')::numeric, 'FM999999999999999999999999990D00000000000000000'), '0'), '.');
+    RETURN encode(digest(format('{"unit":%s,"value":{"number":%s}}', to_jsonb(value_payload->>'unit')::text, to_jsonb(normalized_number)::text), 'sha256'), 'hex');
+END; $$;
+
 CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     binding_row jsonb := to_jsonb(NEW);
@@ -418,9 +437,17 @@ DECLARE
     assertion_source text;
     correction_assertion_id bigint;
     correction_source text;
+    candidate_payload jsonb;
+    evidence_value jsonb;
+    evidence_locator jsonb;
+    evidence_type text;
+    evidence_source_type text;
+    evidence_source_ref text;
+    evidence_producer_name text;
+    evidence_producer_version text;
 BEGIN
-    SELECT source_version, invalidation_version, invalidated_at
-    INTO actual_source_version, actual_invalidation_version, actual_invalidated_at
+    SELECT source_version, invalidation_version, invalidated_at, value, locator, type, source_type, source_ref, producer_name, producer_version
+    INTO actual_source_version, actual_invalidation_version, actual_invalidated_at, evidence_value, evidence_locator, evidence_type, evidence_source_type, evidence_source_ref, evidence_producer_name, evidence_producer_version
     FROM estimate_generation_evidence
     WHERE id = NEW.evidence_id AND organization_id = NEW.organization_id AND project_id = NEW.project_id AND session_id = NEW.session_id
     FOR UPDATE;
@@ -472,7 +499,7 @@ BEGIN
         RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
     END IF;
     IF binding_assertion_id IS NOT NULL THEN
-        SELECT entity_id, payload->>'source' INTO assertion_entity_id, assertion_source
+        SELECT entity_id, payload->>'source', payload - 'source' INTO assertion_entity_id, assertion_source, candidate_payload
         FROM estimate_generation_project_model_assertions
         WHERE id = binding_assertion_id
           AND building_model_id = NEW.building_model_id
@@ -480,7 +507,8 @@ BEGIN
           AND project_id = NEW.project_id
           AND session_id = NEW.session_id
           AND source_version = NEW.source_version;
-        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR assertion_source IS NULL OR assertion_source <> binding_candidate_source THEN
+        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR assertion_source IS NULL OR assertion_source <> binding_candidate_source
+            OR eg_project_model_value_fingerprint(candidate_payload) <> binding_candidate_value_fingerprint THEN
             RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
         END IF;
     ELSE
@@ -496,7 +524,7 @@ BEGIN
         IF NOT FOUND THEN
             RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
         END IF;
-        SELECT entity_id INTO assertion_entity_id
+        SELECT entity_id, payload - 'source' INTO assertion_entity_id, candidate_payload
         FROM estimate_generation_project_model_assertions
         WHERE id = correction_assertion_id
           AND building_model_id = NEW.building_model_id
@@ -504,9 +532,39 @@ BEGIN
           AND project_id = NEW.project_id
           AND session_id = NEW.session_id
           AND source_version = NEW.source_version;
-        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR correction_source IS NULL OR correction_source <> binding_candidate_source THEN
+        IF NOT FOUND OR assertion_entity_id <> NEW.entity_id OR correction_source IS NULL OR correction_source <> binding_candidate_source
+            OR eg_project_model_value_fingerprint(candidate_payload) <> binding_candidate_value_fingerprint THEN
             RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
         END IF;
+    END IF;
+    IF NOT (
+        evidence_source_ref ~ '^document:[1-9][0-9]*$'
+        AND (evidence_locator->>'document_id')::text = split_part(evidence_source_ref, ':', 2)
+        AND (evidence_locator->>'unit_index') ~ '^[0-9]+$'
+        AND (evidence_locator->>'page') = (evidence_locator->>'unit_index')
+        AND (
+            (binding_candidate_source = 'explicit_dimension'
+                AND evidence_type = 'extracted' AND evidence_source_type = 'document_unit'
+                AND evidence_producer_name = 'drawing_analyzer' AND evidence_producer_version = 'model:v2'
+                AND evidence_value->>'field_key' = 'room_area' AND evidence_value->>'unit' = 'm2'
+                AND (evidence_value->>'field_value')::numeric > 0
+                AND evidence_locator ? 'region_key' AND evidence_locator ? 'element_key' AND evidence_locator ? 'bbox'
+                AND candidate_payload = jsonb_build_object('unit', 'm2', 'value', (evidence_value->>'field_value')::numeric))
+            OR (binding_candidate_source = 'table'
+                AND evidence_type = 'extracted' AND evidence_source_type = 'document_unit'
+                AND evidence_producer_name = 'ocr_fact_extractor' AND evidence_producer_version = 'extractor:v1'
+                AND evidence_value->>'field_key' = 'room_area' AND evidence_value->>'unit' = 'm2'
+                AND (evidence_value->>'field_value')::numeric > 0 AND evidence_locator ? 'cell'
+                AND candidate_payload = jsonb_build_object('unit', 'm2', 'value', (evidence_value->>'field_value')::numeric))
+            OR (binding_candidate_source IN ('cad', 'reconciled_geometry')
+                AND evidence_type = 'measured' AND evidence_source_type = 'document_unit'
+                AND evidence_producer_name = 'pdf_geometry' AND evidence_producer_version = 'extractor:v1'
+                AND evidence_value->>'field_key' = 'dimension_value' AND evidence_value ? 'unit'
+                AND (evidence_value->>'field_value')::numeric > 0 AND evidence_locator ? 'handle'
+                AND candidate_payload = jsonb_build_object('unit', evidence_value->>'unit', 'value', (evidence_value->>'field_value')::numeric))
+        )
+    ) THEN
+        RAISE EXCEPTION 'estimate_generation.project_model_evidence_candidate_invalid';
     END IF;
     RETURN NEW;
 END; $$;

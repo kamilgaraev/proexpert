@@ -143,9 +143,11 @@ final readonly class ProjectModelEvidenceWriter
                 'entity' => ['kind' => 'room', 'key' => $entityKey, 'area_m2' => $area['area_m2']],
                 'assertion_type' => 'area',
                 'value' => ['value' => $area['area_m2'], 'unit' => 'm2'],
-                'source' => 'ai_candidate',
+                // A room label is only promoted when SessionBuildingModelBridge has
+                // written its typed drawing_analyzer extraction with this exact locator.
+                'source' => 'explicit_dimension',
                 'confidence' => $confidence,
-                'locator' => ['element_index' => $index],
+                'locator' => $this->roomEvidenceLocator($unit, $element, $index),
             ];
         }
 
@@ -162,7 +164,7 @@ final readonly class ProjectModelEvidenceWriter
         if ($candidate['source'] === 'ai_candidate') {
             return;
         }
-        $evidence = $this->activeEvidence($stored, $candidate['unit'], $candidate['locator'], $candidate['value']);
+        $evidence = $this->activeEvidence($stored, $candidate['unit'], $candidate['source'], $candidate['locator'], $candidate['value']);
         if ($evidence === null) {
             return;
         }
@@ -237,7 +239,7 @@ final readonly class ProjectModelEvidenceWriter
     }
 
     /** @param array<string,mixed> $candidateValue */
-    private function activeEvidence(StoredBuildingModel $stored, SessionBuildingModelUnitData $unit, array $locator, array $candidateValue): ?object
+    private function activeEvidence(StoredBuildingModel $stored, SessionBuildingModelUnitData $unit, string $candidateSource, array $locator, array $candidateValue): ?object
     {
         if ($locator === [] || array_is_list($locator)) {
             return null;
@@ -257,18 +259,50 @@ final readonly class ProjectModelEvidenceWriter
             ->where('evidence.source_version', $unit->sourceVersion)
             ->whereNull('evidence.invalidated_at')
             ->where('evidence.source_ref', 'document:'.$unit->documentId);
-        foreach ($query->orderBy('evidence.id')->get(['evidence.id', 'evidence.source_version', 'evidence.invalidation_version', 'evidence.locator', 'evidence.value']) as $row) {
+        foreach ($query->orderBy('evidence.id')->get(['evidence.id', 'evidence.source_version', 'evidence.invalidation_version', 'evidence.source_ref', 'evidence.locator', 'evidence.value', 'evidence.type', 'evidence.source_type', 'evidence.producer_name', 'evidence.producer_version']) as $row) {
             $evidenceLocator = $this->decode($row->locator);
             if (($evidenceLocator['document_id'] ?? null) !== $unit->documentId
                 || (($evidenceLocator['unit_index'] ?? $evidenceLocator['page'] ?? null) !== $unit->index)) {
                 continue;
             }
-            if ($evidenceLocator === $locator && $this->evidenceValueMatches($row->value, $candidateValue)) {
+            if (ProjectModelEvidenceContract::confirms($candidateSource, [
+                'type' => $row->type,
+                'source_type' => $row->source_type,
+                'producer_name' => $row->producer_name,
+                'producer_version' => $row->producer_version,
+                'source_ref' => $row->source_ref,
+                'locator' => $evidenceLocator,
+                'value' => $this->decode($row->value),
+            ], $candidateValue, $locator)) {
                 return $row;
             }
         }
 
         return null;
+    }
+
+    /** @param array<string,mixed> $element @return array<string,mixed> */
+    private function roomEvidenceLocator(SessionBuildingModelUnitData $unit, array $element, int $index): array
+    {
+        $points = is_array($element['polygon'] ?? null) ? $element['polygon'] : [];
+        $x = [];
+        $y = [];
+        foreach ($points as $point) {
+            if (is_array($point) && isset($point[0], $point[1]) && is_numeric($point[0]) && is_numeric($point[1])) {
+                $x[] = (float) $point[0];
+                $y[] = (float) $point[1];
+            }
+        }
+        $key = is_string($element['key'] ?? null) ? $element['key'] : (string) $index;
+        return [
+            'document_id' => $unit->documentId,
+            'unit_type' => $unit->type->value,
+            'unit_index' => $unit->index,
+            'page' => $unit->index,
+            'region_key' => 'region:'.hash('sha256', $unit->unitId.'|'.$key),
+            'element_key' => 'element:'.hash('sha256', $unit->unitId.'|'.$key),
+            'bbox' => $x === [] ? null : [min($x), min($y), max($x), max($y)],
+        ];
     }
 
     /** @param array<string,mixed> $candidateValue */
