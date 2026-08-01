@@ -278,7 +278,7 @@ final readonly class ProcurementCycleOwnerEventRecorder
         $request->loadMissing(['lines.purchaseRequest']);
         foreach ($request->lines as $line) {
             $snapshot = $this->existingOrGapSnapshot($line, ['missing_request_created_event']);
-            if ($terminalReason !== null && ! $this->sourceState->policyAllows($snapshot, $terminalReason)) {
+            if ($terminalReason !== null && ! $this->terminalReasonAllowed($snapshot, $terminalReason)) {
                 throw new LogicException('procurement_cycle_terminal_reason_not_allowed');
             }
             $this->recordLine(
@@ -292,6 +292,18 @@ final readonly class ProcurementCycleOwnerEventRecorder
                 terminalReason: $terminalReason,
             );
         }
+    }
+
+    private function terminalReasonAllowed(
+        ProcurementProcessDimensionSnapshot $snapshot,
+        ProcurementTerminalReason $terminalReason,
+    ): bool {
+        if (($snapshot->values['policy_version_id'] ?? null) !== null) {
+            return $this->sourceState->policyAllows($snapshot, $terminalReason);
+        }
+
+        return $terminalReason === ProcurementTerminalReason::REQUEST_REJECTED
+            && in_array('missing_policy_version', (array) ($snapshot->values['gap_codes'] ?? []), true);
     }
 
     private function recordReceiptEvent(

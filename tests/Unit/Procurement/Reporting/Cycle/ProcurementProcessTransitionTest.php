@@ -189,6 +189,18 @@ final class ProcurementProcessTransitionTest extends TestCase
         ProcurementProcessDimensionSnapshot::fromArray($dimensions);
     }
 
+    public function test_partial_snapshot_without_gap_codes_is_rejected(): void
+    {
+        $dimensions = $this->baseDimensions();
+        $dimensions['quality_status'] = 'PARTIAL';
+        $dimensions['gap_codes'] = [];
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('procurement_process_dimension_partial_gaps_required');
+
+        ProcurementProcessDimensionSnapshot::fromArray($dimensions);
+    }
+
     public function test_dimension_snapshot_rejects_non_scalar_business_fields(): void
     {
         $dimensions = $this->baseDimensions();

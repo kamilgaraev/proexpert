@@ -13,13 +13,31 @@ final class ProcurementCycleMigrationContractTest extends TestCase
         $migration = $this->migration();
 
         self::assertStringContainsString(
-            "NEW.event_code = 'cancelled' AND NEW.policy_version_id IS NULL",
+            "NEW.terminal_reason IS DISTINCT FROM 'request_rejected'",
             $migration,
         );
+        self::assertStringContainsString("'missing_policy_version'", $migration);
         self::assertStringContainsString(
             'pinned_policy.terminal_cancellation_policy @> jsonb_build_array(NEW.terminal_reason)',
             $migration,
         );
+    }
+
+    public function test_checks_reject_null_gates_for_partial_pins_and_quality_gaps(): void
+    {
+        $migration = $this->migration();
+
+        foreach ([
+            'policy_hash IS NOT NULL',
+            'calendar_version IS NOT NULL',
+            'calendar_hash IS NOT NULL',
+            'procurement_process_event_dimension_quality_check',
+            "jsonb_typeof(dimension_snapshot->'gap_codes') IS NOT DISTINCT FROM 'array'",
+            "dimension_snapshot->>'quality_status' = 'PARTIAL'",
+            "jsonb_array_length(dimension_snapshot->'gap_codes') > 0",
+        ] as $invariant) {
+            self::assertStringContainsString($invariant, $migration);
+        }
     }
 
     public function test_trigger_uses_request_created_or_quarantine_for_late_project_provenance(): void

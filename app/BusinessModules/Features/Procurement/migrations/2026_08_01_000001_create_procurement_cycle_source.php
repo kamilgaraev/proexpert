@@ -174,7 +174,9 @@ ADD CONSTRAINT procurement_process_event_schema_check
 CHECK (event_version = 'procurement-process-events.v1'),
 ADD CONSTRAINT procurement_process_event_terminal_reason_check
 CHECK (
-    (event_code = 'cancelled' AND terminal_reason IN ('request_rejected', 'request_cancelled', 'order_cancelled'))
+    (event_code = 'cancelled'
+        AND terminal_reason IS NOT NULL
+        AND terminal_reason IN ('request_rejected', 'request_cancelled', 'order_cancelled'))
     OR (event_code <> 'cancelled' AND terminal_reason IS NULL)
 ),
 ADD CONSTRAINT procurement_process_event_hash_check
@@ -184,10 +186,23 @@ CHECK (
     (policy_version_id IS NULL AND policy_hash IS NULL AND calendar_version IS NULL AND calendar_hash IS NULL)
     OR (
         policy_version_id IS NOT NULL
+        AND policy_hash IS NOT NULL
         AND policy_hash ~ '^[a-f0-9]{64}$'
+        AND calendar_version IS NOT NULL
         AND calendar_version = 'procurement-business-calendar.v1'
+        AND calendar_hash IS NOT NULL
         AND calendar_hash ~ '^[a-f0-9]{64}$'
     )
+),
+ADD CONSTRAINT procurement_process_event_dimension_quality_check
+CHECK (
+    jsonb_typeof(dimension_snapshot->'gap_codes') IS NOT DISTINCT FROM 'array'
+    AND (
+        (dimension_snapshot->>'quality_status' = 'FULL'
+            AND jsonb_array_length(dimension_snapshot->'gap_codes') = 0)
+        OR (dimension_snapshot->>'quality_status' = 'PARTIAL'
+            AND jsonb_array_length(dimension_snapshot->'gap_codes') > 0)
+    ) IS TRUE
 ),
 ADD CONSTRAINT procurement_process_event_dimension_lineage_check
 CHECK (
@@ -455,8 +470,13 @@ BEGIN
         RAISE EXCEPTION 'procurement process receipt line lineage mismatch' USING ERRCODE = '23514';
     END IF;
 
-    IF NEW.event_code = 'cancelled' AND NEW.policy_version_id IS NULL THEN
-        RAISE EXCEPTION 'procurement process terminal policy pin required' USING ERRCODE = '23514';
+    IF NEW.event_code = 'cancelled'
+       AND NEW.policy_version_id IS NULL
+       AND (
+           NEW.terminal_reason IS DISTINCT FROM 'request_rejected'
+           OR (NEW.dimension_snapshot->'gap_codes' ? 'missing_policy_version') IS NOT TRUE
+       ) THEN
+        RAISE EXCEPTION 'procurement process unpinned terminal reason is not permitted' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.policy_version_id IS NOT NULL THEN

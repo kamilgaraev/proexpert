@@ -172,6 +172,39 @@ final class ProcurementCycleOwnerAdapterParityTest extends TestCase
         self::assertSame([], $store->transitions);
     }
 
+    public function test_request_rejected_without_published_policy_is_recorded_as_partial_rollout_evidence(): void
+    {
+        [$request] = $this->requestGraph();
+        $store = new OwnerParityStore();
+        $state = new OwnerParitySourceState();
+        $state->requestCreated = ProcurementProcessDimensionSnapshot::fromArray([
+            'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
+            'organization_id' => 10,
+            'project_id' => 20,
+            'purchase_request_id' => 30,
+            'purchase_request_line_id' => 40,
+            'quality_status' => 'PARTIAL',
+            'gap_codes' => ['missing_policy_version'],
+        ]);
+        $state->allowedTerminalReasons = [];
+        $owner = new ProcurementCycleOwnerEventRecorder(
+            new ProcurementProcessEventRecorder($store, new OwnerParityTransactionBoundary()),
+            $state,
+        );
+
+        $owner->recordRequestCancelled(
+            $request,
+            50,
+            new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
+            ProcurementTerminalReason::REQUEST_REJECTED,
+        );
+
+        self::assertCount(1, $store->transitions);
+        self::assertSame(ProcurementTerminalReason::REQUEST_REJECTED, $store->transitions[0]->terminalReason);
+        self::assertNull($store->transitions[0]->policyVersionId);
+        self::assertContains('missing_policy_version', $store->transitions[0]->dimensionSnapshot->values['gap_codes']);
+    }
+
     public function test_missing_request_created_uses_quarantine_without_current_project_reconstruction(): void
     {
         [$request] = $this->requestGraph();

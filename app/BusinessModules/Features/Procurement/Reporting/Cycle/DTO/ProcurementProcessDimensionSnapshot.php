@@ -183,6 +183,9 @@ final readonly class ProcurementProcessDimensionSnapshot
             && ! in_array($values['quality_status'], ['FULL', 'PARTIAL'], true)) {
             throw new InvalidArgumentException('procurement_process_dimension_quality_invalid');
         }
+        if (($values['quality_status'] ?? null) === 'PARTIAL' && $gapCodes === []) {
+            throw new InvalidArgumentException('procurement_process_dimension_partial_gaps_required');
+        }
 
         foreach (['policy_hash', 'calendar_hash'] as $hashKey) {
             if (isset($values[$hashKey])
