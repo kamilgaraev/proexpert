@@ -314,14 +314,23 @@ final class ReportRunHydrator
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED);
         }
 
-        $this->sealVerifier->assertTrusted(new ReportSnapshotSealVerificationInput(
-            $snapshot->seal,
-            $snapshot->id,
-            $snapshot->kind,
-            $snapshot->classification,
-            $snapshot->generatedAt,
-            $snapshot->sourceHash,
-        ));
+        try {
+            $input = new ReportSnapshotSealVerificationInput(
+                $snapshot->seal,
+                $snapshot->id,
+                $snapshot->kind,
+                $snapshot->classification,
+                $snapshot->generatedAt,
+                $snapshot->sourceHash,
+            );
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED,
+                previous: $exception,
+            );
+        }
+
+        $this->sealVerifier->assertTrusted($input);
     }
 
     private function sealed(ReportRunRecord $record, ReportScope $scope): array

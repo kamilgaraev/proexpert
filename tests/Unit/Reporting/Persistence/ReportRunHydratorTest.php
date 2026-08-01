@@ -62,8 +62,15 @@ final class ReportRunHydratorTest extends TestCase
             str_repeat('f', 64),
         );
 
-        $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
-        (new ReportRunHydrator($this->trustedVerifier($keyPair)))->exportSource($record, 1250);
+        try {
+            (new ReportRunHydrator($this->trustedVerifier($keyPair)))->exportSource($record, 1250);
+            self::fail('Expected sealed payload mismatch to fail closed.');
+        } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+            self::assertSame(
+                \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED,
+                $exception->errorCode,
+            );
+        }
     }
 
     public function test_store_contract_has_exact_typed_surface(): void
