@@ -55,8 +55,8 @@ final readonly class AssemblePersistedVectorGeometry
             ->where('id', (int) $page->processing_unit_id)
             ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)
             ->where('session_id', $command->sessionId)->where('document_id', (int) $document->id)
-            ->where('status', 'completed')->whereIn('unit_type', ['pdf_page', 'cad_drawing'])
-            ->lockForUpdate()->first(['id', 'document_id', 'source_version']);
+            ->where('status', 'completed')
+            ->lockForUpdate()->first(['id', 'document_id', 'source_version', 'unit_type']);
         if ($unit === null || ! is_string($unit->source_version)
             || ! hash_equals($document->source_version, $unit->source_version)) {
             throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
@@ -70,6 +70,10 @@ final readonly class AssemblePersistedVectorGeometry
         }
         if (! is_array($value)) {
             throw new InvalidArgumentException('Confirmed geometry source is invalid.');
+        }
+        if ($unit->unit_type !== 'cad_drawing'
+            || (array_key_exists('source_kind', $value) && ($value['source_kind'] ?? null) !== 'cad')) {
+            throw new InvalidArgumentException('geometry_confirmation_source_unavailable');
         }
         $canonicalConfirmation = $this->sourceConfirmation->makeFromNormalizedPayload($value, $document->source_version);
         if ($canonicalConfirmation === null) {

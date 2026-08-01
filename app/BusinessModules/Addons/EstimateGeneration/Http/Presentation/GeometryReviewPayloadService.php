@@ -92,8 +92,11 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
             || ! $this->currentSourceVersions($row, $sourceVersion)) {
             return ['payload' => null, 'reason' => 'source_not_current'];
         }
-        if (($row->unit_status ?? null) !== 'completed' || ! in_array($row->unit_type ?? null, ['pdf_page', 'cad_drawing'], true)) {
+        if (($row->unit_status ?? null) !== 'completed') {
             return ['payload' => null, 'reason' => 'source_not_complete'];
+        }
+        if (($row->unit_type ?? null) !== 'cad_drawing') {
+            return ['payload' => null, 'reason' => 'semantic_confirmation_unavailable'];
         }
         if (! is_numeric($row->source_evidence_id ?? null) || (int) $row->source_evidence_id < 1
             || ! is_numeric($row->source_evidence_count ?? null) || (int) $row->source_evidence_count !== 1) {
@@ -108,6 +111,9 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
         }
         if (! is_array($normalizedPayload)) {
             return ['payload' => null, 'reason' => 'vector_capture_invalid'];
+        }
+        if (array_key_exists('source_kind', $normalizedPayload) && ($normalizedPayload['source_kind'] ?? null) !== 'cad') {
+            return ['payload' => null, 'reason' => 'semantic_confirmation_unavailable'];
         }
         $payload = $this->sourceConfirmation->makeFromNormalizedPayload($normalizedPayload, $sourceVersion);
 

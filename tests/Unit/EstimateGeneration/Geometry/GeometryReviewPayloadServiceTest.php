@@ -117,7 +117,7 @@ final class GeometryReviewPayloadServiceTest extends TestCase
     }
 
     #[Test]
-    public function it_marks_the_production_pdf_geometry_artifact_unavailable_without_claiming_a_vector_capture(): void
+    public function it_keeps_pdf_pages_unavailable_for_semantic_confirmation_even_with_an_injected_vector_capture(): void
     {
         $source = new FakeGeometryReviewDataSource(1, [$this->pdfGeometryRow()]);
         $files = Mockery::mock(FileService::class);
@@ -175,7 +175,7 @@ final class GeometryReviewPayloadServiceTest extends TestCase
         $row->unit_status = 'completed';
         $row->source_evidence_id = 91;
         $row->source_evidence_count = 1;
-        $row->normalized_payload = ['vector_geometry' => $this->vectorGeometry()];
+        $row->normalized_payload = ['source_kind' => 'cad', 'vector_geometry' => $this->vectorGeometry()];
 
         return $row;
     }
@@ -194,6 +194,7 @@ final class GeometryReviewPayloadServiceTest extends TestCase
         $row->normalized_payload = [
             'schema_version' => 1,
             'source_kind' => 'pdf_page',
+            'vector_geometry' => $this->vectorGeometry(),
             'pdf_geometry' => [
                 'schema_version' => 1,
                 'geometry' => [

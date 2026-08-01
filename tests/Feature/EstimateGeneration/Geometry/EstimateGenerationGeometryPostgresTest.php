@@ -317,6 +317,35 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     }
 
     #[Test]
+    public function source_confirmation_rejects_a_pdf_page_with_an_injected_canonical_vector_capture_without_audit(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture();
+        $this->attachVectorCapture($fixture);
+        DB::table('estimate_generation_processing_units')->where('id', $fixture['unit_id'])->update(['unit_type' => 'pdf_page']);
+        DB::table('estimate_generation_document_pages')->where('id', $fixture['page_id'])->update([
+            'normalized_payload' => json_encode([
+                'source_kind' => 'pdf_page',
+                'vector_geometry' => $this->vectorPayload(),
+            ], JSON_THROW_ON_ERROR),
+        ]);
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnTrue();
+        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $this->actingAs($fixture['user'], 'api_admin');
+        $before = $this->counts($fixture);
+        try {
+            $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
+                ->postJson($url, $this->sourcePayload($fixture))->assertUnprocessable();
+            self::assertSame($before, $this->counts($fixture));
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
     public function geometry_outbox_has_composite_tenant_fk_idempotency_and_claim_indexes(): void
     {
         $this->requirePostgres();
