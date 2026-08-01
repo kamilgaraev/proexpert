@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGener
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationGeometryController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationProjectModelCorrectionController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationProjectModelReviewController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationReviewController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Http\Controllers\EstimateNormativeStatusController;
@@ -41,6 +42,7 @@ Route::middleware([
         Route::get('/{session}/geometry', [EstimateGenerationGeometryController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('geometry.show');
         Route::post('/{session}/geometry/confirm', [EstimateGenerationGeometryController::class, 'confirm'])->middleware('authorize:estimate_generation.review,project,project')->name('geometry.confirm');
         Route::get('/{session}/building-model', [EstimateGenerationBuildingModelController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('building-model.show');
+        Route::get('/{session}/project-model/review', [EstimateGenerationProjectModelReviewController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('project-model.review.show');
         Route::get('/{session}/evidence/{evidence}', [EstimateGenerationBuildingModelController::class, 'evidence'])->whereNumber('evidence')->middleware('authorize:estimate_generation.view,project,project')->name('evidence.show');
         Route::post('/{session}/project-model/corrections', [EstimateGenerationProjectModelCorrectionController::class, 'store'])->middleware('authorize:estimate_generation.review,project,project')->name('project-model.corrections.store');
         Route::post('/{session}/project-model/corrections/revert', [EstimateGenerationProjectModelCorrectionController::class, 'revert'])->middleware('authorize:estimate_generation.review,project,project')->name('project-model.corrections.revert');
