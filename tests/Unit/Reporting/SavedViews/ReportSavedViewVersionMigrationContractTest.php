@@ -32,11 +32,22 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString("((content_json ->> 'contract_version') = contract_version) IS TRUE", $source);
         self::assertStringContainsString("btrim(contract_version, ' ' || chr(9) || chr(10) || chr(13) || chr(11)) <> ''", $source);
         self::assertStringContainsString("btrim(content_json ->> 'name', ' ' || chr(9) || chr(10) || chr(13) || chr(11)) <> ''", $source);
-        self::assertStringContainsString("(content_json -> 'sort' ->> 'field') ~ '^[a-z][a-z0-9_]{0,63}$'", $source);
+        self::assertStringContainsString('report_saved_view_version_json_is_php_hydratable', $source);
+        self::assertStringContainsString('report_saved_view_version_json_is_php_hydratable(content_json) IS TRUE', $source);
+        self::assertStringContainsString("<= '1.7976931348623157e308'::numeric", $source);
+        self::assertStringContainsString('current_depth > 512', $source);
+        self::assertStringContainsString("COLLATE \"C\") ~ '\\A[a-z][a-z0-9_]{0,63}\\Z'", $source);
         self::assertStringContainsString('report_saved_view_version_columns_are_valid', $source);
         self::assertStringContainsString("jsonb_typeof(column_value) <> 'string'", $source);
-        self::assertStringContainsString("count(DISTINCT column_value #>> '{}')", $source);
+        self::assertStringContainsString(
+            "count(DISTINCT (column_value #>> '{}') COLLATE \"C\")",
+            $source,
+        );
         self::assertStringContainsString('DROP FUNCTION IF EXISTS report_saved_view_version_columns_are_valid(jsonb)', $source);
+        self::assertStringContainsString(
+            'DROP FUNCTION IF EXISTS report_saved_view_version_json_is_php_hydratable(jsonb, integer)',
+            $source,
+        );
     }
 
     public function test_postgres_gate_is_opt_in_before_any_connection_and_covers_real_persistence(): void
@@ -56,6 +67,7 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString('test_restore_can_append_a_previously_seen_content_hash', $source);
         self::assertStringContainsString('test_append_and_find_preserve_microseconds', $source);
         self::assertStringContainsString('test_invalid_content_binding_is_rejected_before_it_can_be_frozen', $source);
+        self::assertStringContainsString('test_recursive_json_contract_accepts_php_hydratable_values', $source);
         self::assertStringContainsString("yield 'empty sort field'", $source);
         self::assertStringContainsString("yield 'non-string column'", $source);
         self::assertStringContainsString("yield 'duplicate columns'", $source);
@@ -63,6 +75,12 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString("yield 'newline-only contract version'", $source);
         self::assertStringContainsString("yield 'extra top-level key'", $source);
         self::assertStringContainsString("yield 'non-container filters'", $source);
+        self::assertStringContainsString("yield 'huge filter number'", $source);
+        self::assertStringContainsString("yield 'nested huge comparison number'", $source);
+        self::assertStringContainsString("yield 'sort field with trailing line feed'", $source);
+        self::assertStringContainsString("yield 'non ASCII sort field'", $source);
+        self::assertStringContainsString("yield 'non ASCII column identifier'", $source);
+        self::assertStringContainsString("yield 'non ASCII report code'", $source);
     }
 
     public function test_existing_postgres_workflow_executes_the_saved_view_version_gate_fail_closed(): void

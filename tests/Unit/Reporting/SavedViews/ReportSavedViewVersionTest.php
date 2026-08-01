@@ -9,6 +9,8 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewVersionStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewVersion;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewVersionContent;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSavedViewVersionStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSavedViewVersionRecord;
@@ -16,6 +18,7 @@ use App\BusinessModules\Core\Reporting\ReportingCatalogServiceProvider;
 use DateTimeImmutable;
 use Illuminate\Foundation\Application;
 use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use Tests\Support\Reporting\SavedViewVersionDefinitionRegistry;
@@ -97,6 +100,52 @@ final class ReportSavedViewVersionTest extends TestCase
             'sort' => ['field' => 'request_number', 'direction' => 'asc'],
             'columns' => ['request_number'],
         ]);
+    }
+
+    #[DataProvider('persistedNonFiniteNumbers')]
+    public function test_persisted_content_rejects_numbers_that_decode_as_non_finite(
+        string $contentJson,
+    ): void {
+        $content = json_decode($contentJson, true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($content);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        ReportSavedViewVersionContent::fromArray($content);
+    }
+
+    #[DataProvider('invalidSortIdentifiers')]
+    public function test_sort_field_requires_a_strict_ascii_identifier(string $field): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_window_sort_field_invalid');
+
+        new ReportWindowSort($field, ReportSortDirection::ASC);
+    }
+
+    public function test_persisted_content_accepts_recursive_canonical_json_values(): void
+    {
+        $content = ReportSavedViewVersionContent::fromArray([
+            'schema_version' => 1,
+            'report_code' => 'procurement_cycle',
+            'contract_version' => 'v7',
+            'name' => 'A',
+            'visibility' => 'private',
+            'filters' => [
+                'nullable' => null,
+                'text' => 'value',
+                'enabled' => true,
+                'numbers' => [1, 1.25],
+                'nested' => ['disabled' => false],
+            ],
+            'comparison' => ['baseline' => ['value' => 0.5, 'note' => null]],
+            'sort' => ['field' => 'request_number', 'direction' => 'asc'],
+            'columns' => ['request_number'],
+        ]);
+
+        self::assertNull($content->filters->values['nullable']);
+        self::assertSame([1, 1.25], $content->filters->values['numbers']);
+        self::assertSame(0.5, $content->comparison['baseline']['value']);
     }
 
     public function test_version_store_read_is_tenant_scoped(): void
@@ -182,5 +231,21 @@ final class ReportSavedViewVersionTest extends TestCase
                 ->code('procurement_cycle')
                 ->published(),
         );
+    }
+
+    public static function persistedNonFiniteNumbers(): iterable
+    {
+        yield 'huge filter number' => [
+            '{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v7","name":"A","visibility":"private","filters":{"risk":1e400},"comparison":[],"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]}',
+        ];
+        yield 'nested huge comparison number' => [
+            '{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v7","name":"A","visibility":"private","filters":[],"comparison":{"groups":[{"ratio":-1e400}]},"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]}',
+        ];
+    }
+
+    public static function invalidSortIdentifiers(): iterable
+    {
+        yield 'trailing line feed' => ["request_number\n"];
+        yield 'non ASCII letter' => ["requ\u{00E9}st_number"];
     }
 }

@@ -13,7 +13,7 @@ final readonly class ReportWindowSort
         public string $field,
         public ReportSortDirection $direction,
     ) {
-        if (preg_match('/^[a-z][a-z0-9_]{0,63}$/', $field) !== 1) {
+        if (preg_match('/\A[a-z][a-z0-9_]{0,63}\z/', $field) !== 1) {
             throw new InvalidArgumentException('report_window_sort_field_invalid');
         }
     }

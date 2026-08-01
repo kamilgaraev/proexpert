@@ -138,10 +138,41 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
         );
     }
 
+    public function test_recursive_json_contract_accepts_php_hydratable_values(): void
+    {
+        $savedViewId = $this->insertHead(10, 20);
+        $data = (new ReportSavedViewVersionHasher($this->registry()))->hash(
+            $savedViewId,
+            10,
+            20,
+            1,
+            'procurement_cycle',
+            new ReportSavedViewVersionPresentation(
+                'Срез закупок',
+                'private',
+                new ReportFilterSet([
+                    'nullable' => null,
+                    'text' => 'value',
+                    'enabled' => true,
+                    'numbers' => [1, 1.25],
+                    'nested' => ['disabled' => false],
+                ]),
+                ['baseline' => ['value' => 0.5, 'note' => null]],
+                new ReportWindowSort('request_number', ReportSortDirection::ASC),
+                ['request_number'],
+            ),
+        );
+
+        $version = $this->store()->append($data);
+
+        self::assertNotNull($this->store()->find(10, $savedViewId, $version->revision));
+    }
+
     #[DataProvider('invalidContentBindings')]
     public function test_invalid_content_binding_is_rejected_before_it_can_be_frozen(
         string $contentJson,
         string $contractVersion = 'v7',
+        string $reportCode = 'procurement_cycle',
     ): void {
         $savedViewId = $this->insertHead(10, 20);
 
@@ -149,6 +180,7 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
             $savedViewId,
             $contentJson,
             $contractVersion,
+            $reportCode,
         ): void {
             DB::table('report_saved_view_versions')->insert([
                 'id' => (string) Str::ulid(),
@@ -156,7 +188,7 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
                 'organization_id' => 10,
                 'owner_id' => 20,
                 'revision' => 1,
-                'report_code' => 'procurement_cycle',
+                'report_code' => $reportCode,
                 'contract_version' => $contractVersion,
                 'presentation_schema_version' => 1,
                 'content_json' => $contentJson,
@@ -202,6 +234,11 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
         yield 'null report code' => [self::encodeContent([...$valid, 'report_code' => null])];
         yield 'non-string report code' => [self::encodeContent([...$valid, 'report_code' => 7])];
         yield 'mismatched report code' => [self::encodeContent([...$valid, 'report_code' => 'other_report'])];
+        yield 'non ASCII report code' => [
+            self::encodeContent([...$valid, 'report_code' => "r\u{00E9}port_code"]),
+            'v7',
+            "r\u{00E9}port_code",
+        ];
 
         $content = $valid;
         unset($content['contract_version']);
@@ -225,6 +262,12 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
         yield 'unsupported visibility' => [self::encodeContent([...$valid, 'visibility' => 'public'])];
         yield 'non-container filters' => [self::encodeContent([...$valid, 'filters' => 'invalid'])];
         yield 'non-container comparison' => [self::encodeContent([...$valid, 'comparison' => 'invalid'])];
+        yield 'huge filter number' => [
+            '{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v7","name":"A","visibility":"private","filters":{"risk":1e400},"comparison":[],"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]}',
+        ];
+        yield 'nested huge comparison number' => [
+            '{"schema_version":1,"report_code":"procurement_cycle","contract_version":"v7","name":"A","visibility":"private","filters":[],"comparison":{"groups":[{"ratio":-1e400}]},"sort":{"field":"request_number","direction":"asc"},"columns":["request_number"]}',
+        ];
         yield 'non-object sort' => [self::encodeContent([...$valid, 'sort' => []])];
         yield 'sort missing field' => [self::encodeContent([...$valid, 'sort' => ['direction' => 'asc']])];
         yield 'sort has extra key' => [self::encodeContent([...$valid, 'sort' => [
@@ -238,6 +281,14 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
         ]])];
         yield 'invalid sort field identifier' => [self::encodeContent([...$valid, 'sort' => [
             'field' => 'RequestNumber',
+            'direction' => 'asc',
+        ]])];
+        yield 'sort field with trailing line feed' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => "request_number\n",
+            'direction' => 'asc',
+        ]])];
+        yield 'non ASCII sort field' => [self::encodeContent([...$valid, 'sort' => [
+            'field' => "requ\u{00E9}st_number",
             'direction' => 'asc',
         ]])];
         yield 'oversized sort field identifier' => [self::encodeContent([...$valid, 'sort' => [
@@ -260,6 +311,10 @@ final class ReportSavedViewVersionPostgresTest extends TestCase
             'columns' => ['request_number', 'request_number'],
         ])];
         yield 'invalid column identifier' => [self::encodeContent([...$valid, 'columns' => ['RequestNumber']])];
+        yield 'non ASCII column identifier' => [self::encodeContent([
+            ...$valid,
+            'columns' => ["requ\u{00E9}st_number"],
+        ])];
         yield 'oversized column identifier' => [self::encodeContent([
             ...$valid,
             'columns' => ['a'.str_repeat('b', 64)],
