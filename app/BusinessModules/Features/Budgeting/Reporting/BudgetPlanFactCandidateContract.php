@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceCloseIdentity;
+use App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactSourceSnapshotRequest;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactCalculator;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactSourceSnapshotMaterializer;
@@ -18,7 +19,7 @@ final readonly class BudgetPlanFactCandidateContract
 {
     public const CODE = 'budget_plan_fact';
 
-    public const FORMULA_VERSION = '1.0.0';
+    public const FORMULA_VERSION = 'plan-fact-v1';
 
     public const FORMULA_HASH = 'be8618c2f770e98c295dca6236e421d762d914add6e119a738d9b73630450c90';
 
@@ -100,6 +101,7 @@ final readonly class BudgetPlanFactCandidateContract
         array $filters,
         string $closeId,
         BudgetingReportSourceCloseIdentity $closeIdentity,
+        string $closeFormulaVersion,
     ): void {
         $allowed = array_column($this->filters(), 'id');
         unset($allowed[array_search('close_id', $allowed, true)]);
@@ -112,6 +114,14 @@ final readonly class BudgetPlanFactCandidateContract
             if ($filter['required'] && $filter['id'] !== 'close_id' && ! array_key_exists($filter['id'], $filters)) {
                 throw new InvalidArgumentException('budget_plan_fact_candidate_filters_invalid');
             }
+        }
+
+        if ($closeFormulaVersion !== $this->formulaVersion) {
+            throw new InvalidArgumentException('budget_plan_fact_candidate_formula_version_invalid');
+        }
+
+        if (($filters['group_by'] ?? null) !== PlanFactReportFilters::DEFAULT_GROUP_BY) {
+            throw new InvalidArgumentException('budget_plan_fact_candidate_grouping_invalid');
         }
 
         new PlanFactSourceSnapshotRequest(

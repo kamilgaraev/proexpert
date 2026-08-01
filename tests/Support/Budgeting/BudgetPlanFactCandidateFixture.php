@@ -40,7 +40,7 @@ final class BudgetPlanFactCandidateFixture
             'period_end' => '2026-01-31',
             'scenario_uuid' => 'scenario-1',
             'budget_version_uuid' => 'budget-1',
-            'group_by' => ['month', 'project', 'currency'],
+            'group_by' => PlanFactReportFilters::DEFAULT_GROUP_BY,
         ];
     }
 
@@ -56,7 +56,8 @@ final class BudgetPlanFactCandidateFixture
 
     public static function snapshot(): ReportSourceSnapshotWrite
     {
-        self::contract()->assertSnapshotRequest(self::scope(), self::filters(), self::closeId(), self::closeIdentity());
+        $close = self::close();
+        self::contract()->assertSnapshotRequest(self::scope(), self::filters(), self::closeId(), self::closeIdentity(), $close->formulaVersion);
         $report = self::report();
         $drills = [];
         foreach ($report['rows'] as $row) {
@@ -73,7 +74,7 @@ final class BudgetPlanFactCandidateFixture
             $drills,
             new DateTimeImmutable('2026-01-31T10:00:00+00:00'),
             null,
-            self::close(),
+            $close,
         );
     }
 
@@ -114,7 +115,7 @@ final class BudgetPlanFactCandidateFixture
                 null,
                 null,
                 null,
-                ['month', 'budget_article', 'responsibility_center', 'project', 'currency'],
+                PlanFactReportFilters::DEFAULT_GROUP_BY,
             ),
             [
                 new PlanFactSourceAggregate('budget_amount', '2026-01', 1, 10, 10, null, 'RUB', 'outflow', 100.0),

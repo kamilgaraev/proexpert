@@ -83,6 +83,7 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
             $filters,
             BudgetPlanFactCandidateFixture::closeId(),
             new BudgetingReportSourceCloseIdentity(2, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1'),
+            BudgetPlanFactCandidateContract::FORMULA_VERSION,
         );
     }
 
@@ -96,6 +97,34 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
             BudgetPlanFactCandidateFixture::filters(),
             BudgetPlanFactCandidateFixture::closeId(),
             new BudgetingReportSourceCloseIdentity(1, '2026-02-01', '2026-02-28', 'scenario-1', 'budget-1'),
+            BudgetPlanFactCandidateContract::FORMULA_VERSION,
+        );
+    }
+
+    public function test_rejects_close_formula_version_drift(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        BudgetPlanFactCandidateFixture::contract()->assertSnapshotRequest(
+            BudgetPlanFactCandidateFixture::scope(),
+            BudgetPlanFactCandidateFixture::filters(),
+            BudgetPlanFactCandidateFixture::closeId(),
+            BudgetPlanFactCandidateFixture::closeIdentity(),
+            'other-formula',
+        );
+    }
+
+    public function test_rejects_grouping_drift(): void
+    {
+        $filters = BudgetPlanFactCandidateFixture::filters();
+        $filters['group_by'] = ['month', 'project', 'currency'];
+
+        $this->expectException(InvalidArgumentException::class);
+        BudgetPlanFactCandidateFixture::contract()->assertSnapshotRequest(
+            BudgetPlanFactCandidateFixture::scope(),
+            $filters,
+            BudgetPlanFactCandidateFixture::closeId(),
+            BudgetPlanFactCandidateFixture::closeIdentity(),
+            BudgetPlanFactCandidateContract::FORMULA_VERSION,
         );
     }
 
