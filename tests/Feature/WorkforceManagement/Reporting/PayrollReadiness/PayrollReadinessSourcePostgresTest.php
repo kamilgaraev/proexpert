@@ -11,6 +11,8 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use DateTimeImmutable;
+use DateTimeZone;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -120,12 +122,9 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
             unset($sourceItem['id']);
             $sourceItem['position'] = (int) $snapshot['item_count'] + 1;
             DB::table('workforce_payroll_readiness_snapshot_items')->insert($sourceItem);
-            DB::statement(
-                'SET CONSTRAINTS workforce_payroll_readiness_snapshot_items_complete IMMEDIATE',
-            );
         });
 
-        $this->assertSqlState($exception, '23514');
+        $this->assertSqlState($exception, '55000');
         self::assertSame(
             (int) $snapshot['item_count'],
             DB::table('workforce_payroll_readiness_snapshot_items')
@@ -156,6 +155,102 @@ final class PayrollReadinessSourcePostgresTest extends TestCase
 
         $this->assertSqlState($exception, '23514');
         self::assertSame(1, DB::table('workforce_payroll_readiness_snapshots')->count());
+    }
+
+    public function test_database_rejects_reason_that_contradicts_full_evidence_set_at_single_seal(): void
+    {
+        $fixture = $this->fixture(withBlockingIssue: false);
+        $snapshot = $this->recorder()->recordBlocked(
+            $this->identity($fixture),
+            $fixture['user_id'],
+            new DateTimeImmutable('now', new DateTimeZone('UTC')),
+            str_repeat('a', 64),
+            PayrollReadinessReason::SOURCE_CHANGED,
+        );
+        $exception = $this->captureQueryException(static function () use ($snapshot): void {
+            $payload = $snapshot->toPersistence();
+            $payload['evaluated_at'] = $snapshot->evaluatedAt;
+            $payload['created_at'] = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+            $payload['reason_code'] = PayrollReadinessReason::SOURCE_EMPTY->value;
+            $payload['source_hash'] = str_repeat('f', 64);
+            $payload['state_hash'] = str_repeat('e', 64);
+            $snapshotId = (int) DB::table('workforce_payroll_readiness_snapshots')->insertGetId($payload);
+            $items = [];
+
+            foreach ($snapshot->items() as $position => $item) {
+                $items[] = [
+                    ...$item->toPersistence($position + 1),
+                    'organization_id' => $snapshot->organizationId,
+                    'payroll_period_id' => $snapshot->periodId,
+                    'payroll_readiness_snapshot_id' => $snapshotId,
+                    'created_at' => new DateTimeImmutable('now', new DateTimeZone('UTC')),
+                ];
+            }
+
+            DB::table('workforce_payroll_readiness_snapshot_items')->insert($items);
+            DB::table('workforce_payroll_readiness_snapshots')
+                ->where('id', $snapshotId)
+                ->update(['sealed_at' => new DateTimeImmutable('now', new DateTimeZone('UTC'))]);
+        });
+
+        $this->assertSqlState($exception, '23514');
+    }
+
+    public function test_production_sized_snapshot_uses_one_full_set_seal_and_constant_time_late_append_guard(): void
+    {
+        $fixture = $this->fixture(withBlockingIssue: false);
+        $baseRow = (array) DB::table('workforce_payroll_source_rows')
+            ->where('payroll_period_id', $fixture['period_id'])
+            ->first();
+        unset($baseRow['id']);
+        $baseRow['timesheet_entry_id'] = null;
+        $rows = [];
+
+        for ($index = 0; $index < 1500; $index++) {
+            $rows[] = $baseRow;
+        }
+
+        foreach (array_chunk($rows, 500) as $batch) {
+            DB::table('workforce_payroll_source_rows')->insert($batch);
+        }
+
+        $sealUpdates = 0;
+        DB::listen(static function (QueryExecuted $query) use (&$sealUpdates): void {
+            if (str_contains($query->sql, 'workforce_payroll_readiness_snapshots')
+                && str_contains($query->sql, 'sealed_at')
+                && str_starts_with(strtolower(ltrim($query->sql)), 'update')) {
+                $sealUpdates++;
+            }
+        });
+
+        $this->recorder()->recordBlocked(
+            $this->identity($fixture),
+            $fixture['user_id'],
+            new DateTimeImmutable('now', new DateTimeZone('UTC')),
+            str_repeat('a', 64),
+            PayrollReadinessReason::SOURCE_CHANGED,
+        );
+
+        $snapshot = (array) DB::table('workforce_payroll_readiness_snapshots')->first();
+        self::assertSame(1506, (int) $snapshot['item_count']);
+        self::assertNotNull($snapshot['sealed_at']);
+        self::assertSame(1, $sealUpdates);
+        self::assertSame(
+            1506,
+            DB::table('workforce_payroll_readiness_snapshot_items')
+                ->where('payroll_readiness_snapshot_id', $snapshot['id'])
+                ->count(),
+        );
+
+        $lateItem = (array) DB::table('workforce_payroll_readiness_snapshot_items')
+            ->where('payroll_readiness_snapshot_id', $snapshot['id'])
+            ->where('source_type', 'payroll_source_row')
+            ->first();
+        unset($lateItem['id']);
+        $lateItem['position'] = 1507;
+        $this->assertSqlState($this->captureQueryException(static function () use ($lateItem): void {
+            DB::table('workforce_payroll_readiness_snapshot_items')->insert($lateItem);
+        }), '55000');
     }
 
     public function test_database_rejects_cross_project_period_lineage(): void

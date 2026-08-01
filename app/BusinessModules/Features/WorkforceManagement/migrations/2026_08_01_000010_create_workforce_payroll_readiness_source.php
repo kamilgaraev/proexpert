@@ -40,6 +40,7 @@ return new class extends Migration
             $table->unsignedBigInteger('blocker_count');
             $table->unsignedBigInteger('item_count');
             $table->timestampTz('created_at');
+            $table->timestampTz('sealed_at')->nullable();
 
             $table->unique(
                 ['organization_id', 'payroll_period_id', 'source_hash', 'snapshot_kind'],
@@ -117,8 +118,8 @@ BEGIN
     IF NEW.schema_version <> 'payroll-readiness-source.v1'
        OR NEW.formula_version <> 'payroll-readiness-checks.v1'
        OR NEW.policy_version <> 'payroll-readiness-policy.v1'
-       OR NEW.policy_hash <> '7109e886ffb25a26311b107d4965630d9b7e075c8e69b156bca8594b61a43283'
-       OR NEW.policy_definition <> '{"version":"payroll-readiness-policy.v1","timezone":"UTC","calendar_mode":"none","check_order":["period_validated","source_present","source_actual","validation_clear","accounting_clear"],"allowed_reasons":["period_not_validated","source_empty","source_changed","validation_blockers","accounting_blockers","locked"],"blocking_severities":["blocking"],"redacted_fields":["employee_id","employee_name","hours","amount","message","personnel_number","salary_amount"]}'::jsonb
+       OR NEW.policy_hash <> '7c6ece8bab141323bec6ddd0eceb3358434d016313320ef329a87e0ebd2dafd0'
+       OR NEW.policy_definition <> '{"version":"payroll-readiness-policy.v1","timezone":"UTC","calendar_mode":"none","check_order":["period_validated","source_present","source_actual","validation_clear","accounting_clear"],"allowed_reasons":["period_not_validated","source_empty","source_changed","validation_blockers","accounting_blockers","locked"],"blocking_severities":["blocking"],"redacted_fields":["employee_id","employee_name","hours","amount","message","personnel_number","salary_amount"],"reason_evidence":{"period_not_validated":{"blocked_check":"period_validated","source_rows":"any","blocking_issues":"any"},"source_empty":{"blocked_check":"source_present","source_rows":"none","blocking_issues":"any"},"source_changed":{"blocked_check":"source_actual","source_rows":"required","blocking_issues":"any"},"validation_blockers":{"blocked_check":"validation_clear","source_rows":"required","blocking_issues":"required"},"accounting_blockers":{"blocked_check":"accounting_clear","source_rows":"required","blocking_issues":"required"},"locked":{"blocked_check":null,"source_rows":"required","blocking_issues":"none"}}}'::jsonb
        OR NEW.reason_code NOT IN (
            'period_not_validated',
            'source_empty',
@@ -138,7 +139,9 @@ BEGIN
        OR jsonb_typeof(NEW.gap_codes) <> 'array'
        OR NEW.item_count < 5
        OR NEW.item_count <> 5 + NEW.source_row_count + NEW.validation_issue_count
-       OR NEW.blocker_count > NEW.validation_issue_count THEN
+       OR NEW.blocker_count > NEW.validation_issue_count
+       OR NEW.created_at < NEW.evaluated_at
+       OR NEW.sealed_at IS NOT NULL THEN
         RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'payroll readiness snapshot payload invalid';
     END IF;
 
@@ -194,6 +197,14 @@ BEGIN
         RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'payroll readiness item snapshot lineage mismatch';
     END IF;
 
+    IF snapshot.sealed_at IS NOT NULL THEN
+        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'payroll readiness snapshot is already sealed';
+    END IF;
+
+    IF NEW.created_at < snapshot.created_at THEN
+        RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'payroll readiness item capture precedes snapshot capture';
+    END IF;
+
     IF NEW.content_hash !~ '^[0-9a-f]{64}$'
        OR jsonb_typeof(NEW.lineage) <> 'object'
        OR NEW.lineage ?| ARRAY[
@@ -244,6 +255,7 @@ BEGIN
            ] <> '{}'::jsonb
            OR source_row.organization_id <> NEW.organization_id
            OR source_row.payroll_period_id <> NEW.payroll_period_id
+           OR source_row.created_at > snapshot.evaluated_at
            OR (snapshot.project_id IS NOT NULL AND source_row.project_id IS DISTINCT FROM snapshot.project_id)
            OR (NEW.lineage->>'payroll_period_id')::bigint IS DISTINCT FROM source_row.payroll_period_id
            OR (NEW.lineage->>'project_id')::bigint IS DISTINCT FROM source_row.project_id
@@ -274,6 +286,7 @@ BEGIN
            ] <> '{}'::jsonb
            OR validation_issue.organization_id <> NEW.organization_id
            OR validation_issue.payroll_period_id <> NEW.payroll_period_id
+           OR validation_issue.created_at > snapshot.evaluated_at
            OR validation_issue.issue_code <> NEW.evidence_code
            OR validation_issue.severity <> NEW.evidence_status
            OR (snapshot.project_id IS NOT NULL
@@ -293,9 +306,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE FUNCTION workforce_payroll_readiness_complete_guard() RETURNS trigger AS $$
+CREATE FUNCTION workforce_payroll_readiness_assert_complete(
+    snapshot_id bigint,
+    sealing_at timestamptz
+) RETURNS void AS $$
 DECLARE
-    snapshot_id bigint;
     snapshot workforce_payroll_readiness_snapshots%ROWTYPE;
     actual_item_count bigint;
     actual_position_count bigint;
@@ -305,13 +320,11 @@ DECLARE
     actual_source_count bigint;
     actual_validation_count bigint;
     actual_blocker_count bigint;
+    invalid_check_count bigint;
+    actual_blocker_codes jsonb;
+    first_item_created_at timestamptz;
+    last_item_created_at timestamptz;
 BEGIN
-    IF TG_TABLE_NAME = 'workforce_payroll_readiness_snapshots' THEN
-        snapshot_id := NEW.id;
-    ELSE
-        snapshot_id := NEW.payroll_readiness_snapshot_id;
-    END IF;
-
     SELECT * INTO snapshot
       FROM workforce_payroll_readiness_snapshots
      WHERE id = snapshot_id;
@@ -327,7 +340,25 @@ BEGIN
            COUNT(*) FILTER (WHERE source_type = 'readiness_check'),
            COUNT(*) FILTER (WHERE source_type = 'payroll_source_row'),
            COUNT(*) FILTER (WHERE source_type = 'validation_issue'),
-           COUNT(*) FILTER (WHERE source_type = 'validation_issue' AND evidence_status = 'blocking')
+           COUNT(*) FILTER (WHERE source_type = 'validation_issue' AND evidence_status = 'blocking'),
+           COUNT(*) FILTER (
+               WHERE source_type = 'readiness_check'
+                 AND evidence_status IS DISTINCT FROM CASE snapshot.reason_code
+                     WHEN 'period_not_validated' THEN CASE WHEN position = 1 THEN 'blocked' ELSE 'not_evaluated' END
+                     WHEN 'source_empty' THEN CASE WHEN position < 2 THEN 'passed' WHEN position = 2 THEN 'blocked' ELSE 'not_evaluated' END
+                     WHEN 'source_changed' THEN CASE WHEN position < 3 THEN 'passed' WHEN position = 3 THEN 'blocked' ELSE 'not_evaluated' END
+                     WHEN 'validation_blockers' THEN CASE WHEN position < 4 THEN 'passed' WHEN position = 4 THEN 'blocked' ELSE 'not_evaluated' END
+                     WHEN 'accounting_blockers' THEN CASE WHEN position < 5 THEN 'passed' WHEN position = 5 THEN 'blocked' ELSE 'not_evaluated' END
+                     WHEN 'locked' THEN 'passed'
+                 END
+           ),
+           COALESCE(
+               jsonb_agg(DISTINCT evidence_code ORDER BY evidence_code)
+                   FILTER (WHERE source_type = 'validation_issue' AND evidence_status = 'blocking'),
+               '[]'::jsonb
+           ),
+           MIN(created_at),
+           MAX(created_at)
       INTO actual_item_count,
            actual_position_count,
            first_position,
@@ -335,7 +366,11 @@ BEGIN
            actual_check_count,
            actual_source_count,
            actual_validation_count,
-           actual_blocker_count
+           actual_blocker_count,
+           invalid_check_count,
+           actual_blocker_codes,
+           first_item_created_at,
+           last_item_created_at
       FROM workforce_payroll_readiness_snapshot_items
      WHERE payroll_readiness_snapshot_id = snapshot_id;
 
@@ -346,8 +381,47 @@ BEGIN
        OR actual_check_count <> 5
        OR actual_source_count <> snapshot.source_row_count
        OR actual_validation_count <> snapshot.validation_issue_count
-       OR actual_blocker_count <> snapshot.blocker_count THEN
+       OR actual_blocker_count <> snapshot.blocker_count
+       OR invalid_check_count <> 0
+       OR actual_blocker_codes <> snapshot.blocker_codes
+       OR first_item_created_at < snapshot.created_at
+       OR last_item_created_at > sealing_at
+       OR (snapshot.reason_code = 'source_empty' AND actual_source_count <> 0)
+       OR (snapshot.reason_code IN ('source_changed', 'validation_blockers', 'accounting_blockers', 'locked')
+           AND actual_source_count < 1)
+       OR (snapshot.reason_code IN ('validation_blockers', 'accounting_blockers')
+           AND actual_blocker_count < 1)
+       OR (snapshot.reason_code = 'locked' AND actual_blocker_count <> 0) THEN
         RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'payroll readiness item set incomplete';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION workforce_payroll_readiness_snapshot_finalize_guard() RETURNS trigger AS $$
+BEGIN
+    IF OLD.sealed_at IS NOT NULL
+       OR NEW.sealed_at IS NULL
+       OR NEW.sealed_at < NEW.created_at
+       OR (to_jsonb(NEW) - 'sealed_at') IS DISTINCT FROM (to_jsonb(OLD) - 'sealed_at') THEN
+        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'payroll readiness snapshot is append-only';
+    END IF;
+
+    PERFORM workforce_payroll_readiness_assert_complete(NEW.id, NEW.sealed_at);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION workforce_payroll_readiness_snapshot_commit_guard() RETURNS trigger AS $$
+DECLARE
+    current_sealed_at timestamptz;
+BEGIN
+    SELECT sealed_at INTO current_sealed_at
+      FROM workforce_payroll_readiness_snapshots
+     WHERE id = NEW.id;
+
+    IF NOT FOUND OR current_sealed_at IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'payroll readiness snapshot is not sealed';
     END IF;
 
     RETURN NEW;
@@ -365,15 +439,14 @@ FOR EACH ROW EXECUTE FUNCTION workforce_payroll_readiness_item_lineage_guard();
 CREATE CONSTRAINT TRIGGER workforce_payroll_readiness_snapshots_complete
 AFTER INSERT ON workforce_payroll_readiness_snapshots
 DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW EXECUTE FUNCTION workforce_payroll_readiness_complete_guard();
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_readiness_snapshot_commit_guard();
 
-CREATE CONSTRAINT TRIGGER workforce_payroll_readiness_snapshot_items_complete
-AFTER INSERT ON workforce_payroll_readiness_snapshot_items
-DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW EXECUTE FUNCTION workforce_payroll_readiness_complete_guard();
+CREATE TRIGGER workforce_payroll_readiness_snapshots_finalize
+BEFORE UPDATE ON workforce_payroll_readiness_snapshots
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_readiness_snapshot_finalize_guard();
 
 CREATE TRIGGER workforce_payroll_readiness_snapshots_append_only
-BEFORE UPDATE OR DELETE ON workforce_payroll_readiness_snapshots
+BEFORE DELETE ON workforce_payroll_readiness_snapshots
 FOR EACH ROW EXECUTE FUNCTION workforce_payroll_readiness_prevent_mutation();
 
 CREATE TRIGGER workforce_payroll_readiness_snapshot_items_append_only
@@ -388,12 +461,14 @@ SQL);
             DB::unprepared(<<<'SQL'
 DROP TRIGGER IF EXISTS workforce_payroll_readiness_snapshot_items_append_only ON workforce_payroll_readiness_snapshot_items;
 DROP TRIGGER IF EXISTS workforce_payroll_readiness_snapshots_append_only ON workforce_payroll_readiness_snapshots;
-DROP TRIGGER IF EXISTS workforce_payroll_readiness_snapshot_items_complete ON workforce_payroll_readiness_snapshot_items;
+DROP TRIGGER IF EXISTS workforce_payroll_readiness_snapshots_finalize ON workforce_payroll_readiness_snapshots;
 DROP TRIGGER IF EXISTS workforce_payroll_readiness_snapshots_complete ON workforce_payroll_readiness_snapshots;
 DROP TRIGGER IF EXISTS workforce_payroll_readiness_snapshot_items_lineage ON workforce_payroll_readiness_snapshot_items;
 DROP TRIGGER IF EXISTS workforce_payroll_readiness_snapshots_lineage ON workforce_payroll_readiness_snapshots;
 DROP FUNCTION IF EXISTS workforce_payroll_readiness_item_lineage_guard();
-DROP FUNCTION IF EXISTS workforce_payroll_readiness_complete_guard();
+DROP FUNCTION IF EXISTS workforce_payroll_readiness_snapshot_commit_guard();
+DROP FUNCTION IF EXISTS workforce_payroll_readiness_snapshot_finalize_guard();
+DROP FUNCTION IF EXISTS workforce_payroll_readiness_assert_complete(bigint, timestamptz);
 DROP FUNCTION IF EXISTS workforce_payroll_readiness_snapshot_lineage_guard();
 DROP FUNCTION IF EXISTS workforce_payroll_readiness_prevent_mutation();
 SQL);

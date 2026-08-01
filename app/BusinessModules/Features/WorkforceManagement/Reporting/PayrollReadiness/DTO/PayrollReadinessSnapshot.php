@@ -67,6 +67,13 @@ final readonly class PayrollReadinessSnapshot
             throw new InvalidArgumentException('payroll_readiness_evidence_counts_invalid');
         }
 
+        $this->policy->assertEvidenceState(
+            $this->reason,
+            $this->sourceRowCount,
+            $this->blockerCount,
+            $this->blockerCodes,
+        );
+
         if ($this->kind === PayrollReadinessSnapshotKind::LOCK_SUCCEEDED) {
             if ($this->reason !== PayrollReadinessReason::LOCKED
                 || $this->lockedSourceHash !== $this->ownerSourceHash

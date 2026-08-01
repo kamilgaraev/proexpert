@@ -117,6 +117,12 @@ final readonly class PayrollReadinessSnapshotBuilder
         );
         $summary = $this->summarize($itemStream);
         $blockerCodes = $summary['blocker_codes'];
+        $this->policy->assertEvidenceState(
+            $reason,
+            $summary['source_row_count'],
+            $summary['blocker_count'],
+            $blockerCodes,
+        );
 
         $stateHash = $this->hash([
             'organization_id' => $organizationId,
@@ -335,19 +341,7 @@ final readonly class PayrollReadinessSnapshotBuilder
 
     private function checkItems(PayrollReadinessReason $reason): iterable
     {
-        $blockedAt = match ($reason) {
-            PayrollReadinessReason::PERIOD_NOT_VALIDATED => 0,
-            PayrollReadinessReason::SOURCE_EMPTY => 1,
-            PayrollReadinessReason::SOURCE_CHANGED => 2,
-            PayrollReadinessReason::VALIDATION_BLOCKERS => 3,
-            PayrollReadinessReason::ACCOUNTING_BLOCKERS => 4,
-            PayrollReadinessReason::LOCKED => null,
-        };
-
-        foreach ($this->policy->checkOrder as $position => $check) {
-            $status = $blockedAt === null || $position < $blockedAt
-                ? 'passed'
-                : ($position === $blockedAt ? 'blocked' : 'not_evaluated');
+        foreach ($this->policy->checkStates($reason) as $check => $status) {
             yield new PayrollReadinessEvidenceItem(
                 sourceType: 'readiness_check',
                 sourceId: null,

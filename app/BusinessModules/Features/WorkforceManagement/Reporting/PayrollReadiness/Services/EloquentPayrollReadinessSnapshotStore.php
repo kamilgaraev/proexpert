@@ -8,6 +8,8 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessSnapshot;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Models\PayrollReadinessSnapshotItemRecord;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Models\PayrollReadinessSnapshotRecord;
+use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Support\Facades\DB;
 use LogicException;
 
@@ -28,8 +30,14 @@ final class EloquentPayrollReadinessSnapshotStore implements PayrollReadinessSna
             }
 
             $payload = $snapshot->toPersistence();
+            $capturedAt = $this->now();
+
+            if ($capturedAt < $snapshot->evaluatedAt) {
+                throw new LogicException('payroll_readiness_evaluated_at_is_in_future');
+            }
+
             $payload['evaluated_at'] = $snapshot->evaluatedAt;
-            $payload['created_at'] = $snapshot->evaluatedAt;
+            $payload['created_at'] = $capturedAt;
 
             $record = PayrollReadinessSnapshotRecord::query()->create($payload);
 
@@ -50,17 +58,16 @@ final class EloquentPayrollReadinessSnapshotStore implements PayrollReadinessSna
                     'organization_id' => $snapshot->organizationId,
                     'payroll_period_id' => $snapshot->periodId,
                     'payroll_readiness_snapshot_id' => $record->getKey(),
-                    'created_at' => $snapshot->evaluatedAt,
                 ];
 
                 if (count($batch) === 500) {
-                    DB::table((new PayrollReadinessSnapshotItemRecord)->getTable())->insert($batch);
+                    $capturedAt = $this->insertBatch($batch, $capturedAt);
                     $batch = [];
                 }
             }
 
             if ($batch !== []) {
-                DB::table((new PayrollReadinessSnapshotItemRecord)->getTable())->insert($batch);
+                $capturedAt = $this->insertBatch($batch, $capturedAt);
             }
 
             if ($position !== $snapshot->itemCount
@@ -71,16 +78,41 @@ final class EloquentPayrollReadinessSnapshotStore implements PayrollReadinessSna
                 throw new LogicException('payroll_readiness_evidence_stream_changed');
             }
 
-            if (DB::getDriverName() === 'pgsql') {
-                DB::statement(
-                    'SET CONSTRAINTS workforce_payroll_readiness_snapshots_complete, '
-                    .'workforce_payroll_readiness_snapshot_items_complete IMMEDIATE',
-                );
-                DB::statement(
-                    'SET CONSTRAINTS workforce_payroll_readiness_snapshots_complete, '
-                    .'workforce_payroll_readiness_snapshot_items_complete DEFERRED',
-                );
+            $sealedAt = $this->now();
+
+            if ($sealedAt < $capturedAt) {
+                throw new LogicException('payroll_readiness_capture_clock_moved_backwards');
+            }
+
+            $sealed = DB::table((new PayrollReadinessSnapshotRecord)->getTable())
+                ->where('id', $record->getKey())
+                ->whereNull('sealed_at')
+                ->update(['sealed_at' => $sealedAt]);
+
+            if ($sealed !== 1) {
+                throw new LogicException('payroll_readiness_snapshot_seal_failed');
             }
         });
+    }
+
+    private function insertBatch(array $batch, DateTimeImmutable $notBefore): DateTimeImmutable
+    {
+        $capturedAt = $this->now();
+
+        if ($capturedAt < $notBefore) {
+            throw new LogicException('payroll_readiness_capture_clock_moved_backwards');
+        }
+
+        DB::table((new PayrollReadinessSnapshotItemRecord)->getTable())->insert(array_map(
+            static fn (array $item): array => [...$item, 'created_at' => $capturedAt],
+            $batch,
+        ));
+
+        return $capturedAt;
+    }
+
+    private function now(): DateTimeImmutable
+    {
+        return new DateTimeImmutable('now', new DateTimeZone('UTC'));
     }
 }

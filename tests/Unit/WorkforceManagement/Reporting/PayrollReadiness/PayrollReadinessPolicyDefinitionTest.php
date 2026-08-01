@@ -33,6 +33,9 @@ final class PayrollReadinessPolicyDefinitionTest extends TestCase
             'personnel_number',
             'salary_amount',
         ], $policy->redactedFields);
+        self::assertSame('source_present', $policy->reasonEvidence['source_empty']['blocked_check']);
+        self::assertSame('required', $policy->reasonEvidence['validation_blockers']['blocking_issues']);
+        self::assertNull($policy->reasonEvidence['locked']['blocked_check']);
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $policy->hash());
         self::assertSame($policy->hash(), PayrollReadinessPolicyDefinition::v1()->hash());
     }

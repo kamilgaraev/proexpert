@@ -82,7 +82,6 @@ final class WorkforceCorporateService
                 return (array) $period;
             }
 
-            $evaluatedAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
             $this->lockPayrollSnapshotRows($organizationId, $period);
             $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
             $ownerSourceHash = $this->payrollSnapshotHash($organizationId, $period);
@@ -92,7 +91,7 @@ final class WorkforceCorporateService
                 $this->payrollReadinessRecorder->recordBlocked(
                     $identity,
                     $userId,
-                    $evaluatedAt,
+                    $this->payrollReadinessEvaluationTime(),
                     $ownerSourceHash,
                     PayrollReadinessReason::PERIOD_NOT_VALIDATED,
                 );
@@ -104,7 +103,7 @@ final class WorkforceCorporateService
                 $this->payrollReadinessRecorder->recordBlocked(
                     $identity,
                     $userId,
-                    $evaluatedAt,
+                    $this->payrollReadinessEvaluationTime(),
                     $ownerSourceHash,
                     PayrollReadinessReason::SOURCE_EMPTY,
                 );
@@ -116,7 +115,7 @@ final class WorkforceCorporateService
                 $this->payrollReadinessRecorder->recordBlocked(
                     $identity,
                     $userId,
-                    $evaluatedAt,
+                    $this->payrollReadinessEvaluationTime(),
                     $ownerSourceHash,
                     PayrollReadinessReason::SOURCE_CHANGED,
                 );
@@ -131,7 +130,7 @@ final class WorkforceCorporateService
                 $this->payrollReadinessRecorder->recordBlocked(
                     $identity,
                     $userId,
-                    $evaluatedAt,
+                    $this->payrollReadinessEvaluationTime(),
                     $ownerSourceHash,
                     PayrollReadinessReason::VALIDATION_BLOCKERS,
                 );
@@ -145,7 +144,7 @@ final class WorkforceCorporateService
                 $this->payrollReadinessRecorder->recordBlocked(
                     $identity,
                     $userId,
-                    $evaluatedAt,
+                    $this->payrollReadinessEvaluationTime(),
                     $ownerSourceHash,
                     PayrollReadinessReason::ACCOUNTING_BLOCKERS,
                 );
@@ -1070,6 +1069,11 @@ final class WorkforceCorporateService
             ->where('organization_id', $organizationId)
             ->where('payroll_period_id', $periodId)
             ->exists();
+    }
+
+    private function payrollReadinessEvaluationTime(): DateTimeImmutable
+    {
+        return new DateTimeImmutable('now', new DateTimeZone('UTC'));
     }
 
     private function assertMappingScope(int $organizationId, array $payload): void

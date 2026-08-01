@@ -31,6 +31,7 @@ final class PayrollReadinessSnapshotRecord extends Model
             'gap_codes' => 'array',
             'evaluated_at' => 'immutable_datetime',
             'created_at' => 'immutable_datetime',
+            'sealed_at' => 'immutable_datetime',
         ];
     }
 }

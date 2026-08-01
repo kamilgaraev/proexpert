@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Tests\Unit\WorkforceManagement\Reporting\PayrollReadiness;
 
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessPolicyDefinition;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessSnapshot;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Enums\PayrollReadinessReason;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Enums\PayrollReadinessSnapshotKind;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Services\PayrollReadinessSnapshotBuilder;
 use DateTimeImmutable;
 use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class PayrollReadinessSnapshotBuilderTest extends TestCase
@@ -239,6 +241,142 @@ final class PayrollReadinessSnapshotBuilderTest extends TestCase
         self::assertCount($snapshot->itemCount, iterator_to_array($snapshot->items(), false));
         self::assertSame(2, $sourceReads);
         self::assertSame(2, $issueReads);
+    }
+
+    #[DataProvider('reasonCheckStatesProvider')]
+    public function test_policy_pins_exact_check_states_for_every_owner_reason(
+        PayrollReadinessReason $reason,
+        array $expected,
+    ): void {
+        self::assertSame($expected, PayrollReadinessPolicyDefinition::v1()->checkStates($reason));
+    }
+
+    public static function reasonCheckStatesProvider(): array
+    {
+        return [
+            'period not validated' => [PayrollReadinessReason::PERIOD_NOT_VALIDATED, [
+                'period_validated' => 'blocked',
+                'source_present' => 'not_evaluated',
+                'source_actual' => 'not_evaluated',
+                'validation_clear' => 'not_evaluated',
+                'accounting_clear' => 'not_evaluated',
+            ]],
+            'source empty' => [PayrollReadinessReason::SOURCE_EMPTY, [
+                'period_validated' => 'passed',
+                'source_present' => 'blocked',
+                'source_actual' => 'not_evaluated',
+                'validation_clear' => 'not_evaluated',
+                'accounting_clear' => 'not_evaluated',
+            ]],
+            'source changed' => [PayrollReadinessReason::SOURCE_CHANGED, [
+                'period_validated' => 'passed',
+                'source_present' => 'passed',
+                'source_actual' => 'blocked',
+                'validation_clear' => 'not_evaluated',
+                'accounting_clear' => 'not_evaluated',
+            ]],
+            'validation blockers' => [PayrollReadinessReason::VALIDATION_BLOCKERS, [
+                'period_validated' => 'passed',
+                'source_present' => 'passed',
+                'source_actual' => 'passed',
+                'validation_clear' => 'blocked',
+                'accounting_clear' => 'not_evaluated',
+            ]],
+            'accounting blockers' => [PayrollReadinessReason::ACCOUNTING_BLOCKERS, [
+                'period_validated' => 'passed',
+                'source_present' => 'passed',
+                'source_actual' => 'passed',
+                'validation_clear' => 'passed',
+                'accounting_clear' => 'blocked',
+            ]],
+            'locked' => [PayrollReadinessReason::LOCKED, [
+                'period_validated' => 'passed',
+                'source_present' => 'passed',
+                'source_actual' => 'passed',
+                'validation_clear' => 'passed',
+                'accounting_clear' => 'passed',
+            ]],
+        ];
+    }
+
+    #[DataProvider('invalidReasonEvidenceProvider')]
+    public function test_builder_rejects_reason_that_contradicts_evidence(
+        PayrollReadinessReason $reason,
+        bool $withSourceRows,
+        bool $withBlockingIssue,
+    ): void {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('payroll_readiness_reason_evidence_mismatch');
+
+        (new PayrollReadinessSnapshotBuilder(PayrollReadinessPolicyDefinition::v1()))->blocked(
+            organizationId: 10,
+            periodId: 20,
+            projectId: 30,
+            periodStart: '2026-07-01',
+            periodEnd: '2026-07-31',
+            actorUserId: 40,
+            evaluatedAt: new DateTimeImmutable('2026-08-01T10:15:00+00:00'),
+            ownerSourceHash: str_repeat('a', 64),
+            reason: $reason,
+            sourceRows: $withSourceRows ? $this->sourceRows() : [],
+            validationIssues: $withBlockingIssue ? $this->validationIssues() : [],
+        );
+    }
+
+    public static function invalidReasonEvidenceProvider(): array
+    {
+        return [
+            'source empty with source rows' => [PayrollReadinessReason::SOURCE_EMPTY, true, false],
+            'source changed without source rows' => [PayrollReadinessReason::SOURCE_CHANGED, false, false],
+            'validation reason without blocker' => [PayrollReadinessReason::VALIDATION_BLOCKERS, true, false],
+            'accounting reason without blocker' => [PayrollReadinessReason::ACCOUNTING_BLOCKERS, true, false],
+        ];
+    }
+
+    public function test_snapshot_dto_rejects_reason_that_contradicts_header_counts(): void
+    {
+        $snapshot = (new PayrollReadinessSnapshotBuilder(PayrollReadinessPolicyDefinition::v1()))->blocked(
+            organizationId: 10,
+            periodId: 20,
+            projectId: 30,
+            periodStart: '2026-07-01',
+            periodEnd: '2026-07-31',
+            actorUserId: 40,
+            evaluatedAt: new DateTimeImmutable('2026-08-01T10:15:00+00:00'),
+            ownerSourceHash: str_repeat('a', 64),
+            reason: PayrollReadinessReason::SOURCE_CHANGED,
+            sourceRows: $this->sourceRows(),
+            validationIssues: [],
+        );
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('payroll_readiness_reason_evidence_mismatch');
+
+        new PayrollReadinessSnapshot(
+            organizationId: $snapshot->organizationId,
+            periodId: $snapshot->periodId,
+            projectId: $snapshot->projectId,
+            periodStart: $snapshot->periodStart,
+            periodEnd: $snapshot->periodEnd,
+            kind: $snapshot->kind,
+            reason: PayrollReadinessReason::SOURCE_EMPTY,
+            actorUserId: $snapshot->actorUserId,
+            evaluatedAt: $snapshot->evaluatedAt,
+            schemaVersion: $snapshot->schemaVersion,
+            formulaVersion: $snapshot->formulaVersion,
+            policy: $snapshot->policy,
+            ownerSourceHash: $snapshot->ownerSourceHash,
+            lockedSourceHash: $snapshot->lockedSourceHash,
+            blockerCodes: $snapshot->blockerCodes,
+            gapCodes: $snapshot->gapCodes,
+            sourceRowCount: $snapshot->sourceRowCount,
+            validationIssueCount: $snapshot->validationIssueCount,
+            blockerCount: $snapshot->blockerCount,
+            itemCount: $snapshot->itemCount,
+            itemsHash: $snapshot->itemsHash,
+            stateHash: $snapshot->stateHash,
+            sourceHash: $snapshot->sourceHash,
+            itemStream: static fn (): iterable => [],
+        );
     }
 
     private function sourceRows(): array

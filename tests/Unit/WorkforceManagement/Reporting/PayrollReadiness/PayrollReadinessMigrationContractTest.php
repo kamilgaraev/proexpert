@@ -9,7 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 final class PayrollReadinessMigrationContractTest extends TestCase
 {
-    public function test_database_contract_seals_complete_item_set_at_commit(): void
+    public function test_database_contract_seals_complete_item_set_once_and_rejects_late_append_in_constant_time(): void
     {
         $migration = $this->migration();
 
@@ -20,11 +20,17 @@ final class PayrollReadinessMigrationContractTest extends TestCase
             'CREATE CONSTRAINT TRIGGER workforce_payroll_readiness_snapshots_complete',
             $migration,
         );
-        self::assertStringContainsString(
+        self::assertStringNotContainsString(
             'CREATE CONSTRAINT TRIGGER workforce_payroll_readiness_snapshot_items_complete',
             $migration,
         );
-        self::assertSame(2, substr_count($migration, 'DEFERRABLE INITIALLY DEFERRED'));
+        self::assertSame(1, substr_count($migration, 'DEFERRABLE INITIALLY DEFERRED'));
+        self::assertSame(1, substr_count(
+            $migration,
+            'PERFORM workforce_payroll_readiness_assert_complete(NEW.id, NEW.sealed_at);',
+        ));
+        self::assertStringContainsString('IF snapshot.sealed_at IS NOT NULL THEN', $migration);
+        self::assertStringContainsString('payroll readiness snapshot is already sealed', $migration);
         self::assertStringContainsString('payroll readiness item set incomplete', $migration);
     }
 
@@ -38,6 +44,11 @@ final class PayrollReadinessMigrationContractTest extends TestCase
         self::assertStringContainsString('NEW.reason_code NOT IN (', $migration);
         self::assertStringContainsString('NEW.source_row_count < 1', $migration);
         self::assertStringContainsString("NEW.policy_definition <> '", $migration);
+        self::assertStringContainsString("snapshot.reason_code = 'source_empty'", $migration);
+        self::assertStringContainsString("snapshot.reason_code IN ('validation_blockers', 'accounting_blockers')", $migration);
+        self::assertStringContainsString('actual_blocker_codes <> snapshot.blocker_codes', $migration);
+        self::assertStringContainsString('source_row.created_at > snapshot.evaluated_at', $migration);
+        self::assertStringContainsString('validation_issue.created_at > snapshot.evaluated_at', $migration);
 
         $policy = PayrollReadinessPolicyDefinition::v1();
         self::assertStringContainsString($policy->hash(), $migration);
