@@ -97,9 +97,11 @@ class CommercialQuotaService
             }
 
             if ($allocation->source === 'corporate_override') {
-                $corporateOverrides[$organizationId] ??= $allocation->quantity === null
-                    ? null
-                    : (float) $allocation->quantity;
+                if (! array_key_exists($organizationId, $corporateOverrides)) {
+                    $corporateOverrides[$organizationId] = $allocation->quantity === null
+                        ? null
+                        : (float) $allocation->quantity;
+                }
 
                 continue;
             }

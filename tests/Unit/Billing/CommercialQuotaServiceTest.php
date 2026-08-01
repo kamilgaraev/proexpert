@@ -221,6 +221,33 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertNull($users['sources']['corporate_override']);
     }
 
+    public function test_latest_unlimited_corporate_override_wins_in_batch_ai_estimate_limits(): void
+    {
+        $account = $this->account('corporate', 'corporate');
+        OrganizationResourceAllocation::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id,
+            'resource_slug' => 'corporate-ai-estimates',
+            'limit_key' => 'ai_estimates_month',
+            'quantity' => 10,
+            'source' => 'corporate_override',
+            'status' => 'active',
+        ]);
+        OrganizationResourceAllocation::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id,
+            'resource_slug' => 'corporate-ai-estimates-unlimited',
+            'limit_key' => 'ai_estimates_month',
+            'quantity' => null,
+            'source' => 'corporate_override',
+            'status' => 'active',
+        ]);
+
+        $limits = $this->quota()->getEffectiveAiEstimateMonthlyLimits([$this->organization->id]);
+
+        $this->assertSame([$this->organization->id => null], $limits);
+    }
+
     public function test_assert_can_use_blocks_hard_limit_when_delta_exceeds_remaining(): void
     {
         $this->user('one@example.test');
