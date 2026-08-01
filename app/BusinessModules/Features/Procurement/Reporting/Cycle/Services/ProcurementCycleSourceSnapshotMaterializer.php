@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQueryIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
@@ -25,6 +26,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
     public function identity(
         ProcurementCycleSnapshotRequest $request,
         ProcurementCycleSourceRead $source,
+        ?ReportQueryIdentity $reportQueryIdentity = null,
     ): ReportSourceSnapshotIdentity {
         return new ReportSourceSnapshotIdentity(
             ProcurementCycleReportAdapter::SOURCE_KIND,
@@ -34,6 +36,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
             $this->hash([
                 'as_of' => $this->utc($request->asOf),
                 'filters' => $request->filters,
+                'report_query_hash' => $reportQueryIdentity?->hash->value,
                 'scope' => $request->scope->canonicalIdentity(),
             ]),
             $source->sourceVersion(
@@ -52,7 +55,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
         array $eventsByLine,
         ?ReportQuery $query = null,
     ): ReportSourceSnapshotWrite {
-        $identity = $this->identity($request, $source);
+        $identity = $this->identity($request, $source, $query?->identity);
         $rows = [];
         $drillRows = [];
         $resultByLine = [];

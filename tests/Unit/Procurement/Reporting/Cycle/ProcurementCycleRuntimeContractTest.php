@@ -86,6 +86,26 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
         );
     }
 
+    public function test_source_snapshot_identity_changes_with_the_immutable_report_query_identity(): void
+    {
+        $scope = (new ReportExecutionContextBuilder)->build()->scope;
+        $request = new ProcurementCycleSnapshotRequest($scope, [], new DateTimeImmutable('2026-08-01T10:00:00+00:00'), null);
+        $source = new ProcurementCycleSourceRead([], 0, 0, 0, 0, null, 0, null);
+        $definition = (new ReportDefinitionBuilder)
+            ->code(ProcurementCycleReportAdapter::REPORT_CODE)
+            ->formulaVersion(ProcurementCycleReportAdapter::FORMULA_VERSION)
+            ->sourceSchemaVersion(ProcurementCycleReportAdapter::SCHEMA_VERSION)
+            ->payload();
+        $first = new ReportQuery($definition, $scope, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet([]), [], new DateTimeImmutable('2026-08-01T10:00:00+00:00'), 'ru');
+        $second = new ReportQuery($definition, $scope, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet([]), ['period' => 'previous'], new DateTimeImmutable('2026-08-01T11:00:00+00:00'), 'en');
+        $materializer = new ProcurementCycleSourceSnapshotMaterializer;
+
+        self::assertNotSame(
+            $materializer->identity($request, $source, $first->identity)->queryHash->value,
+            $materializer->identity($request, $source, $second->identity)->queryHash->value,
+        );
+    }
+
     public function test_binding_uses_one_production_adapter_for_data_rows_and_drill(): void
     {
         $definition = (new ReportDefinitionBuilder)

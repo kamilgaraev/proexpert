@@ -39,7 +39,7 @@ final readonly class CanonicalProcurementCycleSourceSnapshotWriter implements Pr
                 $results[] = $this->formula->calculate($events, $policy, $query->asOf);
             },
         );
-        $identity = $this->materializer->identity($request, $source);
+        $identity = $this->materializer->identity($request, $source, $query->identity);
         $ready = $this->store->findReady($identity);
         if ($ready !== null) {
             return $ready;
