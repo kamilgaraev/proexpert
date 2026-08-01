@@ -19,6 +19,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFa
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use LogicException;
@@ -52,7 +53,6 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             $existing = $this->connection->table('report_publications')
                 ->where('code', $publication->candidate->code)
                 ->where('status', ReportPublicationStatus::PUBLISHED->value)
-                ->lockForUpdate()
                 ->first();
             $existingRecord = $existing === null ? null : $this->record((array) $existing);
             if ($existingRecord !== null
@@ -69,7 +69,6 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
                     ->where('code', $publication->candidate->code)
                     ->orderByDesc('published_at')
                     ->orderByDesc('id')
-                    ->lockForUpdate()
                     ->first();
                 $previous = $previousRow === null ? null : $this->record((array) $previousRow);
             }
@@ -95,7 +94,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             $releaseArtifactPayload = $releaseArtifact->payload();
             $publishedAt = new DateTimeImmutable($proof['release']['created_at_utc']);
             $this->connection->select(<<<'SQL'
-                SELECT report_publication_promote(
+                SELECT public.report_publication_promote(
                     ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, CAST(? AS timestamptz)
                 )
@@ -148,19 +147,18 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             throw new InvalidArgumentException('report_publication_disable_input_invalid');
         }
 
-        $this->connection->transaction(function () use ($publicationId, $reason, $actorIdentity): void {
-            $row = $this->connection->table('report_publications')
-                ->where('id', $publicationId)
-                ->lockForUpdate()
-                ->first();
-            if ($row === null || $row->status !== ReportPublicationStatus::PUBLISHED->value) {
-                throw new LogicException('report_publication_not_active');
-            }
+        try {
             $this->connection->select(
-                'SELECT report_publication_disable(?, ?, ?)',
+                'SELECT public.report_publication_disable(?, ?, ?)',
                 [$publicationId, $reason, $actorIdentity],
             );
-        });
+        } catch (QueryException $exception) {
+            if ($this->hasSqlState($exception, 'P0002')) {
+                throw new LogicException('report_publication_not_active', 0, $exception);
+            }
+
+            throw $exception;
+        }
     }
 
     public function history(string $code): iterable
@@ -279,5 +277,11 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
         if (preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $code) !== 1) {
             throw new InvalidArgumentException('report_publication_code_invalid');
         }
+    }
+
+    private function hasSqlState(QueryException $exception, string $sqlState): bool
+    {
+        return ($exception->errorInfo[0] ?? null) === $sqlState
+            || (string) $exception->getCode() === $sqlState;
     }
 }

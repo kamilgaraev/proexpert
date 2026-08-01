@@ -5,22 +5,85 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\EligibleReportPublication;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationReleaseIdentity;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
+use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\QueryException;
 use InvalidArgumentException;
 use LogicException;
+use PDOException;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\Publication\ReportPublicationFixtureFactory;
 use Tests\Support\Reporting\Publication\ReportPublicationReleaseArtifactTestFactory;
 
 final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
 {
+    public function test_non_superuser_repositories_delegate_all_write_locks_to_admission_functions(): void
+    {
+        foreach ([
+            EloquentReportPublicationRegistry::class,
+            \App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore::class,
+        ] as $class) {
+            $file = (new \ReflectionClass($class))->getFileName();
+            self::assertIsString($file);
+            $source = file_get_contents($file);
+            self::assertIsString($source);
+            self::assertStringNotContainsString('->lockForUpdate()', $source, $class);
+        }
+    }
+
+    public function test_disable_translates_admission_not_active_sqlstate_to_domain_error(): void
+    {
+        $fixture = ReportPublicationFixtureFactory::eligible();
+        $connection = $this->createMock(ConnectionInterface::class);
+        $connection->expects(self::once())
+            ->method('select')
+            ->willThrowException($this->queryException('P0002'));
+        $registry = new EloquentReportPublicationRegistry(
+            $connection,
+            $fixture['eligibility_service'],
+            new ReportDefinitionFactory,
+        );
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('report_publication_not_active');
+
+        $registry->disable(
+            '01J00000000000000000000000',
+            'source_contract_revoked',
+            'release-bot@most',
+        );
+    }
+
+    public function test_feature_store_translates_stale_identity_sqlstate_to_domain_error(): void
+    {
+        $connection = $this->createMock(ConnectionInterface::class);
+        $connection->expects(self::once())
+            ->method('selectOne')
+            ->willThrowException($this->queryException('P0002'));
+        $store = new EloquentReportPublicationFeatureStore($connection);
+        $identity = new ReportPublicationIdentity(
+            '01J00000000000000000000000',
+            'test_report',
+            new Sha256Hash(str_repeat('a', 64)),
+            str_repeat('b', 40),
+        );
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('report_publication_feature_stale_identity');
+
+        $store->configure($identity, ReportPublicationFeatureMode::ON, [], []);
+    }
+
     public function test_current_materializes_the_exact_persisted_candidate_without_a_live_candidate_registry(): void
     {
         $fixture = ReportPublicationFixtureFactory::eligible();
@@ -231,5 +294,13 @@ final class EloquentReportPublicationRegistryBoundaryTest extends TestCase
             'disabled_at' => $disabledAt,
             'disabled_reason' => $disabledReason,
         ];
+    }
+
+    private function queryException(string $sqlState): QueryException
+    {
+        $exception = new PDOException('admission rejected');
+        $exception->errorInfo = [$sqlState, null, 'admission rejected'];
+
+        return new QueryException('testing', 'SELECT admission()', [], $exception);
     }
 }
