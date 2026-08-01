@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFormulaConformanceEvidence;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceConformanceEvidence;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use DateTimeImmutable;
 use InvalidArgumentException;
 
 final class BudgetPlanFactReleaseCandidateResolver
@@ -52,6 +57,7 @@ final class BudgetPlanFactReleaseCandidateResolver
 
         try {
             $publicationProof = ReportPublicationProof::fromArray($proof);
+            $conformanceEvidence = $this->conformanceEvidence($conformance);
         } catch (\Throwable) {
             $this->reject();
         }
@@ -83,6 +89,9 @@ final class BudgetPlanFactReleaseCandidateResolver
             || $conformance['code'] !== BudgetPlanFactCandidateContract::CODE
             || $conformance['commit_sha'] !== $commitSha
             || $conformance['status'] !== 'passed'
+            || ! isset($conformance['digest'])
+            || ! is_string($conformance['digest'])
+            || ! hash_equals($conformanceEvidence->digest()->value, $conformance['digest'])
             || ($conformance['definition_hash'] ?? null) !== $candidate['candidate_definition_sha256']
             || ($conformance['source_schema_version'] ?? null) !== $candidate['source_schema_version']
             || ($conformance['formula']['formula_version'] ?? null) !== BudgetPlanFactCandidateContract::FORMULA_VERSION
@@ -104,6 +113,62 @@ final class BudgetPlanFactReleaseCandidateResolver
         }
 
         return $documents;
+    }
+
+    /** @param array<string, mixed> $document */
+    private function conformanceEvidence(array $document): ReportDefinitionConformanceEvidence
+    {
+        $components = $document['component_class_hashes'] ?? null;
+        $source = $document['source'] ?? null;
+        $formula = $document['formula'] ?? null;
+        if (! is_array($components) || ! array_is_list($components)
+            || ! is_array($source) || array_is_list($source)
+            || ! is_array($formula) || array_is_list($formula)) {
+            throw new InvalidArgumentException('budget_plan_fact_release_candidate_untrusted');
+        }
+        $hashes = [];
+        foreach ($components as $component) {
+            if (! is_array($component)
+                || ! is_string($component['class'] ?? null)
+                || ! is_string($component['sha256'] ?? null)) {
+                throw new InvalidArgumentException('budget_plan_fact_release_candidate_untrusted');
+            }
+            $hashes[$component['class']] = new Sha256Hash($component['sha256']);
+        }
+        $evidence = new ReportDefinitionConformanceEvidence(
+            (string) ($document['code'] ?? ''),
+            new Sha256Hash((string) ($document['definition_hash'] ?? '')),
+            (string) ($document['contract_version'] ?? ''),
+            (string) ($document['source_schema_version'] ?? ''),
+            new Sha256Hash((string) ($document['fixture_hash'] ?? '')),
+            new ReportSourceConformanceEvidence(
+                new Sha256Hash((string) ($source['source_hash'] ?? '')),
+                (string) ($source['snapshot_kind'] ?? ''),
+                (string) ($source['snapshot_id'] ?? ''),
+                $source['row_count'] ?? null,
+                new Sha256Hash((string) ($source['rows_hash'] ?? '')),
+                $source['passed'] ?? null,
+                $source['assertion_codes'] ?? null,
+            ),
+            new ReportFormulaConformanceEvidence(
+                (string) ($formula['formula_version'] ?? ''),
+                new Sha256Hash((string) ($formula['totals_hash'] ?? '')),
+                $formula['passed'] ?? null,
+                $formula['assertion_codes'] ?? null,
+            ),
+            $hashes,
+            $document['assertion_count'] ?? null,
+            (string) ($document['status'] ?? ''),
+            (string) ($document['commit_sha'] ?? ''),
+            new DateTimeImmutable((string) ($document['generated_at'] ?? '')),
+        );
+        $payload = $document;
+        unset($payload['digest']);
+        if ($payload !== $evidence->canonicalPayload()) {
+            throw new InvalidArgumentException('budget_plan_fact_release_candidate_untrusted');
+        }
+
+        return $evidence;
     }
 
     /** @param array<string, mixed> $definition */

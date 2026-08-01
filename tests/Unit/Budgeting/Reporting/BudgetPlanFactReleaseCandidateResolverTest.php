@@ -103,6 +103,26 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
         (new BudgetPlanFactReleaseCandidateResolver)->resolve($this->directory, $this->commitSha());
     }
 
+    public function test_rejects_a_self_consistent_but_noncanonical_conformance_digest(): void
+    {
+        $candidate = $this->document(BudgetPlanFactReleaseCandidateLayout::CANDIDATE_MANIFEST);
+        $conformance = $this->document(BudgetPlanFactReleaseCandidateLayout::CONFORMANCE_EVIDENCE);
+        $conformance['digest'] = str_repeat('c', 64);
+        $proof = $this->proof($candidate, $conformance['digest']);
+
+        $this->write(BudgetPlanFactReleaseCandidateLayout::CONFORMANCE_EVIDENCE, $conformance);
+        $this->write(BudgetPlanFactReleaseCandidateLayout::PROOF_TEMPLATE, $proof);
+        $this->write(
+            BudgetPlanFactReleaseCandidateLayout::REQUEST_FILE,
+            BudgetPlanFactReleaseCandidateLayout::request($this->commitSha(), ReportPublicationProof::fromArray($proof)->digest()->value),
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('budget_plan_fact_release_candidate_untrusted');
+
+        (new BudgetPlanFactReleaseCandidateResolver)->resolve($this->directory, $this->commitSha());
+    }
+
     private function writeDocuments(): void
     {
         $commit = $this->commitSha();
@@ -138,7 +158,7 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
             ],
             'contract_version' => '1.0.0',
             'definition_hash' => $candidate['candidate_definition_sha256'],
-            'digest' => str_repeat('c', 64),
+            'digest' => '',
             'fixture_hash' => str_repeat('b', 64),
             'formula' => ['assertion_codes' => ['formula.plan_fact.passed'], 'formula_version' => BudgetPlanFactCandidateContract::FORMULA_VERSION, 'passed' => true, 'totals_hash' => str_repeat('a', 64)],
             'generated_at' => '2026-08-01T00:00:00.000000Z',
@@ -146,6 +166,7 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
             'source_schema_version' => BudgetPlanFactCandidateFixture::contract()->sourceSchemaVersion,
             'status' => 'passed',
         ];
+        $conformance['digest'] = $this->conformanceDigest($conformance);
         $proof = $this->proof($candidate, $conformance['digest']);
         $request = BudgetPlanFactReleaseCandidateLayout::request($commit, ReportPublicationProof::fromArray($proof)->digest()->value);
 
@@ -237,5 +258,13 @@ final class BudgetPlanFactReleaseCandidateResolverTest extends TestCase
             static fn (array $item): array => json_decode(CanonicalJson::encode($item), true, 64, JSON_THROW_ON_ERROR),
             $items,
         );
+    }
+
+    /** @param array<string, mixed> $document */
+    private function conformanceDigest(array $document): string
+    {
+        unset($document['digest']);
+
+        return hash('sha256', CanonicalJson::encode($document));
     }
 }
