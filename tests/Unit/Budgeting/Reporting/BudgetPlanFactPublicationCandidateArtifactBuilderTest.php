@@ -81,6 +81,42 @@ final class BudgetPlanFactPublicationCandidateArtifactBuilderTest extends TestCa
         $this->assertRejected($directory, str_repeat('b', 40));
     }
 
+    public function test_rejects_traversal_and_intermediate_symlink_output_paths(): void
+    {
+        [$candidate, $conformance, $proof] = $this->documents();
+        $builder = new BudgetPlanFactPublicationCandidateArtifactBuilder;
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('budget_plan_fact_candidate_artifact_input_invalid');
+        $builder->build($this->root.DIRECTORY_SEPARATOR.'one'.DIRECTORY_SEPARATOR.'..'.DIRECTORY_SEPARATOR.'two'.DIRECTORY_SEPARATOR.'v1', $this->commit(), $candidate, $conformance, $proof);
+    }
+
+    public function test_rejects_an_intermediate_symlink_output_path(): void
+    {
+        [$candidate, $conformance, $proof] = $this->documents();
+        $target = $this->root.DIRECTORY_SEPARATOR.'target';
+        $link = $this->root.DIRECTORY_SEPARATOR.'link';
+        mkdir($target, 0700, true);
+        if (! @symlink($target, $link)) {
+            self::markTestSkipped('The current filesystem does not permit symlink test setup.');
+        }
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('budget_plan_fact_candidate_artifact_input_invalid');
+        (new BudgetPlanFactPublicationCandidateArtifactBuilder)->build($link.DIRECTORY_SEPARATOR.'nested'.DIRECTORY_SEPARATOR.'v1', $this->commit(), $candidate, $conformance, $proof);
+    }
+
+    public function test_rejects_an_arbitrary_or_proof_mismatched_conformance_digest(): void
+    {
+        [$candidate, $conformance, $proof] = $this->documents();
+        $conformance['digest'] = str_repeat('c', 64);
+        $this->assertArtifactInvalid($candidate, $conformance, $proof);
+
+        [$candidate, $conformance, $proof] = $this->documents();
+        $proof['conformance_evidence_sha256'] = str_repeat('d', 64);
+        $this->assertArtifactInvalid($candidate, $conformance, $proof);
+    }
+
     private function build(): string
     {
         [$candidate, $conformance, $proof] = $this->documents();
@@ -114,12 +150,13 @@ final class BudgetPlanFactPublicationCandidateArtifactBuilderTest extends TestCa
         $conformance = [
             'assertion_count' => 2, 'code' => BudgetPlanFactCandidateContract::CODE, 'commit_sha' => $this->commit(),
             'component_class_hashes' => [['class' => PlanFactCalculator::class, 'sha256' => BudgetPlanFactCandidateContract::FORMULA_HASH], ['class' => PlanFactSourceSnapshotMaterializer::class, 'sha256' => BudgetPlanFactCandidateContract::SOURCE_HASH]],
-            'contract_version' => '1.0.0', 'definition_hash' => $candidate['candidate_definition_sha256'], 'digest' => str_repeat('c', 64), 'fixture_hash' => str_repeat('b', 64),
+            'contract_version' => '1.0.0', 'definition_hash' => $candidate['candidate_definition_sha256'], 'digest' => '', 'fixture_hash' => str_repeat('b', 64),
             'formula' => ['assertion_codes' => ['formula.plan_fact.passed'], 'formula_version' => $contract->formulaVersion, 'passed' => true, 'totals_hash' => str_repeat('a', 64)],
             'generated_at' => '2026-08-01T00:00:00.000000Z',
             'source' => ['assertion_codes' => ['source.plan_fact.passed'], 'passed' => true, 'row_count' => 1, 'rows_hash' => str_repeat('e', 64), 'snapshot_id' => BudgetPlanFactCandidateFixture::closeId(), 'snapshot_kind' => 'budget.plan_fact.close', 'source_hash' => BudgetPlanFactCandidateContract::SOURCE_HASH],
             'source_schema_version' => $contract->sourceSchemaVersion, 'status' => 'passed',
         ];
+        $conformance['digest'] = $this->conformanceDigest($conformance);
         $export = static fn (string $format, string $renderer, string $value): array => ['format' => $format, 'schema_sha256' => str_repeat($value, 64), 'fixture_sha256' => str_repeat('b', 64), 'renderer_class' => $renderer, 'renderer_contract_sha256' => str_repeat($value, 64), 'renderer_sha256' => str_repeat($value, 64), 'assertion_codes' => ["export.{$format}.renderer.passed"]];
         $proof = [
             'binding_sha256' => str_repeat('7', 64), 'candidate_definition_sha256' => $candidate['candidate_definition_sha256'], 'candidate_manifest_sha256' => $this->hash($candidate),
@@ -153,6 +190,17 @@ final class BudgetPlanFactPublicationCandidateArtifactBuilderTest extends TestCa
         }
     }
 
+    /** @param array<string,mixed> $candidate @param array<string,mixed> $conformance @param array<string,mixed> $proof */
+    private function assertArtifactInvalid(array $candidate, array $conformance, array $proof): void
+    {
+        try {
+            (new BudgetPlanFactPublicationCandidateArtifactBuilder)->build($this->outputDirectory(bin2hex(random_bytes(4))), $this->commit(), $candidate, $conformance, $proof);
+            self::fail('Expected the builder to reject the invalid conformance linkage.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame('budget_plan_fact_candidate_artifact_invalid', $exception->getMessage());
+        }
+    }
+
     /** @return array<string,mixed> */
     private function read(string $directory, string $file): array
     {
@@ -171,6 +219,14 @@ final class BudgetPlanFactPublicationCandidateArtifactBuilderTest extends TestCa
         return hash('sha256', CanonicalJson::encode($document));
     }
 
+    /** @param array<string,mixed> $document */
+    private function conformanceDigest(array $document): string
+    {
+        unset($document['digest']);
+
+        return hash('sha256', CanonicalJson::encode($document));
+    }
+
     private function commit(): string
     {
         return 'abcdefabcdefabcdefabcdefabcdefabcdefabcd';
@@ -178,6 +234,11 @@ final class BudgetPlanFactPublicationCandidateArtifactBuilderTest extends TestCa
 
     private function delete(string $directory): void
     {
+        if (is_link($directory)) {
+            unlink($directory);
+
+            return;
+        }
         if (! is_dir($directory)) {
             return;
         } foreach (scandir($directory) ?: [] as $entry) {
