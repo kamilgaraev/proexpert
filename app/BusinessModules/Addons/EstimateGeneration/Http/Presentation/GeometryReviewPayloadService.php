@@ -6,12 +6,15 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
+use JsonException;
 
 final readonly class GeometryReviewPayloadService implements GeometryReviewPayloadReader
 {
     public function __construct(
         private GeometryReviewDataSource $data,
         private GeometryReviewSourcePresenter $sources,
+        private GeometrySourceConfirmationFactory $sourceConfirmation,
     ) {}
 
     /** @return array<string, mixed> */
@@ -57,6 +60,11 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
                 )
                 : (string) $row->storage_path);
             if ($source !== null) {
+                $sourceConfirmation = $this->sourceConfirmation($row);
+                $source['source_confirmation'] = $sourceConfirmation['payload'];
+                if ($sourceConfirmation['reason'] !== null) {
+                    $source['source_confirmation_unavailable_reason'] = $sourceConfirmation['reason'];
+                }
                 $presentedSources[] = $source;
             }
         }
@@ -74,5 +82,53 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
                 'last_page' => max(1, (int) ceil($sourcePage['total'] / $perPage)),
             ],
         ];
+    }
+
+    /** @return array{payload: array<string, mixed>|null, reason: string|null} */
+    private function sourceConfirmation(object $row): array
+    {
+        $sourceVersion = is_string($row->source_version ?? null) ? $row->source_version : null;
+        if ($sourceVersion === null || preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceVersion) !== 1
+            || ! $this->currentSourceVersions($row, $sourceVersion)) {
+            return ['payload' => null, 'reason' => 'source_not_current'];
+        }
+        if (($row->unit_status ?? null) !== 'completed' || ! in_array($row->unit_type ?? null, ['pdf_page', 'cad_drawing'], true)) {
+            return ['payload' => null, 'reason' => 'source_not_complete'];
+        }
+        if (! is_numeric($row->source_evidence_id ?? null) || (int) $row->source_evidence_id < 1
+            || ! is_numeric($row->source_evidence_count ?? null) || (int) $row->source_evidence_count !== 1) {
+            return ['payload' => null, 'reason' => 'source_evidence_unavailable'];
+        }
+        try {
+            $metadata = is_array($row->metadata ?? null)
+                ? $row->metadata
+                : json_decode((string) ($row->metadata ?? ''), true, 64, JSON_THROW_ON_ERROR);
+            if (! is_array($metadata) || array_keys($metadata) !== ['vector_geometry'] || ! is_array($metadata['vector_geometry'])) {
+                return ['payload' => null, 'reason' => 'vector_capture_unavailable'];
+            }
+            $vector = VectorGeometryData::fromArray($metadata['vector_geometry']);
+        } catch (JsonException|\InvalidArgumentException) {
+            return ['payload' => null, 'reason' => 'vector_capture_invalid'];
+        }
+        if (! hash_equals($sourceVersion, $vector->sourceFingerprint)) {
+            return ['payload' => null, 'reason' => 'source_not_current'];
+        }
+        $payload = $this->sourceConfirmation->make($vector);
+
+        return $payload === null
+            ? ['payload' => null, 'reason' => 'semantic_confirmation_unavailable']
+            : ['payload' => $payload, 'reason' => null];
+    }
+
+    private function currentSourceVersions(object $row, string $sourceVersion): bool
+    {
+        foreach (['document_source_version', 'unit_source_version', 'page_source_version'] as $field) {
+            $value = $row->{$field} ?? null;
+            if (! is_string($value) || ! hash_equals($sourceVersion, $value)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

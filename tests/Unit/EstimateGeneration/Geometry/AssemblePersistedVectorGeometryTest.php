@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryC
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometrySourceConfirmationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Collection;
@@ -82,6 +83,27 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         ));
     }
 
+    public function test_server_derived_semantic_payload_is_accepted_for_the_same_current_vector_capture(): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('b', 64);
+        $payload = $this->vectorPayload($sourceVersion);
+        $confirmation = (new GeometrySourceConfirmationFactory)->make(VectorGeometryData::fromArray($payload));
+        self::assertIsArray($confirmation);
+        $service = $this->service([(object) [
+            'id' => 81,
+            'document_id' => 71,
+            'metadata' => json_encode(['vector_geometry' => $payload], JSON_THROW_ON_ERROR),
+        ]]);
+
+        $result = $service->handle(new GeometryConfirmationCommand(
+            11, 22, 33, 44, 5, 'sha256:'.str_repeat('c', 64), 'sha256:'.str_repeat('e', 64),
+            null, [], $confirmation, $this->reviewedSource(),
+        ), 92);
+
+        self::assertSame('confirmed', $result->model->scaleStatus);
+        self::assertSame($this->reviewedSource(), $result->sourceConfirmationContext->toArray());
+    }
+
     private function service(array $rows): AssemblePersistedVectorGeometry
     {
         $unit = $rows === [] ? null : (object) [...get_object_vars($rows[0]), 'source_version' => 'sha256:'.str_repeat('b', 64)];
@@ -130,10 +152,10 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         return new AssemblePersistedVectorGeometry($database, new GeometryBuildingModelInputMapper, new BuildingModelAssembler);
     }
 
-    private function vectorPayload(): array
+    private function vectorPayload(?string $sourceFingerprint = null): array
     {
         return ['schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;ezdxf:1.4.4',
-            'source_fingerprint' => 'sha256:'.str_repeat('a', 64), 'source_unit' => 'mm', 'unit_status' => 'confirmed',
+            'source_fingerprint' => $sourceFingerprint ?? 'sha256:'.str_repeat('a', 64), 'source_unit' => 'mm', 'unit_status' => 'confirmed',
             'bounds' => [0, 0, 4000, 3000], 'layers' => [['name' => 'A', 'visible' => true]], 'blocks' => [],
             'entities' => [
                 ['handle' => 'R1', 'type' => 'lwpolyline', 'layer' => 'A', 'points' => [[0, 0], [4000, 0], [4000, 3000], [0, 3000]], 'closed' => true],
