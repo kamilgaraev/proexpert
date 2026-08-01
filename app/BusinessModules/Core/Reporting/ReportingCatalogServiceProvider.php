@@ -20,6 +20,8 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataReg
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationFeatureStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewVersionStore;
@@ -33,9 +35,9 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportWorkspacePreferenc
 use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LogReportSubscriptionEventRecorder;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabasePublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportSchedulingCapabilityRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\PublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportSavedViewCursorCodec;
@@ -46,6 +48,8 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionDeliveryStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportSubscriptionStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportWorkspacePreferencesStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
@@ -63,10 +67,16 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
                     __DIR__.'/resources/management-catalog.v1.schema.json',
                 ),
         );
-        $this->app->singleton(
-            ReportDefinitionRegistry::class,
-            PublishedReportDefinitionRegistry::class,
-        );
+        $this->app->singleton(ReportPublicationRegistry::class, fn (Application $app): EloquentReportPublicationRegistry => new EloquentReportPublicationRegistry(
+            $app['db']->connection(),
+            null,
+            $app->make(\App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory::class),
+            (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
+        ));
+        $this->app->singleton(ReportPublicationFeatureStore::class, fn (Application $app): EloquentReportPublicationFeatureStore => new EloquentReportPublicationFeatureStore(
+            $app['db']->connection(),
+        ));
+        $this->app->singleton(ReportDefinitionRegistry::class, DatabasePublishedReportDefinitionRegistry::class);
         $this->app->singleton(
             ReportCatalogMetadataRegistry::class,
             ManifestReportCatalogMetadataRegistry::class,

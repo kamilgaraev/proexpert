@@ -11,6 +11,9 @@ interface ReportPublicationRegistry
 {
     public function current(string $code): ?PublishedReportDefinition;
 
+    /** @return string[] */
+    public function publishedCodes(): array;
+
     public function promote(EligibleReportPublication $publication): PublishedReportDefinition;
 
     public function disable(string $publicationId, string $reason, string $actorIdentity): void;

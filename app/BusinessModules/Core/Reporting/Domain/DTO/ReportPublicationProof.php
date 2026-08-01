@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use DateTimeZone;
 use InvalidArgumentException;
+use JsonException;
 
 final readonly class ReportPublicationProof
 {
@@ -33,6 +34,20 @@ final readonly class ReportPublicationProof
     ];
 
     private function __construct(private array $data) {}
+
+    public static function fromCanonicalBytes(string $bytes): self
+    {
+        try {
+            $payload = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new InvalidArgumentException('report_publication_proof_invalid', 0, $exception);
+        }
+        if (! is_array($payload) || array_is_list($payload) || ! hash_equals(CanonicalJson::encode($payload), $bytes)) {
+            self::invalid();
+        }
+
+        return self::fromArray($payload);
+    }
 
     public static function fromArray(array $payload): self
     {

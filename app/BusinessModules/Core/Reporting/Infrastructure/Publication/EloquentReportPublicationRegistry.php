@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier;
 use App\BusinessModules\Core\Reporting\Domain\DTO\EligibleReportPublication;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
@@ -28,8 +29,9 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
 {
     public function __construct(
         private readonly ConnectionInterface $connection,
-        private readonly ReportPublicationEligibilityService $eligibility,
+        private readonly ?ReportPublicationEligibilityService $eligibility,
         private readonly ReportDefinitionFactory $definitions,
+        private readonly ?ReportPublicationReleaseArtifactVerifier $releaseArtifacts = null,
     ) {}
 
     public function current(string $code): ?PublishedReportDefinition
@@ -43,8 +45,22 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
         return $row === null ? null : $this->published($this->record((array) $row));
     }
 
+    public function publishedCodes(): array
+    {
+        return $this->connection->table('public.report_publications')
+            ->where('status', ReportPublicationStatus::PUBLISHED->value)
+            ->orderBy('code')
+            ->pluck('code')
+            ->map(static fn (mixed $code): string => (string) $code)
+            ->all();
+    }
+
     public function promote(EligibleReportPublication $publication): PublishedReportDefinition
     {
+        if ($this->eligibility === null) {
+            throw new LogicException('report_publication_promotion_unavailable');
+        }
+
         return $this->connection->transaction(function () use ($publication): PublishedReportDefinition {
             $this->connection->select(
                 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
@@ -90,7 +106,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
 
             $id = (string) Str::ulid();
             $proof = $publication->proof->payload();
-            $releaseArtifact = $this->eligibility->verifyReleaseArtifact($publication->releaseArtifactBytes);
+            $releaseArtifact = $this->verifyReleaseArtifact($publication->releaseArtifactBytes);
             $releaseArtifactPayload = $releaseArtifact->payload();
             $publishedAt = new DateTimeImmutable($proof['release']['created_at_utc']);
             $this->connection->select(<<<'SQL'
@@ -211,7 +227,7 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             || ! hash_equals((string) ($row['release_artifact_sha256'] ?? ''), hash('sha256', $releaseArtifactBytes))) {
             throw new LogicException('report_publication_persisted_release_artifact_drift');
         }
-        $releaseArtifact = $this->eligibility->verifyReleaseArtifact($releaseArtifactBytes);
+        $releaseArtifact = $this->verifyReleaseArtifact($releaseArtifactBytes);
         $releasePayload = $releaseArtifact->payload();
         $releaseSubject = $releasePayload['subject'];
         if (! hash_equals($releaseSubject['proof_sha256'], $proofHash->value)
@@ -283,5 +299,17 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
     {
         return ($exception->errorInfo[0] ?? null) === $sqlState
             || (string) $exception->getCode() === $sqlState;
+    }
+
+    private function verifyReleaseArtifact(string $bytes): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationReleaseArtifact
+    {
+        if ($this->releaseArtifacts !== null) {
+            return $this->releaseArtifacts->verify($bytes);
+        }
+        if ($this->eligibility !== null) {
+            return $this->eligibility->verifyReleaseArtifact($bytes);
+        }
+
+        throw new LogicException('report_publication_release_verifier_unavailable');
     }
 }
