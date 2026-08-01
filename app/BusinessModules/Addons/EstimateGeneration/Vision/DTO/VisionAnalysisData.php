@@ -211,10 +211,21 @@ final readonly class VisionAnalysisData
 
         $normalized = [];
         foreach ($evidence as $key => $item) {
-            if (! is_string($key) || ! is_array($item) || ! self::hasExactKeys($item, ['locator'])) {
+            if (! is_string($key) || ! is_array($item)) {
                 throw new VisionContractException('invalid_evidence');
             }
-            $normalized[] = ['key' => $key, 'locator' => $item['locator']];
+            if (self::hasExactKeys($item, ['locator'])) {
+                $normalized[] = ['key' => $key, 'locator' => $item['locator']];
+
+                continue;
+            }
+            if (self::hasExactKeys($item, ['page_id', 'page_number', 'processing_unit_id', 'source_version', 'coordinate_space'])) {
+                $normalized[] = ['key' => $key, 'locator' => $item];
+
+                continue;
+            }
+
+            throw new VisionContractException('invalid_evidence');
         }
 
         return $normalized;
