@@ -56,6 +56,17 @@ final class ProcurementAwardMigrationContractTest extends TestCase
         self::assertStringNotContainsString('cursor()', $migration);
     }
 
+    public function test_event_primary_key_is_registered_before_its_self_referencing_foreign_key(): void
+    {
+        $migration = $this->migration();
+
+        self::assertStringContainsString("\$table->primary('id', 'proc_award_evidence_events_pk')", $migration);
+        self::assertLessThan(
+            strpos($migration, "\$table->foreign('predecessor_event_id'"),
+            strpos($migration, "\$table->primary('id', 'proc_award_evidence_events_pk')"),
+        );
+    }
+
     private function migration(): string
     {
         $source = file_get_contents(
