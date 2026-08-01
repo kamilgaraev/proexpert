@@ -30,7 +30,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         $vector = VectorGeometryData::fromArray($vectorPayload);
         $confirmation = $this->confirmation($vector);
         $service = $this->service([(object) [
-            'id' => 81, 'document_id' => 71, 'normalized_payload' => ['vector_geometry' => $vectorPayload],
+            'id' => 81, 'document_id' => 71, 'normalized_payload' => ['source_kind' => 'cad', 'vector_geometry' => $vectorPayload],
         ]]);
 
         $result = $service->handle(new GeometryConfirmationCommand(
@@ -93,14 +93,14 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         $sourceVersion = 'sha256:'.str_repeat('b', 64);
         $payload = $this->vectorPayload($sourceVersion);
         $confirmation = (new GeometrySourceConfirmationFactory)->makeFromNormalizedPayload(
-            ['vector_geometry' => $payload],
+            ['source_kind' => 'cad', 'vector_geometry' => $payload],
             $sourceVersion,
         );
         self::assertIsArray($confirmation);
         $service = $this->service([(object) [
             'id' => 81,
             'document_id' => 71,
-            'normalized_payload' => ['vector_geometry' => $payload],
+            'normalized_payload' => ['source_kind' => 'cad', 'vector_geometry' => $payload],
         ]]);
 
         $result = $service->handle(new GeometryConfirmationCommand(
@@ -131,7 +131,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         $service = $this->service([(object) [
             'id' => 81,
             'document_id' => 71,
-            'normalized_payload' => ['vector_geometry' => $payload],
+            'normalized_payload' => ['source_kind' => 'cad', 'vector_geometry' => $payload],
         ]]);
 
         $this->expectException(\InvalidArgumentException::class);
@@ -198,7 +198,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
 
     private function vectorPayload(?string $sourceFingerprint = null): array
     {
-        return ['source_kind' => 'cad', 'schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;ezdxf:1.4.4',
+        return ['schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;ezdxf:1.4.4',
             'source_fingerprint' => $sourceFingerprint ?? 'sha256:'.str_repeat('a', 64), 'source_unit' => 'mm', 'unit_status' => 'confirmed',
             'bounds' => [0, 0, 4000, 3000], 'layers' => [['name' => 'A', 'visible' => true]], 'blocks' => [],
             'entities' => [

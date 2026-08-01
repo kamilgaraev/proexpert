@@ -351,8 +351,10 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $this->requirePostgres();
         $fixture = $this->fixture();
         $this->attachVectorCapture($fixture);
+        $normalizedPayload = ['source_kind' => 'cad', 'vector_geometry' => $this->vectorPayload()];
+        unset($normalizedPayload['source_kind']);
         DB::table('estimate_generation_document_pages')->where('id', $fixture['page_id'])->update([
-            'normalized_payload' => json_encode(['vector_geometry' => $this->vectorPayload()], JSON_THROW_ON_ERROR),
+            'normalized_payload' => json_encode($normalizedPayload, JSON_THROW_ON_ERROR),
             'updated_at' => now(),
         ]);
         $authorization = Mockery::mock(AuthorizationService::class);
