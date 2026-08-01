@@ -6,8 +6,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Un
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSheetAnalysisOperation;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
-use DateInterval;
 use DateTimeImmutable;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Database\QueryException;
 use LogicException;
 use Throwable;
@@ -42,13 +44,13 @@ final class SheetAnalysisOperationJournal
         try {
             $analysis = $wire();
             $finalRouting = $routing;
-            $this->complete($operationId, $scope, $analysis, $finalRouting);
+            $this->complete($operationId, $kind, $scope, $analysis, $finalRouting);
 
             return SheetAnalysisOperationRun::performed($analysis, $finalRouting);
         } catch (Throwable $exception) {
             $status = $exception instanceof \App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException
                 && $exception->reason === 'vision_wire_replay_forbidden' ? 'needs_review' : 'failed';
-            $this->fail($operationId, $scope, $status, $exception::class);
+            $this->fail($operationId, $kind, $scope, $status, $exception::class);
             throw $exception;
         }
     }
@@ -96,14 +98,11 @@ final class SheetAnalysisOperationJournal
     }
 
     /** @param array<string, mixed> $routing */
-    private function complete(string $operationId, DocumentSheetOperationScope $scope, VisionAnalysisData $analysis, array $routing): void
+    private function complete(string $operationId, string $kind, DocumentSheetOperationScope $scope, VisionAnalysisData $analysis, array $routing): void
     {
-        if (EstimateGenerationSheetAnalysisOperation::query()->whereKey($operationId)->where($scope->attributes())
-            ->where('status', 'claimed')->where('lease_token', $scope->claimToken)
-            ->update(['status' => 'completed', 'analysis_payload' => $analysis->toArray(), 'final_routing' => $routing,
-                'lease_token' => null, 'lease_expires_at' => null, 'completed_at' => now(), 'updated_at' => now()]) !== 1) {
-            throw new SheetAnalysisOperationBusy('sheet_analysis_operation_lease_lost');
-        }
+        $this->transition($operationId, $kind, $scope, 'completed', null, [
+            'analysis_payload' => $analysis->toArray(), 'final_routing' => $routing, 'completed_at' => now(),
+        ]);
     }
 
     /** @param array<string, mixed> $routing */
@@ -115,11 +114,56 @@ final class SheetAnalysisOperationJournal
         }
     }
 
-    private function fail(string $operationId, DocumentSheetOperationScope $scope, string $status, string $reason): void
+    private function fail(string $operationId, string $kind, DocumentSheetOperationScope $scope, string $status, string $reason): void
     {
-        EstimateGenerationSheetAnalysisOperation::query()->whereKey($operationId)->where($scope->attributes())
-            ->where('status', 'claimed')->where('lease_token', $scope->claimToken)
-            ->update(['status' => $status, 'failure_reason' => $reason, 'lease_token' => null, 'lease_expires_at' => null, 'updated_at' => now()]);
+        $this->transition($operationId, $kind, $scope, $status, $reason);
+    }
+
+    /** @param array<string, mixed> $attributes */
+    private function transition(string $operationId, string $kind, DocumentSheetOperationScope $scope, string $status, ?string $reason, array $attributes = []): void
+    {
+        DB::transaction(function () use ($operationId, $kind, $scope, $status, $reason, $attributes): void {
+            $operation = EstimateGenerationSheetAnalysisOperation::query()->whereKey($operationId)->where($scope->attributes())->lockForUpdate()->first();
+            if (! $operation instanceof EstimateGenerationSheetAnalysisOperation || $operation->status !== 'claimed' || $operation->lease_token !== $scope->claimToken) {
+                throw new SheetAnalysisOperationBusy('sheet_analysis_operation_lease_lost');
+            }
+            $operation->forceFill([
+                ...$attributes,
+                'status' => $status,
+                'failure_reason' => $reason,
+                'lease_token' => null,
+                'lease_expires_at' => null,
+            ])->save();
+            if ($kind !== 'targeted') {
+                return;
+            }
+            $session = EstimateGenerationSession::query()->find($scope->sessionId);
+            if (! $session instanceof EstimateGenerationSession) {
+                throw new LogicException('Sheet analysis session disappeared.');
+            }
+            $payload = [
+                'operation_id' => $operationId,
+                'attempt' => (string) $operation->attempt_count,
+                'status' => $status,
+                'document_id' => $scope->documentId,
+                'unit_id' => $scope->unitId,
+                'source_version' => $scope->sourceVersion,
+                'reason' => $reason,
+            ];
+            try {
+                EstimateGenerationAuditEvent::query()->create([
+                    'session_id' => $session->id,
+                    'package_id' => null,
+                    'user_id' => $session->user_id,
+                    'event_type' => 'sheet_targeted_reanalysis_transition',
+                    'payload' => $payload,
+                ]);
+            } catch (QueryException $exception) {
+                if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '23505') {
+                    throw $exception;
+                }
+            }
+        }, 3);
     }
 
     /** @param array<string, mixed> $payload */
@@ -138,5 +182,10 @@ final class SheetAnalysisOperationJournal
 
     /** @param mixed $stored @param array<string, mixed> $fallback @return array<string, mixed> */
     private function routing(mixed $stored, array $fallback): array { return is_array($stored) && $stored !== [] ? $stored : $fallback; }
-    private function leaseExpiry(): DateTimeImmutable { return (new DateTimeImmutable)->add(new DateInterval('PT5M')); }
+    private function leaseExpiry(): DateTimeImmutable
+    {
+        return (new DateTimeImmutable)->modify(sprintf('+%d seconds', self::LEASE_SECONDS));
+    }
+
+    private const LEASE_SECONDS = 1860;
 }

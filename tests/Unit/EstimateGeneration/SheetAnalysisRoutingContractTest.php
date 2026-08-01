@@ -61,9 +61,33 @@ final class SheetAnalysisRoutingContractTest extends TestCase
         self::assertStringContainsString("->where('lease_token', \$scope->claimToken)", $journal);
         self::assertStringContainsString("'final_routing' => \$routing", $journal);
         self::assertStringContainsString('eg_sheet_analysis_scope_kind_uq', $migration);
-        self::assertStringContainsString('eg_sheet_analysis_audit_operation_uq', $migration);
+        self::assertStringContainsString('public $withinTransaction = false', $migration);
+        self::assertStringContainsString('assertNoDuplicateAuditTransitions', $migration);
+        self::assertStringContainsString('ensureConcurrentIndex', $migration);
+        self::assertStringContainsString('eg_sheet_analysis_audit_transition_uq', $migration);
+        self::assertStringContainsString('DROP INDEX CONCURRENTLY IF EXISTS eg_sheet_analysis_audit_transition_uq', $migration);
+        self::assertStringContainsString("'sheet_targeted_reanalysis_transition'", $journal);
+        self::assertStringContainsString("'attempt' => (string) \$operation->attempt_count", $journal);
+        self::assertStringContainsString('DB::transaction(function () use ($operationId, $kind, $scope, $status, $reason, $attributes)', $journal);
+        self::assertStringNotContainsString('audit_recorded_at', $journal);
+        self::assertStringContainsString('private const LEASE_SECONDS = 1860', $journal);
         $processor = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/ProductionDocumentUnitProcessor.php');
         self::assertStringContainsString("\$targetedRouting['outcome'] = 'needs_review'", $processor);
         self::assertStringContainsString("'sheet_analysis_routing' => \$routingPayload", $processor);
+    }
+
+    #[Test]
+    public function document_vision_runtime_cannot_outlive_its_journal_or_unit_lease(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $provider = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Providers/TimewebVisionProvider.php');
+        $journal = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/Understanding/SheetAnalysisOperationJournal.php');
+        $unit = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/ProcessDocumentUnit.php');
+
+        self::assertStringContainsString('DOCUMENT_OPERATION_MAX_SECONDS = 1800', $provider);
+        self::assertStringContainsString('boundedDocumentAttemptTimeout', $provider);
+        self::assertStringContainsString('retryDelayMilliseconds', $provider);
+        self::assertStringContainsString('LEASE_SECONDS = 1860', $journal);
+        self::assertStringContainsString('LEASE_SECONDS = 2100', $unit);
     }
 }

@@ -27,6 +27,10 @@ use Throwable;
 
 final readonly class TimewebVisionProvider implements VisionProvider
 {
+    public const DOCUMENT_OPERATION_MAX_SECONDS = 1800;
+
+    public const DOCUMENT_OPERATION_RETRY_DELAY_MAX_SECONDS = 5;
+
     public const PROVIDER = 'timeweb';
 
     public const PROMPT_VERSION = 'vision-contract:v3';
@@ -92,6 +96,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $wireClaimed = true;
                 $timeoutSeconds = $effective?->timeoutSeconds('vision')
                     ?? max(1, min(120, (int) config('estimate-generation.vision.timeout_seconds', 60)));
+                $timeoutSeconds = $this->boundedDocumentAttemptTimeout($input, $attempts, $timeoutSeconds);
                 $response = Http::timeout($timeoutSeconds)
                     ->withOptions(['stream' => true])
                     ->acceptJson()->asJson()->withToken($apiKey)
@@ -192,7 +197,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             if (! $lastException instanceof VisionProviderException || ! $lastException->retryable || $wireAttempt === $attempts) {
                 throw $lastException ?? new VisionProviderException('vision_provider_failed');
             }
-            usleep(max(0, min(5_000, (int) config('estimate-generation.vision.retry_delay_ms', 250))) * 1_000);
+            usleep($this->retryDelayMilliseconds($input) * 1_000);
         }
 
         throw new VisionProviderException('vision_provider_failed');
@@ -220,6 +225,26 @@ final readonly class TimewebVisionProvider implements VisionProvider
     private function retryableStatus(int $status): bool
     {
         return in_array($status, [408, 429], true) || $status >= 500;
+    }
+
+    private function boundedDocumentAttemptTimeout(VisionDocumentInput $input, int $attempts, int $configuredTimeout): int
+    {
+        if ($input->operationContext->unitId === null) {
+            return $configuredTimeout;
+        }
+        $retryBudget = max(0, $attempts - 1) * self::DOCUMENT_OPERATION_RETRY_DELAY_MAX_SECONDS;
+        $available = self::DOCUMENT_OPERATION_MAX_SECONDS - $retryBudget;
+
+        return max(1, min($configuredTimeout, intdiv($available, $attempts)));
+    }
+
+    private function retryDelayMilliseconds(VisionDocumentInput $input): int
+    {
+        $configured = max(0, min(5_000, (int) config('estimate-generation.vision.retry_delay_ms', 250)));
+
+        return $input->operationContext->unitId === null
+            ? $configured
+            : min($configured, self::DOCUMENT_OPERATION_RETRY_DELAY_MAX_SECONDS * 1_000);
     }
 
     /** @return array<string, mixed> */

@@ -24,6 +24,5 @@ final class EstimateGenerationSheetAnalysisOperation extends Model
         'final_routing' => 'array',
         'lease_expires_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',
-        'audit_recorded_at' => 'immutable_datetime',
     ];
 }

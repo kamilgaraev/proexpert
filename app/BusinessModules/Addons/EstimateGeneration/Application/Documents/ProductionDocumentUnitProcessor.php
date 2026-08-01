@@ -22,8 +22,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\Organization;
 use Throwable;
 
@@ -36,7 +34,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private RasterPreprocessor $raster,
         private BoundedVersionedS3ObjectReader $reader,
         private ?SheetAnalysisRouter $sheetAnalysisRouter = null,
-        private ?EstimateGenerationAuditService $audit = null,
         private ?SheetAnalysisOperationJournal $sheetAnalysisJournal = null,
     ) {}
 
@@ -258,14 +255,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 if ($targetedRun?->analysis === null) {
                     $targetedRouting['outcome'] = 'needs_review';
                     $targetedRouting['needs_review'] = true;
-                    $this->recordTargetedReanalysis($context, $targetedRouting, $targetedOperation, 'needs_review');
                 } else {
                     $analysis = $targetedRun?->analysis ?? $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform);
                     $final = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
                     $targetedRouting = $final?->toArray() ?? $targetedRouting;
                     $targetedRouting['outcome'] = $targetedRun?->outcome ?? 'succeeded';
                     $this->sheetAnalysisJournal?->persistFinalRouting($targetedOperation, $scope, $targetedRouting);
-                    $this->recordTargetedReanalysis($context, $targetedRouting, $targetedOperation, $targetedRun?->outcome ?? 'succeeded');
                 }
             } catch (Throwable $exception) {
                 $noCall = $exception instanceof VisionProviderException && $exception->reason === 'vision_wire_replay_forbidden';
@@ -273,12 +268,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $targetedRouting['outcome'] = 'needs_review';
                     $targetedRouting['needs_review'] = true;
                 }
-                $this->recordTargetedReanalysis(
-                    $context,
-                    $targetedRouting,
-                    $targetedOperation,
-                    $noCall ? 'needs_review' : 'failed',
-                );
                 if (! $noCall) {
                     throw $exception;
                 }
@@ -349,19 +338,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 ],
             ],
         );
-    }
-
-    /** @param array<string, mixed> $routing */
-    private function recordTargetedReanalysis(DocumentUnitExecutionContext $context, array $routing, string $operationId, string $outcome): void
-    {
-        if ($this->audit === null) {
-            return;
-        }
-
-        $session = EstimateGenerationSession::query()->find($context->sessionId);
-        if ($session instanceof EstimateGenerationSession) {
-            $this->audit->recordSheetTargetedReanalysis($session, $context->documentId, $context->unitId, $context->sourceVersion, $routing, $operationId, $outcome);
-        }
     }
 
     private function withSourceProvenance(DocumentUnitOutput $output, DocumentUnitProvenance $provenance): DocumentUnitOutput
