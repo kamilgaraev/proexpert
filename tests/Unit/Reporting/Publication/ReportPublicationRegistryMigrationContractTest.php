@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Publication;
 
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Process\Process;
 use Symfony\Component\Yaml\Yaml;
 
 final class ReportPublicationRegistryMigrationContractTest extends TestCase
@@ -276,13 +277,52 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         $workflow = Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/notification-concurrency.yml');
         $job = $workflow['jobs']['report-publication-release-request-discovery'] ?? null;
         self::assertIsArray($job);
-        $commands = implode("\n", array_map(
-            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
-            $job['steps'] ?? [],
-        ));
+        $commands = '';
+        foreach ($job['steps'] ?? [] as $step) {
+            if (($step['id'] ?? null) === 'release-requests') {
+                $commands = (string) ($step['run'] ?? '');
+                break;
+            }
+        }
         self::assertStringContainsString('if [[ -f "$request" && ! -L "$request" ]]', $commands);
         self::assertStringContainsString('has_requests=false', $commands);
         self::assertStringNotContainsString('build/reports/publication-release-requests', $commands);
+
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-r15-discovery-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory.'/build/reports/r15-candidate-evidence', 0777, true));
+        $output = $directory.'/github-output';
+        file_put_contents($output, '');
+        try {
+            $workspace = PHP_OS_FAMILY === 'Windows' ? $this->gitBashPath($directory) : $directory;
+            $outputPath = PHP_OS_FAMILY === 'Windows' ? $this->gitBashPath($output) : $output;
+            $bash = PHP_OS_FAMILY === 'Windows' && is_file('C:\\Program Files\\Git\\bin\\bash.exe')
+                ? 'C:\\Program Files\\Git\\bin\\bash.exe'
+                : 'bash';
+            $process = new Process([$bash, '-c', $commands], null, [
+                'GITHUB_WORKSPACE' => $workspace,
+                'GITHUB_OUTPUT' => $outputPath,
+            ]);
+            $process->run();
+
+            self::assertTrue($process->isSuccessful(), $process->getErrorOutput());
+            self::assertSame("has_requests=false\n", file_get_contents($output));
+        } finally {
+            @unlink($output);
+            @rmdir($directory.'/build/reports/r15-candidate-evidence');
+            @rmdir($directory.'/build/reports');
+            @rmdir($directory.'/build');
+            @rmdir($directory);
+        }
+    }
+
+    private function gitBashPath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+        if (preg_match('/^([A-Za-z]):\/(.*)$/', $path, $matches) !== 1) {
+            return $path;
+        }
+
+        return '/'.strtolower($matches[1]).'/'.$matches[2];
     }
 
     private function migrationPath(): string
