@@ -55,6 +55,14 @@ final class ProjectModelEvidenceWriterTest extends TestCase
         self::assertSame('dimension', $candidates[0]['assertion_type']);
         self::assertSame(['value' => 6.5, 'unit' => 'm'], $candidates[0]['value']);
         self::assertSame('cad', $candidates[0]['source']);
+
+        $other = $this->candidates($this->unit(505, 5, ['project_model_candidates' => [[
+            'identity' => ['axis' => '2', 'elevation' => '+6.500'],
+            'entity' => ['kind' => 'dimension', 'value' => 6.5, 'unit' => 'm'],
+            'assertion' => ['type' => 'dimension', 'source' => 'cad', 'value' => ['value' => 6.5, 'unit' => 'm']],
+        ]]]));
+
+        self::assertNotSame($candidates[0]['entity_key'], $other[0]['entity_key']);
     }
 
     #[Test]

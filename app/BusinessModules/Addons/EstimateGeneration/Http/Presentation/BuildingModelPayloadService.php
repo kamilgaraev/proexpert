@@ -54,7 +54,7 @@ final readonly class BuildingModelPayloadService
             'normalized_building_model' => $model->toArray(),
             'document_total_area' => $totalArea,
         ]);
-        if ($documentArea !== null) {
+        if (! $this->effectiveProjection->hasAreaCorrections($effectiveValues) && $documentArea !== null) {
             $quantitiesByKey[$documentArea->key] = $documentArea;
         }
         $quantities = array_values($quantitiesByKey);

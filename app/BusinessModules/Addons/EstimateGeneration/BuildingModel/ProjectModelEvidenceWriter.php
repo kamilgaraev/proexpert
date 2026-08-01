@@ -132,7 +132,10 @@ final readonly class ProjectModelEvidenceWriter
                 continue;
             }
             $identity = is_array($element['identity'] ?? null) ? $element['identity'] : [];
-            $entityKey = $this->entityKey('room', $identity, $unit, $index);
+            $modelRoomKey = $element['key'] ?? null;
+            $entityKey = is_string($modelRoomKey) && preg_match('/^[a-zA-Z][a-zA-Z0-9._:-]{0,79}$/D', $modelRoomKey) === 1
+                ? $modelRoomKey
+                : $this->entityKey('room', $identity, $unit, $index);
             $confidence = $this->confidence($element['confidence'] ?? $unit->confidence);
             $result[] = [
                 'unit' => $unit,
@@ -250,22 +253,25 @@ final readonly class ProjectModelEvidenceWriter
             ->where('evidence.source_version', $unit->sourceVersion)
             ->whereNull('evidence.invalidated_at')
             ->where('evidence.source_ref', 'document:'.$unit->documentId);
-        $row = $query->orderBy('evidence.id')->first(['evidence.id', 'evidence.source_version', 'evidence.invalidation_version', 'evidence.locator']);
-        if ($row === null) {
-            return null;
-        }
-        $evidenceLocator = $this->decode($row->locator);
-        if (($evidenceLocator['document_id'] ?? null) !== $unit->documentId
-            || (($evidenceLocator['unit_index'] ?? $evidenceLocator['page'] ?? null) !== $unit->index)) {
-            return null;
-        }
-        foreach ($locator as $key => $value) {
-            if (array_key_exists($key, $evidenceLocator) && $evidenceLocator[$key] !== $value) {
-                return null;
+        foreach ($query->orderBy('evidence.id')->get(['evidence.id', 'evidence.source_version', 'evidence.invalidation_version', 'evidence.locator']) as $row) {
+            $evidenceLocator = $this->decode($row->locator);
+            if (($evidenceLocator['document_id'] ?? null) !== $unit->documentId
+                || (($evidenceLocator['unit_index'] ?? $evidenceLocator['page'] ?? null) !== $unit->index)) {
+                continue;
+            }
+            $matches = true;
+            foreach ($locator as $key => $value) {
+                if (! array_key_exists($key, $evidenceLocator) || $evidenceLocator[$key] !== $value) {
+                    $matches = false;
+                    break;
+                }
+            }
+            if ($matches) {
+                return $row;
             }
         }
 
-        return $row;
+        return null;
     }
 
     /** @param array<string,mixed> $identity */
@@ -282,16 +288,23 @@ final readonly class ProjectModelEvidenceWriter
     /** @param array<string,mixed> $identity */
     private function unambiguousJoin(array $identity): ?string
     {
-        $axis = $this->identityToken($identity['axis'] ?? null);
-        if ($axis !== null) {
-            return 'axis:'.$axis;
-        }
         $room = $this->identityToken($identity['room_number'] ?? null);
         $floor = $this->identityToken($identity['floor'] ?? null);
         $marker = $this->identityToken($identity['section_marker'] ?? $identity['elevation'] ?? null);
+        $axis = $this->identityToken($identity['axis'] ?? null);
 
-        return $room !== null && $floor !== null && $marker !== null
-            ? 'room:'.$room.'|floor:'.$floor.'|marker:'.$marker
+        if ($room !== null && $floor !== null && $marker !== null) {
+            return 'room:'.$room.'|floor:'.$floor.'|marker:'.$marker;
+        }
+
+        // An axis is only useful when the entity kind, measurement and role make
+        // it unique across sheets. Axis alone collides between plans and sections.
+        $entityType = $this->identityToken($identity['entity_type'] ?? null);
+        $measurement = $this->identityToken($identity['measurement'] ?? null);
+        $role = $this->identityToken($identity['role'] ?? null);
+
+        return $axis !== null && $entityType !== null && $measurement !== null && $role !== null
+            ? 'axis:'.$axis.'|entity:'.$entityType.'|measurement:'.$measurement.'|role:'.$role
             : null;
     }
 

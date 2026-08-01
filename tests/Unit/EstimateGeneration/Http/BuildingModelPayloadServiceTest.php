@@ -149,7 +149,12 @@ final class BuildingModelPayloadServiceTest extends TestCase
             'value' => ['value' => 19.5, 'unit' => 'm2'],
             'correction_stable_key' => 'correction:'.str_repeat('a', 64),
         ]];
-        $applied = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource($this->model(), [], effectiveValues: $effective));
+        $applied = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource(
+            $this->model(),
+            [],
+            totalArea: ['amount' => '100.000000', 'evidence_id' => 21, 'confidence' => 0.95, 'floor_count' => 1],
+            effectiveValues: $effective,
+        ));
         $reverted = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource($this->model(), []));
 
         $afterApply = $applied->handle($this->generationSession());

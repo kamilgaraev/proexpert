@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -68,21 +67,6 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
             $diagnostics = $calculation->diagnostics;
             $metrics = $calculation->metrics;
         }
-        if ($model !== null && $context->baseInputVersion !== null) {
-            $expectedFloorCount = $this->positiveInteger($analysis['object']['floors'] ?? null);
-            $roomAreas = $this->roomAnnotationFloorArea->makeAll(new BuildingModelOperationContext(
-                $context->organizationId,
-                $context->projectId,
-                $context->sessionId,
-                $context->baseInputVersion,
-            ), $model, $expectedFloorCount);
-            foreach ($roomAreas as $roomArea) {
-                if ($roomArea->key === 'floor_area' && $hasEffectiveAreaCorrections) {
-                    continue;
-                }
-                $quantities[$roomArea->key] = $roomArea;
-            }
-        }
         $documentArea = $this->analysisFloorArea->make($analysis);
         if (! $hasEffectiveAreaCorrections && $documentArea !== null
             && ($documentArea->source === QuantitySource::Evidenced
@@ -120,12 +104,4 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         return $this->results->make($context, $this->stage(), $data, ['hints_count' => count($hints)]);
     }
 
-    private function positiveInteger(mixed $value): ?int
-    {
-        if (! is_numeric($value) || (float) $value < 1 || (float) $value > 100 || floor((float) $value) !== (float) $value) {
-            return null;
-        }
-
-        return (int) $value;
-    }
 }
