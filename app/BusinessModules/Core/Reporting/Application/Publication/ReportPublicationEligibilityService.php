@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationEligibilityRe
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationRecord;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationReleaseIdentity;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
@@ -141,9 +142,13 @@ final class ReportPublicationEligibilityService
         ReportPublicationReleaseIdentity $release,
         ?ReportPublicationRecord $previous,
     ): void {
-        if ($previous !== null
-            && ! hash_equals($previous->identity->proofHash->value, $proof->digest()->value)
-            && $release->createdAt <= $previous->publishedAt) {
+        if ($previous === null) {
+            return;
+        }
+        $activeIdempotentReplay = $previous->status === ReportPublicationStatus::PUBLISHED
+            && hash_equals($previous->identity->proofHash->value, $proof->digest()->value);
+        $previousBoundary = $previous->disabledAt ?? $previous->publishedAt;
+        if (! $activeIdempotentReplay && $release->createdAt <= $previousBoundary) {
             $this->ineligible();
         }
     }

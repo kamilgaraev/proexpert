@@ -15,6 +15,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use LogicException;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
@@ -183,6 +184,7 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
         $row = (array) DB::table('report_publications')->where('id', $oldPublicationId)->first();
         $row['id'] = (string) Str::ulid();
         $row['status'] = 'published';
+        $row['published_at'] = (new \DateTimeImmutable((string) $row['published_at']))->modify('+1 microsecond');
         $row['disabled_at'] = null;
         $row['disabled_reason'] = null;
         $row['disabled_by'] = null;
@@ -193,6 +195,23 @@ final class ReportPublicationRegistryPostgresTest extends TestCase
 
         self::assertSame('23514', $exception->errorInfo[0] ?? null);
         self::assertSame(1, DB::table('report_publications')->count());
+    }
+
+    public function test_disabled_same_proof_replay_is_rejected_before_insert(): void
+    {
+        [$registry, $eligible] = $this->registry();
+        $published = $registry->promote($eligible);
+        $publicationId = (string) $published->publicationIdentity?->publicationId;
+        $registry->disable($publicationId, 'source_contract_revoked', 'release-bot@most');
+
+        try {
+            $registry->promote($eligible);
+            self::fail('Disabled proof replay must be rejected by the application gate.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame('report_publication_ineligible', $exception->getMessage());
+        }
+        self::assertSame(1, DB::table('report_publications')->count());
+        self::assertSame('disabled', DB::table('report_publications')->value('status'));
     }
 
     public function test_feature_state_is_bound_to_publication_and_proof(): void

@@ -291,7 +291,7 @@ return new class extends Migration
                         FROM report_publications AS previous
                         WHERE previous.code = NEW.code
                             AND previous.id <> NEW.id
-                            AND previous.published_at >= NEW.published_at
+                            AND COALESCE(previous.disabled_at, previous.published_at) >= NEW.published_at
                     ) THEN
                         RAISE EXCEPTION 'report_publication_timestamp_not_monotonic' USING ERRCODE = '23514';
                     END IF;
