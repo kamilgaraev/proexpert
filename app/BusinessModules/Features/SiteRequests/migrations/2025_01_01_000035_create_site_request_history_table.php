@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('site_request_history')) {
+            return;
+        }
+
         Schema::create('site_request_history', function (Blueprint $table) {
             $table->id();
 
@@ -57,4 +61,3 @@ return new class extends Migration
         Schema::dropIfExists('site_request_history');
     }
 };
-
