@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\DTOs;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQueryIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -18,6 +19,7 @@ final readonly class ProjectMarginSourceSnapshotRequest
         public DateTimeImmutable $asOf,
         public ?DateTimeImmutable $staleAt,
         public ?string $snapshotId = null,
+        public ?ReportQueryIdentity $reportQueryIdentity = null,
     ) {
         if (($filters['organization_id'] ?? null) !== $scope->organizationId
             || $closeIdentity->organizationId !== $scope->organizationId

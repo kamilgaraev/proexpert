@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Services;
 
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
@@ -16,8 +17,9 @@ final class PlanFactReportSourceSnapshotAdapter extends AbstractBudgetingReportS
         private readonly PlanFactSourceSnapshotWriter $writer,
         private readonly BudgetingReportSourceCloseService $closeService,
         ReportSourceSnapshotStore $store,
+        ?CanonicalReportSourceHashBuilder $hashes = null,
     ) {
-        parent::__construct($store);
+        parent::__construct($store, $hashes);
     }
 
     protected function persistSourceSnapshot(ReportQuery $query): ReportSourceSnapshotHeader
@@ -29,6 +31,8 @@ final class PlanFactReportSourceSnapshotAdapter extends AbstractBudgetingReportS
             $this->closeIdentity($query),
             $query->asOf,
             null,
+            null,
+            $query->identity,
         ));
     }
 
@@ -41,13 +45,25 @@ final class PlanFactReportSourceSnapshotAdapter extends AbstractBudgetingReportS
         )->formulaVersion;
     }
 
-    protected function reportCode(): string { return PlanFactSourceSnapshotMaterializer::REPORT_CODE; }
+    protected function reportCode(): string
+    {
+        return PlanFactSourceSnapshotMaterializer::REPORT_CODE;
+    }
 
-    protected function sourceKind(): string { return PlanFactSourceSnapshotMaterializer::SOURCE_KIND; }
+    protected function sourceKind(): string
+    {
+        return PlanFactSourceSnapshotMaterializer::SOURCE_KIND;
+    }
 
-    protected function schemaVersion(): string { return PlanFactSourceSnapshotMaterializer::SCHEMA_VERSION; }
+    protected function schemaVersion(): string
+    {
+        return PlanFactSourceSnapshotMaterializer::SCHEMA_VERSION;
+    }
 
-    protected function drillColumnId(): string { return PlanFactSourceSnapshotMaterializer::DRILL_COLUMN_ID; }
+    protected function drillColumnId(): string
+    {
+        return PlanFactSourceSnapshotMaterializer::DRILL_COLUMN_ID;
+    }
 
     protected function rowSchema(): array
     {

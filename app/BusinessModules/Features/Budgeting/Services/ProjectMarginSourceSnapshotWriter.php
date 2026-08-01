@@ -41,6 +41,7 @@ final class ProjectMarginSourceSnapshotWriter
             $request->asOf,
             $request->staleAt,
             $close,
+            $request->reportQueryIdentity,
         );
 
         return $this->store->resolveReady($identity, $snapshot);

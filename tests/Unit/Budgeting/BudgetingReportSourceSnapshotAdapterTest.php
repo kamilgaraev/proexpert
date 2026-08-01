@@ -110,7 +110,9 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
 
         self::assertSame($sourceKind, $snapshot->kind);
         self::assertSame($store->headerValue?->id, $snapshot->id);
-        self::assertSame($store->headerValue?->sourceHash->value, $snapshot->sourceHash->value);
+        self::assertSame($store->headerValue?->materializedSourceHash->value, $snapshot->materializedSourceHash->value);
+        self::assertSame($snapshot->canonicalReportHash->value, $result->provenance->sourceHash->value);
+        self::assertNotSame($snapshot->canonicalReportHash->value, $snapshot->materializedSourceHash->value);
         self::assertSame('01JZZZZZZZZZZZZZZZZZZZZZZZ', $snapshot->watermarks['close_id']);
         self::assertSame(str_repeat('a', 64), $snapshot->watermarks['content_hash']);
         self::assertSame('actuals:1', $snapshot->watermarks['source_watermarks'][0]['watermark']);
@@ -371,6 +373,7 @@ final class InMemoryReportSourceSnapshotStore implements ReportSourceSnapshotSto
             $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt,
             $header->staleAt, \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceSnapshotStatus::READY,
             $header->rowCount, $header->drillRowCount, $header->snapshotHash, $header->generatedAt, null,
+            $header->reportQueryIdentity, $header->reportQueryHash,
         );
         $this->rows = $snapshot->rows;
         $this->drillRows = $snapshot->drillRows;

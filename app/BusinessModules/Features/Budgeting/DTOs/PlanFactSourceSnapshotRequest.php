@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\DTOs;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQueryIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -18,6 +19,7 @@ final readonly class PlanFactSourceSnapshotRequest
         public DateTimeImmutable $asOf,
         public ?DateTimeImmutable $staleAt,
         public ?string $snapshotId = null,
+        public ?ReportQueryIdentity $reportQueryIdentity = null,
     ) {
         if (($filters['organization_id'] ?? null) !== $scope->organizationId
             || $closeIdentity->organizationId !== $scope->organizationId
@@ -25,7 +27,7 @@ final readonly class PlanFactSourceSnapshotRequest
             || ($filters['period_end'] ?? null) !== $closeIdentity->periodEnd
             || ($filters['scenario_uuid'] ?? null) !== $closeIdentity->scenarioIdentity
             || ($filters['budget_version_uuid'] ?? null) !== $closeIdentity->planIdentity
-            || (($filters['project_id'] ?? null) !== null && !in_array((int) $filters['project_id'], $scope->projectIds, true))
+            || (($filters['project_id'] ?? null) !== null && ! in_array((int) $filters['project_id'], $scope->projectIds, true))
             || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $closeId) !== 1
             || ($snapshotId !== null && preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $snapshotId) !== 1)) {
             throw new InvalidArgumentException('plan_fact_source_snapshot_request_invalid');

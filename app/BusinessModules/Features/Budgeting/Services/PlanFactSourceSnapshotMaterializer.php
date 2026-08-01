@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Services;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQueryIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
@@ -37,6 +38,7 @@ final class PlanFactSourceSnapshotMaterializer
         DateTimeImmutable $asOf,
         ?DateTimeImmutable $staleAt,
         BudgetingReportSourceClose $close,
+        ?ReportQueryIdentity $reportQueryIdentity = null,
     ): ReportSourceSnapshotWrite {
         $identity = $this->identity($scope, $filters, $close->closeId);
         $rows = $this->rows($snapshotId, $report['rows'] ?? []);
@@ -65,6 +67,8 @@ final class PlanFactSourceSnapshotMaterializer
             $this->hash(['pending' => $snapshotId]),
             null,
             null,
+            $reportQueryIdentity?->projection,
+            $reportQueryIdentity?->hash,
         );
         $snapshotHash = ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows);
         $header = new ReportSourceSnapshotHeader(
@@ -85,6 +89,8 @@ final class PlanFactSourceSnapshotMaterializer
             $snapshotHash,
             null,
             null,
+            $header->reportQueryIdentity,
+            $header->reportQueryHash,
         );
 
         return new ReportSourceSnapshotWrite($header, $rows, $drillRows);

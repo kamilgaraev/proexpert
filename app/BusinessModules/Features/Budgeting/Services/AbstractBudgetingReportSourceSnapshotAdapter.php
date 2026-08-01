@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
@@ -34,17 +35,17 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use DateTimeImmutable;
 
-abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDataProvider, ReportRowQuery, ReportDrillDownProvider
+abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDataProvider, ReportDrillDownProvider, ReportRowQuery
 {
     private const REPORT_QUERY_HASH = 'report_query_hash';
 
     private const SOURCE_SNAPSHOT_QUERY_HASH = 'source_snapshot_query_hash';
 
-    public function __construct(private readonly ReportSourceSnapshotStore $store)
-    {
-    }
+    public function __construct(
+        private readonly ReportSourceSnapshotStore $store,
+        private readonly ?CanonicalReportSourceHashBuilder $hashes = null,
+    ) {}
 
     final public function materialize(
         ReportExecutionContext $context,
@@ -57,13 +58,13 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
         $this->assertHeader($header, $context, $query);
         $progress->advance(100);
 
-        return new ReportSnapshotRef(
+        $provisional = new ReportSnapshotRef(
             $header->sourceKind,
             $header->id,
             $header->scope,
             $query->definition->definitionHash,
             $query->definition->formulaVersion,
-            $header->sourceHash,
+            $header->materializedSourceHash,
             $header->generatedAt,
             $header->staleAt,
             [
@@ -73,6 +74,27 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
             ],
             ReportSnapshotClassification::OPERATIONAL,
             null,
+            $header->materializedSourceHash,
+        );
+        $canonical = ($this->hashes ?? new CanonicalReportSourceHashBuilder)->build($query, $provisional, $this->result($context, $provisional));
+
+        return new ReportSnapshotRef(
+            $header->sourceKind,
+            $header->id,
+            $header->scope,
+            $query->definition->definitionHash,
+            $query->definition->formulaVersion,
+            $canonical,
+            $header->generatedAt,
+            $header->staleAt,
+            [
+                ...$header->watermarks,
+                self::REPORT_QUERY_HASH => $query->queryHash->value,
+                self::SOURCE_SNAPSHOT_QUERY_HASH => $header->queryHash->value,
+            ],
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+            $header->materializedSourceHash,
         );
     }
 
@@ -95,7 +117,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
                     $this->sourceRefSchemaVersion(),
                     'approved_close',
                     $header->rowCount,
-                    $header->snapshotHash,
+                    $header->materializedSourceHash,
                 )],
                 $snapshot->sourceHash,
                 null,
@@ -219,7 +241,9 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
             || $header->sourceKind !== $this->sourceKind()
             || $header->schemaVersion !== $this->schemaVersion()
             || $header->scopeIdentity() !== $context->scope->canonicalIdentity()
-            || $header->scopeIdentity() !== $query->scope->canonicalIdentity()) {
+            || $header->scopeIdentity() !== $query->scope->canonicalIdentity()
+            || $header->reportQueryHash === null
+            || ! hash_equals($header->reportQueryHash->value, $query->queryHash->value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
         }
 
@@ -235,7 +259,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
 
         $header = $this->store->header($this->readRequest($context, $snapshot));
         if ($header->id !== $snapshot->id
-            || ! hash_equals($header->sourceHash->value, $snapshot->sourceHash->value)
+            || ! hash_equals($header->materializedSourceHash->value, $snapshot->materializedSourceHash->value)
             || $header->generatedAt != $snapshot->generatedAt
             || $header->staleAt != $snapshot->staleAt
             || ! hash_equals($this->closeFormulaVersion($header), $snapshot->formulaVersion)

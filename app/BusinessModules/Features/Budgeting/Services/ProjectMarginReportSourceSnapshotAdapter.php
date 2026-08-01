@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Services;
 
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
@@ -16,8 +17,9 @@ final class ProjectMarginReportSourceSnapshotAdapter extends AbstractBudgetingRe
         private readonly ProjectMarginSourceSnapshotWriter $writer,
         private readonly BudgetingReportSourceCloseService $closeService,
         ReportSourceSnapshotStore $store,
+        ?CanonicalReportSourceHashBuilder $hashes = null,
     ) {
-        parent::__construct($store);
+        parent::__construct($store, $hashes);
     }
 
     protected function persistSourceSnapshot(ReportQuery $query): ReportSourceSnapshotHeader
@@ -29,6 +31,8 @@ final class ProjectMarginReportSourceSnapshotAdapter extends AbstractBudgetingRe
             $this->closeIdentity($query),
             $query->asOf,
             null,
+            null,
+            $query->identity,
         ));
     }
 
@@ -41,13 +45,25 @@ final class ProjectMarginReportSourceSnapshotAdapter extends AbstractBudgetingRe
         )->formulaVersion;
     }
 
-    protected function reportCode(): string { return ProjectMarginSourceSnapshotMaterializer::REPORT_CODE; }
+    protected function reportCode(): string
+    {
+        return ProjectMarginSourceSnapshotMaterializer::REPORT_CODE;
+    }
 
-    protected function sourceKind(): string { return ProjectMarginSourceSnapshotMaterializer::SOURCE_KIND; }
+    protected function sourceKind(): string
+    {
+        return ProjectMarginSourceSnapshotMaterializer::SOURCE_KIND;
+    }
 
-    protected function schemaVersion(): string { return ProjectMarginSourceSnapshotMaterializer::SCHEMA_VERSION; }
+    protected function schemaVersion(): string
+    {
+        return ProjectMarginSourceSnapshotMaterializer::SCHEMA_VERSION;
+    }
 
-    protected function drillColumnId(): string { return ProjectMarginSourceSnapshotMaterializer::DRILL_COLUMN_ID; }
+    protected function drillColumnId(): string
+    {
+        return ProjectMarginSourceSnapshotMaterializer::DRILL_COLUMN_ID;
+    }
 
     protected function rowSchema(): array
     {
