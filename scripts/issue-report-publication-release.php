@@ -24,9 +24,6 @@ try {
             throw new RuntimeException('report_publication_release_input_invalid');
         }
     }
-    $requestRoot = dirname(__DIR__).'/build/reports/publication-release-requests';
-    $request = (new ReportPublicationReleaseRequestFileLoader)->load($options['request'], $requestRoot);
-
     $trustedRoot = getenv('MOST_R15_RELEASE_TRUSTED_ROOT');
     if (! is_string($trustedRoot) || $trustedRoot === '') {
         throw new RuntimeException('report_publication_release_trusted_root_missing');
@@ -46,6 +43,7 @@ try {
             throw new RuntimeException('report_publication_release_trusted_root_incomplete');
         }
     }
+    $request = (new ReportPublicationReleaseRequestFileLoader)->load($options['request'], $trustedRootReal);
     $trustedRequest = (new ReportPublicationReleaseRequestFileLoader)->load(
         $trustedRootReal.DIRECTORY_SEPARATOR.'r15_release_request.json',
         $trustedRootReal,

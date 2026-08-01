@@ -203,7 +203,9 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('issue-report-publication-release.php', $releaseCommands);
         self::assertStringNotContainsString('report-publication-proof.valid.json', $releaseCommands);
         self::assertStringNotContainsString('wave-1-candidates.v1.yaml', $releaseCommands);
-        self::assertStringContainsString('publication-release-requests/*.json', $releaseCommands);
+        self::assertStringContainsString('MOST_R15_RELEASE_TRUSTED_ROOT', $releaseCommands);
+        self::assertStringContainsString('r15_release_request.json', $releaseCommands);
+        self::assertStringNotContainsString('publication-release-requests/*.json', $releaseCommands);
         self::assertStringNotContainsString('publication-release-requests/*.php', $releaseCommands);
         self::assertContains(
             'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
@@ -222,6 +224,7 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('ReportPublicationReleaseRequestFileLoader', $releaseScript);
         self::assertStringContainsString('ProjectReportPublicationReleaseRequestRegistry', $releaseScript);
         self::assertStringContainsString("getenv('MOST_R15_RELEASE_TRUSTED_ROOT')", $releaseScript);
+        self::assertStringContainsString('load($options[\'request\'], $trustedRootReal)', $releaseScript);
         self::assertStringContainsString('realpath($trustedRoot)', $releaseScript);
         self::assertStringContainsString('is_link($trustedRoot)', $releaseScript);
         self::assertStringContainsString('r15-candidate-manifest.json', $releaseScript);

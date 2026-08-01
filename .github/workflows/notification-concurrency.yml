@@ -703,7 +703,7 @@ jobs:
           REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64: ${{ secrets.REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64 }}
         run: |
           shopt -s nullglob
-          for request in build/reports/publication-release-requests/*.json; do
+          for request in "$MOST_R15_RELEASE_TRUSTED_ROOT"/r15_release_request.json; do
             php scripts/issue-report-publication-release.php \
               --request="$request" \
               --output-directory=build/reports/signed-publication-releases
