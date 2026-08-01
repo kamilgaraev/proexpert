@@ -10,31 +10,39 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    private const TABLE = 'estimate_generation_project_model_evidence_bindings';
+
     public $withinTransaction = false;
 
     public function up(): void
     {
-        Schema::table('estimate_generation_project_model_evidence_bindings', function (Blueprint $table): void {
-            $table->unsignedBigInteger('assertion_id')->nullable()->after('entity_id');
-            $table->unsignedBigInteger('correction_id')->nullable()->after('assertion_id');
-            $table->string('candidate_source', 32)->nullable()->after('evidence_id');
-            $table->char('candidate_value_fingerprint', 64)->nullable()->after('candidate_source');
-            $table->index(['assertion_id', 'building_model_id'], 'eg_project_model_evidence_assertion_idx');
-            $table->index(['correction_id', 'building_model_id'], 'eg_project_model_evidence_correction_idx');
-        });
+        $this->ensureColumns();
 
         if (DB::getDriverName() !== 'pgsql') {
-            Schema::table('estimate_generation_project_model_evidence_bindings', function (Blueprint $table): void {
-                $table->unique(['assertion_id', 'correction_id', 'evidence_id'], 'eg_project_model_evidence_candidate_binding_uq');
-                $table->foreign(['assertion_id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'], 'eg_project_model_evidence_assertion_scope_fk')
-                    ->references(['id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'])
-                    ->on('estimate_generation_project_model_assertions')
-                    ->cascadeOnDelete();
-                $table->foreign(['correction_id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'], 'eg_project_model_evidence_correction_scope_fk')
-                    ->references(['id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'])
-                    ->on('estimate_generation_project_model_corrections')
-                    ->cascadeOnDelete();
-            });
+            $this->ensureNonPostgresIndexesAndForeignKeys();
+
+            return;
+        }
+
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
+        $timeouts = $runtime->configureSessionTimeouts();
+        try {
+            $this->ensurePostgresIndexes($runtime);
+            $this->ensurePostgresConstraints($runtime);
+            $this->replaceExactBindingGuard();
+            $this->ensureExactBindingGuardTrigger();
+            DB::statement('ALTER TABLE '.self::TABLE.' DROP CONSTRAINT IF EXISTS eg_project_model_evidence_binding_uq');
+        } finally {
+            $runtime->restoreSessionTimeouts($timeouts);
+        }
+    }
+
+    public function down(): void
+    {
+        $this->assertNoExactBindingAuditData();
+
+        if (DB::getDriverName() !== 'pgsql') {
+            $this->dropNonPostgresSchema();
 
             return;
         }
@@ -43,18 +51,234 @@ return new class extends Migration
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             $runtime->ensureConcurrentIndex(
-                'eg_project_model_evidence_candidate_binding_uq',
-                'CREATE UNIQUE INDEX CONCURRENTLY eg_project_model_evidence_candidate_binding_uq ON estimate_generation_project_model_evidence_bindings (COALESCE(assertion_id, 0), COALESCE(correction_id, 0), evidence_id) WHERE num_nonnulls(assertion_id, correction_id) = 1'
+                'eg_project_model_evidence_binding_uq',
+                'CREATE UNIQUE INDEX CONCURRENTLY eg_project_model_evidence_binding_uq ON '.self::TABLE.' (entity_id, evidence_id)'
             );
+            if (! $this->postgresConstraintExists('eg_project_model_evidence_binding_uq')) {
+                DB::statement('ALTER TABLE '.self::TABLE.' ADD CONSTRAINT eg_project_model_evidence_binding_uq UNIQUE USING INDEX eg_project_model_evidence_binding_uq');
+            }
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS eg_project_model_evidence_candidate_binding_uq');
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS eg_project_model_evidence_correction_idx');
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS eg_project_model_evidence_assertion_idx');
+        } finally {
+            $runtime->restoreSessionTimeouts($timeouts);
+        }
 
-            DB::unprepared(<<<'SQL'
+        DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_project_model_evidence_bindings
-    ADD CONSTRAINT eg_project_model_evidence_assertion_scope_fk FOREIGN KEY (assertion_id, building_model_id, organization_id, project_id, session_id, source_version) REFERENCES estimate_generation_project_model_assertions (id, building_model_id, organization_id, project_id, session_id, source_version) ON DELETE CASCADE NOT VALID,
-    ADD CONSTRAINT eg_project_model_evidence_correction_scope_fk FOREIGN KEY (correction_id, building_model_id, organization_id, project_id, session_id, source_version) REFERENCES estimate_generation_project_model_corrections (id, building_model_id, organization_id, project_id, session_id, source_version) ON DELETE CASCADE NOT VALID,
-    ADD CONSTRAINT eg_project_model_evidence_candidate_subject_ck CHECK (num_nonnulls(assertion_id, correction_id) = 1) NOT VALID,
-    ADD CONSTRAINT eg_project_model_evidence_candidate_source_ck CHECK (candidate_source IN ('manual_correction', 'cad', 'table', 'explicit_dimension', 'reconciled_geometry')) NOT VALID,
-    ADD CONSTRAINT eg_project_model_evidence_candidate_fingerprint_ck CHECK (candidate_value_fingerprint ~ '^[a-f0-9]{64}$') NOT VALID;
+    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_fingerprint_ck,
+    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_source_ck,
+    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_subject_ck,
+    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_correction_scope_fk,
+    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_assertion_scope_fk;
+SQL);
 
+        $this->dropColumns();
+        $this->replaceLegacyBindingGuard();
+    }
+
+    private function ensureColumns(): void
+    {
+        if (! Schema::hasColumn(self::TABLE, 'assertion_id')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->unsignedBigInteger('assertion_id')->nullable()->after('entity_id');
+            });
+        }
+
+        if (! Schema::hasColumn(self::TABLE, 'correction_id')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->unsignedBigInteger('correction_id')->nullable()->after('assertion_id');
+            });
+        }
+
+        if (! Schema::hasColumn(self::TABLE, 'candidate_source')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->string('candidate_source', 32)->nullable()->after('evidence_id');
+            });
+        }
+
+        if (! Schema::hasColumn(self::TABLE, 'candidate_value_fingerprint')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->char('candidate_value_fingerprint', 64)->nullable()->after('candidate_source');
+            });
+        }
+    }
+
+    private function ensureNonPostgresIndexesAndForeignKeys(): void
+    {
+        if (! Schema::hasIndex(self::TABLE, 'eg_project_model_evidence_assertion_idx')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->index(['assertion_id', 'building_model_id'], 'eg_project_model_evidence_assertion_idx');
+            });
+        }
+        if (! Schema::hasIndex(self::TABLE, 'eg_project_model_evidence_correction_idx')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->index(['correction_id', 'building_model_id'], 'eg_project_model_evidence_correction_idx');
+            });
+        }
+        if (! Schema::hasIndex(self::TABLE, 'eg_project_model_evidence_candidate_binding_uq')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->unique(['assertion_id', 'correction_id', 'evidence_id'], 'eg_project_model_evidence_candidate_binding_uq');
+            });
+        }
+        if (! $this->foreignKeyExists('eg_project_model_evidence_assertion_scope_fk')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->foreign(['assertion_id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'], 'eg_project_model_evidence_assertion_scope_fk')
+                    ->references(['id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'])
+                    ->on('estimate_generation_project_model_assertions')
+                    ->cascadeOnDelete();
+            });
+        }
+        if (! $this->foreignKeyExists('eg_project_model_evidence_correction_scope_fk')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->foreign(['correction_id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'], 'eg_project_model_evidence_correction_scope_fk')
+                    ->references(['id', 'building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version'])
+                    ->on('estimate_generation_project_model_corrections')
+                    ->cascadeOnDelete();
+            });
+        }
+    }
+
+    private function ensurePostgresIndexes(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
+    {
+        $runtime->ensureConcurrentIndex(
+            'eg_project_model_evidence_assertion_idx',
+            'CREATE INDEX CONCURRENTLY eg_project_model_evidence_assertion_idx ON '.self::TABLE.' (assertion_id, building_model_id)'
+        );
+        $runtime->ensureConcurrentIndex(
+            'eg_project_model_evidence_correction_idx',
+            'CREATE INDEX CONCURRENTLY eg_project_model_evidence_correction_idx ON '.self::TABLE.' (correction_id, building_model_id)'
+        );
+        $runtime->ensureConcurrentIndex(
+            'eg_project_model_evidence_candidate_binding_uq',
+            'CREATE UNIQUE INDEX CONCURRENTLY eg_project_model_evidence_candidate_binding_uq ON '.self::TABLE.' (COALESCE(assertion_id, 0), COALESCE(correction_id, 0), evidence_id) WHERE num_nonnulls(assertion_id, correction_id) = 1'
+        );
+    }
+
+    private function ensurePostgresConstraints(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
+    {
+        $runtime->ensureConstraint(
+            self::TABLE,
+            'eg_project_model_evidence_assertion_scope_fk',
+            'FOREIGN KEY (assertion_id, building_model_id, organization_id, project_id, session_id, source_version) REFERENCES estimate_generation_project_model_assertions (id, building_model_id, organization_id, project_id, session_id, source_version) ON DELETE CASCADE'
+        );
+        $runtime->ensureConstraint(
+            self::TABLE,
+            'eg_project_model_evidence_correction_scope_fk',
+            'FOREIGN KEY (correction_id, building_model_id, organization_id, project_id, session_id, source_version) REFERENCES estimate_generation_project_model_corrections (id, building_model_id, organization_id, project_id, session_id, source_version) ON DELETE CASCADE'
+        );
+        $runtime->ensureConstraint(
+            self::TABLE,
+            'eg_project_model_evidence_candidate_subject_ck',
+            'CHECK (num_nonnulls(assertion_id, correction_id) = 1)'
+        );
+        $runtime->ensureConstraint(
+            self::TABLE,
+            'eg_project_model_evidence_candidate_source_ck',
+            "CHECK (candidate_source IN ('manual_correction', 'cad', 'table', 'explicit_dimension', 'reconciled_geometry'))"
+        );
+        $runtime->ensureConstraint(
+            self::TABLE,
+            'eg_project_model_evidence_candidate_fingerprint_ck',
+            "CHECK (candidate_value_fingerprint ~ '^[a-f0-9]{64}$')"
+        );
+    }
+
+    private function assertNoExactBindingAuditData(): void
+    {
+        $auditColumns = ['assertion_id', 'correction_id', 'candidate_source', 'candidate_value_fingerprint'];
+        if (array_filter($auditColumns, static fn (string $column): bool => Schema::hasColumn(self::TABLE, $column)) === []) {
+            return;
+        }
+
+        $hasAuditData = DB::table(self::TABLE)->where(function ($query): void {
+            if (Schema::hasColumn(self::TABLE, 'assertion_id')) {
+                $query->whereNotNull('assertion_id');
+            }
+            if (Schema::hasColumn(self::TABLE, 'correction_id')) {
+                $query->orWhereNotNull('correction_id');
+            }
+            if (Schema::hasColumn(self::TABLE, 'candidate_source')) {
+                $query->orWhereNotNull('candidate_source');
+            }
+            if (Schema::hasColumn(self::TABLE, 'candidate_value_fingerprint')) {
+                $query->orWhereNotNull('candidate_value_fingerprint');
+            }
+        })->exists();
+
+        if ($hasAuditData) {
+            throw new RuntimeException('estimate_generation.project_model_evidence_binding_rollback_would_drop_candidate_bindings');
+        }
+    }
+
+    private function dropNonPostgresSchema(): void
+    {
+        if ($this->foreignKeyExists('eg_project_model_evidence_correction_scope_fk')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->dropForeign('eg_project_model_evidence_correction_scope_fk');
+            });
+        }
+        if ($this->foreignKeyExists('eg_project_model_evidence_assertion_scope_fk')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->dropForeign('eg_project_model_evidence_assertion_scope_fk');
+            });
+        }
+        if (Schema::hasIndex(self::TABLE, 'eg_project_model_evidence_candidate_binding_uq')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->dropUnique('eg_project_model_evidence_candidate_binding_uq');
+            });
+        }
+        if (Schema::hasIndex(self::TABLE, 'eg_project_model_evidence_correction_idx')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->dropIndex('eg_project_model_evidence_correction_idx');
+            });
+        }
+        if (Schema::hasIndex(self::TABLE, 'eg_project_model_evidence_assertion_idx')) {
+            Schema::table(self::TABLE, function (Blueprint $table): void {
+                $table->dropIndex('eg_project_model_evidence_assertion_idx');
+            });
+        }
+        $this->dropColumns();
+    }
+
+    private function dropColumns(): void
+    {
+        $columns = array_values(array_filter([
+            'candidate_value_fingerprint',
+            'candidate_source',
+            'correction_id',
+            'assertion_id',
+        ], static fn (string $column): bool => Schema::hasColumn(self::TABLE, $column)));
+
+        if ($columns !== []) {
+            Schema::table(self::TABLE, function (Blueprint $table) use ($columns): void {
+                $table->dropColumn($columns);
+            });
+        }
+    }
+
+    private function foreignKeyExists(string $name): bool
+    {
+        foreach (Schema::getForeignKeys(self::TABLE) as $foreignKey) {
+            if (($foreignKey['name'] ?? null) === $name) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function postgresConstraintExists(string $name): bool
+    {
+        return DB::selectOne(
+            'SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = ? AND t.relname = ? AND c.conname = ?',
+            ['public', self::TABLE, $name],
+        ) !== null;
+    }
+
+    private function replaceExactBindingGuard(): void
+    {
+        DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     actual_source_version text;
@@ -101,66 +325,10 @@ BEGIN
     RETURN NEW;
 END; $$;
 SQL);
-            DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings DROP CONSTRAINT IF EXISTS eg_project_model_evidence_binding_uq');
-        } finally {
-            $runtime->restoreSessionTimeouts($timeouts);
-        }
     }
 
-    public function down(): void
+    private function replaceLegacyBindingGuard(): void
     {
-        if (DB::getDriverName() !== 'pgsql') {
-            Schema::table('estimate_generation_project_model_evidence_bindings', function (Blueprint $table): void {
-                $table->dropForeign('eg_project_model_evidence_correction_scope_fk');
-                $table->dropForeign('eg_project_model_evidence_assertion_scope_fk');
-                $table->dropUnique('eg_project_model_evidence_candidate_binding_uq');
-                $table->dropIndex('eg_project_model_evidence_correction_idx');
-                $table->dropIndex('eg_project_model_evidence_assertion_idx');
-                $table->dropColumn(['candidate_value_fingerprint', 'candidate_source', 'correction_id', 'assertion_id']);
-            });
-
-            return;
-        }
-
-        $duplicate = DB::table('estimate_generation_project_model_evidence_bindings')
-            ->select(['entity_id', 'evidence_id'])
-            ->selectRaw('COUNT(*) AS duplicate_count')
-            ->groupBy(['entity_id', 'evidence_id'])
-            ->havingRaw('COUNT(*) > 1')
-            ->limit(1)
-            ->first();
-
-        if ($duplicate !== null) {
-            throw new RuntimeException('estimate_generation.project_model_evidence_binding_rollback_would_drop_candidate_bindings');
-        }
-
-        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
-        $timeouts = $runtime->configureSessionTimeouts();
-        try {
-            $runtime->ensureConcurrentIndex(
-                'eg_project_model_evidence_binding_uq',
-                'CREATE UNIQUE INDEX CONCURRENTLY eg_project_model_evidence_binding_uq ON estimate_generation_project_model_evidence_bindings (entity_id, evidence_id)'
-            );
-            DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings ADD CONSTRAINT eg_project_model_evidence_binding_uq UNIQUE USING INDEX eg_project_model_evidence_binding_uq');
-            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS eg_project_model_evidence_candidate_binding_uq');
-        } finally {
-            $runtime->restoreSessionTimeouts($timeouts);
-        }
-
-        DB::unprepared(<<<'SQL'
-ALTER TABLE estimate_generation_project_model_evidence_bindings
-    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_fingerprint_ck,
-    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_source_ck,
-    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_subject_ck,
-    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_correction_scope_fk,
-    DROP CONSTRAINT IF EXISTS eg_project_model_evidence_assertion_scope_fk;
-SQL);
-
-        Schema::table('estimate_generation_project_model_evidence_bindings', function (Blueprint $table): void {
-            $table->dropIndex('eg_project_model_evidence_correction_idx');
-            $table->dropIndex('eg_project_model_evidence_assertion_idx');
-            $table->dropColumn(['candidate_value_fingerprint', 'candidate_source', 'correction_id', 'assertion_id']);
-        });
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -185,5 +353,24 @@ BEGIN
     RETURN NEW;
 END; $$;
 SQL);
+    }
+
+    private function ensureExactBindingGuardTrigger(): void
+    {
+        $trigger = DB::selectOne(
+            'SELECT pg_get_triggerdef(t.oid, true) AS definition FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ? AND t.tgname = ? AND NOT t.tgisinternal',
+            ['public', self::TABLE, 'eg_project_model_evidence_binding_guard_trg'],
+        );
+
+        if ($trigger === null) {
+            DB::statement('CREATE TRIGGER eg_project_model_evidence_binding_guard_trg BEFORE INSERT ON '.self::TABLE.' FOR EACH ROW EXECUTE FUNCTION eg_project_model_evidence_binding_guard()');
+
+            return;
+        }
+
+        $definition = strtolower((string) $trigger->definition);
+        if (! str_contains($definition, 'before insert on '.self::TABLE) || ! str_contains($definition, 'execute function eg_project_model_evidence_binding_guard()')) {
+            throw new RuntimeException('estimate_generation.project_model_evidence_binding_guard_trigger_definition_mismatch');
+        }
     }
 };

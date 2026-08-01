@@ -178,6 +178,38 @@ final class ProjectModelContractTest extends TestCase
         }
     }
 
+    #[Test]
+    public function exact_evidence_binding_migration_recovers_partial_online_steps_and_refuses_to_erase_audit_links(): void
+    {
+        $migration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php'
+        );
+
+        foreach ([
+            "Schema::hasColumn(self::TABLE, 'assertion_id')",
+            "Schema::hasColumn(self::TABLE, 'correction_id')",
+            "Schema::hasColumn(self::TABLE, 'candidate_source')",
+            "Schema::hasColumn(self::TABLE, 'candidate_value_fingerprint')",
+            "'eg_project_model_evidence_assertion_idx'",
+            "'eg_project_model_evidence_correction_idx'",
+            'ensureConcurrentIndex(',
+            'ensureConstraint(',
+            'CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard()',
+            'CREATE TRIGGER eg_project_model_evidence_binding_guard_trg BEFORE INSERT',
+            'DROP CONSTRAINT IF EXISTS eg_project_model_evidence_binding_uq',
+            "whereNotNull('assertion_id')",
+            "orWhereNotNull('correction_id')",
+            "orWhereNotNull('candidate_source')",
+            "orWhereNotNull('candidate_value_fingerprint')",
+            'estimate_generation.project_model_evidence_binding_rollback_would_drop_candidate_bindings',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+
+        self::assertStringNotContainsString("->groupBy(['entity_id', 'evidence_id'])", $migration);
+        self::assertStringNotContainsString('duplicate_count', $migration);
+    }
+
     private function sourceVersion(): string
     {
         return 'sha256:'.str_repeat('b', 64);
