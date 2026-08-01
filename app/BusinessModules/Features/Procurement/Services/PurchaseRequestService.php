@@ -266,7 +266,6 @@ class PurchaseRequestService
                 $request,
                 $userId,
                 $occurredAt->toDateTimeImmutable(),
-                ProcurementTerminalReason::REQUEST_REJECTED,
             );
 
             DB::commit();
@@ -309,6 +308,7 @@ class PurchaseRequestService
                 $request,
                 $userId,
                 $occurredAt->toDateTimeImmutable(),
+                ProcurementTerminalReason::REQUEST_REJECTED,
             );
 
             DB::commit();

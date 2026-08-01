@@ -137,6 +137,11 @@ ON procurement_process_events (organization_id, purchase_request_line_id, event_
 WHERE event_code IN ('first_receipt', 'fully_received')
 SQL);
             DB::statement(<<<'SQL'
+CREATE UNIQUE INDEX procurement_process_event_request_created_unique
+ON procurement_process_events (organization_id, purchase_request_line_id)
+WHERE event_code = 'request_created'
+SQL);
+            DB::statement(<<<'SQL'
 ALTER TABLE procurement_cycle_policy_versions
 ADD CONSTRAINT procurement_cycle_policy_hash_check
 CHECK (canonical_hash ~ '^[a-f0-9]{64}$' AND calendar_hash ~ '^[a-f0-9]{64}$'),
@@ -222,20 +227,89 @@ RETURNS trigger AS $$
 DECLARE
     request_organization_id bigint;
     request_project_id bigint;
+    request_site_request_id bigint;
+    created_event procurement_process_events%ROWTYPE;
     pinned_policy procurement_cycle_policy_versions%ROWTYPE;
 BEGIN
-    SELECT purchase_requests.organization_id, site_requests.project_id
-    INTO request_organization_id, request_project_id
+    SELECT purchase_requests.organization_id
+    INTO request_organization_id
     FROM purchase_request_lines
     INNER JOIN purchase_requests ON purchase_requests.id = purchase_request_lines.purchase_request_id
-    LEFT JOIN site_requests ON site_requests.id = purchase_requests.site_request_id
     WHERE purchase_request_lines.id = NEW.purchase_request_line_id
-      AND purchase_requests.id = NEW.purchase_request_id;
+      AND purchase_requests.id = NEW.purchase_request_id
+    FOR KEY SHARE OF purchase_request_lines, purchase_requests;
 
     IF NOT FOUND
-       OR request_organization_id <> NEW.organization_id
-       OR request_project_id IS DISTINCT FROM NEW.project_id THEN
+       OR request_organization_id <> NEW.organization_id THEN
         RAISE EXCEPTION 'procurement process event lineage mismatch' USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.event_code = 'request_created' THEN
+        SELECT purchase_requests.site_request_id
+        INTO request_site_request_id
+        FROM purchase_requests
+        WHERE purchase_requests.id = NEW.purchase_request_id
+        FOR SHARE;
+
+        IF request_site_request_id IS NULL THEN
+            request_project_id := NULL;
+        ELSE
+            SELECT site_requests.project_id
+            INTO request_project_id
+            FROM site_requests
+            WHERE site_requests.id = request_site_request_id
+            FOR SHARE;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'procurement process request-created site request lineage mismatch' USING ERRCODE = '23514';
+            END IF;
+        END IF;
+
+        IF request_project_id IS DISTINCT FROM NEW.project_id THEN
+            RAISE EXCEPTION 'procurement process request-created project lineage mismatch' USING ERRCODE = '23514';
+        END IF;
+    ELSE
+        SELECT * INTO created_event
+        FROM procurement_process_events
+        WHERE organization_id = NEW.organization_id
+          AND purchase_request_line_id = NEW.purchase_request_line_id
+          AND event_code = 'request_created'
+        ORDER BY occurred_at, id
+        LIMIT 1;
+
+        IF FOUND THEN
+            IF created_event.project_id IS DISTINCT FROM NEW.project_id
+               OR created_event.policy_version_id IS DISTINCT FROM NEW.policy_version_id
+               OR created_event.policy_hash IS DISTINCT FROM NEW.policy_hash
+               OR created_event.calendar_version IS DISTINCT FROM NEW.calendar_version
+               OR created_event.calendar_hash IS DISTINCT FROM NEW.calendar_hash THEN
+                RAISE EXCEPTION 'procurement process event request-created provenance mismatch' USING ERRCODE = '23514';
+            END IF;
+        ELSIF NEW.project_id IS NOT NULL
+           OR NEW.policy_version_id IS NOT NULL
+           OR NEW.policy_hash IS NOT NULL
+           OR NEW.calendar_version IS NOT NULL
+           OR NEW.calendar_hash IS NOT NULL
+           OR NEW.dimension_snapshot->>'quality_status' IS DISTINCT FROM 'PARTIAL'
+           OR NOT (NEW.dimension_snapshot->'gap_codes' @> '["missing_request_created_event", "missing_project_lineage", "missing_policy_version"]'::jsonb)
+           OR (NEW.dimension_snapshot - ARRAY[
+               'schema_version',
+               'organization_id',
+               'project_id',
+               'purchase_request_id',
+               'purchase_request_line_id',
+               'quality_status',
+               'gap_codes'
+           ]) <> '{}'::jsonb THEN
+            RAISE EXCEPTION 'procurement process event quarantine provenance required' USING ERRCODE = '23514';
+        END IF;
+    END IF;
+
+    IF (NEW.supplier_request_id IS NOT NULL
+        OR NEW.supplier_proposal_id IS NOT NULL
+        OR NEW.purchase_order_id IS NOT NULL)
+       AND NEW.supplier_party_id IS NULL THEN
+        RAISE EXCEPTION 'procurement process supplier party required' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.supplier_request_id IS NOT NULL AND NOT EXISTS (
@@ -243,6 +317,8 @@ BEGIN
         WHERE id = NEW.supplier_request_id
           AND organization_id = NEW.organization_id
           AND purchase_request_id = NEW.purchase_request_id
+          AND supplier_party_id = NEW.supplier_party_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process supplier request lineage mismatch' USING ERRCODE = '23514';
     END IF;
@@ -252,6 +328,7 @@ BEGIN
         WHERE id = NEW.supplier_request_line_id
           AND supplier_request_id = NEW.supplier_request_id
           AND purchase_request_line_id = NEW.purchase_request_line_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process supplier request line lineage mismatch' USING ERRCODE = '23514';
     END IF;
@@ -260,24 +337,38 @@ BEGIN
         SELECT 1 FROM supplier_parties
         WHERE id = NEW.supplier_party_id
           AND organization_id = NEW.organization_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process supplier party lineage mismatch' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.supplier_proposal_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM supplier_proposals
-        WHERE id = NEW.supplier_proposal_id
-          AND organization_id = NEW.organization_id
-          AND supplier_request_id = NEW.supplier_request_id
+        SELECT 1
+        FROM supplier_proposals
+        INNER JOIN supplier_requests ON supplier_requests.id = supplier_proposals.supplier_request_id
+        WHERE supplier_proposals.id = NEW.supplier_proposal_id
+          AND supplier_proposals.organization_id = NEW.organization_id
+          AND supplier_proposals.supplier_request_id = NEW.supplier_request_id
+          AND supplier_proposals.supplier_party_id = NEW.supplier_party_id
+          AND supplier_requests.purchase_request_id = NEW.purchase_request_id
+          AND supplier_requests.supplier_party_id = NEW.supplier_party_id
+        FOR KEY SHARE OF supplier_proposals, supplier_requests
     ) THEN
         RAISE EXCEPTION 'procurement process supplier proposal lineage mismatch' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.supplier_proposal_version_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM supplier_proposal_versions
-        WHERE id = NEW.supplier_proposal_version_id
-          AND organization_id = NEW.organization_id
-          AND supplier_proposal_id = NEW.supplier_proposal_id
+        SELECT 1
+        FROM supplier_proposal_versions
+        INNER JOIN supplier_proposals ON supplier_proposals.id = supplier_proposal_versions.supplier_proposal_id
+        INNER JOIN supplier_requests ON supplier_requests.id = supplier_proposals.supplier_request_id
+        WHERE supplier_proposal_versions.id = NEW.supplier_proposal_version_id
+          AND supplier_proposal_versions.organization_id = NEW.organization_id
+          AND supplier_proposal_versions.supplier_proposal_id = NEW.supplier_proposal_id
+          AND supplier_proposals.supplier_request_id = NEW.supplier_request_id
+          AND supplier_proposals.supplier_party_id = NEW.supplier_party_id
+          AND supplier_requests.purchase_request_id = NEW.purchase_request_id
+        FOR KEY SHARE OF supplier_proposal_versions, supplier_proposals, supplier_requests
     ) THEN
         RAISE EXCEPTION 'procurement process proposal version lineage mismatch' USING ERRCODE = '23514';
     END IF;
@@ -289,6 +380,7 @@ BEGIN
           AND supplier_request_id = NEW.supplier_request_id
           AND winning_supplier_proposal_id = NEW.supplier_proposal_id
           AND winning_supplier_proposal_version_id = NEW.supplier_proposal_version_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process proposal decision lineage mismatch' USING ERRCODE = '23514';
     END IF;
@@ -298,24 +390,57 @@ BEGIN
         WHERE id = NEW.purchase_order_id
           AND organization_id = NEW.organization_id
           AND purchase_request_id = NEW.purchase_request_id
+          AND supplier_party_id = NEW.supplier_party_id
+          AND accepted_supplier_proposal_id IS NOT DISTINCT FROM NEW.supplier_proposal_id
+          AND accepted_supplier_proposal_version_id IS NOT DISTINCT FROM NEW.supplier_proposal_version_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process order lineage mismatch' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.purchase_order_item_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM purchase_order_items
-        WHERE id = NEW.purchase_order_item_id
-          AND purchase_order_id = NEW.purchase_order_id
-          AND purchase_request_line_id = NEW.purchase_request_line_id
-          AND supplier_request_line_id IS NOT DISTINCT FROM NEW.supplier_request_line_id
+        WHERE purchase_order_items.id = NEW.purchase_order_item_id
+          AND purchase_order_items.purchase_order_id = NEW.purchase_order_id
+          AND purchase_order_items.purchase_request_line_id = NEW.purchase_request_line_id
+          AND purchase_order_items.supplier_request_line_id IS NOT DISTINCT FROM NEW.supplier_request_line_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process order item lineage mismatch' USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.purchase_order_item_id IS NOT NULL
+       AND NEW.supplier_proposal_id IS NULL
+       AND NOT EXISTS (
+           SELECT 1 FROM purchase_order_items
+           WHERE id = NEW.purchase_order_item_id
+             AND supplier_proposal_line_id IS NULL
+           FOR KEY SHARE
+       ) THEN
+        RAISE EXCEPTION 'procurement process direct order item lineage mismatch' USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.purchase_order_item_id IS NOT NULL
+       AND NEW.supplier_proposal_id IS NOT NULL
+       AND NOT EXISTS (
+           SELECT 1
+           FROM purchase_order_items
+           INNER JOIN supplier_proposal_lines
+             ON supplier_proposal_lines.id = purchase_order_items.supplier_proposal_line_id
+           WHERE purchase_order_items.id = NEW.purchase_order_item_id
+             AND supplier_proposal_lines.supplier_proposal_id = NEW.supplier_proposal_id
+             AND supplier_proposal_lines.supplier_request_line_id = NEW.supplier_request_line_id
+           FOR KEY SHARE OF purchase_order_items, supplier_proposal_lines
+       ) THEN
+        RAISE EXCEPTION 'procurement process proposal line lineage mismatch' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.purchase_receipt_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM purchase_receipts
         WHERE id = NEW.purchase_receipt_id
+          AND organization_id = NEW.organization_id
           AND purchase_order_id = NEW.purchase_order_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process receipt lineage mismatch' USING ERRCODE = '23514';
     END IF;
@@ -325,8 +450,13 @@ BEGIN
         WHERE id = NEW.purchase_receipt_line_id
           AND purchase_receipt_id = NEW.purchase_receipt_id
           AND purchase_order_item_id = NEW.purchase_order_item_id
+        FOR KEY SHARE
     ) THEN
         RAISE EXCEPTION 'procurement process receipt line lineage mismatch' USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.event_code = 'cancelled' AND NEW.policy_version_id IS NULL THEN
+        RAISE EXCEPTION 'procurement process terminal policy pin required' USING ERRCODE = '23514';
     END IF;
 
     IF NEW.policy_version_id IS NOT NULL THEN
@@ -343,6 +473,11 @@ BEGIN
            OR pinned_policy.effective_from > NEW.occurred_at
            OR (pinned_policy.effective_to IS NOT NULL AND pinned_policy.effective_to <= NEW.occurred_at) THEN
             RAISE EXCEPTION 'procurement process event policy pin mismatch' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.event_code = 'cancelled'
+           AND NOT (pinned_policy.terminal_cancellation_policy @> jsonb_build_array(NEW.terminal_reason)) THEN
+            RAISE EXCEPTION 'procurement process terminal reason is not allowed by pinned policy' USING ERRCODE = '23514';
         END IF;
     END IF;
 
@@ -398,6 +533,7 @@ SQL);
             DB::statement('DROP FUNCTION IF EXISTS procurement_cycle_policy_validate_scope()');
             DB::statement('DROP INDEX IF EXISTS procurement_cycle_policy_scope_version_unique');
             DB::statement('DROP INDEX IF EXISTS procurement_process_event_receipt_milestone_unique');
+            DB::statement('DROP INDEX IF EXISTS procurement_process_event_request_created_unique');
         }
 
         Schema::table('purchase_orders', function (Blueprint $table): void {

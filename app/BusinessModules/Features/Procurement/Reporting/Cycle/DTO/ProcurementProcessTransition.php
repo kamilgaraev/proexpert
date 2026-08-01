@@ -141,6 +141,12 @@ final readonly class ProcurementProcessTransition
         if (($this->supplierRequestLineId !== null && $this->supplierRequestId === null)
             || ($this->supplierProposalId !== null && $this->supplierRequestId === null)
             || ($this->supplierProposalVersionId !== null && $this->supplierProposalId === null)
+            || (($this->supplierRequestId !== null
+                    || $this->supplierProposalId !== null
+                    || $this->purchaseOrderId !== null)
+                && $this->supplierPartyId === null)
+            || ($this->purchaseOrderId !== null
+                && (($this->supplierProposalId === null) !== ($this->supplierProposalVersionId === null)))
             || ($this->supplierProposalDecisionId !== null
                 && ($this->supplierRequestId === null
                     || $this->supplierProposalId === null

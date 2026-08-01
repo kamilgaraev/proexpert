@@ -151,6 +151,29 @@ final readonly class ProcurementProcessDimensionSnapshot
             }
         }
 
+        if (in_array('missing_request_created_event', $gapCodes, true)) {
+            $requiredQuarantineGaps = [
+                'missing_policy_version',
+                'missing_project_lineage',
+                'missing_request_created_event',
+            ];
+            $quarantineKeys = [
+                'schema_version',
+                'organization_id',
+                'project_id',
+                'purchase_request_id',
+                'purchase_request_line_id',
+                'quality_status',
+                'gap_codes',
+            ];
+            if (($values['project_id'] ?? null) !== null
+                || ($values['quality_status'] ?? null) !== 'PARTIAL'
+                || array_diff($requiredQuarantineGaps, $gapCodes) !== []
+                || array_diff(array_keys($values), $quarantineKeys) !== []) {
+                throw new InvalidArgumentException('procurement_process_dimension_quarantine_invalid');
+            }
+        }
+
         if (($values['project_id'] ?? null) === null
             && (($values['quality_status'] ?? null) !== 'PARTIAL'
                 || ! in_array('missing_project_lineage', $gapCodes, true))) {

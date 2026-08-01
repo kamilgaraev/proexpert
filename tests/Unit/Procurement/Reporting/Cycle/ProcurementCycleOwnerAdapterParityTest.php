@@ -31,6 +31,7 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\Material;
 use DateTimeImmutable;
 use Illuminate\Support\Collection;
+use LogicException;
 use PHPUnit\Framework\TestCase;
 
 final class ProcurementCycleOwnerAdapterParityTest extends TestCase
@@ -136,6 +137,75 @@ final class ProcurementCycleOwnerAdapterParityTest extends TestCase
         self::assertSame(ProcurementTerminalReason::REQUEST_REJECTED, $cancelled?->terminalReason);
     }
 
+    public function test_terminal_reason_outside_pinned_policy_fails_closed_without_event(): void
+    {
+        [$request] = $this->requestGraph();
+        $store = new OwnerParityStore();
+        $state = new OwnerParitySourceState();
+        $state->requestCreated = ProcurementProcessDimensionSnapshot::fromArray([
+            'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
+            'organization_id' => 10,
+            'project_id' => 20,
+            'purchase_request_id' => 30,
+            'purchase_request_line_id' => 40,
+            'quality_status' => 'PARTIAL',
+            'gap_codes' => ['missing_policy_version'],
+        ]);
+        $state->allowedTerminalReasons = [];
+        $owner = new ProcurementCycleOwnerEventRecorder(
+            new ProcurementProcessEventRecorder($store, new OwnerParityTransactionBoundary()),
+            $state,
+        );
+
+        try {
+            $owner->recordRequestCancelled(
+                $request,
+                50,
+                new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
+                ProcurementTerminalReason::REQUEST_CANCELLED,
+            );
+            self::fail('Expected terminal policy invariant failure.');
+        } catch (LogicException $exception) {
+            self::assertSame('procurement_cycle_terminal_reason_not_allowed', $exception->getMessage());
+        }
+
+        self::assertSame([], $store->transitions);
+    }
+
+    public function test_missing_request_created_uses_quarantine_without_current_project_reconstruction(): void
+    {
+        [$request] = $this->requestGraph();
+        $store = new OwnerParityStore();
+        $state = new OwnerParitySourceState();
+        $owner = new ProcurementCycleOwnerEventRecorder(
+            new ProcurementProcessEventRecorder($store, new OwnerParityTransactionBoundary()),
+            $state,
+        );
+
+        $owner->recordRequestApproved(
+            $request,
+            50,
+            new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
+        );
+
+        self::assertCount(1, $store->transitions);
+        $transition = $store->transitions[0];
+        self::assertNull($transition->projectId);
+        self::assertSame([
+            'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
+            'organization_id' => 10,
+            'project_id' => null,
+            'purchase_request_id' => 30,
+            'purchase_request_line_id' => 40,
+            'quality_status' => 'PARTIAL',
+            'gap_codes' => [
+                'missing_policy_version',
+                'missing_project_lineage',
+                'missing_request_created_event',
+            ],
+        ], $transition->dimensionSnapshot->values);
+    }
+
     private function requestGraph(): array
     {
         $siteRequest = $this->model(SiteRequest::class, 20, [
@@ -197,6 +267,8 @@ final class OwnerParitySourceState implements ProcurementCycleSourceState
 {
     public ?ProcurementProcessDimensionSnapshot $requestCreated = null;
 
+    public array $allowedTerminalReasons = [ProcurementTerminalReason::REQUEST_REJECTED];
+
     public function activePolicy(
         int $organizationId,
         ?int $projectId,
@@ -216,7 +288,7 @@ final class OwnerParitySourceState implements ProcurementCycleSourceState
         ProcurementProcessDimensionSnapshot $snapshot,
         ProcurementTerminalReason $reason,
     ): bool {
-        return $reason === ProcurementTerminalReason::REQUEST_REJECTED;
+        return in_array($reason, $this->allowedTerminalReasons, true);
     }
 
     public function eventExists(

@@ -142,6 +142,53 @@ final class ProcurementProcessTransitionTest extends TestCase
         );
     }
 
+    public function test_quarantine_snapshot_rejects_current_project_reconstruction(): void
+    {
+        $dimensions = $this->baseDimensions();
+        $dimensions['gap_codes'] = [
+            'missing_policy_version',
+            'missing_project_lineage',
+            'missing_request_created_event',
+        ];
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('procurement_process_dimension_quarantine_invalid');
+
+        ProcurementProcessDimensionSnapshot::fromArray($dimensions);
+    }
+
+    public function test_quarantine_snapshot_requires_all_evidence_gaps(): void
+    {
+        $dimensions = $this->baseDimensions();
+        $dimensions['project_id'] = null;
+        $dimensions['gap_codes'] = [
+            'missing_project_lineage',
+            'missing_request_created_event',
+        ];
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('procurement_process_dimension_quarantine_invalid');
+
+        ProcurementProcessDimensionSnapshot::fromArray($dimensions);
+    }
+
+    public function test_quarantine_snapshot_rejects_policy_or_mutable_dimension_reconstruction(): void
+    {
+        $dimensions = $this->baseDimensions();
+        $dimensions['project_id'] = null;
+        $dimensions['request_number'] = 'CURRENT-PR-42';
+        $dimensions['gap_codes'] = [
+            'missing_policy_version',
+            'missing_project_lineage',
+            'missing_request_created_event',
+        ];
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('procurement_process_dimension_quarantine_invalid');
+
+        ProcurementProcessDimensionSnapshot::fromArray($dimensions);
+    }
+
     public function test_dimension_snapshot_rejects_non_scalar_business_fields(): void
     {
         $dimensions = $this->baseDimensions();
@@ -219,6 +266,49 @@ final class ProcurementProcessTransitionTest extends TestCase
             dimensionSnapshot: ProcurementProcessDimensionSnapshot::fromArray($this->baseDimensions()),
             supplierProposalVersionId: 70,
         );
+    }
+
+    #[DataProvider('invalidRelationalLineageProvider')]
+    public function test_transition_rejects_structurally_incomplete_relational_lineage(array $lineage): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('procurement_process_transition_optional_lineage_incomplete');
+
+        new ProcurementProcessTransition(...[
+            'eventCode' => ProcurementProcessEventCode::SUPPLIER_RESPONDED,
+            'organizationId' => 10,
+            'projectId' => 20,
+            'purchaseRequestId' => 30,
+            'purchaseRequestLineId' => 40,
+            'occurredAt' => new DateTimeImmutable('2026-08-01T09:30:00+00:00'),
+            'sourceKind' => 'supplier_proposal_version',
+            'sourceId' => 70,
+            'dimensionSnapshot' => ProcurementProcessDimensionSnapshot::fromArray($this->baseDimensions()),
+            ...$lineage,
+        ]);
+    }
+
+    public static function invalidRelationalLineageProvider(): array
+    {
+        return [
+            'supplier request requires party' => [[
+                'supplierRequestId' => 60,
+            ]],
+            'proposal chain requires party' => [[
+                'supplierRequestId' => 60,
+                'supplierProposalId' => 70,
+                'supplierProposalVersionId' => 71,
+            ]],
+            'order requires party' => [[
+                'purchaseOrderId' => 80,
+            ]],
+            'accepted proposal pair requires version' => [[
+                'supplierRequestId' => 60,
+                'supplierPartyId' => 65,
+                'supplierProposalId' => 70,
+                'purchaseOrderId' => 80,
+            ]],
+        ];
     }
 
     private function transition(array $dimensions): ProcurementProcessTransition

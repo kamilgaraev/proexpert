@@ -275,11 +275,11 @@ final readonly class ProcurementCycleOwnerEventRecorder
         DateTimeImmutable $occurredAt,
         ?ProcurementTerminalReason $terminalReason = null,
     ): void {
-        $request->loadMissing(['siteRequest', 'lines.purchaseRequest.siteRequest']);
+        $request->loadMissing(['lines.purchaseRequest']);
         foreach ($request->lines as $line) {
             $snapshot = $this->existingOrGapSnapshot($line, ['missing_request_created_event']);
             if ($terminalReason !== null && ! $this->sourceState->policyAllows($snapshot, $terminalReason)) {
-                continue;
+                throw new LogicException('procurement_cycle_terminal_reason_not_allowed');
             }
             $this->recordLine(
                 $line,
@@ -439,31 +439,31 @@ final readonly class ProcurementCycleOwnerEventRecorder
             return $snapshot;
         }
 
-        return $this->missingCreatedEventSnapshot($line, $missingGaps);
+        return $this->quarantineMissingCreatedEventSnapshot($line, $missingGaps);
     }
 
-    private function missingCreatedEventSnapshot(
+    private function quarantineMissingCreatedEventSnapshot(
         PurchaseRequestLine $line,
         array $missingGaps,
     ): ProcurementProcessDimensionSnapshot {
-        $line->loadMissing(['purchaseRequest.siteRequest']);
+        $line->loadMissing(['purchaseRequest']);
         $request = $line->purchaseRequest;
         if (! $request instanceof PurchaseRequest) {
             throw new LogicException('procurement_process_request_line_parent_required');
         }
 
-        $projectId = $this->positive($request->siteRequest?->project_id);
         $gaps = array_values(array_unique([
             ...$missingGaps,
             'missing_policy_version',
-            ...($projectId === null ? ['missing_project_lineage'] : []),
+            'missing_project_lineage',
+            'missing_request_created_event',
         ]));
         sort($gaps, SORT_STRING);
 
         return ProcurementProcessDimensionSnapshot::fromArray([
             'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
             'organization_id' => (int) $request->organization_id,
-            'project_id' => $projectId,
+            'project_id' => null,
             'purchase_request_id' => (int) $request->id,
             'purchase_request_line_id' => (int) $line->id,
             'quality_status' => 'PARTIAL',
