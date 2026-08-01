@@ -36,7 +36,7 @@ final class R15CandidateAdmissionVerifierTest extends TestCase
 
     public function test_rejects_missing_current_request_document(): void
     {
-        unlink($this->directory.DIRECTORY_SEPARATOR.'r15-release-request.json');
+        unlink($this->directory.DIRECTORY_SEPARATOR.'r15_release_request.json');
         $this->expectException(InvalidArgumentException::class);
         (new R15CandidateAdmissionVerifier)->verify($this->directory, str_repeat('a', 40), 'kamilgaraev/proexpert', 'refs/heads/main', 'procurement-cycle-r15-protected-admission');
     }
@@ -55,7 +55,7 @@ final class R15CandidateAdmissionVerifierTest extends TestCase
         $conformance = ['artifact_id' => 'r15_candidate_conformance', 'artifacts' => [], 'code' => 'procurement_cycle', 'commit_sha' => $sha, 'generated_at' => '2026-08-01T00:00:00.000000Z', 'schema_version' => '1.0.0', 'verification_status' => 'ci_required'];
         $proof = ['admission_status' => 'blocked', 'artifacts' => [], 'candidate_manifest_sha256' => hash('sha256', CanonicalJson::encode($candidate)), 'canonical_publication_proof_schema_sha256' => str_repeat('d', 64), 'ci' => ['commit_sha' => $sha, 'required_checks' => ['r15_formula_contract', 'r15_postgresql_contract', 'r15_runtime_contract'], 'run_id' => '1.1', 'suite_sha256' => str_repeat('e', 64)], 'code' => 'procurement_cycle', 'conformance_evidence_sha256' => hash('sha256', CanonicalJson::encode($conformance)), 'schema_version' => '1.0.0'];
         $request = ['admission_status' => 'blocked', 'artifact_paths' => ['candidate_manifest' => 'r15-candidate-manifest.json', 'conformance_evidence' => 'r15-conformance-evidence.json', 'proof_template' => 'r15-proof-template.json'], 'code' => 'procurement_cycle', 'commit_sha' => $sha, 'proof_sha256' => hash('sha256', CanonicalJson::encode($proof)), 'request_kind' => 'r15_candidate_evidence', 'schema_version' => '1.0.0'];
-        foreach (['r15-candidate-manifest.json' => $candidate, 'r15-conformance-evidence.json' => $conformance, 'r15-proof-template.json' => $proof, 'r15-release-request.json' => $request] as $name => $document) {
+        foreach (['r15-candidate-manifest.json' => $candidate, 'r15-conformance-evidence.json' => $conformance, 'r15-proof-template.json' => $proof, 'r15_release_request.json' => $request] as $name => $document) {
             file_put_contents($this->directory.DIRECTORY_SEPARATOR.$name, CanonicalJson::encode($document));
         }
     }
