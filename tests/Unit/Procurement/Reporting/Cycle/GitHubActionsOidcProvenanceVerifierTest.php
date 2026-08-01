@@ -134,6 +134,8 @@ PEM;
             'spoofed subdomain' => ['https://spoof.actions.githubusercontent.com/idtoken'],
             'non-default port' => ['https://pipelines.actions.githubusercontent.com:8443/idtoken'],
             'unexpected path' => ['https://pipelines.actions.githubusercontent.com/other'],
+            'token userinfo' => ['https://token@pipelines.actions.githubusercontent.com/idtoken'],
+            'password userinfo' => ['https://user:password@pipelines.actions.githubusercontent.com/idtoken'],
         ];
     }
 
