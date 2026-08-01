@@ -79,75 +79,87 @@ final class WorkforceProService
 
     public function storeStaffUnit(int $organizationId, array $payload): array
     {
-        $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        return DB::transaction(function () use ($organizationId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+            $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
 
-        return $this->store('workforce_staff_units', $organizationId, $payload);
+            return $this->store('workforce_staff_units', $organizationId, $payload);
+        });
     }
 
     public function updateStaffUnit(int $organizationId, int $staffUnitId, array $payload): array
     {
-        $current = $this->assertRecord('workforce_staff_units', $organizationId, $staffUnitId);
+        return DB::transaction(function () use ($organizationId, $staffUnitId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $current = $this->assertRecord('workforce_staff_units', $organizationId, $staffUnitId);
 
-        if (($payload['is_active'] ?? null) === false) {
-            $this->assertNoActiveAssignmentsForStaffUnit($organizationId, $staffUnitId);
-        }
+            if (($payload['is_active'] ?? null) === false) {
+                $this->assertNoActiveAssignmentsForStaffUnit($organizationId, $staffUnitId);
+            }
 
-        if (array_key_exists('department_id', $payload)) {
-            $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        }
+            if (array_key_exists('department_id', $payload)) {
+                $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+            }
 
-        if (array_key_exists('position_id', $payload)) {
-            $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
-        }
+            if (array_key_exists('position_id', $payload)) {
+                $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+            }
 
-        $effectiveValidTo = $payload['valid_to'] ?? $current->valid_to;
+            $effectiveValidTo = $payload['valid_to'] ?? $current->valid_to;
 
-        if ($effectiveValidTo !== null && $this->hasActiveAssignmentAfterDate($organizationId, $staffUnitId, (string) $effectiveValidTo)) {
-            throw new DomainException(trans_message('workforce.errors.structure_has_active_assignments'));
-        }
+            if ($effectiveValidTo !== null && $this->hasActiveAssignmentAfterDate($organizationId, $staffUnitId, (string) $effectiveValidTo)) {
+                throw new DomainException(trans_message('workforce.errors.structure_has_active_assignments'));
+            }
 
-        return $this->update('workforce_staff_units', $organizationId, $staffUnitId, $payload);
+            return $this->update('workforce_staff_units', $organizationId, $staffUnitId, $payload);
+        });
     }
 
     public function storeAssignment(int $organizationId, array $payload, ?int $assignmentId = null): array
     {
-        $this->assertActiveEmployee($organizationId, (int) $payload['employee_id']);
-        $staffUnit = $this->assertActiveRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
-        $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        return DB::transaction(function () use ($organizationId, $payload, $assignmentId): array {
+            $this->lockOrganization($organizationId);
+            $this->assertActiveEmployee($organizationId, (int) $payload['employee_id']);
+            $staffUnit = $this->assertActiveRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
+            $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+            $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
 
-        if ((int) ($payload['department_id'] ?? 0) !== (int) $staffUnit->department_id || (int) ($payload['position_id'] ?? 0) !== (int) $staffUnit->position_id) {
-            throw new DomainException(trans_message('workforce.errors.staff_unit_structure_mismatch'));
-        }
+            if ((int) ($payload['department_id'] ?? 0) !== (int) $staffUnit->department_id || (int) ($payload['position_id'] ?? 0) !== (int) $staffUnit->position_id) {
+                throw new DomainException(trans_message('workforce.errors.staff_unit_structure_mismatch'));
+            }
 
-        if (! empty($payload['work_schedule_id'])) {
-            $this->assertActiveRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
-        }
+            if (! empty($payload['work_schedule_id'])) {
+                $this->assertActiveRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
+            }
 
-        if (! empty($payload['project_id'])) {
-            $this->assertProject($organizationId, (int) $payload['project_id']);
-        }
+            if (! empty($payload['project_id'])) {
+                $this->assertProject($organizationId, (int) $payload['project_id']);
+            }
 
-        if ($this->hasOverlappingAssignment($organizationId, (int) $payload['employee_id'], $payload['valid_from'], $payload['valid_to'] ?? null, $assignmentId)) {
-            throw new DomainException(trans_message('workforce.errors.assignment_overlap'));
-        }
+            if ($this->hasOverlappingAssignment($organizationId, (int) $payload['employee_id'], $payload['valid_from'], $payload['valid_to'] ?? null, $assignmentId)) {
+                throw new DomainException(trans_message('workforce.errors.assignment_overlap'));
+            }
 
-        $this->assertAssignmentWithinStaffUnitPeriod($staffUnit, (string) $payload['valid_from'], $payload['valid_to'] ?? null);
-        $this->assertStaffUnitCapacity($organizationId, (int) $payload['staff_unit_id'], $payload['valid_from'], $payload['valid_to'] ?? null, (float) ($payload['rate'] ?? 1), $assignmentId);
+            $this->assertAssignmentWithinStaffUnitPeriod($staffUnit, (string) $payload['valid_from'], $payload['valid_to'] ?? null);
+            $this->assertStaffUnitCapacity($organizationId, (int) $payload['staff_unit_id'], $payload['valid_from'], $payload['valid_to'] ?? null, (float) ($payload['rate'] ?? 1), $assignmentId);
 
-        return $assignmentId === null
-            ? $this->store('workforce_employee_assignments', $organizationId, $payload)
-            : $this->update('workforce_employee_assignments', $organizationId, $assignmentId, $payload);
+            return $assignmentId === null
+                ? $this->store('workforce_employee_assignments', $organizationId, $payload)
+                : $this->update('workforce_employee_assignments', $organizationId, $assignmentId, $payload);
+        });
     }
 
     public function storeScheduleDay(int $organizationId, int $scheduleId, array $payload): array
     {
-        $this->assertRecord('workforce_work_schedules', $organizationId, $scheduleId);
+        return DB::transaction(function () use ($organizationId, $scheduleId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertRecord('workforce_work_schedules', $organizationId, $scheduleId);
 
-        return $this->store('workforce_work_schedule_days', $organizationId, array_merge($payload, [
-            'work_schedule_id' => $scheduleId,
-        ]));
+            return $this->store('workforce_work_schedule_days', $organizationId, array_merge($payload, [
+                'work_schedule_id' => $scheduleId,
+            ]));
+        });
     }
 
     public function scheduleCalendar(int $organizationId, string $dateFrom, string $dateTo, ?int $projectId = null): array
@@ -251,45 +263,51 @@ final class WorkforceProService
 
     public function storeAbsence(int $organizationId, array $payload): array
     {
-        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
-        $absenceType = DB::table('workforce_absence_types')
-            ->where('organization_id', $organizationId)
-            ->where('code', $payload['absence_type_code'] ?? 'vacation')
-            ->first();
+        return DB::transaction(function () use ($organizationId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+            $absenceType = DB::table('workforce_absence_types')
+                ->where('organization_id', $organizationId)
+                ->where('code', $payload['absence_type_code'] ?? 'vacation')
+                ->first();
 
-        if (! $absenceType) {
-            $absenceTypeCode = $payload['absence_type_code'] ?? 'vacation';
-            $absenceTypeId = DB::table('workforce_absence_types')->insertGetId([
-                'organization_id' => $organizationId,
-                'code' => $absenceTypeCode,
-                'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.'.$absenceTypeCode),
-                'affects_payroll' => true,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        } else {
-            $absenceTypeId = $absenceType->id;
-        }
+            if (! $absenceType) {
+                $absenceTypeCode = $payload['absence_type_code'] ?? 'vacation';
+                $absenceTypeId = DB::table('workforce_absence_types')->insertGetId([
+                    'organization_id' => $organizationId,
+                    'code' => $absenceTypeCode,
+                    'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.'.$absenceTypeCode),
+                    'affects_payroll' => true,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            } else {
+                $absenceTypeId = $absenceType->id;
+            }
 
-        unset($payload['absence_type_code'], $payload['absence_type_name']);
+            unset($payload['absence_type_code'], $payload['absence_type_name']);
 
-        return $this->store('workforce_absences', $organizationId, array_merge($payload, [
-            'absence_type_id' => $absenceTypeId,
-            'status' => 'draft',
-        ]));
+            return $this->store('workforce_absences', $organizationId, array_merge($payload, [
+                'absence_type_id' => $absenceTypeId,
+                'status' => 'draft',
+            ]));
+        });
     }
 
     public function storeBusinessTrip(int $organizationId, array $payload): array
     {
-        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+        return DB::transaction(function () use ($organizationId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertEmployee($organizationId, (int) $payload['employee_id']);
 
-        if (! empty($payload['project_id'])) {
-            $this->assertProject($organizationId, (int) $payload['project_id']);
-        }
+            if (! empty($payload['project_id'])) {
+                $this->assertProject($organizationId, (int) $payload['project_id']);
+            }
 
-        return $this->store('workforce_business_trips', $organizationId, array_merge($payload, [
-            'status' => 'draft',
-        ]));
+            return $this->store('workforce_business_trips', $organizationId, array_merge($payload, [
+                'status' => 'draft',
+            ]));
+        });
     }
 
     public function storeOrder(int $organizationId, array $payload): array
@@ -351,50 +369,62 @@ final class WorkforceProService
 
     public function approveAbsence(int $organizationId, int $absenceId): array
     {
-        $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
-        $this->assertDraftStatus($absence);
-        $this->assertActiveEmployee($organizationId, (int) $absence->employee_id);
+        return DB::transaction(function () use ($organizationId, $absenceId): array {
+            $this->lockOrganization($organizationId);
+            $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
+            $this->assertDraftStatus($absence);
+            $this->assertActiveEmployee($organizationId, (int) $absence->employee_id);
 
-        if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $absence->employee_id, (string) $absence->start_date, (string) $absence->end_date, $absenceId)) {
-            throw new DomainException(trans_message('workforce.errors.absence_overlap'));
-        }
+            if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $absence->employee_id, (string) $absence->start_date, (string) $absence->end_date, $absenceId)) {
+                throw new DomainException(trans_message('workforce.errors.absence_overlap'));
+            }
 
-        return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'approved']);
+            return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'approved']);
+        });
     }
 
     public function cancelAbsence(int $organizationId, int $absenceId): array
     {
-        $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
+        return DB::transaction(function () use ($organizationId, $absenceId): array {
+            $this->lockOrganization($organizationId);
+            $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
 
-        if ($absence->status === 'cancelled') {
-            return (array) $absence;
-        }
+            if ($absence->status === 'cancelled') {
+                return (array) $absence;
+            }
 
-        return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'cancelled']);
+            return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'cancelled']);
+        });
     }
 
     public function approveBusinessTrip(int $organizationId, int $tripId): array
     {
-        $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
-        $this->assertDraftStatus($trip);
-        $this->assertActiveEmployee($organizationId, (int) $trip->employee_id);
+        return DB::transaction(function () use ($organizationId, $tripId): array {
+            $this->lockOrganization($organizationId);
+            $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
+            $this->assertDraftStatus($trip);
+            $this->assertActiveEmployee($organizationId, (int) $trip->employee_id);
 
-        if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $trip->employee_id, (string) $trip->start_date, (string) $trip->end_date)) {
-            throw new DomainException(trans_message('workforce.errors.business_trip_absence_overlap'));
-        }
+            if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $trip->employee_id, (string) $trip->start_date, (string) $trip->end_date)) {
+                throw new DomainException(trans_message('workforce.errors.business_trip_absence_overlap'));
+            }
 
-        return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'approved']);
+            return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'approved']);
+        });
     }
 
     public function cancelBusinessTrip(int $organizationId, int $tripId): array
     {
-        $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
+        return DB::transaction(function () use ($organizationId, $tripId): array {
+            $this->lockOrganization($organizationId);
+            $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
 
-        if ($trip->status === 'cancelled') {
-            return (array) $trip;
-        }
+            if ($trip->status === 'cancelled') {
+                return (array) $trip;
+            }
 
-        return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'cancelled']);
+            return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'cancelled']);
+        });
     }
 
     public function storePayrollPeriod(int $organizationId, int $userId, array $payload): array

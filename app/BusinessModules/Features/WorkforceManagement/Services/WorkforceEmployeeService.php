@@ -53,6 +53,10 @@ final class WorkforceEmployeeService
 
     public function update(int $organizationId, int $employeeId, array $payload): WorkforceEmployee
     {
+        if (array_key_exists('employment_status', $payload) || array_key_exists('dismissal_date', $payload)) {
+            throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
+        }
+
         return DB::transaction(function () use ($organizationId, $employeeId, $payload): WorkforceEmployee {
             $this->lockOrganization($organizationId);
             $employee = $this->find($organizationId, $employeeId);
@@ -66,26 +70,17 @@ final class WorkforceEmployeeService
 
     public function dismiss(int $organizationId, int $employeeId, ?string $dismissalDate = null): WorkforceEmployee
     {
-        $employee = $this->find($organizationId, $employeeId);
-        $date = $dismissalDate ?? now()->toDateString();
-
-        if ($employee->hire_date !== null && Carbon::parse($date)->lt(Carbon::parse($employee->hire_date))) {
-            throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
-        }
-
-        DB::transaction(function () use ($employee, $organizationId, $date): void {
+        return DB::transaction(function () use ($organizationId, $employeeId, $dismissalDate): WorkforceEmployee {
             $this->lockOrganization($organizationId);
+            $employee = $this->find($organizationId, $employeeId);
+            $date = $dismissalDate ?? now()->toDateString();
+
+            if ($employee->hire_date !== null && Carbon::parse($date)->lt(Carbon::parse($employee->hire_date))) {
+                throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
+            }
+
             $this->assertDismissalDoesNotChangeLockedPayrollSource($organizationId, (int) $employee->id, $date);
-            $assignments = DB::table('workforce_employee_assignments')
-                ->where('organization_id', $organizationId)
-                ->where('employee_id', $employee->id)
-                ->where('status', 'active')
-                ->orderBy('id')
-                ->get([
-                    'id', 'organization_id', 'employee_id', 'staff_unit_id', 'department_id', 'position_id',
-                    'project_id', 'work_schedule_id', 'rate', 'valid_from', 'valid_to', 'status', 'deleted_at',
-                ]);
-            $assignmentIds = $assignments->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+            $captureDraft = $this->capacityCapture->beginDismissal($organizationId, (int) $employee->id, $date);
             $employee->update([
                 'employment_status' => 'dismissed',
                 'dismissal_date' => $date,
@@ -112,26 +107,10 @@ final class WorkforceEmployeeService
                     'status' => 'cancelled',
                     'updated_at' => now(),
                 ]);
-            $updatedAssignments = $assignmentIds === []
-                ? collect()
-                : DB::table('workforce_employee_assignments')
-                    ->where('organization_id', $organizationId)
-                    ->whereIn('id', $assignmentIds)
-                    ->orderBy('id')
-                    ->get([
-                        'id', 'organization_id', 'employee_id', 'staff_unit_id', 'department_id', 'position_id',
-                        'project_id', 'work_schedule_id', 'rate', 'valid_from', 'valid_to', 'status', 'deleted_at',
-                    ]);
-            $this->capacityCapture->afterEmployeeDismissal(
-                $organizationId,
-                (int) $employee->id,
-                $date,
-                $assignments->map(static fn (object $row): array => (array) $row)->all(),
-                $updatedAssignments->map(static fn (object $row): array => (array) $row)->all(),
-            );
-        });
+            $this->capacityCapture->finishDismissal($captureDraft);
 
-        return $employee->refresh()->load('user:id,name,email,current_organization_id');
+            return $employee->refresh()->load('user:id,name,email,current_organization_id');
+        });
     }
 
     private function lockOrganization(int $organizationId): void

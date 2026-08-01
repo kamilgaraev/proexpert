@@ -39,11 +39,16 @@ final readonly class WorkforceCapacitySnapshot
         public string $semanticLabel = 'planned_capacity',
     ) {
         if (! in_array($this->captureKind, $this->policy->captureKinds, true)
-            || ($this->captureKind === 'manual_recompute' && ($this->actorUserId === null || $this->actorUserId < 1))
-            || ($this->captureKind !== 'manual_recompute' && ($this->serviceActor === null || trim($this->serviceActor) === ''))
+            || ($this->captureKind === 'manual_recompute' && (
+                $this->actorUserId === null || $this->actorUserId < 1 || $this->serviceActor !== null
+            ))
+            || ($this->captureKind !== 'manual_recompute' && (
+                $this->actorUserId !== null || $this->serviceActor === null || trim($this->serviceActor) === ''
+            ))
             || $this->capturedAt->getOffset() !== 0
             || ! in_array($this->capacityStatus, ['gap', 'understaffed', 'balanced', 'overallocated', 'unavailable'], true)
-            || $this->itemCount !== count($this->items)) {
+            || $this->itemCount !== count($this->items)
+            || $this->semanticLabel !== 'planned_capacity') {
             throw new InvalidArgumentException('workforce_capacity_snapshot_contract_invalid');
         }
 
@@ -57,6 +62,48 @@ final readonly class WorkforceCapacitySnapshot
             || ! hash_equals($this->stateHash, hash('sha256', $this->stateCanonical))
             || ! hash_equals($this->sourceHash, hash('sha256', $this->sourceCanonical))) {
             throw new InvalidArgumentException('workforce_capacity_snapshot_canonical_hash_mismatch');
+        }
+
+        $itemCanonical = [];
+        foreach ($this->items as $position => $item) {
+            if (! $item instanceof WorkforceCapacityEvidenceItem) {
+                throw new InvalidArgumentException('workforce_capacity_snapshot_item_invalid');
+            }
+            $itemCanonical[] = [
+                'position' => $position + 1,
+                'type' => $item->sourceType,
+                'content_hash' => $item->contentHash,
+            ];
+        }
+        $state = [
+            ...$this->key->canonical(),
+            'capture_kind' => $this->captureKind,
+            'source_schema_version' => $this->schemaVersion,
+            'formula_version' => $this->formulaVersion,
+            'policy_hash' => $this->policy->hash(),
+            'authorized_fte' => $this->authorizedFte,
+            'assigned_fte' => $this->assignedFte,
+            'available_fte' => $this->availableFte,
+            'approved_unavailability_fte' => $this->approvedUnavailabilityFte,
+            'open_fte' => $this->openFte,
+            'overallocated_fte' => $this->overallocatedFte,
+            'scheduled_hours' => $this->scheduledHours,
+            'capacity_status' => $this->capacityStatus,
+            'gap_codes' => $this->gapCodes,
+            'source_counts' => $this->sourceCounts,
+            'item_count' => $this->itemCount,
+        ];
+        $source = [
+            'schema' => $this->schemaVersion,
+            'formula' => $this->formulaVersion,
+            'policy_hash' => $this->policy->hash(),
+            'state_hash' => $this->stateHash,
+            'items_hash' => $this->itemsHash,
+        ];
+        if ($this->decodeCanonical($this->itemsCanonical) !== $this->canonical($itemCanonical)
+            || $this->decodeCanonical($this->stateCanonical) !== $this->canonical($state)
+            || $this->decodeCanonical($this->sourceCanonical) !== $this->canonical($source)) {
+            throw new InvalidArgumentException('workforce_capacity_snapshot_canonical_semantics_mismatch');
         }
     }
 
@@ -105,5 +152,34 @@ final readonly class WorkforceCapacitySnapshot
             'source_canonical' => $this->sourceCanonical,
             'semantic_label' => $this->semanticLabel,
         ];
+    }
+
+    private function decodeCanonical(string $canonical): array
+    {
+        try {
+            $decoded = json_decode($canonical, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw new InvalidArgumentException('workforce_capacity_snapshot_canonical_invalid');
+        }
+        if (! is_array($decoded)
+            || json_encode($this->canonical($decoded), JSON_THROW_ON_ERROR) !== $canonical) {
+            throw new InvalidArgumentException('workforce_capacity_snapshot_canonical_invalid');
+        }
+
+        return $decoded;
+    }
+
+    private function canonical(array $value): array
+    {
+        if (! array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+        foreach ($value as $key => $nested) {
+            if (is_array($nested)) {
+                $value[$key] = $this->canonical($nested);
+            }
+        }
+
+        return $value;
     }
 }

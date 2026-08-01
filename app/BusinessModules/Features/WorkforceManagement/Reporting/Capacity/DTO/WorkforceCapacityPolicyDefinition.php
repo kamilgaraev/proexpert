@@ -13,6 +13,7 @@ final readonly class WorkforceCapacityPolicyDefinition
         public string $version,
         public string $timezone,
         public array $calendarPrecedence,
+        public array $calendarNonWorkDayTypes,
         public array $assignmentStatuses,
         public array $unavailabilityStatuses,
         public array $gapCodes,
@@ -30,6 +31,7 @@ final readonly class WorkforceCapacityPolicyDefinition
             version: 'workforce-capacity-policy.v1',
             timezone: $timezone,
             calendarPrecedence: ['schedule_day', 'weekly_pattern', 'gap'],
+            calendarNonWorkDayTypes: ['day_off', 'holiday', 'non_work', 'weekend'],
             assignmentStatuses: ['active'],
             unavailabilityStatuses: ['approved'],
             gapCodes: [
@@ -77,7 +79,10 @@ final readonly class WorkforceCapacityPolicyDefinition
             'absence_type_rule' => 'affects_payroll_true_v1',
             'project_attribution_rule' => 'exact_or_null_bucket_no_derived_split',
             'calendar_precedence' => $this->calendarPrecedence,
+            'calendar_non_work_day_types' => $this->calendarNonWorkDayTypes,
             'weekly_pattern_keys' => ['1', '2', '3', '4', '5', '6', '7'],
+            'weekly_pattern_shapes' => ['weekday_hours_map', 'work_days_with_explicit_hours_per_day'],
+            'weekly_pattern_hours_rule' => 'explicit_only_no_default',
             'missing_schedule_rule' => 'gap',
             'rounding' => ['fte_scale' => 4, 'hours_scale' => 2, 'mode' => 'half_up_at_render_boundary'],
             'formula_order' => [

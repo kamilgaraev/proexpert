@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services;
 
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityCaptureBoundary;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityLifecycleCaptureCoordinator;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCaptureCommand;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityLifecycleCaptureDraft;
 use InvalidArgumentException;
 
 final readonly class WorkforceCapacityOwnerMutationBridge
@@ -42,7 +44,10 @@ final readonly class WorkforceCapacityOwnerMutationBridge
         ],
     ];
 
-    public function __construct(private WorkforceCapacityCaptureBoundary $capture) {}
+    public function __construct(
+        private WorkforceCapacityCaptureBoundary $capture,
+        private WorkforceCapacityLifecycleCaptureCoordinator $lifecycleCapture,
+    ) {}
 
     public function supports(string $table): bool
     {
@@ -78,44 +83,21 @@ final readonly class WorkforceCapacityOwnerMutationBridge
         ));
     }
 
-    public function afterEmployeeDismissal(
+    public function beginDismissal(
         int $organizationId,
         int $employeeId,
         string $dismissalDate,
-        array $oldAssignments,
-        array $newAssignments,
-    ): void {
+    ): WorkforceCapacityLifecycleCaptureDraft {
         if ($organizationId < 1 || $employeeId < 1) {
             throw new InvalidArgumentException('workforce_capacity_lifecycle_identity_invalid');
         }
-        $old = [
-            'employee_id' => $employeeId,
-            'employment_status' => 'active',
-            'dismissal_date' => null,
-            'assignments' => array_map(
-                fn (array $assignment): array => $this->sanitize('assignment', $organizationId, $assignment) ?? [],
-                $oldAssignments,
-            ),
-        ];
-        $new = [
-            'employee_id' => $employeeId,
-            'employment_status' => 'dismissed',
-            'dismissal_date' => $dismissalDate,
-            'assignments' => array_map(
-                fn (array $assignment): array => $this->sanitize('assignment', $organizationId, $assignment) ?? [],
-                $newAssignments,
-            ),
-        ];
-        $this->capture->capture(new WorkforceCapacityCaptureCommand(
-            mutationId: $this->mutationId('employee_lifecycle', $organizationId, $old, $new),
-            organizationId: $organizationId,
-            sourceType: 'employee_lifecycle',
-            oldState: $old,
-            newState: $new,
-            captureKind: 'change_capture',
-            actorUserId: null,
-            serviceActor: 'workforce-owner',
-        ));
+
+        return $this->lifecycleCapture->beginDismissal($organizationId, $employeeId, $dismissalDate);
+    }
+
+    public function finishDismissal(WorkforceCapacityLifecycleCaptureDraft $draft): void
+    {
+        $this->lifecycleCapture->finishDismissal($draft);
     }
 
     private function hasApprovedState(?array $oldState, ?array $newState): bool

@@ -5,6 +5,10 @@ on:
     paths:
       - 'app/BusinessModules/Features/WorkforceManagement/Reporting/Capacity/**'
       - 'app/BusinessModules/Features/WorkforceManagement/migrations/2026_08_01_000030_create_workforce_capacity_source.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Http/Controllers/WorkforceEmployeeController.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceEmployeeService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceProService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/WorkforceManagementServiceProvider.php'
       - 'tests/Feature/WorkforceManagement/Reporting/Capacity/**'
       - 'composer.json'
       - 'composer.lock'
@@ -14,6 +18,10 @@ on:
     paths:
       - 'app/BusinessModules/Features/WorkforceManagement/Reporting/Capacity/**'
       - 'app/BusinessModules/Features/WorkforceManagement/migrations/2026_08_01_000030_create_workforce_capacity_source.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Http/Controllers/WorkforceEmployeeController.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceEmployeeService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/Services/WorkforceProService.php'
+      - 'app/BusinessModules/Features/WorkforceManagement/WorkforceManagementServiceProvider.php'
       - 'tests/Feature/WorkforceManagement/Reporting/Capacity/**'
       - 'composer.json'
       - 'composer.lock'
@@ -67,7 +75,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: 8.2
-          extensions: mbstring, pdo_pgsql, pgsql
+          extensions: mbstring, pcntl, pdo_pgsql, pgsql, posix
           coverage: none
           tools: composer:v2
 

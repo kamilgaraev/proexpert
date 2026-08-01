@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Se
 
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCohortKey;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityEvidenceItem;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityFrozenCapturePins;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityPolicyDefinition;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacitySnapshot;
 use DateInterval;
@@ -15,10 +16,6 @@ use InvalidArgumentException;
 
 final readonly class WorkforceCapacitySnapshotBuilder
 {
-    private const SCHEMA_VERSION = 'workforce-capacity-source.v1';
-
-    private const FORMULA_VERSION = 'workforce-capacity-formula.v1';
-
     private const TYPE_ORDER = [
         'staff_unit' => 1,
         'assignment' => 2,
@@ -47,7 +44,9 @@ final readonly class WorkforceCapacitySnapshotBuilder
 
         if ($staffUnit === null) {
             $gaps[] = 'source_contract_missing';
-        } elseif (! $this->effective($staffUnit, $key->asOfDate) || ! (bool) $staffUnit['is_active']) {
+        } elseif (! $this->effective($staffUnit, $key->asOfDate)
+            || ! (bool) $staffUnit['is_active']
+            || ($staffUnit['deleted_at'] ?? null) !== null) {
             $gaps[] = 'inactive_staff_unit';
         }
 
@@ -97,8 +96,8 @@ final readonly class WorkforceCapacitySnapshotBuilder
         $state = [
             ...$key->canonical(),
             'capture_kind' => $captureKind,
-            'source_schema_version' => self::SCHEMA_VERSION,
-            'formula_version' => self::FORMULA_VERSION,
+            'source_schema_version' => WorkforceCapacityFrozenCapturePins::SOURCE_SCHEMA_VERSION,
+            'formula_version' => WorkforceCapacityFrozenCapturePins::FORMULA_VERSION,
             'policy_hash' => $this->policy->hash(),
             'authorized_fte' => $authorized === null ? null : WorkforceCapacityDecimal::format($authorized, 4),
             'assigned_fte' => WorkforceCapacityDecimal::format($assigned, 4),
@@ -115,8 +114,8 @@ final readonly class WorkforceCapacitySnapshotBuilder
         $stateCanonical = json_encode($this->canonicalValue($state), JSON_THROW_ON_ERROR);
         $stateHash = hash('sha256', $stateCanonical);
         $sourceValue = [
-            'schema' => self::SCHEMA_VERSION,
-            'formula' => self::FORMULA_VERSION,
+            'schema' => WorkforceCapacityFrozenCapturePins::SOURCE_SCHEMA_VERSION,
+            'formula' => WorkforceCapacityFrozenCapturePins::FORMULA_VERSION,
             'policy_hash' => $this->policy->hash(),
             'state_hash' => $stateHash,
             'items_hash' => $itemsHash,
@@ -130,8 +129,8 @@ final readonly class WorkforceCapacitySnapshotBuilder
             capturedAt: $capturedAt,
             actorUserId: $actorUserId,
             serviceActor: $serviceActor,
-            schemaVersion: self::SCHEMA_VERSION,
-            formulaVersion: self::FORMULA_VERSION,
+            schemaVersion: WorkforceCapacityFrozenCapturePins::SOURCE_SCHEMA_VERSION,
+            formulaVersion: WorkforceCapacityFrozenCapturePins::FORMULA_VERSION,
             policy: $this->policy,
             authorizedFte: $state['authorized_fte'],
             assignedFte: $state['assigned_fte'],
@@ -208,6 +207,7 @@ final readonly class WorkforceCapacitySnapshotBuilder
             }
             if (in_array((string) ($absence['status'] ?? ''), $this->policy->unavailabilityStatuses, true)
                 && (bool) ($absence['affects_payroll'] ?? false)
+                && ($absence['deleted_at'] ?? null) === null
                 && $this->effectiveRange($absence, $key->asOfDate, 'start_date', 'end_date')) {
                 $absenceByEmployee[(int) $absence['employee_id']] = true;
             }
@@ -221,13 +221,14 @@ final readonly class WorkforceCapacitySnapshotBuilder
                 throw new InvalidArgumentException('workforce_capacity_business_trip_lineage_mismatch');
             }
             if (! in_array((string) ($trip['status'] ?? ''), $this->policy->unavailabilityStatuses, true)
+                || ($trip['deleted_at'] ?? null) !== null
                 || ! $this->effectiveRange($trip, $key->asOfDate, 'start_date', 'end_date')) {
                 continue;
             }
 
             $employeeId = (int) ($trip['employee_id'] ?? 0);
             $tripProjectId = $this->nullablePositiveInt($trip['project_id'] ?? null);
-            if ($tripProjectId !== null && $tripProjectId !== $key->projectId) {
+            if ($tripProjectId !== $key->projectId) {
                 $crossScope[$employeeId] = true;
             } else {
                 $tripByEmployee[$employeeId] = true;
@@ -238,12 +239,12 @@ final readonly class WorkforceCapacitySnapshotBuilder
         $gaps = [];
         foreach ($assignments as $assignment) {
             $employeeId = (int) $assignment['employee_id'];
-            if (isset($crossScope[$employeeId])) {
+            $absenceIsCrossScope = isset($absenceByEmployee[$employeeId]) && $key->projectId !== null;
+            if (isset($crossScope[$employeeId]) || $absenceIsCrossScope) {
                 $gaps[] = 'cross_scope_unavailability';
-
-                continue;
             }
-            if (isset($absenceByEmployee[$employeeId]) || isset($tripByEmployee[$employeeId])) {
+            if ((isset($absenceByEmployee[$employeeId]) && ! $absenceIsCrossScope)
+                || isset($tripByEmployee[$employeeId])) {
                 $unavailable += WorkforceCapacityDecimal::parse($assignment['rate'], 4);
             }
         }
@@ -295,7 +296,7 @@ final readonly class WorkforceCapacitySnapshotBuilder
                 continue;
             }
 
-            $pattern = $this->weekPattern($schedule['week_pattern'] ?? null);
+            $pattern = $this->weekPattern($schedule);
             $assignmentHours = 0;
             foreach (new DatePeriod($monthStart, new DateInterval('P1D'), $monthEndExclusive) as $date) {
                 $day = $date->format('Y-m-d');
@@ -305,10 +306,15 @@ final readonly class WorkforceCapacitySnapshotBuilder
 
                 $override = $overrideByScheduleAndDate[$scheduleId][$day] ?? null;
                 if (is_array($override)) {
-                    if (($override['day_type'] ?? null) === 'non_work') {
+                    if (in_array(($override['day_type'] ?? null), $this->policy->calendarNonWorkDayTypes, true)) {
                         $hours = 0;
                     } elseif (($override['day_type'] ?? null) === 'work') {
-                        $hours = WorkforceCapacityDecimal::parse($override['planned_hours'] ?? null, 2);
+                        $hours = $this->scheduleHours($override['planned_hours'] ?? null);
+                        if ($hours === null) {
+                            $gaps[] = 'invalid_schedule';
+
+                            continue 2;
+                        }
                     } else {
                         $gaps[] = 'invalid_schedule';
 
@@ -321,7 +327,12 @@ final readonly class WorkforceCapacitySnapshotBuilder
 
                         continue 2;
                     }
-                    $hours = WorkforceCapacityDecimal::parse($pattern[$weekday], 2);
+                    $hours = $this->scheduleHours($pattern[$weekday]);
+                    if ($hours === null) {
+                        $gaps[] = 'invalid_schedule';
+
+                        continue 2;
+                    }
                 }
                 $assignmentHours += $hours;
             }
@@ -412,13 +423,51 @@ final readonly class WorkforceCapacitySnapshotBuilder
         return $items;
     }
 
-    private function weekPattern(mixed $value): array
+    private function weekPattern(array $schedule): array
     {
+        $value = $schedule['week_pattern'] ?? null;
         if (is_string($value)) {
             $value = json_decode($value, true);
         }
 
-        return is_array($value) ? $value : [];
+        if (! is_array($value)) {
+            return [];
+        }
+
+        if (isset($value['work_days'])) {
+            $workDays = $value['work_days'];
+            $hoursPerDay = $schedule['hours_per_day'] ?? null;
+            if (! is_array($workDays) || $hoursPerDay === null || $hoursPerDay === '') {
+                return [];
+            }
+
+            $normalizedWorkDays = [];
+            foreach ($workDays as $workDay) {
+                $weekday = (int) $workDay;
+                if ($weekday < 1 || $weekday > 7) {
+                    return [];
+                }
+                $normalizedWorkDays[$weekday] = true;
+            }
+
+            $pattern = [];
+            for ($weekday = 1; $weekday <= 7; $weekday++) {
+                $pattern[(string) $weekday] = isset($normalizedWorkDays[$weekday]) ? $hoursPerDay : '0.00';
+            }
+
+            return $pattern;
+        }
+
+        return $value;
+    }
+
+    private function scheduleHours(mixed $value): ?int
+    {
+        try {
+            return WorkforceCapacityDecimal::parse($value, 2);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
     }
 
     private function effective(array $row, string $date): bool

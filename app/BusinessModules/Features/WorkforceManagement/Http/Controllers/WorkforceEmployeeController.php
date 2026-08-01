@@ -19,9 +19,7 @@ use Illuminate\Validation\ValidationException;
 
 final class WorkforceEmployeeController extends Controller
 {
-    public function __construct(private readonly WorkforceEmployeeService $service)
-    {
-    }
+    public function __construct(private readonly WorkforceEmployeeService $service) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -161,9 +159,13 @@ final class WorkforceEmployeeController extends Controller
             'last_name' => [$required, 'string', 'max:255'],
             'first_name' => [$required, 'string', 'max:255'],
             'middle_name' => ['nullable', 'string', 'max:255'],
-            'employment_status' => [$partial ? 'sometimes' : 'nullable', Rule::in(['active', 'dismissed', 'inactive'])],
+            'employment_status' => $partial
+                ? ['prohibited']
+                : ['nullable', Rule::in(['active', 'dismissed', 'inactive'])],
             'hire_date' => [$required, 'date'],
-            'dismissal_date' => ['nullable', 'date', 'after_or_equal:hire_date'],
+            'dismissal_date' => $partial
+                ? ['prohibited']
+                : ['nullable', 'date', 'after_or_equal:hire_date'],
             'external_payroll_ref' => [
                 'nullable',
                 'string',

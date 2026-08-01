@@ -6,10 +6,13 @@ namespace Tests\Unit\WorkforceManagement\Reporting\Capacity;
 
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityClock;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityCurrentSource;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityDeferredCaptureDispatcher;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityFrozenCaptureWriter;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityPolicySource;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacitySnapshotStore;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCaptureCommand;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCohortKey;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityFrozenCaptureReceipt;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityPolicyDefinition;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacitySnapshotService;
 use DateTimeImmutable;
@@ -50,9 +53,9 @@ final class WorkforceCapacitySnapshotServiceTest extends TestCase
             sourceType: 'staff_unit',
             oldState: ['id' => 11, 'valid_from' => '2026-08-01'],
             newState: ['id' => 11, 'valid_from' => '2026-08-01'],
-            captureKind: 'change_capture',
+            captureKind: 'scheduled_close',
             actorUserId: null,
-            serviceActor: 'workforce-owner',
+            serviceActor: 'workforce-scheduler',
         ));
 
         self::assertSame(125, $result->snapshotCount);
@@ -88,10 +91,47 @@ final class WorkforceCapacitySnapshotServiceTest extends TestCase
             sourceType: 'assignment',
             oldState: ['id' => 31],
             newState: ['id' => 31],
+            captureKind: 'scheduled_close',
+            actorUserId: null,
+            serviceActor: 'workforce-scheduler',
+        ));
+    }
+
+    #[Test]
+    public function owner_change_is_always_frozen_without_materializing_even_one_sync_cohort(): void
+    {
+        $keys = [new WorkforceCapacityCohortKey(7, '2026-08-15', '2026-08-01', 11, null)];
+        $source = new RecordingCapacitySource($keys, $this->source());
+        $store = new RecordingCapacityStore;
+        $dispatcher = new RecordingSnapshotDeferredDispatcher;
+        $command = new WorkforceCapacityCaptureCommand(
+            mutationId: 'assignment:31:deferred-limit',
+            organizationId: 7,
+            sourceType: 'assignment',
+            oldState: null,
+            newState: ['id' => 31, 'organization_id' => 7, 'staff_unit_id' => 11],
             captureKind: 'change_capture',
             actorUserId: null,
             serviceActor: 'workforce-owner',
-        ));
+        );
+        $writer = new RecordingFrozenCaptureWriter;
+        $service = new WorkforceCapacitySnapshotService(
+            $source,
+            new FixedCapacityPolicySource,
+            $store,
+            new FixedCapacityClock,
+            40,
+            $writer,
+            $dispatcher,
+        );
+
+        $result = $service->capture($command);
+
+        self::assertSame(0, $result->snapshotCount);
+        self::assertSame([], $source->batchSizes);
+        self::assertSame([], $store->batchSizes);
+        self::assertSame([$command], $writer->commands);
+        self::assertSame([91], $dispatcher->requestIds);
     }
 
     private function source(): array
@@ -211,4 +251,30 @@ final class FailingCapacityStore implements WorkforceCapacitySnapshotStore
         int $snapshotCount,
         int $chunkCount,
     ): void {}
+}
+
+final class RecordingFrozenCaptureWriter implements WorkforceCapacityFrozenCaptureWriter
+{
+    public array $commands = [];
+
+    public function freezeAndEnqueue(
+        WorkforceCapacityCaptureCommand $command,
+        WorkforceCapacityPolicyDefinition $policy,
+        DateTimeImmutable $capturedAt,
+        string $businessDate,
+    ): WorkforceCapacityFrozenCaptureReceipt {
+        $this->commands[] = $command;
+
+        return new WorkforceCapacityFrozenCaptureReceipt(91, true);
+    }
+}
+
+final class RecordingSnapshotDeferredDispatcher implements WorkforceCapacityDeferredCaptureDispatcher
+{
+    public array $requestIds = [];
+
+    public function dispatchAfterCommit(int $captureRequestId): void
+    {
+        $this->requestIds[] = $captureRequestId;
+    }
 }

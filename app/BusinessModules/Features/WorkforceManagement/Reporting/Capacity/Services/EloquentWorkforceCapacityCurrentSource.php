@@ -52,6 +52,8 @@ final readonly class EloquentWorkforceCapacityCurrentSource implements Workforce
         $assignments = DB::table('workforce_employee_assignments')
             ->where('organization_id', $command->organizationId)
             ->whereIn('staff_unit_id', $staffUnitIds)
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
             ->whereDate('valid_from', '<=', $maxDate)
             ->where(function ($query) use ($minDate): void {
                 $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $minDate);
@@ -70,7 +72,7 @@ final readonly class EloquentWorkforceCapacityCurrentSource implements Workforce
         $schedules = $scheduleIds === [] ? [] : DB::table('workforce_work_schedules')
             ->where('organization_id', $command->organizationId)
             ->whereIn('id', $scheduleIds)
-            ->get(['id', 'organization_id', 'schedule_type', 'week_pattern', 'is_active', 'deleted_at'])
+            ->get(['id', 'organization_id', 'schedule_type', 'hours_per_day', 'week_pattern', 'is_active', 'deleted_at'])
             ->map(fn ($row): array => (array) $row)->all();
         $scheduleDays = $scheduleIds === [] ? [] : DB::table('workforce_work_schedule_days')
             ->where('organization_id', $command->organizationId)
@@ -86,6 +88,9 @@ final readonly class EloquentWorkforceCapacityCurrentSource implements Workforce
             })
             ->where('absence.organization_id', $command->organizationId)
             ->whereIn('absence.employee_id', $employeeIds)
+            ->where('absence.status', 'approved')
+            ->whereNull('absence.deleted_at')
+            ->where('type.affects_payroll', true)
             ->whereDate('absence.start_date', '<=', $maxDate)
             ->whereDate('absence.end_date', '>=', $minDate)
             ->orderBy('absence.id')
@@ -97,6 +102,8 @@ final readonly class EloquentWorkforceCapacityCurrentSource implements Workforce
         $trips = $employeeIds === [] ? [] : DB::table('workforce_business_trips')
             ->where('organization_id', $command->organizationId)
             ->whereIn('employee_id', $employeeIds)
+            ->where('status', 'approved')
+            ->whereNull('deleted_at')
             ->whereDate('start_date', '<=', $maxDate)
             ->whereDate('end_date', '>=', $minDate)
             ->orderBy('id')
@@ -120,6 +127,8 @@ final readonly class EloquentWorkforceCapacityCurrentSource implements Workforce
                 $assignments,
                 fn (array $row): bool => (int) $row['staff_unit_id'] === $key->staffUnitId
                     && $this->nullableInt($row['project_id']) === $key->projectId
+                    && (string) $row['status'] === 'active'
+                    && $row['deleted_at'] === null
                     && (string) $row['valid_from'] <= $key->asOfDate
                     && ($row['valid_to'] === null || (string) $row['valid_to'] >= $key->asOfDate),
             ));
@@ -156,6 +165,9 @@ final readonly class EloquentWorkforceCapacityCurrentSource implements Workforce
 
     private function relatedAssignments(WorkforceCapacityCaptureCommand $command): iterable
     {
+        if ($command->sourceType === 'capture_request') {
+            return [];
+        }
         if ($command->sourceType === 'employee_lifecycle') {
             return array_values(array_merge(
                 (array) ($command->oldState['assignments'] ?? []),
@@ -174,7 +186,9 @@ final readonly class EloquentWorkforceCapacityCurrentSource implements Workforce
             : [];
 
         $query = DB::table('workforce_employee_assignments')
-            ->where('organization_id', $command->organizationId);
+            ->where('organization_id', $command->organizationId)
+            ->where('status', 'active')
+            ->whereNull('deleted_at');
         if ($staffUnitIds !== []) {
             $query->whereIn('staff_unit_id', $staffUnitIds);
         } elseif ($scheduleIds !== []) {

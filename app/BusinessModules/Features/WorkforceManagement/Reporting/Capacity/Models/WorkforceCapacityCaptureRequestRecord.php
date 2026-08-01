@@ -15,7 +15,15 @@ final class WorkforceCapacityCaptureRequestRecord extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'command_payload' => 'array',
+        'policy_definition' => 'array',
+        'business_date' => 'immutable_date',
+        'captured_at' => 'immutable_datetime',
+        'frozen_at' => 'immutable_datetime',
+        'available_at' => 'immutable_datetime',
+        'claimed_at' => 'immutable_datetime',
         'started_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',
+        'dead_lettered_at' => 'immutable_datetime',
     ];
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services;
 
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityCohortLock;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacitySnapshotStore;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityEvidenceItem;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacitySnapshot;
@@ -17,6 +18,8 @@ use LogicException;
 
 final readonly class EloquentWorkforceCapacitySnapshotStore implements WorkforceCapacitySnapshotStore
 {
+    public function __construct(private WorkforceCapacityCohortLock $cohortLock) {}
+
     public function appendBatch(
         string $mutationId,
         ?string $priorCursor,
@@ -26,6 +29,16 @@ final readonly class EloquentWorkforceCapacitySnapshotStore implements Workforce
         if ($snapshots === []) {
             throw new LogicException('workforce_capacity_empty_batch');
         }
+
+        $keys = [];
+        foreach ($snapshots as $snapshot) {
+            if (! $snapshot instanceof WorkforceCapacitySnapshot) {
+                throw new LogicException('workforce_capacity_snapshot_type_invalid');
+            }
+
+            $keys[] = $snapshot->key;
+        }
+        (new WorkforceCapacitySnapshotBatchOrder)->assertKeys($keys);
 
         DB::transaction(function () use ($mutationId, $priorCursor, $cursor, $snapshots): void {
             $organizationId = $this->batchOrganizationId($snapshots);
@@ -41,7 +54,7 @@ final readonly class EloquentWorkforceCapacitySnapshotStore implements Workforce
             }
 
             foreach ($snapshots as $snapshot) {
-                $this->appendSnapshot($mutationId, $cursor, $snapshot);
+                $this->appendSnapshot((int) $request->id, $mutationId, $cursor, $snapshot);
             }
 
             DB::table((new WorkforceCapacityCaptureRequestRecord)->getTable())
@@ -88,13 +101,14 @@ final readonly class EloquentWorkforceCapacitySnapshotStore implements Workforce
         });
     }
 
-    private function appendSnapshot(string $mutationId, string $cursor, mixed $snapshot): void
+    private function appendSnapshot(int $captureRequestId, string $mutationId, string $cursor, mixed $snapshot): void
     {
         if (! $snapshot instanceof WorkforceCapacitySnapshot) {
             throw new LogicException('workforce_capacity_snapshot_type_invalid');
         }
-        $this->lockCohort($snapshot);
+        $this->cohortLock->acquire($snapshot->key);
         $existing = WorkforceCapacitySnapshotRecord::query()
+            ->where('capture_request_id', $captureRequestId)
             ->where('organization_id', $snapshot->key->organizationId)
             ->where('month_start', $snapshot->key->monthStart)
             ->where('as_of_date', $snapshot->key->asOfDate)
@@ -115,6 +129,7 @@ final readonly class EloquentWorkforceCapacitySnapshotStore implements Workforce
         unset($payload['semantic_label']);
         $record = WorkforceCapacitySnapshotRecord::query()->create([
             ...$payload,
+            'capture_request_id' => $captureRequestId,
             'capture_mutation_id' => $mutationId,
             'capture_cursor' => $cursor,
             'sealed_at' => null,
@@ -133,7 +148,7 @@ final readonly class EloquentWorkforceCapacitySnapshotStore implements Workforce
                 'content_hash' => $item->contentHash,
             ];
             $batch[] = [
-                ...$item->toPersistence($position),
+                ...(new WorkforceCapacityEvidenceBulkPersistence)->row($item, $position),
                 'workforce_capacity_snapshot_id' => $record->getKey(),
                 'organization_id' => $snapshot->key->organizationId,
                 'staff_unit_id' => $snapshot->key->staffUnitId,
@@ -200,18 +215,6 @@ final readonly class EloquentWorkforceCapacitySnapshotStore implements Workforce
         }
 
         return (int) $organizationId;
-    }
-
-    private function lockCohort(WorkforceCapacitySnapshot $snapshot): void
-    {
-        if (DB::getDriverName() !== 'pgsql') {
-            return;
-        }
-
-        DB::statement('SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))', [
-            'workforce-capacity:'.$snapshot->key->organizationId,
-            $snapshot->key->identity(),
-        ]);
     }
 
     private function now(): DateTimeImmutable

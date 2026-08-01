@@ -46,6 +46,22 @@ final readonly class WorkforceCapacityEvidenceItem
             || ! hash_equals($this->contentHash, hash('sha256', $this->contentCanonical))) {
             throw new InvalidArgumentException('workforce_capacity_evidence_canonical_hash_mismatch');
         }
+
+        $source = $this->decodeCanonical($this->sourceCanonical);
+        $content = $this->decodeCanonical($this->contentCanonical);
+        $expectedContent = $this->canonical([
+            'type' => $this->sourceType,
+            'source_id' => $this->sourceId,
+            'revision' => $this->sourceRevisionHash,
+            'lineage' => $this->lineage,
+            'evidence' => $this->evidence,
+            'sealed_employee_id' => $this->sealedEmployeeId,
+        ]);
+        if (($source['type'] ?? null) !== $this->sourceType
+            || (($source['source']['id'] ?? null) === null ? null : (int) $source['source']['id']) !== $this->sourceId
+            || $content !== $expectedContent) {
+            throw new InvalidArgumentException('workforce_capacity_evidence_canonical_semantics_mismatch');
+        }
     }
 
     public function toPersistence(int $position): array
@@ -62,5 +78,34 @@ final readonly class WorkforceCapacityEvidenceItem
             'content_canonical' => $this->contentCanonical,
             'sealed_employee_id' => $this->sealedEmployeeId,
         ];
+    }
+
+    private function decodeCanonical(string $canonical): array
+    {
+        try {
+            $decoded = json_decode($canonical, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw new InvalidArgumentException('workforce_capacity_evidence_canonical_invalid');
+        }
+        if (! is_array($decoded)
+            || json_encode($this->canonical($decoded), JSON_THROW_ON_ERROR) !== $canonical) {
+            throw new InvalidArgumentException('workforce_capacity_evidence_canonical_invalid');
+        }
+
+        return $decoded;
+    }
+
+    private function canonical(array $value): array
+    {
+        if (! array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+        foreach ($value as $key => $nested) {
+            if (is_array($nested)) {
+                $value[$key] = $this->canonical($nested);
+            }
+        }
+
+        return $value;
     }
 }

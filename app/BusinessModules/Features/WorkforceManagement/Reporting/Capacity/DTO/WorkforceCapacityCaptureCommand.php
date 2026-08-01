@@ -34,8 +34,12 @@ final readonly class WorkforceCapacityCaptureCommand
             || ! in_array($this->sourceType, self::SOURCE_TYPES, true)
             || ($this->oldState === null && $this->newState === null)
             || ! in_array($this->captureKind, ['change_capture', 'scheduled_close', 'manual_recompute'], true)
-            || ($this->captureKind === 'manual_recompute' && ($this->actorUserId === null || $this->actorUserId < 1))
-            || ($this->captureKind !== 'manual_recompute' && ($this->serviceActor === null || trim($this->serviceActor) === ''))) {
+            || ($this->captureKind === 'manual_recompute' && (
+                $this->actorUserId === null || $this->actorUserId < 1 || $this->serviceActor !== null
+            ))
+            || ($this->captureKind !== 'manual_recompute' && (
+                $this->actorUserId !== null || $this->serviceActor === null || trim($this->serviceActor) === ''
+            ))) {
             throw new InvalidArgumentException('workforce_capacity_capture_command_invalid');
         }
     }

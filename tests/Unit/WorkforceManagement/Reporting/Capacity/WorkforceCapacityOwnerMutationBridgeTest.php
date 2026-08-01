@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tests\Unit\WorkforceManagement\Reporting\Capacity;
 
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityCaptureBoundary;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Contracts\WorkforceCapacityLifecycleCaptureCoordinator;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCaptureCommand;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCaptureResult;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityLifecycleCaptureDraft;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -17,7 +19,7 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
     public function every_capacity_owner_table_maps_to_the_closed_source_contract(): void
     {
         $capture = new RecordingCaptureBoundary;
-        $bridge = new WorkforceCapacityOwnerMutationBridge($capture);
+        $bridge = new WorkforceCapacityOwnerMutationBridge($capture, new RecordingLifecycleCaptureCoordinator);
         $cases = [
             ['workforce_staff_units', 'staff_unit', ['id' => 11, 'valid_from' => '2026-01-01']],
             ['workforce_employee_assignments', 'assignment', ['id' => 12, 'staff_unit_id' => 11, 'valid_from' => '2026-01-01']],
@@ -39,7 +41,7 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
     public function draft_unavailability_is_skipped_but_approved_to_cancelled_transition_is_captured(): void
     {
         $capture = new RecordingCaptureBoundary;
-        $bridge = new WorkforceCapacityOwnerMutationBridge($capture);
+        $bridge = new WorkforceCapacityOwnerMutationBridge($capture, new RecordingLifecycleCaptureCoordinator);
 
         $bridge->afterMutation('workforce_absences', 7, null, [
             'id' => 15,
@@ -76,42 +78,26 @@ final class WorkforceCapacityOwnerMutationBridgeTest extends TestCase
     }
 
     #[Test]
-    public function dismissal_uses_lifecycle_contract_with_exact_closed_assignment_states(): void
+    public function dismissal_delegates_an_id_only_lifecycle_draft_without_assignment_arrays(): void
     {
         $capture = new RecordingCaptureBoundary;
-        $bridge = new WorkforceCapacityOwnerMutationBridge($capture);
+        $lifecycle = new RecordingLifecycleCaptureCoordinator;
+        $bridge = new WorkforceCapacityOwnerMutationBridge($capture, $lifecycle);
 
-        $bridge->afterEmployeeDismissal(
+        $draft = $bridge->beginDismissal(
             organizationId: 7,
             employeeId: 41,
             dismissalDate: '2026-08-15',
-            oldAssignments: [[
-                'id' => 31,
-                'organization_id' => 7,
-                'employee_id' => 41,
-                'staff_unit_id' => 11,
-                'project_id' => null,
-                'valid_from' => '2026-01-01',
-                'valid_to' => null,
-                'status' => 'active',
-            ]],
-            newAssignments: [[
-                'id' => 31,
-                'organization_id' => 7,
-                'employee_id' => 41,
-                'staff_unit_id' => 11,
-                'project_id' => null,
-                'valid_from' => '2026-01-01',
-                'valid_to' => '2026-08-15',
-                'status' => 'active',
-            ]],
         );
+        $bridge->finishDismissal($draft);
 
-        self::assertCount(1, $capture->commands);
-        self::assertSame('employee_lifecycle', $capture->commands[0]->sourceType);
-        self::assertSame('2026-08-15', $capture->commands[0]->newState['dismissal_date']);
-        self::assertCount(1, $capture->commands[0]->oldState['assignments']);
-        self::assertCount(1, $capture->commands[0]->newState['assignments']);
+        self::assertCount(0, $capture->commands);
+        self::assertSame([[7, 41, '2026-08-15']], $lifecycle->begun);
+        self::assertSame([$draft], $lifecycle->finished);
+        self::assertSame(7, $draft->organizationId);
+        self::assertSame(41, $draft->employeeId);
+        self::assertSame('2026-08-15', $draft->dismissalDate);
+        self::assertStringNotContainsString('assignments', json_encode($draft, JSON_THROW_ON_ERROR));
     }
 }
 
@@ -124,5 +110,27 @@ final class RecordingCaptureBoundary implements WorkforceCapacityCaptureBoundary
         $this->commands[] = $command;
 
         return new WorkforceCapacityCaptureResult(1, 1, str_repeat('a', 64));
+    }
+}
+
+final class RecordingLifecycleCaptureCoordinator implements WorkforceCapacityLifecycleCaptureCoordinator
+{
+    public array $begun = [];
+
+    public array $finished = [];
+
+    public function beginDismissal(
+        int $organizationId,
+        int $employeeId,
+        string $dismissalDate,
+    ): WorkforceCapacityLifecycleCaptureDraft {
+        $this->begun[] = [$organizationId, $employeeId, $dismissalDate];
+
+        return new WorkforceCapacityLifecycleCaptureDraft(1, $organizationId, $employeeId, $dismissalDate, 0);
+    }
+
+    public function finishDismissal(WorkforceCapacityLifecycleCaptureDraft $draft): void
+    {
+        $this->finished[] = $draft;
     }
 }
