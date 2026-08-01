@@ -200,4 +200,32 @@ final class DocumentSourceReplacementCoordinatorTest extends TestCase
         ], $pages->pages);
         self::assertSame(0, $invalidator->calls);
     }
+
+    #[Test]
+    public function replacement_with_empty_previous_source_version_removes_stale_pages_only_for_its_document(): void
+    {
+        $pages = new InMemoryDocumentSourceReplacementPageStore([
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 44, 'page_number' => 1, 'source_version' => null, 'processing_unit_id' => 501],
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 45, 'page_number' => 1, 'source_version' => null, 'processing_unit_id' => 502],
+        ]);
+        $invalidator = new class implements EvidenceSourceReplacementInvalidator
+        {
+            public int $calls = 0;
+
+            public function invalidateReplacedDocumentSource(int $organizationId, int $projectId, int $sessionId, int $documentId, string $previousSourceVersion): int
+            {
+                ++$this->calls;
+
+                return 0;
+            }
+        };
+        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages);
+
+        $coordinator->commit(1, 10, 100, 44, '', 'accepted', static fn (): null => null);
+
+        self::assertSame([
+            ['organization_id' => 1, 'project_id' => 10, 'session_id' => 100, 'document_id' => 45, 'page_number' => 1, 'source_version' => null, 'processing_unit_id' => 502],
+        ], $pages->pages);
+        self::assertSame(0, $invalidator->calls);
+    }
 }
