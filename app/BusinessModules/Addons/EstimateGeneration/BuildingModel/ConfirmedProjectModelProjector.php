@@ -8,6 +8,13 @@ final class ConfirmedProjectModelProjector
 {
     public function project(ProjectModelMergeResult $result): ConfirmedProjectModelProjection
     {
-        return new ConfirmedProjectModelProjection($result->resolved);
+        $confirmed = [];
+        foreach ($result->resolved as $value) {
+            if ($value->hasConfirmedCanonicalProof()) {
+                $confirmed[] = $value;
+            }
+        }
+
+        return new ConfirmedProjectModelProjection(ProjectModelResolvedValueList::of(...$confirmed));
     }
 }

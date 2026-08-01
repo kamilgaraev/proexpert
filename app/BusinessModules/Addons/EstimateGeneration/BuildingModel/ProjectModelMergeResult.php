@@ -8,14 +8,16 @@ use InvalidArgumentException;
 
 final readonly class ProjectModelMergeResult
 {
-    public function __construct(
-        public array $resolved,
-        public array $conflicts,
-        public array $unconfirmed,
+    private function __construct(
+        public ProjectModelResolvedValueList $resolved,
+        public ProjectModelConflictList $conflicts,
+        public ProjectModelConflictList $unconfirmed,
     ) {
-        self::assertCollection($resolved, ProjectModelResolvedValue::class, 'Resolved values');
-        self::assertCollection($conflicts, ProjectModelConflict::class, 'Conflicts');
-        self::assertCollection($unconfirmed, ProjectModelConflict::class, 'Unconfirmed values');
+        foreach ($resolved as $value) {
+            if (! $value->hasConfirmedCanonicalProof()) {
+                throw new InvalidArgumentException('Resolved value has no confirmed canonical proof.');
+            }
+        }
         foreach ($conflicts as $conflict) {
             if (! str_ends_with($conflict->code, '_conflict')) {
                 throw new InvalidArgumentException('Conflict result contains an unconfirmed value.');
@@ -28,15 +30,8 @@ final readonly class ProjectModelMergeResult
         }
     }
 
-    private static function assertCollection(array $values, string $class, string $subject): void
+    public static function fromResolution(ProjectModelResolvedValueList $resolved, ProjectModelConflictList $conflicts, ProjectModelConflictList $unconfirmed): self
     {
-        if (! array_is_list($values)) {
-            throw new InvalidArgumentException("{$subject} must be a list.");
-        }
-        foreach ($values as $value) {
-            if (! $value instanceof $class) {
-                throw new InvalidArgumentException("{$subject} contains an invalid item.");
-            }
-        }
+        return new self($resolved, $conflicts, $unconfirmed);
     }
 }

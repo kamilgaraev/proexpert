@@ -8,7 +8,7 @@ use InvalidArgumentException;
 
 final readonly class ProjectModelCandidate
 {
-    public function __construct(
+    private function __construct(
         public string $stableKey,
         public string $assertionStableKey,
         public ?string $correctionStableKey,
@@ -33,6 +33,37 @@ final readonly class ProjectModelCandidate
         }
     }
 
+    /** @param array<string, mixed> $value */
+    public static function forAssertion(ProjectModelAssertion $assertion, string $source, array $value, ProjectModelEvidenceBindingList $bindings): self
+    {
+        return new self(
+            $assertion->stableKey,
+            $assertion->stableKey,
+            null,
+            $source,
+            $value,
+            $source !== 'ai_candidate' && self::hasExactEvidence($bindings, $assertion->entityStableKey, $assertion->stableKey, null, $source, $value),
+        );
+    }
+
+    /** @param array<string, mixed> $value */
+    public static function forCorrection(ProjectModelAssertion $assertion, ProjectModelCorrection $correction, string $source, array $value, ProjectModelEvidenceBindingList $bindings): self
+    {
+        return new self(
+            $correction->stableKey,
+            $assertion->stableKey,
+            $correction->stableKey,
+            $source,
+            $value,
+            $source === 'manual_correction' || self::hasExactEvidence($bindings, $assertion->entityStableKey, $assertion->stableKey, $correction->stableKey, $source, $value),
+        );
+    }
+
+    public function hasCanonicalConfirmation(): bool
+    {
+        return $this->confirmed && $this->source !== 'ai_candidate';
+    }
+
     public function priority(): int
     {
         return match ($this->source) {
@@ -41,5 +72,17 @@ final readonly class ProjectModelCandidate
             'reconciled_geometry' => 2,
             'ai_candidate' => 1,
         };
+    }
+
+    /** @param array<string, mixed> $value */
+    private static function hasExactEvidence(ProjectModelEvidenceBindingList $bindings, string $entityStableKey, string $assertionStableKey, ?string $correctionStableKey, string $source, array $value): bool
+    {
+        foreach ($bindings as $binding) {
+            if ($binding->proves($entityStableKey, $assertionStableKey, $correctionStableKey, $source, $value)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

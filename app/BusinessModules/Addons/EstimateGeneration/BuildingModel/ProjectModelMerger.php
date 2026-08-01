@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\BuildingModelSchema;
 use InvalidArgumentException;
 
 final class ProjectModelMerger
@@ -18,13 +17,18 @@ final class ProjectModelMerger
 
     public function __construct(private readonly ProjectModelConflictResolver $conflictResolver = new ProjectModelConflictResolver) {}
 
-    public function merge(array $entities, array $assertions, array $corrections, array $evidenceBindings): ProjectModelMergeResult
+    public function merge(
+        ProjectModelEntityList $entities,
+        ProjectModelAssertionList $assertions,
+        ProjectModelCorrectionList $corrections,
+        ProjectModelEvidenceBindingList $evidenceBindings,
+    ): ProjectModelMergeResult
     {
         $entityIndex = $this->indexEntities($entities);
         $assertionIndex = $this->indexAssertions($assertions, $entityIndex);
-        $evidencedEntityKeys = $this->evidencedEntityKeys($evidenceBindings, $entityIndex);
-        $candidatesBySubject = $this->assertionCandidates($assertionIndex, $evidencedEntityKeys);
-        $this->appendCorrectionCandidates($candidatesBySubject, $corrections, $assertionIndex, $evidencedEntityKeys);
+        $this->validateEvidenceBindings($evidenceBindings, $entityIndex, $assertionIndex);
+        $candidatesBySubject = $this->assertionCandidates($assertionIndex, $evidenceBindings);
+        $this->appendCorrectionCandidates($candidatesBySubject, $corrections, $assertionIndex, $evidenceBindings);
 
         $resolved = [];
         $conflicts = [];
@@ -32,7 +36,7 @@ final class ProjectModelMerger
         ksort($candidatesBySubject, SORT_STRING);
         foreach ($candidatesBySubject as $subject => $candidates) {
             [$entityStableKey, $assertionType] = explode('|', $subject, 2);
-            $confirmed = array_values(array_filter($candidates, static fn (ProjectModelCandidate $candidate): bool => $candidate->confirmed));
+            $confirmed = array_values(array_filter($candidates, static fn (ProjectModelCandidate $candidate): bool => $candidate->hasCanonicalConfirmation()));
             if ($confirmed === []) {
                 $unconfirmed[] = new ProjectModelConflict(
                     $entityStableKey,
@@ -43,7 +47,7 @@ final class ProjectModelMerger
 
                 continue;
             }
-            $outcome = $this->conflictResolver->resolve($entityStableKey, $assertionType, $confirmed);
+            $outcome = $this->conflictResolver->resolve($entityStableKey, $assertionType, ProjectModelCandidateList::of(...$confirmed));
             if ($outcome instanceof ProjectModelConflict) {
                 $conflicts[] = $outcome;
 
@@ -52,12 +56,11 @@ final class ProjectModelMerger
             $resolved[] = $outcome;
         }
 
-        return new ProjectModelMergeResult($resolved, $conflicts, $unconfirmed);
-    }
-
-    public static function canonicalValue(array $value): string
-    {
-        return BuildingModelSchema::canonicalJson($value);
+        return ProjectModelMergeResult::fromResolution(
+            ProjectModelResolvedValueList::of(...$resolved),
+            ProjectModelConflictList::of(...$conflicts),
+            ProjectModelConflictList::of(...$unconfirmed),
+        );
     }
 
     public static function conflictCode(string $assertionType, bool $conflict): string
@@ -69,11 +72,8 @@ final class ProjectModelMerger
         return $assertionType.'_'.($conflict ? 'conflict' : 'unconfirmed');
     }
 
-    private function indexEntities(array $entities): array
+    private function indexEntities(ProjectModelEntityList $entities): array
     {
-        if (! array_is_list($entities)) {
-            throw new InvalidArgumentException('Project model entities must be a list.');
-        }
         $index = [];
         foreach ($entities as $entity) {
             if (! $entity instanceof ProjectModelEntity) {
@@ -88,11 +88,8 @@ final class ProjectModelMerger
         return $index;
     }
 
-    private function indexAssertions(array $assertions, array $entityIndex): array
+    private function indexAssertions(ProjectModelAssertionList $assertions, array $entityIndex): array
     {
-        if (! array_is_list($assertions)) {
-            throw new InvalidArgumentException('Project model assertions must be a list.');
-        }
         $index = [];
         foreach ($assertions as $assertion) {
             if (! $assertion instanceof ProjectModelAssertion) {
@@ -113,28 +110,23 @@ final class ProjectModelMerger
         return $index;
     }
 
-    private function evidencedEntityKeys(array $evidenceBindings, array $entityIndex): array
+    private function validateEvidenceBindings(ProjectModelEvidenceBindingList $evidenceBindings, array $entityIndex, array $assertionIndex): void
     {
-        if (! array_is_list($evidenceBindings)) {
-            throw new InvalidArgumentException('Project model evidence bindings must be a list.');
-        }
-        $keys = [];
         foreach ($evidenceBindings as $binding) {
-            if (! $binding instanceof ProjectModelEvidenceBinding) {
-                throw new InvalidArgumentException('Project model evidence binding is invalid.');
-            }
             $entity = $entityIndex[$binding->entityStableKey] ?? null;
             if (! $entity instanceof ProjectModelEntity) {
                 throw new InvalidArgumentException('Project model evidence binding references an unknown entity.');
             }
             $this->assertSameScope($entity, $binding);
-            $keys[$binding->entityStableKey] = true;
+            $assertion = $assertionIndex[$binding->assertionStableKey] ?? null;
+            if (! $assertion instanceof ProjectModelAssertion || $assertion->entityStableKey !== $binding->entityStableKey) {
+                throw new InvalidArgumentException('Project model evidence binding does not target an assertion subject.');
+            }
+            $this->assertSameScope($assertion, $binding);
         }
-
-        return $keys;
     }
 
-    private function assertionCandidates(array $assertionIndex, array $evidencedEntityKeys): array
+    private function assertionCandidates(array $assertionIndex, ProjectModelEvidenceBindingList $evidenceBindings): array
     {
         $candidates = [];
         foreach ($assertionIndex as $assertion) {
@@ -146,24 +138,14 @@ final class ProjectModelMerger
             unset($value['source']);
             $this->assertValue($assertion->assertionType, $value);
             $subject = $assertion->entityStableKey.'|'.$assertion->assertionType;
-            $candidates[$subject][] = new ProjectModelCandidate(
-                $assertion->stableKey,
-                $assertion->stableKey,
-                null,
-                $source,
-                $value,
-                $source !== 'ai_candidate' && isset($evidencedEntityKeys[$assertion->entityStableKey]),
-            );
+            $candidates[$subject][] = ProjectModelCandidate::forAssertion($assertion, $source, $value, $evidenceBindings);
         }
 
         return $candidates;
     }
 
-    private function appendCorrectionCandidates(array &$candidatesBySubject, array $corrections, array $assertionIndex, array $evidencedEntityKeys): void
+    private function appendCorrectionCandidates(array &$candidatesBySubject, ProjectModelCorrectionList $corrections, array $assertionIndex, ProjectModelEvidenceBindingList $evidenceBindings): void
     {
-        if (! array_is_list($corrections)) {
-            throw new InvalidArgumentException('Project model corrections must be a list.');
-        }
         $keys = [];
         foreach ($corrections as $correction) {
             if (! $correction instanceof ProjectModelCorrection) {
@@ -181,13 +163,12 @@ final class ProjectModelMerger
             $this->assertValue($assertion->assertionType, $correction->payload);
             $isManual = $correction->correctionType === 'manual';
             $subject = $assertion->entityStableKey.'|'.$assertion->assertionType;
-            $candidatesBySubject[$subject][] = new ProjectModelCandidate(
-                $correction->stableKey,
-                $assertion->stableKey,
-                $correction->stableKey,
+            $candidatesBySubject[$subject][] = ProjectModelCandidate::forCorrection(
+                $assertion,
+                $correction,
                 $isManual ? 'manual_correction' : 'reconciled_geometry',
                 $correction->payload,
-                $isManual || isset($evidencedEntityKeys[$assertion->entityStableKey]),
+                $evidenceBindings,
             );
         }
     }

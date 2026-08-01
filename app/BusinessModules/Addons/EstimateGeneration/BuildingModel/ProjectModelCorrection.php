@@ -35,4 +35,9 @@ final readonly class ProjectModelCorrection
             throw new InvalidArgumentException('Project model correction audit data is invalid.');
         }
     }
+
+    public function valueFingerprint(): string
+    {
+        return ProjectModelValueFingerprint::for($this->payload);
+    }
 }

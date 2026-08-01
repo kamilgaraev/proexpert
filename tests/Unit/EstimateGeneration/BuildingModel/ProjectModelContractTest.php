@@ -58,7 +58,7 @@ final class ProjectModelContractTest extends TestCase
         $assertion = new ProjectModelAssertion(10, 1, 2, 3, $sourceVersion, 'assertion:room-1:area', 'room-1', 'area', ['value' => 12.5, 'unit' => 'm2'], 0.95);
         $relation = new ProjectModelRelation(10, 1, 2, 3, $sourceVersion, 'relation:opening-1:hosted_by:wall-1', 'opening-1', 'wall-1', 'hosted_by', ['offset_m' => 1.2]);
         $correction = new ProjectModelCorrection(10, 1, 2, 3, $sourceVersion, 'correction:room-1:area:1', 'assertion:room-1:area', 'manual', ['value' => 13.0, 'unit' => 'm2'], 'Проверено по рабочему чертежу', 42);
-        $binding = new ProjectModelEvidenceBinding(10, 1, 2, 3, $sourceVersion, 'room-1', 17, 'sha256:'.str_repeat('c', 64), 0);
+        $binding = new ProjectModelEvidenceBinding(10, 1, 2, 3, $sourceVersion, 'room-1', 'assertion:room-1:area', null, 17, 'cad', \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint::for(['value' => 12.5, 'unit' => 'm2']), 'sha256:'.str_repeat('c', 64), 0);
 
         self::assertSame($sourceVersion, $assertion->sourceVersion);
         self::assertSame('hosted_by', $relation->relationType);
@@ -82,6 +82,9 @@ final class ProjectModelContractTest extends TestCase
         );
         $indexMigration = (string) file_get_contents(
             dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000150_add_project_model_projection_scope_indexes.php'
+        );
+        $exactBindingMigration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php'
         );
 
         foreach ([
@@ -121,6 +124,20 @@ final class ProjectModelContractTest extends TestCase
         }
         self::assertStringNotContainsString('$table->jsonb(\'evidence\')', $source);
         self::assertStringNotContainsString('eg_project_model_entities_payload_ck', $source);
+
+        foreach ([
+            'assertion_id',
+            'correction_id',
+            'candidate_source',
+            'candidate_value_fingerprint',
+            'eg_project_model_evidence_assertion_scope_fk',
+            'eg_project_model_evidence_correction_scope_fk',
+            'eg_project_model_evidence_candidate_subject_ck',
+            'eg_project_model_evidence_candidate_invalid',
+            'CREATE OR REPLACE FUNCTION eg_project_model_evidence_binding_guard()',
+        ] as $required) {
+            self::assertStringContainsString($required, $exactBindingMigration);
+        }
 
         $entitiesConstraintSection = substr(
             $source,

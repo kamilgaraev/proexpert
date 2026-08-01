@@ -8,13 +8,14 @@ use InvalidArgumentException;
 
 final readonly class ProjectModelResolvedValue
 {
-    public function __construct(
+    private function __construct(
         public string $entityStableKey,
         public string $assertionType,
         public array $value,
         public string $source,
         public string $assertionStableKey,
         public ?string $correctionStableKey = null,
+        private bool $confirmed = false,
     ) {
         ProjectModelEntity::assertStableKey($entityStableKey, 'Resolved value entity');
         self::assertAssertionType($assertionType);
@@ -29,6 +30,28 @@ final readonly class ProjectModelResolvedValue
         if ($correctionStableKey !== null) {
             ProjectModelEntity::assertStableKey($correctionStableKey, 'Resolved value correction');
         }
+    }
+
+    public static function fromConfirmedCandidate(string $entityStableKey, string $assertionType, ProjectModelCandidate $candidate): self
+    {
+        if (! $candidate->hasCanonicalConfirmation()) {
+            throw new InvalidArgumentException('Resolved value requires a confirmed canonical candidate.');
+        }
+
+        return new self(
+            $entityStableKey,
+            $assertionType,
+            $candidate->value,
+            $candidate->source,
+            $candidate->assertionStableKey,
+            $candidate->correctionStableKey,
+            true,
+        );
+    }
+
+    public function hasConfirmedCanonicalProof(): bool
+    {
+        return $this->confirmed && $this->source !== 'ai_candidate';
     }
 
     public static function assertAssertionType(string $assertionType): void
