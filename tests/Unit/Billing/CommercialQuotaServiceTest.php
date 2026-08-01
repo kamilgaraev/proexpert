@@ -190,6 +190,16 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertTrue($aiEstimates['available']);
     }
 
+    public function test_ai_estimate_resource_catalog_uses_current_price_and_module_requirement(): void
+    {
+        $resource = config('commercial_limits.resources.extra_ai_estimates');
+
+        $this->assertSame(50000, $resource['price_minor']);
+        $this->assertSame('estimate', $resource['unit']);
+        $this->assertSame(10, $resource['step']);
+        $this->assertSame('ai-estimates', $resource['requires_module']);
+    }
+
     public function test_corporate_override_can_set_unlimited_limit(): void
     {
         $account = $this->account('corporate', 'corporate');
@@ -260,7 +270,7 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertSame('ai-assistant', $quote['items'][0]['requires_module']);
         $this->assertSame('ok', $quote['items'][1]['status']);
         $this->assertSame('ai-estimates', $quote['items'][1]['requires_module']);
-        $this->assertSame(100000, $quote['amount_minor']);
+        $this->assertSame(550000, $quote['amount_minor']);
     }
 
     public function test_paid_composition_keeps_labels_for_module_bound_resource_addons(): void

@@ -111,7 +111,7 @@ return [
             'extra_holding_organizations' => 'Дополнительные организации холдинга',
             'extra_contractors' => 'Дополнительные подрядчики',
             'extra_ai_requests' => 'Дополнительные AI-запросы',
-            'extra_ai_estimates' => 'Дополнительные AI-сметы',
+            'extra_ai_estimates' => 'Дополнительная AI-смета',
             'extra_document_pages' => 'Дополнительные страницы распознавания',
             'extra_exports' => 'Дополнительные экспорты',
             'extra_commercial_proposals' => 'Дополнительные коммерческие предложения',

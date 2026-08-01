@@ -112,7 +112,7 @@ return [
             'min' => 0,
             'max_self_service' => 1000,
             'pricing_model' => 'linear',
-            'price_minor' => 5000,
+            'price_minor' => 50000,
             'requires_package' => 'estimates-norms',
             'requires_module' => 'ai-estimates',
             'sort_order' => 60,
