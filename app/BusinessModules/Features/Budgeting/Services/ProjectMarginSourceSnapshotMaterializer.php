@@ -40,7 +40,7 @@ final class ProjectMarginSourceSnapshotMaterializer
         BudgetingReportSourceClose $close,
         ?ReportQueryIdentity $reportQueryIdentity = null,
     ): ReportSourceSnapshotWrite {
-        $identity = $this->identity($scope, $filters, $close->closeId);
+        $identity = $this->identity($scope, $filters, $close->closeId, $reportQueryIdentity);
         $rows = $this->rows($snapshotId, $report['rows'] ?? []);
         $drillRows = $this->drillRows($snapshotId, $rows, $drillsByKey);
         $watermarks = $this->watermarks($report, $rows, $close);
@@ -100,6 +100,7 @@ final class ProjectMarginSourceSnapshotMaterializer
         ReportScope $scope,
         array $filters,
         string $sourceVersion,
+        ?ReportQueryIdentity $reportQueryIdentity = null,
     ): ReportSourceSnapshotIdentity {
         return new ReportSourceSnapshotIdentity(
             self::SOURCE_KIND,
@@ -108,6 +109,7 @@ final class ProjectMarginSourceSnapshotMaterializer
             $scope,
             $this->hash([
                 'filters' => $this->canonicalFilters($filters),
+                'report_query_hash' => $reportQueryIdentity?->hash->value,
                 'scope' => $scope->canonicalIdentity(),
             ]),
             $sourceVersion,

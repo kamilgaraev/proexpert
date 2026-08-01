@@ -77,6 +77,27 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
     }
 
     #[DataProvider('adapters')]
+    public function test_does_not_reuse_a_ready_snapshot_for_a_different_report_query_identity(
+        string $code,
+        string $sourceKind,
+        string $drillColumn,
+        object $adapter,
+        object $source,
+        InMemoryReportSourceSnapshotStore $store,
+    ): void {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $first = $adapter->materialize($context, $this->query($code, $context->scope), new ReportProgress(0));
+        $second = $adapter->materialize(
+            $context,
+            $this->query($code, $context->scope, asOf: new DateTimeImmutable('2026-07-31T11:00:00+00:00')),
+            new ReportProgress(0),
+        );
+
+        self::assertNotSame($first->id, $second->id);
+        self::assertSame(2, $store->persistCalls);
+    }
+
+    #[DataProvider('adapters')]
     public function test_materializes_approved_close_and_replays_only_the_persisted_snapshot(
         string $code,
         string $sourceKind,
@@ -279,6 +300,7 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         ReportScope $scope,
         string $formulaVersion = 'margin-v1',
         string $sourceSchemaVersion = '1.0.0',
+        ?DateTimeImmutable $asOf = null,
     ): ReportQuery {
         return new ReportQuery(
             (new ReportDefinitionBuilder)
@@ -298,7 +320,7 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
                 'close_id' => '01JZZZZZZZZZZZZZZZZZZZZZZZ',
             ]),
             [],
-            new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
+            $asOf ?? new DateTimeImmutable('2026-07-31T10:00:00+00:00'),
             'ru',
         );
     }
