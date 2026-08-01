@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('payment_document_estimate_splits')) {
+            return;
+        }
+
         Schema::create('payment_document_estimate_splits', function (Blueprint $table) {
             $table->id();
             $table->foreignId('payment_document_id')
@@ -42,4 +46,3 @@ return new class extends Migration
         Schema::dropIfExists('payment_document_estimate_splits');
     }
 };
-

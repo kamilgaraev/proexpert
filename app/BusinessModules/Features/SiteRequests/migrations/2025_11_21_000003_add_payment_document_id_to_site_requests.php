@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('site_requests', 'payment_document_id')) {
+            return;
+        }
+
         Schema::table('site_requests', function (Blueprint $table) {
             $table->foreignId('payment_document_id')
                 ->nullable()
@@ -35,4 +39,3 @@ return new class extends Migration
         });
     }
 };
-
