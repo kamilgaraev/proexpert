@@ -68,7 +68,11 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
 
         $ready = $store->persistReady($write);
         self::assertSame(ReportSourceSnapshotStatus::READY, $ready->status);
-        self::assertSame($write->header->scopeIdentity(), $store->header($request)->scopeIdentity());
+        $roundTrip = $store->header($request);
+        self::assertSame($write->header->scopeIdentity(), $roundTrip->scopeIdentity());
+        self::assertSame($write->header->reportQueryIdentity, $roundTrip->reportQueryIdentity);
+        self::assertSame($write->header->reportQueryHash?->value, $roundTrip->reportQueryHash?->value);
+        self::assertSame($write->header->materializedSourceHash->value, $roundTrip->materializedSourceHash->value);
 
         $first = $store->page($request, null, 1);
         self::assertSame(['project:1'], array_map(static fn (ReportSourceSnapshotRow $row): string => $row->rowKey, $first->rows));

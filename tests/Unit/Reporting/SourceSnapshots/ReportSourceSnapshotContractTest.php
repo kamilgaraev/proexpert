@@ -58,6 +58,15 @@ final class ReportSourceSnapshotContractTest extends TestCase
         $this->assertInvalidIdentity($header, $header->reportQueryIdentity, $this->hash(['wrong' => true]));
     }
 
+    public function test_accepts_jsonb_reordered_report_query_identity_with_the_same_canonical_hash(): void
+    {
+        $header = $this->write()->header;
+        $reordered = array_reverse($header->reportQueryIdentity, true);
+        $roundTrip = new ReportSourceSnapshotHeader($header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope, $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt, $header->staleAt, $header->status, $header->rowCount, $header->drillRowCount, $header->snapshotHash, null, null, $reordered, $header->reportQueryHash);
+
+        self::assertSame($header->reportQueryHash?->value, $roundTrip->reportQueryHash?->value);
+    }
+
     public function test_cursor_is_snapshot_bound_and_pagination_is_stable_by_ordinal(): void
     {
         $write = $this->write();

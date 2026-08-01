@@ -15,7 +15,9 @@ final readonly class ReportQueryIdentity
 
     public function __construct(public array $projection)
     {
-        if (array_keys($projection) !== ['as_of', 'comparison', 'definition_hash', 'filters', 'locale', 'scope']) {
+        $keys = array_keys($projection);
+        sort($keys, SORT_STRING);
+        if ($keys !== ['as_of', 'comparison', 'definition_hash', 'filters', 'locale', 'scope']) {
             throw new InvalidArgumentException('report_query_identity_invalid');
         }
 
