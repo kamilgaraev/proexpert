@@ -170,13 +170,25 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('ReportPublicationRegistryPostgresTest.php', $commands);
         self::assertStringContainsString('--fail-on-skipped', $commands);
 
+        $discoveryJob = $workflow['jobs']['report-publication-release-request-discovery'] ?? null;
+        self::assertIsArray($discoveryJob);
+        self::assertSame('report-publication-postgres-contract', $discoveryJob['needs'] ?? null);
+        self::assertArrayNotHasKey('environment', $discoveryJob);
+        $discoveryCommands = implode("\n", array_map(
+            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
+            $discoveryJob['steps'] ?? [],
+        ));
+        self::assertStringContainsString('publication-release-requests/*.json', $discoveryCommands);
+        self::assertStringContainsString('has_requests=false', $discoveryCommands);
+        self::assertStringNotContainsString('REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64', $discoveryCommands);
+
         $releaseJob = $workflow['jobs']['report-publication-release-artifact'] ?? null;
         self::assertIsArray($releaseJob);
         self::assertSame(
-            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            "needs.report-publication-release-request-discovery.outputs.has_requests == 'true'",
             $releaseJob['if'] ?? null,
         );
-        self::assertSame('report-publication-postgres-contract', $releaseJob['needs'] ?? null);
+        self::assertSame('report-publication-release-request-discovery', $releaseJob['needs'] ?? null);
         self::assertSame('report-publication-release', $releaseJob['environment'] ?? null);
         $releaseCommands = implode("\n", array_map(
             static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
@@ -186,6 +198,10 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
         self::assertStringContainsString('GITHUB_REF', $releaseCommands);
         self::assertStringContainsString('GITHUB_REPOSITORY', $releaseCommands);
         self::assertStringContainsString('issue-report-publication-release.php', $releaseCommands);
+        self::assertStringNotContainsString('report-publication-proof.valid.json', $releaseCommands);
+        self::assertStringNotContainsString('wave-1-candidates.v1.yaml', $releaseCommands);
+        self::assertStringContainsString('publication-release-requests/*.json', $releaseCommands);
+        self::assertStringNotContainsString('publication-release-requests/*.php', $releaseCommands);
         self::assertContains(
             'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
             array_column($releaseJob['steps'] ?? [], 'uses'),
@@ -198,6 +214,14 @@ final class ReportPublicationRegistryMigrationContractTest extends TestCase
             'shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45',
             array_column($releaseJob['steps'] ?? [], 'uses'),
         );
+        $releaseScript = file_get_contents(dirname(__DIR__, 4).'/scripts/issue-report-publication-release.php');
+        self::assertIsString($releaseScript);
+        self::assertStringContainsString('ReportPublicationReleaseRequestFileLoader', $releaseScript);
+        self::assertStringContainsString('ProjectReportPublicationReleaseRequestRegistry', $releaseScript);
+        self::assertStringContainsString('assertProductionSafe', $releaseScript);
+        self::assertStringContainsString('ReportPublicationReleaseBundleWriter', $releaseScript);
+        self::assertStringNotContainsString('require $requestPath', $releaseScript);
+        self::assertStringNotContainsString('report-publication-proof.valid.json', $releaseScript);
 
         $pullRequestPaths = $workflow['on']['pull_request']['paths'] ?? [];
         $pushPaths = $workflow['on']['push']['paths'] ?? [];

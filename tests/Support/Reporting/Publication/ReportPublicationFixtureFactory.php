@@ -12,14 +12,18 @@ use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublication
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationReleaseIdentity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Budgeting\Services\PlanFactReportSourceSnapshotAdapter;
 use DateTimeImmutable;
 use LogicException;
+use ReflectionClass;
 use Symfony\Component\Yaml\Yaml;
 use Tests\Support\Reporting\CatalogBindingTestFactory;
 
@@ -29,33 +33,50 @@ final class ReportPublicationFixtureFactory
         string $exportSchemaDigit = 'e',
         ?DateTimeImmutable $releaseAt = null,
         ?DateTimeImmutable $ciCompletedAt = null,
+        bool $productionComponents = false,
     ): array {
         $releaseAt ??= new DateTimeImmutable('2026-08-01T02:03:04.654321+00:00');
         $ciCompletedAt ??= new DateTimeImmutable('2026-08-01T01:02:03.123456+00:00');
         $document = Yaml::parseFile(dirname(__DIR__, 4).'/tests/Fixtures/Reporting/Publication/candidate.valid.yaml');
+        $fixtureHash = new Sha256Hash(
+            $productionComponents ? hash('sha256', 'publication-fixture') : str_repeat('6', 64),
+        );
+        $exportSchemaHash = $productionComponents
+            ? hash('sha256', 'export-schema-'.$exportSchemaDigit)
+            : str_repeat($exportSchemaDigit, 64);
+        $drillDownSchemaHash = $productionComponents
+            ? hash('sha256', 'drill-down-schema')
+            : str_repeat('2', 64);
         $row = $document['definitions'][0];
         $factory = new ReportDefinitionFactory;
         $temporary = $factory->fromManifest($row);
-        $temporaryBinding = CatalogBindingTestFactory::binding($temporary);
+        $temporaryBinding = self::binding($temporary, $productionComponents);
         $temporaryEvidence = CatalogBindingTestFactory::evidence(
             $temporary,
             $temporaryBinding,
-            new Sha256Hash(str_repeat('6', 64)),
+            $fixtureHash,
+            productionHashes: $productionComponents,
         );
-        $temporaryEvidence = self::withXlsxRenderer($temporary, $temporaryBinding, $temporaryEvidence);
+        $temporaryEvidence = self::withXlsxRenderer(
+            $temporary,
+            $temporaryBinding,
+            $temporaryEvidence,
+            $productionComponents,
+        );
         $fingerprints = new ReportDefinitionSemanticFingerprint;
         $row['semantic_fingerprints'] = [
             'formula' => $fingerprints->formula($temporaryEvidence),
             'source' => $fingerprints->source($row, $temporaryEvidence),
         ];
         $definition = $factory->fromManifest($row);
-        $binding = CatalogBindingTestFactory::binding($definition);
+        $binding = self::binding($definition, $productionComponents);
         $evidence = CatalogBindingTestFactory::evidence(
             $definition,
             $binding,
-            new Sha256Hash(str_repeat('6', 64)),
+            $fixtureHash,
+            productionHashes: $productionComponents,
         );
-        $evidence = self::withXlsxRenderer($definition, $binding, $evidence);
+        $evidence = self::withXlsxRenderer($definition, $binding, $evidence, $productionComponents);
         $requiredChecks = self::requiredChecks();
         $ciPayload = [
             'checks' => array_fill_keys($requiredChecks, 'passed'),
@@ -68,8 +89,12 @@ final class ReportPublicationFixtureFactory
         foreach ($evidence->componentClassHashes as $class => $hash) {
             $components[] = ['class' => $class, 'sha256' => $hash->value];
         }
-        $candidateManifestHash = new Sha256Hash(str_repeat('1', 64));
-        $officialManifestHash = new Sha256Hash(str_repeat('0', 64));
+        $candidateManifestHash = new Sha256Hash(
+            $productionComponents ? hash('sha256', 'candidate-manifest-bytes') : str_repeat('1', 64),
+        );
+        $officialManifestHash = new Sha256Hash(
+            $productionComponents ? hash('sha256', 'official-manifest-bytes') : str_repeat('0', 64),
+        );
         $release = new ReportPublicationReleaseIdentity(
             $evidence->commitSha,
             $releaseAt,
@@ -88,7 +113,7 @@ final class ReportPublicationFixtureFactory
             XlsxReportExportRenderer::class,
             $rendererHash,
             $definition->rendererVersion,
-            new Sha256Hash(str_repeat($exportSchemaDigit, 64)),
+            new Sha256Hash($exportSchemaHash),
             $evidence->fixtureHash,
             $rendererAssertions,
         );
@@ -134,7 +159,7 @@ final class ReportPublicationFixtureFactory
             ],
             'export_contracts' => [[
                 'format' => 'xlsx',
-                'schema_sha256' => str_repeat($exportSchemaDigit, 64),
+                'schema_sha256' => $exportSchemaHash,
                 'fixture_sha256' => $evidence->fixtureHash->value,
                 'renderer_class' => XlsxReportExportRenderer::class,
                 'renderer_contract_sha256' => $rendererContractHash->value,
@@ -142,7 +167,7 @@ final class ReportPublicationFixtureFactory
                 'assertion_codes' => $rendererAssertions,
             ]],
             'drill_down_contract' => [
-                'schema_sha256' => str_repeat('2', 64),
+                'schema_sha256' => $drillDownSchemaHash,
                 'assertion_codes' => ['drill_down.schema.passed'],
             ],
             'ci' => [
@@ -166,10 +191,10 @@ final class ReportPublicationFixtureFactory
             [$candidate->code => $requiredChecks],
             [
                 $candidate->code => [
-                    'drill_down_schema_sha256' => str_repeat('2', 64),
+                    'drill_down_schema_sha256' => $drillDownSchemaHash,
                     'exports' => [
                         'xlsx' => [
-                            'schema_sha256' => str_repeat($exportSchemaDigit, 64),
+                            'schema_sha256' => $exportSchemaHash,
                             'renderer_class' => XlsxReportExportRenderer::class,
                         ],
                     ],
@@ -211,6 +236,7 @@ final class ReportPublicationFixtureFactory
         \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $definition,
         \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding $binding,
         \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence $evidence,
+        bool $productionHashes = false,
     ): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionConformanceEvidence {
         $rendererFile = (new \ReflectionClass(XlsxReportExportRenderer::class))->getFileName();
         if (! is_string($rendererFile)) {
@@ -224,6 +250,25 @@ final class ReportPublicationFixtureFactory
             $binding,
             $evidence->fixtureHash,
             componentHashes: $components,
+            productionHashes: $productionHashes,
+        );
+    }
+
+    private static function binding(ReportDefinition $definition, bool $productionComponents): ReportDefinitionBinding
+    {
+        if (! $productionComponents) {
+            return CatalogBindingTestFactory::binding($definition);
+        }
+        $adapter = (new ReflectionClass(PlanFactReportSourceSnapshotAdapter::class))->newInstanceWithoutConstructor();
+
+        return new ReportDefinitionBinding(
+            $definition->code,
+            $definition->definitionHash,
+            $definition->contractVersion,
+            $adapter,
+            $adapter,
+            $adapter,
+            null,
         );
     }
 

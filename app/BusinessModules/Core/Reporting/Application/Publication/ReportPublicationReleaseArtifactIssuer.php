@@ -39,12 +39,20 @@ final readonly class ReportPublicationReleaseArtifactIssuer
     public function __construct(
         private Ed25519ReportPublicationReleaseArtifactSigner $signer,
         private ReportPublicationReleaseArtifactVerifier $verifier,
+        private ReportPublicationReleaseEligibilityGate $gate,
     ) {}
 
     public function issue(
-        array $proofTemplate,
-        Sha256Hash $candidateManifestHash,
-        Sha256Hash $officialManifestHash,
+        ReportPublicationReleaseAdmission $admission,
+        array $context,
+    ): ReportPublicationReleaseBundle {
+        $admission->assertProductionSafe();
+
+        return $this->issueAdmitted($admission, $context);
+    }
+
+    private function issueAdmitted(
+        ReportPublicationReleaseAdmission $admission,
         array $context,
     ): ReportPublicationReleaseBundle {
         $this->assertContext($context);
@@ -53,9 +61,16 @@ final readonly class ReportPublicationReleaseArtifactIssuer
             new \DateTimeImmutable($context['completed_at_utc']),
             $context['actor_identity'],
         );
+        $proofTemplate = $admission->proofTemplate->payload();
+        $candidateManifestHash = new Sha256Hash(hash('sha256', $admission->candidateManifestBytes));
+        $officialManifestHash = new Sha256Hash(hash('sha256', $admission->officialManifestBytes));
         $requiredChecks = $this->requiredChecks($proofTemplate);
+        $verifiedChecks = $admission->verifiedChecks;
+        if ($verifiedChecks !== $requiredChecks) {
+            throw new InvalidArgumentException('report_publication_release_context_untrusted');
+        }
         $evidence = [
-            'checks' => array_fill_keys($requiredChecks, 'passed'),
+            'checks' => array_fill_keys($verifiedChecks, 'passed'),
             'commit_sha' => $context['commit_sha'],
             'completed_at_utc' => $context['completed_at_utc'],
             'run_id' => $context['run_id'],
@@ -104,6 +119,12 @@ final readonly class ReportPublicationReleaseArtifactIssuer
             $evidence,
         );
         $this->verifier->verify($artifactBytes);
+        $this->gate->assertEligible(
+            $admission,
+            $proof,
+            $release,
+            $artifactBytes,
+        );
 
         return new ReportPublicationReleaseBundle($proof, $artifactBytes, $artifactName);
     }

@@ -6,6 +6,9 @@ namespace Tests\Support\Reporting\Publication;
 
 use App\BusinessModules\Core\Reporting\Application\Publication\Ed25519ReportPublicationReleaseArtifactSigner;
 use App\BusinessModules\Core\Reporting\Application\Publication\Ed25519ReportPublicationReleaseArtifactVerifier;
+use App\BusinessModules\Core\Reporting\Application\Publication\EligibilityServiceReportPublicationReleaseGate;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseAdmission;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseArtifactIssuer;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationProof;
@@ -92,9 +95,47 @@ final class ReportPublicationReleaseArtifactTestFactory
         ]);
     }
 
-    public static function issuer(): ReportPublicationReleaseArtifactIssuer
+    public static function issuer(ReportPublicationEligibilityService $eligibility): ReportPublicationReleaseArtifactIssuer
     {
-        return new ReportPublicationReleaseArtifactIssuer(self::signer(), self::verifier());
+        return new ReportPublicationReleaseArtifactIssuer(
+            self::signer(),
+            self::verifier(),
+            new EligibilityServiceReportPublicationReleaseGate($eligibility),
+        );
+    }
+
+    public static function releaseAdmission(
+        array $fixture,
+        ?ReportPublicationProof $proof = null,
+        bool $productionSafe = false,
+    ): ReportPublicationReleaseAdmission {
+        $eligible = $fixture['eligible'];
+        $candidateManifestBytes = 'candidate-manifest-bytes';
+        $proof ??= $eligible->proof;
+        if ($productionSafe) {
+            $payload = $proof->payload();
+            $payload['candidate_manifest_sha256'] = hash('sha256', $candidateManifestBytes);
+            $proof = ReportPublicationProof::fromArray($payload);
+        }
+
+        return new ReportPublicationReleaseAdmission(
+            $eligible->candidate,
+            $eligible->candidateDocument,
+            $eligible->binding,
+            $eligible->evidence,
+            $proof,
+            [
+                'binding_contract',
+                'drill_down_contract',
+                'export_xlsx_contract',
+                'formula_contract',
+                'postgresql_contract',
+                'rbac_contract',
+                'source_contract',
+            ],
+            $candidateManifestBytes,
+            'official-manifest-bytes',
+        );
     }
 
     private static function signer(): Ed25519ReportPublicationReleaseArtifactSigner

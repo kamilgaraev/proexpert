@@ -4,34 +4,28 @@ declare(strict_types=1);
 
 use App\BusinessModules\Core\Reporting\Application\Publication\Ed25519ReportPublicationReleaseArtifactSigner;
 use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory;
+use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistry;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseArtifactIssuer;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleWriter;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader;
 
 require dirname(__DIR__).'/vendor/autoload.php';
 
 $options = getopt('', [
-    'candidate-manifest:',
-    'official-manifest:',
     'output-directory:',
-    'proof-template:',
+    'request:',
 ]);
 
 try {
-    foreach (['candidate-manifest', 'official-manifest', 'output-directory', 'proof-template'] as $key) {
+    foreach (['output-directory', 'request'] as $key) {
         if (! is_string($options[$key] ?? null) || $options[$key] === '') {
             throw new RuntimeException('report_publication_release_input_invalid');
         }
     }
-    $proofBytes = file_get_contents($options['proof-template']);
-    $candidateBytes = file_get_contents($options['candidate-manifest']);
-    $officialBytes = file_get_contents($options['official-manifest']);
-    if (! is_string($proofBytes) || ! is_string($candidateBytes) || ! is_string($officialBytes)) {
-        throw new RuntimeException('report_publication_release_input_invalid');
-    }
-    $proofTemplate = json_decode($proofBytes, true, 512, JSON_THROW_ON_ERROR);
-    if (! is_array($proofTemplate)) {
-        throw new RuntimeException('report_publication_release_input_invalid');
-    }
+    $requestRoot = dirname(__DIR__).'/build/reports/publication-release-requests';
+    $request = (new ReportPublicationReleaseRequestFileLoader)->load($options['request'], $requestRoot);
+    $resolvedRequest = (new ProjectReportPublicationReleaseRequestRegistry)->resolve($request);
+    $resolvedRequest->admission->assertProductionSafe();
     $repository = getenv('GITHUB_REPOSITORY');
     $workflowRef = getenv('GITHUB_WORKFLOW_REF');
     if (! is_string($repository) || ! is_string($workflowRef)) {
@@ -53,11 +47,10 @@ try {
             $secretKey,
         ),
         (new ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
+        $resolvedRequest->gate,
     );
     $bundle = $issuer->issue(
-        $proofTemplate,
-        new Sha256Hash(hash('sha256', $candidateBytes)),
-        new Sha256Hash(hash('sha256', $officialBytes)),
+        $resolvedRequest->admission,
         [
             'actor_identity' => 'github:'.(string) getenv('GITHUB_ACTOR_ID'),
             'commit_sha' => (string) getenv('GITHUB_SHA'),
@@ -72,16 +65,7 @@ try {
             'workflow_ref' => substr($workflowRef, strlen($workflowPrefix)),
         ],
     );
-    $outputDirectory = $options['output-directory'];
-    if (! is_dir($outputDirectory) && ! mkdir($outputDirectory, 0700, true) && ! is_dir($outputDirectory)) {
-        throw new RuntimeException('report_publication_release_output_unavailable');
-    }
-    $proofPath = $outputDirectory.DIRECTORY_SEPARATOR.$bundle->artifactName.'.proof.json';
-    $artifactPath = $outputDirectory.DIRECTORY_SEPARATOR.$bundle->artifactName.'.json';
-    if (file_put_contents($proofPath, $bundle->proof->canonicalBytes()) === false
-        || file_put_contents($artifactPath, $bundle->artifactBytes) === false) {
-        throw new RuntimeException('report_publication_release_output_unavailable');
-    }
+    (new ReportPublicationReleaseBundleWriter)->write($bundle, $options['output-directory']);
     fwrite(STDOUT, $bundle->artifactName.PHP_EOL);
 } catch (Throwable $exception) {
     fwrite(STDERR, $exception->getMessage().PHP_EOL);

@@ -58,6 +58,7 @@ final class CatalogBindingTestFactory
         ?string $code = null,
         ?Sha256Hash $definitionHash = null,
         ?string $contractVersion = null,
+        bool $productionHashes = false,
     ): ReportDefinitionConformanceEvidence {
         if ($componentHashes === []) {
             foreach ([
@@ -89,17 +90,17 @@ final class CatalogBindingTestFactory
             $definition->sourceSchemaVersion,
             $fixtureHash,
             new ReportSourceConformanceEvidence(
-                new Sha256Hash(str_repeat('1', 64)),
+                new Sha256Hash($productionHashes ? hash('sha256', 'source-hash') : str_repeat('1', 64)),
                 'snapshot',
                 'snapshot-1',
                 1,
-                new Sha256Hash(str_repeat('2', 64)),
+                new Sha256Hash($productionHashes ? hash('sha256', 'rows-hash') : str_repeat('2', 64)),
                 $passed,
                 [$sourceCode],
             ),
             new ReportFormulaConformanceEvidence(
                 $definition->formulaVersion,
-                new Sha256Hash(str_repeat('3', 64)),
+                new Sha256Hash($productionHashes ? hash('sha256', 'formula-hash') : str_repeat('3', 64)),
                 $passed,
                 [$formulaCode],
             ),

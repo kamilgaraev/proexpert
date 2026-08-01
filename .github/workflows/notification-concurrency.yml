@@ -481,9 +481,35 @@ jobs:
           --group=postgresql
           --fail-on-skipped
 
-  report-publication-release-artifact:
+  report-publication-release-request-discovery:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: report-publication-postgres-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_requests: ${{ steps.release-requests.outputs.has_requests }}
+    steps:
+      - name: Checkout trusted main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Discover registered release requests
+        id: release-requests
+        run: |
+          shopt -s nullglob
+          requests=(build/reports/publication-release-requests/*.json)
+          for request in "${requests[@]}"; do
+            test -f "$request"
+            test ! -L "$request"
+          done
+          if (( ${#requests[@]} == 0 )); then
+            echo "has_requests=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_requests=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  report-publication-release-artifact:
+    if: needs.report-publication-release-request-discovery.outputs.has_requests == 'true'
+    needs: report-publication-release-request-discovery
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: report-publication-release
@@ -514,24 +540,19 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Issue and self-verify signed release artifact
+        id: issue-release-artifacts
         env:
           REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64: ${{ secrets.REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64 }}
         run: |
-          php scripts/issue-report-publication-release.php \
-            --proof-template=tests/Fixtures/Reporting/Publication/report-publication-proof.valid.json \
-            --candidate-manifest=app/BusinessModules/Core/Reporting/resources/candidates/wave-1-candidates.v1.yaml \
-            --official-manifest=app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml \
-            --output-directory=build/reports/signed-publication-releases
           shopt -s nullglob
-          for request in build/reports/publication-release-requests/*; do
+          for request in build/reports/publication-release-requests/*.json; do
             php scripts/issue-report-publication-release.php \
-              --proof-template="$request/proof-template.json" \
-              --candidate-manifest="$request/candidate-manifest.yaml" \
-              --official-manifest="$request/official-manifest.yaml" \
+              --request="$request" \
               --output-directory=build/reports/signed-publication-releases
           done
 
       - name: Upload immutable release bundle
+        id: upload-release-artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: report-publication-release-${{ github.sha }}
