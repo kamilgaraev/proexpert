@@ -60,6 +60,13 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(ProjectReportPublicationReleaseRequestRegistryFactory::class);
+        $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolverFactory::class,
+            fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestResolverFactory => new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestResolverFactory(
+                $app,
+                $app->make(ProjectReportPublicationReleaseRequestRegistryFactory::class),
+            ),
+        );
         $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class, fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService(
             new \App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog,
             new \App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy,
@@ -88,6 +95,20 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             $app['db']->connection(),
         ));
         $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestionService::class);
+        $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestor::class,
+            fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestionService => $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestionService::class),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion::class,
+            fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion => new \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion(
+                new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader,
+                $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolverFactory::class),
+                $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestor::class),
+                new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleFileLoader,
+                $app->make(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier::class),
+            ),
+        );
         $this->app->singleton(ReportDefinitionRegistry::class, DatabasePublishedReportDefinitionRegistry::class);
         $this->app->singleton(
             ReportCatalogMetadataRegistry::class,

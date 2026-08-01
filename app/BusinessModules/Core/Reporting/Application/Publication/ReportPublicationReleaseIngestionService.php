@@ -15,7 +15,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
-final readonly class ReportPublicationReleaseIngestionService
+final readonly class ReportPublicationReleaseIngestionService implements ReportPublicationReleaseIngestor
 {
     public function __construct(
         private ReportPublicationReleaseBundleFileLoader $bundles,

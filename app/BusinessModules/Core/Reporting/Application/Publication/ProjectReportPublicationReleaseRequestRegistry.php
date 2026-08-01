@@ -15,7 +15,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\Procuremen
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
 
-final readonly class ProjectReportPublicationReleaseRequestRegistry
+final readonly class ProjectReportPublicationReleaseRequestRegistry implements ReportPublicationReleaseRequestResolver
 {
     public function __construct(
         private string $trustedDirectory,
