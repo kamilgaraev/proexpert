@@ -11,7 +11,7 @@ final readonly class ProjectSheetAnalysisData
     public const SCHEMA_VERSION = 1;
 
     /** @param list<array<string, mixed>> $facts */
-    public function __construct(
+    private function __construct(
         public string $sheetRole,
         public array $facts,
     ) {
