@@ -687,7 +687,7 @@ jobs:
           test ! -L "$R15_TRUSTED_ROOT/r15_release_request.json"
           test -f "$R15_TRUSTED_ROOT/docs/reports/contracts/report-conformance-evidence.schema.json"
           test -d "$R15_TRUSTED_ROOT/build/reports/conformance"
-          printf 'MOST_R15_RELEASE_TRUSTED_ROOT=%s\n' "$R15_TRUSTED_ROOT" >> "$GITHUB_ENV"
+          printf 'MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT=%s\n' "$R15_TRUSTED_ROOT" >> "$GITHUB_ENV"
 
       - name: Set up PHP
         uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45
@@ -715,7 +715,7 @@ jobs:
           REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64: ${{ secrets.REPORT_PUBLICATION_RELEASE_SECRET_KEY_BASE64 }}
         run: |
           shopt -s nullglob
-          for request in "$MOST_R15_RELEASE_TRUSTED_ROOT"/r15_release_request.json; do
+          for request in "$MOST_REPORT_PUBLICATION_RELEASE_TRUSTED_ROOT"/r15_release_request.json; do
             php scripts/issue-report-publication-release.php \
               --request="$request" \
               --output-directory=build/reports/signed-publication-releases
