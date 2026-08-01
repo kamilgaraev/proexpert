@@ -188,18 +188,19 @@ final class ReportPublicationFixtureFactory
             new ReportPermissionCatalog,
             new ReportDefinitionVersionPolicy,
             new ReportPublicationBindingHasher,
-            [$candidate->code => $requiredChecks],
-            [
-                $candidate->code => [
-                    'drill_down_schema_sha256' => $drillDownSchemaHash,
-                    'exports' => [
+            new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog([
+                new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfile(
+                    $candidate->code,
+                    $requiredChecks,
+                    $drillDownSchemaHash,
+                    [
                         'xlsx' => [
                             'schema_sha256' => $exportSchemaHash,
                             'renderer_class' => XlsxReportExportRenderer::class,
                         ],
                     ],
-                ],
-            ],
+                ),
+            ]),
             ReportPublicationReleaseArtifactTestFactory::verifier(),
             new ReportDefinitionSemanticFingerprint,
             new ReportPublicationDeliveryContractHasher,

@@ -7,6 +7,8 @@ namespace Tests\Unit\Reporting\Publication;
 use App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionSemanticFingerprint;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfile;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationDeliveryContractHasher;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService;
@@ -42,6 +44,39 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
         $this->expectExceptionMessage('report_publication_ineligible');
 
         $this->service()->evaluate(
+            $scenario['candidate'],
+            $scenario['document'],
+            $scenario['binding'],
+            $scenario['evidence'],
+            $scenario['proof'],
+            $scenario['candidate_manifest_hash'],
+            $scenario['official_manifest_hash'],
+            $scenario['release'],
+            $scenario['ci_artifact'],
+        );
+    }
+
+    public function test_candidate_without_an_explicit_admission_profile_is_rejected(): void
+    {
+        $scenario = $this->scenario();
+        $profiles = new ReportPublicationAdmissionProfileCatalog([
+            new ReportPublicationAdmissionProfile(
+                'procurement_cycle',
+                self::requiredChecks(),
+                str_repeat('2', 64),
+                [
+                    'xlsx' => [
+                        'schema_sha256' => str_repeat('e', 64),
+                        'renderer_class' => XlsxReportExportRenderer::class,
+                    ],
+                ],
+            ),
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_ineligible');
+
+        $this->service(XlsxReportExportRenderer::class, $profiles)->evaluate(
             $scenario['candidate'],
             $scenario['document'],
             $scenario['binding'],
@@ -487,24 +522,27 @@ final class ReportPublicationEligibilityServiceTest extends TestCase
         ];
     }
 
-    private function service(string $rendererClass = XlsxReportExportRenderer::class): ReportPublicationEligibilityService
-    {
+    private function service(
+        string $rendererClass = XlsxReportExportRenderer::class,
+        ?ReportPublicationAdmissionProfileCatalog $admissionProfiles = null,
+    ): ReportPublicationEligibilityService {
         return new ReportPublicationEligibilityService(
             new ReportPermissionCatalog,
             new ReportDefinitionVersionPolicy,
             new ReportPublicationBindingHasher,
-            ['project_portfolio_health' => self::requiredChecks()],
-            [
-                'project_portfolio_health' => [
-                    'drill_down_schema_sha256' => str_repeat('2', 64),
-                    'exports' => [
+            $admissionProfiles ?? new ReportPublicationAdmissionProfileCatalog([
+                new ReportPublicationAdmissionProfile(
+                    'project_portfolio_health',
+                    self::requiredChecks(),
+                    str_repeat('2', 64),
+                    [
                         'xlsx' => [
                             'schema_sha256' => str_repeat('e', 64),
                             'renderer_class' => $rendererClass,
                         ],
                     ],
-                ],
-            ],
+                ),
+            ]),
             ReportPublicationReleaseArtifactTestFactory::verifier(),
             new ReportDefinitionSemanticFingerprint,
             new ReportPublicationDeliveryContractHasher,

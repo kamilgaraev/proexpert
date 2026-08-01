@@ -32,8 +32,7 @@ final class ReportPublicationEligibilityService
         private readonly ReportPermissionCatalog $permissions,
         private readonly ReportDefinitionVersionPolicy $versions,
         private readonly ReportPublicationBindingHasher $bindings,
-        private readonly array $requiredChecksByCode,
-        private readonly array $deliveryContractsByCode,
+        private readonly ReportPublicationAdmissionProfileCatalog $admissionProfiles,
         private readonly ReportPublicationReleaseArtifactVerifier $releaseArtifacts,
         private readonly ReportDefinitionSemanticFingerprint $fingerprints = new ReportDefinitionSemanticFingerprint,
         private readonly ReportPublicationDeliveryContractHasher $deliveryHasher = new ReportPublicationDeliveryContractHasher,
@@ -55,6 +54,7 @@ final class ReportPublicationEligibilityService
         ?ReportPublicationRecord $previous = null,
     ): ReportPublicationEligibilityResult {
         try {
+            $profile = $this->admissionProfiles->forCode($candidate->code);
             $this->assertEligible(
                 $candidate,
                 $candidateDocument,
@@ -66,6 +66,7 @@ final class ReportPublicationEligibilityService
                 $release,
                 $releaseArtifactBytes,
                 $previous,
+                $profile,
             );
 
             return new ReportPublicationEligibilityResult(new EligibleReportPublication(
@@ -101,6 +102,7 @@ final class ReportPublicationEligibilityService
         ReportPublicationReleaseIdentity $release,
         string $releaseArtifactBytes,
         ?ReportPublicationRecord $previous,
+        ReportPublicationAdmissionProfile $profile,
     ): void {
         $payload = $proof->payload();
         if (! hash_equals($candidate->code, $payload['code'])
@@ -144,7 +146,7 @@ final class ReportPublicationEligibilityService
         $this->assertEvidence($evidence, $payload);
         $this->assertComponents($evidence, $payload);
         $this->assertPermissions($candidate, $payload);
-        $this->assertDeliveryContracts($candidate, $evidence, $payload);
+        $this->assertDeliveryContracts($candidate, $evidence, $payload, $profile);
         $this->assertReleaseSequence($proof, $release, $previous);
         $this->assertCi(
             $candidate->code,
@@ -156,6 +158,7 @@ final class ReportPublicationEligibilityService
             $release,
             $releaseArtifactBytes,
             $previous,
+            $profile,
         );
     }
 
@@ -263,19 +266,14 @@ final class ReportPublicationEligibilityService
         CandidateReportDefinition $candidate,
         ReportDefinitionConformanceEvidence $evidence,
         array $payload,
+        ReportPublicationAdmissionProfile $profile,
     ): void {
-        $delivery = $this->deliveryContractsByCode[$candidate->code] ?? null;
-        if (! is_array($delivery)
-            || array_keys($delivery) !== ['drill_down_schema_sha256', 'exports']
-            || ! is_array($delivery['exports'])) {
-            $this->ineligible();
-        }
         $formats = $candidate->definition->formats;
         sort($formats, SORT_STRING);
         if ($payload['export_contracts'] === []
             || array_column($payload['export_contracts'], 'format') !== $formats
             || ! hash_equals(
-                (string) $delivery['drill_down_schema_sha256'],
+                $profile->drillDownSchemaHash,
                 $payload['drill_down_contract']['schema_sha256'],
             )
             || ! in_array('drill_down.schema.passed', $payload['drill_down_contract']['assertion_codes'], true)) {
@@ -283,7 +281,7 @@ final class ReportPublicationEligibilityService
         }
         foreach ($payload['export_contracts'] as $contract) {
             $format = $contract['format'];
-            $expectedContract = $delivery['exports'][$format] ?? null;
+            $expectedContract = $profile->exports[$format] ?? null;
             $rendererClass = is_array($expectedContract) ? ($expectedContract['renderer_class'] ?? null) : null;
             $rendererHash = is_string($rendererClass)
                 ? ($evidence->componentClassHashes[$rendererClass] ?? null)
@@ -333,8 +331,9 @@ final class ReportPublicationEligibilityService
         ReportPublicationReleaseIdentity $release,
         string $artifactBytes,
         ?ReportPublicationRecord $previous,
+        ReportPublicationAdmissionProfile $profile,
     ): void {
-        $requiredChecks = $this->requiredChecks($code, $payload);
+        $requiredChecks = $this->requiredChecks($profile, $payload);
         $artifact = $this->verifyReleaseArtifact($artifactBytes);
         $artifactPayload = $artifact->payload();
         if ($requiredChecks === []
@@ -386,12 +385,9 @@ final class ReportPublicationEligibilityService
         return $this->releaseArtifacts->verify($artifactBytes);
     }
 
-    private function requiredChecks(string $code, array $payload): array
+    private function requiredChecks(ReportPublicationAdmissionProfile $profile, array $payload): array
     {
-        $configured = $this->requiredChecksByCode[$code] ?? null;
-        if (! is_array($configured) || ! array_is_list($configured)) {
-            $this->ineligible();
-        }
+        $configured = $profile->requiredChecks;
         $required = [
             'binding_contract',
             'drill_down_contract',

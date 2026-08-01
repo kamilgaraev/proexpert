@@ -13,15 +13,7 @@ use RuntimeException;
 
 final class ReportPublicationAdmissionRequirements
 {
-    public static function requiredChecksByCode(): array
-    {
-        return ['procurement_cycle' => [
-            'binding_contract', 'drill_down_contract', 'export_csv_contract', 'export_pdf_contract',
-            'export_xlsx_contract', 'formula_contract', 'postgresql_contract', 'rbac_contract', 'source_contract',
-        ]];
-    }
-
-    public static function deliveryContractsByCode(): array
+    public static function profileCatalog(): ReportPublicationAdmissionProfileCatalog
     {
         $contracts = self::catalog()['codes']['procurement_cycle'];
         $exports = [];
@@ -32,10 +24,27 @@ final class ReportPublicationAdmissionRequirements
             ];
         }
 
-        return ['procurement_cycle' => [
-            'drill_down_schema_sha256' => $contracts['drill_down']['schema_sha256'],
-            'exports' => $exports,
-        ]];
+        return new ReportPublicationAdmissionProfileCatalog([
+            new ReportPublicationAdmissionProfile(
+                'procurement_cycle',
+                [
+                    'binding_contract', 'drill_down_contract', 'export_csv_contract', 'export_pdf_contract',
+                    'export_xlsx_contract', 'formula_contract', 'postgresql_contract', 'rbac_contract', 'source_contract',
+                ],
+                $contracts['drill_down']['schema_sha256'],
+                $exports,
+            ),
+        ]);
+    }
+
+    public static function requiredChecksByCode(): array
+    {
+        return self::profileCatalog()->requiredChecksByCode();
+    }
+
+    public static function deliveryContractsByCode(): array
+    {
+        return self::profileCatalog()->deliveryContractsByCode();
     }
 
     public static function contractHashesByCode(): array
@@ -108,6 +117,7 @@ final class ReportPublicationAdmissionRequirements
                 throw new RuntimeException('report_publication_delivery_contracts_invalid');
             }
         }
+
         return $decoded;
     }
 }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Publication;
 
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfile;
+use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog;
 use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use PHPUnit\Framework\TestCase;
@@ -24,26 +26,21 @@ final class ReportPublicationAdmissionRequirementsTest extends TestCase
             self::assertSame($canonical['exports'][$format]['renderer_class'], $contracts['exports'][$format]['renderer_class']);
         }
         self::assertSame(
-            hash('sha256', CanonicalJson::encode([
-                'csv' => [
-                    'renderer_class' => $contracts['exports']['csv']['renderer_class'],
-                    'schema_sha256' => $contracts['exports']['csv']['schema_sha256'],
-                ],
-                'pdf' => [
-                    'renderer_class' => $contracts['exports']['pdf']['renderer_class'],
-                    'schema_sha256' => $contracts['exports']['pdf']['schema_sha256'],
-                ],
-                'xlsx' => [
-                    'renderer_class' => $contracts['exports']['xlsx']['renderer_class'],
-                    'schema_sha256' => $contracts['exports']['xlsx']['schema_sha256'],
-                ],
-            ])),
+            hash('sha256', CanonicalJson::encode($canonical['exports'])),
             ReportPublicationAdmissionRequirements::contractHashesByCode()['procurement_cycle']['delivery_contract_sha256'],
         );
         self::assertSame(
             $contracts['drill_down_schema_sha256'],
             ReportPublicationAdmissionRequirements::contractHashesByCode()['procurement_cycle']['drill_contract_sha256'],
         );
+
+        $profile = ReportPublicationAdmissionRequirements::profileCatalog()->forCode('procurement_cycle');
+        self::assertSame(ReportPublicationAdmissionRequirements::requiredChecksByCode()['procurement_cycle'], $profile->requiredChecks);
+        self::assertSame($canonical['drill_down']['schema_sha256'], $profile->drillDownSchemaHash);
+        foreach (['csv', 'pdf', 'xlsx'] as $format) {
+            self::assertSame($canonical['exports'][$format]['schema_sha256'], $profile->exports[$format]['schema_sha256']);
+            self::assertSame($canonical['exports'][$format]['renderer_class'], $profile->exports[$format]['renderer_class']);
+        }
     }
 
     public function test_tampered_contract_source_is_rejected(): void
@@ -77,5 +74,36 @@ final class ReportPublicationAdmissionRequirementsTest extends TestCase
         } finally {
             @unlink($tampered);
         }
+    }
+
+    public function test_empty_profile_is_rejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_admission_profile_invalid');
+
+        new ReportPublicationAdmissionProfile('procurement_cycle', [], str_repeat('a', 64), []);
+    }
+
+    public function test_duplicate_profiles_are_rejected(): void
+    {
+        $profile = new ReportPublicationAdmissionProfile(
+            'procurement_cycle',
+            ['binding_contract'],
+            str_repeat('a', 64),
+            ['xlsx' => ['schema_sha256' => str_repeat('b', 64), 'renderer_class' => 'App\\Renderer']],
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_admission_profile_catalog_invalid');
+
+        new ReportPublicationAdmissionProfileCatalog([$profile, $profile]);
+    }
+
+    public function test_unknown_profile_lookup_is_rejected_without_a_default(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_publication_ineligible');
+
+        ReportPublicationAdmissionRequirements::profileCatalog()->forCode('unknown_report');
     }
 }
