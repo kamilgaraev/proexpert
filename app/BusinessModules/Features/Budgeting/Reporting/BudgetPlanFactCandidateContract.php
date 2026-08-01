@@ -115,6 +115,28 @@ final readonly class BudgetPlanFactCandidateContract
         }
     }
 
+    /** @param array<string, mixed> $definition */
+    public function assertCandidateManifestDefinition(array $definition): void
+    {
+        $versions = $definition['versions'] ?? null;
+        $permissions = $definition['permissions'] ?? null;
+        if (! is_array($versions) || array_is_list($versions)
+            || ! is_array($permissions) || array_is_list($permissions)
+            || ($definition['code'] ?? null) !== self::CODE
+            || ($versions['formula'] ?? null) !== $this->formulaVersion
+            || ($versions['source_schema'] ?? null) !== $this->sourceSchemaVersion
+            || ($definition['filters'] ?? null) !== self::canonicalItems($this->filters())
+            || ($definition['columns'] ?? null) !== self::canonicalItems($this->columns())
+            || ($definition['sorts'] ?? null) !== self::canonicalItems($this->sorts())
+            || ($definition['formats'] ?? null) !== $this->formats()
+            || ($permissions['view'] ?? null) !== ['budgeting.plan_fact.view']
+            || ($permissions['export'] ?? null) !== ['budgeting.plan_fact.export']
+            || ($permissions['sensitive'] ?? null) !== []
+            || ($permissions['audit'] ?? null) !== []) {
+            throw new InvalidArgumentException('budget_plan_fact_candidate_definition_invalid');
+        }
+    }
+
     public function assertSnapshotRequest(
         ReportScope $scope,
         array $filters,

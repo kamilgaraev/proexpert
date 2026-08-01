@@ -10,6 +10,9 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFa
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Conformance\FilesystemReportConformanceEvidenceRepository;
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator;
+use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactReleaseCandidateLayout;
+use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactReleaseCandidateResolver;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactReportBindingFactory;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\ProcurementCycleReleaseCandidateResolver;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReportBindingFactory;
 use Illuminate\Contracts\Container\Container;
@@ -65,6 +68,15 @@ final class ProjectReportPublicationReleaseRequestRegistryFactory
                     $container->make(ProcurementCycleReportBindingFactory::class),
                 ),
             ),
+            new ReportPublicationReleaseDispatch(
+                $profiles->forCode('budget_plan_fact'),
+                new BudgetPlanFactReleaseCandidateResolverAdapter(
+                    $container->make(BudgetPlanFactReleaseCandidateResolver::class),
+                ),
+                new BudgetPlanFactReleaseBindingFactoryAdapter(
+                    $container->make(BudgetPlanFactReportBindingFactory::class),
+                ),
+            ),
         ]);
     }
 
@@ -79,6 +91,11 @@ final class ProjectReportPublicationReleaseRequestRegistryFactory
                     'conformance_evidence' => 'r15-conformance-evidence.json',
                     'proof_template' => 'r15-proof-template.json',
                 ],
+            ),
+            new ReportPublicationReleaseDispatchProfile(
+                'budget_plan_fact',
+                BudgetPlanFactReleaseCandidateLayout::REQUEST_ID,
+                BudgetPlanFactReleaseCandidateLayout::artifactPaths(),
             ),
         ]);
     }
