@@ -97,7 +97,14 @@ final class ProcurementCyclePostgresFixture
                 $policyB,
                 $now,
             );
-            $directOrder = $this->directOrderChain($namespace, $chainA, $now);
+            $directOrder = $this->directOrderChain(
+                $namespace,
+                $organizationA,
+                $projectA,
+                $userId,
+                $policyA,
+                $now,
+            );
             $noProject = $this->requestLine(
                 $namespace,
                 'no-project',
@@ -344,7 +351,8 @@ final class ProcurementCyclePostgresFixture
         int $userId,
         array $policy,
         string $now,
-    ): array {
+    ): array
+    {
         $base = $this->requestLine($namespace, $suffix, $organizationId, $projectId, $userId, $now);
         $supplierId = (int) $this->connection->table('suppliers')->insertGetId([
             'organization_id' => $organizationId,
@@ -555,16 +563,48 @@ final class ProcurementCyclePostgresFixture
         ];
     }
 
-    private function directOrderChain(string $namespace, array $base, string $now): array
-    {
+    private function directOrderChain(
+        string $namespace,
+        int $organizationId,
+        int $projectId,
+        int $userId,
+        array $policy,
+        string $now,
+    ): array {
+        $base = $this->requestLine(
+            $namespace,
+            'direct',
+            $organizationId,
+            $projectId,
+            $userId,
+            $now,
+        );
+        $supplierId = (int) $this->connection->table('suppliers')->insertGetId([
+            'organization_id' => $organizationId,
+            'name' => "Supplier {$namespace} direct",
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $supplierPartyId = (int) $this->connection->table('supplier_parties')->insertGetId([
+            'organization_id' => $organizationId,
+            'type' => 'registered',
+            'status' => 'linked',
+            'registered_supplier_id' => $supplierId,
+            'display_name' => "Supplier party {$namespace} direct",
+            'snapshot' => json_encode(['type' => 'registered'], JSON_THROW_ON_ERROR),
+            'linked_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
         $orderId = (int) $this->connection->table('purchase_orders')->insertGetId([
-            'organization_id' => $base['organization_id'],
+            'organization_id' => $organizationId,
             'purchase_request_id' => $base['purchase_request_id'],
             'accepted_supplier_proposal_id' => null,
             'accepted_supplier_proposal_version_id' => null,
-            'supplier_id' => $base['supplier_id'],
-            'supplier_party_id' => $base['supplier_party_id'],
-            'supplier_snapshot' => json_encode(['id' => $base['supplier_party_id']], JSON_THROW_ON_ERROR),
+            'supplier_id' => $supplierId,
+            'supplier_party_id' => $supplierPartyId,
+            'supplier_snapshot' => json_encode(['id' => $supplierPartyId], JSON_THROW_ON_ERROR),
             'order_number' => "PO-{$namespace}-direct",
             'order_date' => '2026-08-01',
             'status' => 'sent',
@@ -592,6 +632,8 @@ final class ProcurementCyclePostgresFixture
 
         return [
             ...$base,
+            'supplier_id' => $supplierId,
+            'supplier_party_id' => $supplierPartyId,
             'supplier_request_id' => null,
             'supplier_request_line_id' => null,
             'supplier_proposal_id' => null,
@@ -602,6 +644,7 @@ final class ProcurementCyclePostgresFixture
             'purchase_order_item_id' => $orderItemId,
             'purchase_receipt_id' => null,
             'purchase_receipt_line_id' => null,
+            'policy' => $policy,
         ];
     }
 }

@@ -208,11 +208,49 @@ final class ProcurementCycleSourcePostgresTest extends TestCase
     public function test_database_accepts_positive_direct_order_null_proposal_chain(): void
     {
         $chain = $this->fixture()['direct_order'];
-        $event = $this->rawEvent($chain);
+        $requestCreated = $this->cleanRequestCreatedEvent($chain);
+        $requestCreatedId = $this->insertRawEvent($requestCreated);
+        $persistedRequestCreated = DB::table('procurement_process_events')
+            ->where('id', $requestCreatedId)
+            ->first();
+        $requestCreatedDimensions = json_decode(
+            (string) $persistedRequestCreated?->dimension_snapshot,
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+
+        self::assertSame(
+            ProcurementProcessEventCode::REQUEST_CREATED->value,
+            $persistedRequestCreated?->event_code,
+        );
+        self::assertSame($chain['project_id'], (int) $persistedRequestCreated?->project_id);
+        self::assertSame($chain['policy']['id'], (int) $persistedRequestCreated?->policy_version_id);
+        self::assertNull($persistedRequestCreated?->supplier_party_id);
+        self::assertNull($persistedRequestCreated?->supplier_request_id);
+        self::assertNull($persistedRequestCreated?->supplier_proposal_id);
+        self::assertNull($persistedRequestCreated?->supplier_proposal_version_id);
+        self::assertNull($persistedRequestCreated?->purchase_order_id);
+        self::assertNull($persistedRequestCreated?->purchase_order_item_id);
+        self::assertIsArray($requestCreatedDimensions);
+        self::assertArrayNotHasKey('supplier_party_id', $requestCreatedDimensions);
+        self::assertArrayNotHasKey('awarded_supplier_party_id', $requestCreatedDimensions);
+        self::assertArrayNotHasKey('awarded_amount', $requestCreatedDimensions);
+
+        $event = $this->rawEvent($chain, [
+            'event_code' => ProcurementProcessEventCode::ORDER_SENT->value,
+            'occurred_at' => '2026-08-01 10:05:00+00',
+        ]);
 
         $eventId = $this->insertRawEvent($event);
         $persisted = DB::table('procurement_process_events')->where('id', $eventId)->first();
 
+        self::assertSame(ProcurementProcessEventCode::ORDER_SENT->value, $persisted?->event_code);
+        self::assertSame($persistedRequestCreated?->project_id, $persisted?->project_id);
+        self::assertSame($persistedRequestCreated?->policy_version_id, $persisted?->policy_version_id);
+        self::assertSame($persistedRequestCreated?->policy_hash, $persisted?->policy_hash);
+        self::assertSame($persistedRequestCreated?->calendar_version, $persisted?->calendar_version);
+        self::assertSame($persistedRequestCreated?->calendar_hash, $persisted?->calendar_hash);
+        self::assertSame($chain['supplier_party_id'], (int) $persisted?->supplier_party_id);
         self::assertNull($persisted?->supplier_proposal_id);
         self::assertNull($persisted?->supplier_proposal_version_id);
         self::assertSame($chain['purchase_order_id'], (int) $persisted?->purchase_order_id);
@@ -675,6 +713,40 @@ final class ProcurementCycleSourcePostgresTest extends TestCase
         );
 
         return $attributes;
+    }
+
+    private function cleanRequestCreatedEvent(array $chain): array
+    {
+        $event = $this->rawEvent($chain, [
+            'supplier_party_id' => null,
+            'supplier_request_id' => null,
+            'supplier_request_line_id' => null,
+            'supplier_proposal_id' => null,
+            'supplier_proposal_version_id' => null,
+            'supplier_proposal_decision_id' => null,
+            'purchase_order_id' => null,
+            'purchase_order_item_id' => null,
+            'purchase_receipt_id' => null,
+            'purchase_receipt_line_id' => null,
+        ]);
+        $event['dimension_snapshot'] = json_encode(
+            ProcurementProcessDimensionSnapshot::fromArray([
+                'schema_version' => ProcurementProcessDimensionSnapshot::SCHEMA_VERSION,
+                'organization_id' => $chain['organization_id'],
+                'project_id' => $chain['project_id'],
+                'purchase_request_id' => $chain['purchase_request_id'],
+                'purchase_request_line_id' => $chain['purchase_request_line_id'],
+                'policy_version_id' => $chain['policy']['id'],
+                'policy_hash' => $chain['policy']['hash'],
+                'calendar_version' => $chain['policy']['calendar_version'],
+                'calendar_hash' => $chain['policy']['calendar_hash'],
+                'quality_status' => 'FULL',
+                'gap_codes' => [],
+            ])->values,
+            JSON_THROW_ON_ERROR,
+        );
+
+        return $event;
     }
 
     private function strictQuarantineEvent(array $chain, ?int $projectId = null): array
