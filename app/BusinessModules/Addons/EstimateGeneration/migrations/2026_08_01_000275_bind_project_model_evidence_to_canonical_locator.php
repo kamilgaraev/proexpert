@@ -49,11 +49,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (Schema::hasColumn(self::TABLE, 'candidate_locator_fingerprint')
-            && DB::table(self::TABLE)->whereNotNull('candidate_locator_fingerprint')->exists()) {
-            throw new \RuntimeException('estimate_generation.project_model_evidence_binding_rollback_would_drop_candidate_locators');
-        }
-
         if (DB::getDriverName() === 'pgsql') {
             $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
             $timeouts = $runtime->configureSessionTimeouts();
@@ -71,13 +66,16 @@ return new class extends Migration
                     DB::statement('DROP FUNCTION IF EXISTS eg_project_model_locator_fingerprint(jsonb)');
                     DB::statement('DROP FUNCTION IF EXISTS eg_project_model_canonical_json(jsonb)');
                     DB::statement('DROP FUNCTION IF EXISTS eg_project_model_legacy_value_fingerprint(jsonb)');
+                    DB::statement('ALTER TABLE '.self::TABLE.' DROP COLUMN IF EXISTS candidate_locator_fingerprint');
+                    $runtime->checkpoint('project_model_locator.down.column_dropped');
                 });
             } finally {
                 $runtime->restoreSessionTimeouts($timeouts);
             }
-        }
-
-        if (Schema::hasColumn(self::TABLE, 'candidate_locator_fingerprint')) {
+        } elseif (Schema::hasColumn(self::TABLE, 'candidate_locator_fingerprint')) {
+            if (DB::table(self::TABLE)->whereNotNull('candidate_locator_fingerprint')->exists()) {
+                throw new \RuntimeException('estimate_generation.project_model_evidence_binding_rollback_would_drop_candidate_locators');
+            }
             Schema::table(self::TABLE, function (Blueprint $table): void {
                 $table->dropColumn('candidate_locator_fingerprint');
             });

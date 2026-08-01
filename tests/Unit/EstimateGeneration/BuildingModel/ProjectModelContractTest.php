@@ -148,8 +148,9 @@ final class ProjectModelContractTest extends TestCase
             self::assertStringContainsString($required, $exactBindingMigration);
         }
 
+        self::assertStringContainsString('public $withinTransaction = false;', $correctionScopeMigration);
+
         foreach ([
-            'public $withinTransaction = false;',
             'eg_project_model_corrections_scope_uq',
             'CREATE UNIQUE INDEX CONCURRENTLY eg_project_model_corrections_scope_uq',
             'DROP INDEX CONCURRENTLY IF EXISTS eg_project_model_corrections_scope_uq',
@@ -213,6 +214,45 @@ final class ProjectModelContractTest extends TestCase
 
         self::assertStringNotContainsString("->groupBy(['entity_id', 'evidence_id'])", $migration);
         self::assertStringNotContainsString('duplicate_count', $migration);
+    }
+
+    #[Test]
+    public function canonical_locator_rollback_keeps_the_final_audit_and_column_drop_under_one_postgres_lock(): void
+    {
+        $migration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php'
+        );
+        $downStart = (int) strpos($migration, 'public function down(): void');
+        $postgresStart = (int) strpos($migration, "if (DB::getDriverName() === 'pgsql')", $downStart);
+        $nonPostgresStart = (int) strpos($migration, "} elseif (Schema::hasColumn", $postgresStart);
+        $postgresDown = substr($migration, $postgresStart, $nonPostgresStart - $postgresStart);
+
+        self::assertStringContainsString('public $withinTransaction = false;', $migration);
+
+        foreach ([
+            'DB::transaction(function () use ($runtime): void {',
+            "LOCK TABLE '.self::TABLE.' IN ACCESS EXCLUSIVE MODE",
+            "whereNotNull('candidate_locator_fingerprint')->exists()",
+            'DROP CONSTRAINT IF EXISTS eg_project_model_evidence_candidate_locator_ck',
+            'DROP TRIGGER IF EXISTS eg_project_model_evidence_locator_guard_trg',
+            'DROP FUNCTION IF EXISTS eg_project_model_evidence_locator_guard()',
+            'restoreExactBindingValueFingerprint();',
+            'DROP FUNCTION IF EXISTS eg_project_model_locator_fingerprint(jsonb)',
+            "ALTER TABLE '.self::TABLE.' DROP COLUMN IF EXISTS candidate_locator_fingerprint",
+            "checkpoint('project_model_locator.down.column_dropped')",
+        ] as $required) {
+            self::assertStringContainsString($required, $postgresDown);
+        }
+
+        self::assertLessThan(
+            strpos($postgresDown, "ALTER TABLE '.self::TABLE.' DROP COLUMN IF EXISTS candidate_locator_fingerprint"),
+            strpos($postgresDown, "whereNotNull('candidate_locator_fingerprint')->exists()"),
+        );
+        self::assertLessThan(
+            strpos($postgresDown, "checkpoint('project_model_locator.down.column_dropped')"),
+            strpos($postgresDown, "ALTER TABLE '.self::TABLE.' DROP COLUMN IF EXISTS candidate_locator_fingerprint"),
+        );
+        self::assertStringNotContainsString('Schema::table(self::TABLE', $postgresDown);
     }
 
     #[Test]

@@ -13,11 +13,11 @@ final class EstimateGenerationContractDatabaseProvisioner
 
     private const INVENTORY_DIGEST = [
         'geometry' => '36cdeec842c989336e6bd78be1ec46e328cf02394abc82291c01da9c2b6bc9ec',
-        'training' => '0482125b75765976e7cab10b06bac8ca6933dcb9aabbd3c4129dc7cea9d6bf4e',
-        'pricing' => '0482125b75765976e7cab10b06bac8ca6933dcb9aabbd3c4129dc7cea9d6bf4e',
+        'training' => '7a4458ad0e4b2d7b4d833225f67add97bed3b9e336233119b2af8da0c62d009c',
+        'pricing' => '7a4458ad0e4b2d7b4d833225f67add97bed3b9e336233119b2af8da0c62d009c',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '526b964f2e68d275f8743abf7170f086292778ebaff6d3de341749bf55626c2e';
+    private const FRESH_INVENTORY_DIGEST = '21b11deec11971c93c739510d943b7dad35131b46408f8c2b0e3d4075578a51d';
 
     private const SUBJECT = [
         'geometry' => [
@@ -48,7 +48,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'geometry' => '740d3b343d86ff7d386546fc9dd63a5d680b79df8f25ecd2d8e1fd46d88f5eab',
         'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
         'training' => 'ff394b33d8717a20622b4895a627e8784d987f0d11611601b5446fd59ee23026',
-        'project-model' => '018af42ef4c5521a1ecfcd084dc75fcde9fa1d69c840d62e71120907fa888d4b',
+        'project-model' => 'a646687227ecddc11d6da919c0e20d30a22d41694c146d80a2413fda221c3809',
     ];
 
     private const CORE = [
