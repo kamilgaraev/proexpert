@@ -233,54 +233,6 @@ paths:
         '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
         '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
 
-  /api/v1/admin/reports/foreman-activity:
-    get:
-      tags: [StandardReports]
-      summary: Отчет об активности прорабов
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: project_id
-          in: query
-          required: false
-          description: ID проекта (опционально, для фильтрации по конкретному проекту)
-          schema:
-            type: integer
-            format: int64
-        - name: user_id # foreman
-          in: query
-          required: false
-          description: ID пользователя (прораба) (опционально, для конкретного прораба)
-          schema:
-            type: integer
-            format: int64
-        - name: date_from
-          in: query
-          required: false
-          description: Дата начала периода (YYYY-MM-DD)
-          schema:
-            type: string
-            format: date
-        - name: date_to
-          in: query
-          required: false
-          description: Дата окончания периода (YYYY-MM-DD)
-          schema:
-            type: string
-            format: date
-        # template_id здесь не используется для JSON, т.к. структура фиксирована сервисом
-      responses:
-        '200':
-          description: Отчет об активности прорабов (JSON)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReportResponseForemanActivity'
-        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
-        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
-        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
-        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
-
   /api/v1/admin/reports/project-status-summary:
     get:
       tags: [StandardReports]
@@ -799,23 +751,6 @@ components:
           type: string
           format: date-time
 
-    ReportResponseForemanActivity:
-      type: object
-      properties:
-        title:
-          type: string
-          example: Отчет по активности прорабов
-        filters:
-          $ref: '#/components/schemas/ReportFilters' # Упрощенный набор фильтров для этого отчета
-        data:
-          type: array 
-          items:
-            type: object # Структура зависит от userRepo->getForemanActivity()
-            additionalProperties: true
-        generated_at:
-          type: string
-          format: date-time
-
     ReportResponseProjectStatusSummary:
       type: object
       properties:
@@ -1293,4 +1228,4 @@ components:
       required: [title, data, filters, generated_at]
 
   securitySchemes:
-    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' }

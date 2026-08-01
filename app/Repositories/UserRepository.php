@@ -13,8 +13,6 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\LengthAwarePaginator as PaginationLengthAwarePaginator;
 use Illuminate\Support\Str;
-use App\Models\Models\Log\MaterialUsageLog;
-use App\Models\CompletedWork;
 
 class UserRepository extends BaseRepository implements UserRepositoryInterface
 {
@@ -520,68 +518,6 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
             ->paginate($perPage);
     }
 
-    public function getForemanActivity(int $organizationId, array $filters = []): Collection
-    {
-        // Получаем контекст организации
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-        
-        $query = $this->model->whereHas('roleAssignments', function ($roleQuery) use ($context) {
-            $roleQuery->where('role_slug', 'foreman')
-                      ->where('context_id', $context->id)
-                      ->where('is_active', true);
-        })->with(['roleAssignments']);
-
-        if (!empty($filters['user_id'])) {
-            $query->where('id', $filters['user_id']);
-        }
-
-        $foremen = $query->get();
-
-        $activityData = collect();
-
-        foreach ($foremen as $foreman) {
-            $materialUsageQuery = MaterialUsageLog::where('user_id', $foreman->id);
-            $completedWorksQuery = CompletedWork::where('user_id', $foreman->id);
-
-            if (!empty($filters['project_id'])) {
-                $materialUsageQuery->where('project_id', $filters['project_id']);
-                $completedWorksQuery->where('project_id', $filters['project_id']);
-            }
-
-            if (!empty($filters['date_from'])) {
-                $materialUsageQuery->whereDate('usage_date', '>=', $filters['date_from']);
-                $completedWorksQuery->whereDate('completion_date', '>=', $filters['date_from']);
-            }
-
-            if (!empty($filters['date_to'])) {
-                $materialUsageQuery->whereDate('usage_date', '<=', $filters['date_to']);
-                $completedWorksQuery->whereDate('completion_date', '<=', $filters['date_to']);
-            }
-
-            $materialUsageCount = $materialUsageQuery->count();
-            $completedWorksCount = $completedWorksQuery->count();
-            $completedWorksSum = $completedWorksQuery->sum('total_amount');
-
-            $lastActivity = collect([
-                $materialUsageQuery->latest('usage_date')->first()?->usage_date,
-                $completedWorksQuery->latest('completion_date')->first()?->completion_date
-            ])->filter()->max();
-
-            $activityData->push([
-                'user_id' => $foreman->id,
-                'user_name' => $foreman->name,
-                'user_email' => $foreman->email,
-                'material_usage_operations' => $materialUsageCount,
-                'completed_works_count' => $completedWorksCount,
-                'completed_works_total_sum' => $completedWorksSum ?? 0,
-                'last_activity_date' => $lastActivity,
-                'is_active' => $foreman->is_active,
-            ]);
-        }
-
-        return $activityData->sortByDesc('completed_works_total_sum');
-    }
-
     // Добавляем реализацию недостающего метода
     public function findByRoleInOrganizationPaginated(int $organizationId, string $roleSlug, int $perPage = 15): PaginationLengthAwarePaginator
     {
@@ -597,91 +533,4 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
             ->paginate($perPage);
     }
 
-    /**
-     * Получить детальные данные по использованию материалов прорабами.
-     */
-    public function getForemanMaterialLogs(int $organizationId, array $filters = []): Collection
-    {
-        // Получаем контекст организации
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-        
-        $query = MaterialUsageLog::whereHas('user.roleAssignments', function ($roleQuery) use ($context) {
-            $roleQuery->where('role_slug', 'foreman')
-                      ->where('context_id', $context->id)
-                      ->where('is_active', true);
-        })
-        ->with(['project:id,name', 'material:id,name', 'user:id,name']);
-
-        if (!empty($filters['user_id'])) {
-            $query->where('user_id', $filters['user_id']);
-        }
-
-        if (!empty($filters['project_id'])) {
-            $query->where('project_id', $filters['project_id']);
-        }
-
-        if (!empty($filters['date_from'])) {
-            $query->whereDate('usage_date', '>=', $filters['date_from']);
-        }
-
-        if (!empty($filters['date_to'])) {
-            $query->whereDate('usage_date', '<=', $filters['date_to']);
-        }
-
-        return $query->orderBy('usage_date', 'desc')->get()->map(function ($log) {
-            return [
-                'user_id' => $log->user_id,
-                'usage_date' => $log->usage_date,
-                'project_name' => $log->project->name ?? '',
-                'material_name' => $log->material->name ?? '',
-                'quantity' => $log->quantity,
-                'operation_type' => $log->operation_type,
-                'notes' => $log->notes,
-            ];
-        });
-    }
-
-    /**
-     * Получить детальные данные по выполненным работам прорабов.
-     */
-    public function getForemanCompletedWorks(int $organizationId, array $filters = []): Collection
-    {
-        // Получаем контекст организации
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-        
-        $query = CompletedWork::whereHas('user.roleAssignments', function ($roleQuery) use ($context) {
-            $roleQuery->where('role_slug', 'foreman')
-                      ->where('context_id', $context->id)
-                      ->where('is_active', true);
-        })
-        ->with(['project:id,name', 'workType:id,name', 'user:id,name']);
-
-        if (!empty($filters['user_id'])) {
-            $query->where('user_id', $filters['user_id']);
-        }
-
-        if (!empty($filters['project_id'])) {
-            $query->where('project_id', $filters['project_id']);
-        }
-
-        if (!empty($filters['date_from'])) {
-            $query->whereDate('completion_date', '>=', $filters['date_from']);
-        }
-
-        if (!empty($filters['date_to'])) {
-            $query->whereDate('completion_date', '<=', $filters['date_to']);
-        }
-
-        return $query->orderBy('completion_date', 'desc')->get()->map(function ($work) {
-            return [
-                'user_id' => $work->user_id,
-                'completion_date' => $work->completion_date,
-                'project_name' => $work->project->name ?? '',
-                'work_type_name' => $work->workType->name ?? '',
-                'quantity' => $work->quantity,
-                'total_amount' => $work->total_amount,
-                'status' => $work->status,
-            ];
-        });
-    }
 } 
