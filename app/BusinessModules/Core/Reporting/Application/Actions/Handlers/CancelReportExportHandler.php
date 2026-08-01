@@ -49,6 +49,7 @@ final readonly class CancelReportExportHandler implements CancelReportExportActi
         $fence = new ReportAuthorizationFence(
             $subject,
             $operations,
+            $subject->exportFormat,
             $this->authorizer,
             $this->contexts,
         );

@@ -46,6 +46,8 @@ final class ReportCatalogResource extends JsonResource
                 'formula_version' => $definition->formulaVersion,
                 'source_schema_version' => $definition->sourceSchemaVersion,
                 'renderer_version' => $definition->rendererVersion,
+                'source_module' => $definition->sourceModule,
+                'core_access_mode' => $definition->coreAccessMode->value,
                 'filters' => $definition->filters,
                 'columns' => $definition->columns,
                 'sorts' => $definition->sorts,

@@ -267,6 +267,37 @@ final class ReportRunHydratorTest extends TestCase
         (new ReportRunHydrator)->query($record);
     }
 
+    public function test_source_module_access_contract_round_trips_from_sealed_definition_snapshot(): void
+    {
+        $record = $this->record();
+        $snapshot = $record->definition_snapshot;
+        $snapshot['source_module'] = 'act-reporting';
+        $snapshot['core_access_mode'] = 'source_module_report';
+        $snapshot['formats'] = ['xlsx'];
+        $snapshot['permission_policy'] = [
+            'view_permissions' => ['act_reports.view'],
+            'export_permissions' => ['act_reports.export.excel'],
+            'sensitive_permissions' => [],
+            'audit_permissions' => [],
+        ];
+        $record->definition_snapshot = $snapshot;
+        $record->definition_snapshot_hash = hash(
+            'sha256',
+            \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($snapshot),
+        );
+        $record->input_fingerprint = hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode([
+            'definition_snapshot_hash' => $record->definition_snapshot_hash,
+            'query' => json_decode($record->canonical_query_json, true, 512, JSON_THROW_ON_ERROR),
+            'saved_view' => null,
+        ]));
+
+        $definition = (new ReportRunHydrator)->query($record)->definition;
+
+        self::assertSame('act-reporting', $definition->sourceModule);
+        self::assertSame('source_module_report', $definition->coreAccessMode->value);
+        self::assertSame(['act_reports.view'], $definition->permissionPolicy->viewPermissions);
+    }
+
     public static function definitionMemberMutations(): iterable
     {
         yield 'code' => ['code', 'changed_report'];
@@ -287,6 +318,8 @@ final class ReportRunHydratorTest extends TestCase
         ]];
         yield 'publication_readiness' => ['publication_readiness', 'candidate'];
         yield 'supports_subscriptions' => ['supports_subscriptions', true];
+        yield 'source_module' => ['source_module', 'act-reporting'];
+        yield 'core_access_mode' => ['core_access_mode', 'source_module_report'];
     }
 
     public function test_ready_row_schema_mutation_is_rejected_by_complete_result_digest(): void
@@ -526,6 +559,8 @@ final class ReportRunHydratorTest extends TestCase
             ],
             'publication_readiness' => 'published',
             'supports_subscriptions' => false,
+            'source_module' => 'reports',
+            'core_access_mode' => 'reporting_workspace',
         ];
         $queryData = [
             'as_of' => '2026-07-26T00:00:00+00:00',

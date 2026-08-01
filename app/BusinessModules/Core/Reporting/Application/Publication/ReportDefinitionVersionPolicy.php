@@ -73,7 +73,7 @@ final class ReportDefinitionVersionPolicy
             contractChanged: $this->changed(
                 $current,
                 $candidate,
-                ['filters', 'columns', 'sorts', 'formats', 'catalog_group'],
+                ['filters', 'columns', 'sorts', 'formats', 'catalog_group', 'source_module', 'core_access_mode'],
             ),
             rendererChanged: $this->changed(
                 $current,

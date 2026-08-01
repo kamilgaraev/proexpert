@@ -10,8 +10,8 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataReg
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogDefinitionView;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
@@ -38,7 +38,7 @@ final class ReportCatalogArtifactGeneratorTest extends TestCase
         self::assertArrayNotHasKey('manifest_ordinal', $generated['resource']['definitions'][0]);
         self::assertStringContainsString("'holding_performance'", $generated['typeScript']);
         self::assertSame([
-            'code', 'title_key', 'catalog_group', 'category', 'grain', 'wave', 'definition_hash', 'contract_version', 'formula_version', 'source_schema_version', 'renderer_version', 'filters', 'columns', 'sorts', 'formats', 'permission_policy', 'supports_subscriptions', 'reproducible_scheduled_snapshot', 'visibility',
+            'code', 'title_key', 'catalog_group', 'category', 'grain', 'wave', 'definition_hash', 'contract_version', 'formula_version', 'source_schema_version', 'renderer_version', 'source_module', 'core_access_mode', 'filters', 'columns', 'sorts', 'formats', 'permission_policy', 'supports_subscriptions', 'reproducible_scheduled_snapshot', 'visibility',
         ], array_keys($generated['resource']['definitions'][0]));
     }
 
@@ -79,10 +79,22 @@ final class ReportCatalogArtifactGeneratorTest extends TestCase
 
     public function test_platform_serializes_empty_translation_maps_as_objects(): void
     {
-        $registry = new class implements ReportDefinitionRegistry {
-            public function published(string $code): PublishedReportDefinition { throw new \LogicException('not_called'); }
-            public function publishedCodes(): array { return []; }
-            public function manifestSha256(): Sha256Hash { return new Sha256Hash(hash('sha256', 'empty-manifest')); }
+        $registry = new class implements ReportDefinitionRegistry
+        {
+            public function published(string $code): PublishedReportDefinition
+            {
+                throw new \LogicException('not_called');
+            }
+
+            public function publishedCodes(): array
+            {
+                return [];
+            }
+
+            public function manifestSha256(): Sha256Hash
+            {
+                return new Sha256Hash(hash('sha256', 'empty-manifest'));
+            }
         };
         $inputs = $this->inputs();
         $inputs['manifest_bytes'] = 'empty-manifest';
@@ -102,15 +114,28 @@ final class ReportCatalogArtifactGeneratorTest extends TestCase
             new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []),
             ReportSnapshotClassification::OPERATIONAL,
             new ReportOutputClassification(ReportDataClassification::STANDARD, [], [], false, false, false),
-            ReportPublicationReadiness::PUBLISHED, false,
+            ReportPublicationReadiness::PUBLISHED, false, 'reports', \App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode::REPORTING_WORKSPACE,
         );
         $published = new PublishedReportDefinition($definition);
 
-        return new class($published) implements ReportDefinitionRegistry {
+        return new class($published) implements ReportDefinitionRegistry
+        {
             public function __construct(private PublishedReportDefinition $published) {}
-            public function published(string $code): PublishedReportDefinition { return $this->published; }
-            public function publishedCodes(): array { return ['holding_performance']; }
-            public function manifestSha256(): Sha256Hash { return new Sha256Hash(hash('sha256', 'manifest')); }
+
+            public function published(string $code): PublishedReportDefinition
+            {
+                return $this->published;
+            }
+
+            public function publishedCodes(): array
+            {
+                return ['holding_performance'];
+            }
+
+            public function manifestSha256(): Sha256Hash
+            {
+                return new Sha256Hash(hash('sha256', 'manifest'));
+            }
         };
     }
 
@@ -118,11 +143,19 @@ final class ReportCatalogArtifactGeneratorTest extends TestCase
     {
         return [
             'manifest_bytes' => 'manifest',
-            'metadata' => new class implements ReportCatalogMetadataRegistry {
-                public function published(string $code): ReportCatalogMetadata { return new ReportCatalogMetadata($code, 'reports.catalog.'.$code, ReportCatalogGroup::PORTFOLIO, 'portfolio', 'project', 1, 1); }
+            'metadata' => new class implements ReportCatalogMetadataRegistry
+            {
+                public function published(string $code): ReportCatalogMetadata
+                {
+                    return new ReportCatalogMetadata($code, 'reports.catalog.'.$code, ReportCatalogGroup::PORTFOLIO, 'portfolio', 'project', 1, 1);
+                }
             },
-            'scheduling' => new class implements ReportSchedulingCapabilityRegistry {
-                public function published(string $code): ReportSchedulingCapability { return new ReportSchedulingCapability($code, false, false); }
+            'scheduling' => new class implements ReportSchedulingCapabilityRegistry
+            {
+                public function published(string $code): ReportSchedulingCapability
+                {
+                    return new ReportSchedulingCapability($code, false, false);
+                }
             },
             'translations' => ReportPermissionTranslationGenerator::fromProject(dirname(__DIR__, 4)),
         ];
@@ -137,15 +170,28 @@ final class ReportCatalogArtifactGeneratorTest extends TestCase
                 $code, new Sha256Hash(hash('sha256', $code)), '1.0.0', '1.0.0', '1.0.0', '1.0.0',
                 [['id' => 'project_id']], [['id' => 'amount']], [['id' => 'amount']], ['csv'],
                 new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []), ReportSnapshotClassification::OPERATIONAL,
-                new ReportOutputClassification(ReportDataClassification::STANDARD, [], [], false, false, false), ReportPublicationReadiness::PUBLISHED, false,
+                new ReportOutputClassification(ReportDataClassification::STANDARD, [], [], false, false, false), ReportPublicationReadiness::PUBLISHED, false, 'reports', \App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode::REPORTING_WORKSPACE,
             ));
         }
 
-        return new class($definitions) implements ReportDefinitionRegistry {
+        return new class($definitions) implements ReportDefinitionRegistry
+        {
             public function __construct(private array $definitions) {}
-            public function published(string $code): PublishedReportDefinition { return $this->definitions[$code]; }
-            public function publishedCodes(): array { return array_keys($this->definitions); }
-            public function manifestSha256(): Sha256Hash { return new Sha256Hash(hash('sha256', 'release-manifest')); }
+
+            public function published(string $code): PublishedReportDefinition
+            {
+                return $this->definitions[$code];
+            }
+
+            public function publishedCodes(): array
+            {
+                return array_keys($this->definitions);
+            }
+
+            public function manifestSha256(): Sha256Hash
+            {
+                return new Sha256Hash(hash('sha256', 'release-manifest'));
+            }
         };
     }
 
@@ -159,17 +205,24 @@ final class ReportCatalogArtifactGeneratorTest extends TestCase
 
         return [
             'manifest_bytes' => 'release-manifest',
-            'metadata' => new class($groups, $distributeGroups) implements ReportCatalogMetadataRegistry {
+            'metadata' => new class($groups, $distributeGroups) implements ReportCatalogMetadataRegistry
+            {
                 public function __construct(private array $groups, private bool $distributeGroups) {}
+
                 public function published(string $code): ReportCatalogMetadata
                 {
                     $ordinal = (int) substr($code, -2);
                     $group = $this->distributeGroups ? $this->groups[$ordinal % count($this->groups)] : ReportCatalogGroup::PORTFOLIO;
+
                     return new ReportCatalogMetadata($code, 'reports.catalog.'.$code, $group, 'catalog', 'project', 1, $ordinal);
                 }
             },
-            'scheduling' => new class implements ReportSchedulingCapabilityRegistry {
-                public function published(string $code): ReportSchedulingCapability { return new ReportSchedulingCapability($code, false, false); }
+            'scheduling' => new class implements ReportSchedulingCapabilityRegistry
+            {
+                public function published(string $code): ReportSchedulingCapability
+                {
+                    return new ReportSchedulingCapability($code, false, false);
+                }
             },
             'translations' => new ReportPermissionTranslationGenerator(
                 ['catalog' => $titles, 'catalog_groups' => array_fill_keys(array_map(static fn (ReportCatalogGroup $group): string => $group->value, $groups), 'Группа')],

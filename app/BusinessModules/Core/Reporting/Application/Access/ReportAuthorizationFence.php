@@ -20,6 +20,7 @@ final readonly class ReportAuthorizationFence
     public function __construct(
         public ReportAuthorizationSubject $subject,
         public array $operations,
+        public ?string $exportFormat,
         private CurrentReportExactManyAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
     ) {
@@ -34,10 +35,19 @@ final readonly class ReportAuthorizationFence
             }
             $seen[$operation->value] = true;
         }
+        $requiresExportFormat = isset($seen[ReportOperation::EXPORT->value])
+            || isset($seen[ReportOperation::DOWNLOAD->value]);
+        if (($exportFormat !== null && ! in_array($exportFormat, $subject->definition->formats, true))
+            || ($requiresExportFormat && $exportFormat === null)
+            || ($subject->aggregateKind->value === 'export'
+                && ($subject->exportFormat === null || $subject->exportFormat !== $exportFormat))) {
+            throw new InvalidArgumentException('report_authorization_fence_invalid');
+        }
 
         $this->fingerprint = hash('sha256', CanonicalJson::encode([
             'subject' => $subject->canonicalFingerprint(),
             'operations' => array_keys($seen),
+            'export_format' => $exportFormat,
         ]));
     }
 
@@ -51,7 +61,7 @@ final readonly class ReportAuthorizationFence
     }
 
     /**
-     * @param list<ReportOperation> $expected
+     * @param  list<ReportOperation>  $expected
      */
     public function assertOperations(array $expected): void
     {
@@ -80,6 +90,7 @@ final readonly class ReportAuthorizationFence
                 $this->subject->definition,
                 $operation,
                 $operation === ReportOperation::RUN ? null : $this->subject->snapshot,
+                $this->exportFormat,
             );
         }
         $authorizations = $this->authorizer->authorizeExactMany(

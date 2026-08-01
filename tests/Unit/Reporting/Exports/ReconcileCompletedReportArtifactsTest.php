@@ -370,6 +370,8 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
             $source->snapshot,
             self::RUN_ID,
             null,
+            null,
+            $export->format,
         );
 
         return [$context, $export, $source, $published, $subject];

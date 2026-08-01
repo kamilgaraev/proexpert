@@ -102,6 +102,8 @@ final class ReportManifestPromotionServiceTest extends TestCase
             $payload->outputClassification,
             $payload->publicationReadiness,
             $payload->supportsSubscriptions,
+            $payload->sourceModule,
+            $payload->coreAccessMode,
         ));
 
         $this->expectException(InvalidArgumentException::class);

@@ -58,7 +58,7 @@ final readonly class ReportExportCoordinator
 
         $published = $this->publishedFor($currentSource);
         $columns = $published->definition->validatedSelectedColumnIds($data->columns);
-        $fence = $this->authorizationFence($context, $currentSource, $published, $columns);
+        $fence = $this->authorizationFence($context, $currentSource, $published, $columns, $data->format);
         $fence->assertCurrent($context);
         $this->renderers->resolve($published, $data);
 
@@ -99,6 +99,7 @@ final readonly class ReportExportCoordinator
         ReportRunExportSource $source,
         PublishedReportDefinition $published,
         array $columns,
+        string $format,
     ): ReportAuthorizationFence {
         $subject = $this->subjects->run($source->run->id);
         ReportAuthorizationFence::assertExactScope($context, $subject);
@@ -121,6 +122,7 @@ final readonly class ReportExportCoordinator
         return new ReportAuthorizationFence(
             $subject,
             $operations,
+            $format,
             $this->authorizer,
             $this->contexts,
         );

@@ -177,6 +177,8 @@ final class ReportCandidateValidationFixtureBuilderTest extends TestCase
             $payload->outputClassification,
             $payload->publicationReadiness,
             $payload->supportsSubscriptions,
+            $payload->sourceModule,
+            $payload->coreAccessMode,
         ));
         $foreignRegistry = new class($foreign) implements CandidateReportDefinitionRegistry
         {

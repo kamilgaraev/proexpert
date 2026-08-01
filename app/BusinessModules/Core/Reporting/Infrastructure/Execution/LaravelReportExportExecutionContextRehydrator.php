@@ -52,6 +52,7 @@ final readonly class LaravelReportExportExecutionContextRehydrator implements Re
                 $seed->definition,
                 ReportOperation::EXPORT,
                 $subject->snapshot,
+                $subject->exportFormat,
             );
             $current = $this->authorizer->authorizeExact(
                 $seed->requesterActorId,

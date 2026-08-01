@@ -26,6 +26,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
@@ -48,7 +49,7 @@ final class ReportRunHydrator
         'source_schema_version', 'renderer_version', 'filters', 'columns',
         'sorts', 'formats', 'permission_policy', 'snapshot_classification',
         'output_classification', 'publication_readiness',
-        'supports_subscriptions',
+        'supports_subscriptions', 'source_module', 'core_access_mode',
     ];
 
     public function hydrate(ReportRunRecord $record, string $httpDisposition, int $pollAfterMs): ReportRun
@@ -145,6 +146,8 @@ final class ReportRunHydrator
                 ),
                 ReportPublicationReadiness::from($this->string($snapshot['publication_readiness'])),
                 $this->boolean($snapshot['supports_subscriptions']),
+                $this->string($snapshot['source_module']),
+                ReportCoreAccessMode::from($this->string($snapshot['core_access_mode'])),
             );
 
             foreach ([

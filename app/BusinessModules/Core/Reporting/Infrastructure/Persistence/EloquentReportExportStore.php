@@ -61,6 +61,9 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
         if ($source->query->scope->canonicalIdentity() !== $context->scope->canonicalIdentity()) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
+        if ($fence->exportFormat === null || ! hash_equals($data->format, $fence->exportFormat)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
 
         $columns = $source->query->definition->validatedSelectedColumnIds($data->columns);
         $id = (string) Str::ulid();
@@ -532,6 +535,10 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
             || ! hash_equals((string) $record->snapshot_id, $snapshot->id)
             || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
             || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
+            || $subject->exportFormat === null
+            || $fence->exportFormat === null
+            || ! hash_equals((string) $record->format, $subject->exportFormat)
+            || ! hash_equals((string) $record->format, $fence->exportFormat)
             || ! $artifactMatches
             || ! $exportIdentityMatches) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);

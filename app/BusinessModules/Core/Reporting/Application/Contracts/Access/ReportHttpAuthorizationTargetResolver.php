@@ -13,7 +13,7 @@ interface ReportHttpAuthorizationTargetResolver
 
     public function run(string $runId, ReportOperation $operation): CurrentReportAuthorizationTarget;
 
-    public function createExport(string $runId): CurrentReportAuthorizationTarget;
+    public function createExport(string $runId, ?string $format): CurrentReportAuthorizationTarget;
 
     public function export(string $exportId, ReportOperation $operation): CurrentReportAuthorizationTarget;
 

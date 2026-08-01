@@ -44,7 +44,7 @@ final readonly class LaravelReportHttpAuthorizationTargetResolver implements Rep
         );
     }
 
-    public function createExport(string $runId): CurrentReportAuthorizationTarget
+    public function createExport(string $runId, ?string $format): CurrentReportAuthorizationTarget
     {
         $subject = $this->subjects->run($runId);
         $this->assertSubject($subject->aggregateKind, $subject->aggregateId, ReportDispatchAggregate::RUN, $runId);
@@ -56,6 +56,7 @@ final readonly class LaravelReportHttpAuthorizationTargetResolver implements Rep
             $subject->definition,
             ReportOperation::EXPORT,
             $subject->snapshot,
+            $format,
         );
     }
 
@@ -77,6 +78,7 @@ final readonly class LaravelReportHttpAuthorizationTargetResolver implements Rep
             $subject->definition,
             $operation,
             $subject->snapshot,
+            $subject->exportFormat,
         );
     }
 

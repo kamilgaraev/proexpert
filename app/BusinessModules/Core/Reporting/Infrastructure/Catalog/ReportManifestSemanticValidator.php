@@ -124,6 +124,8 @@ final class ReportManifestSemanticValidator
 
     private function assertDefinitionSemantics(array $definition, string $code): void
     {
+        $this->assertCoreAccessContract($definition);
+
         if (($definition['title_key'] ?? null) !== 'reports.catalog.'.$code) {
             throw new LogicException('report_manifest_title_key_invalid');
         }
@@ -196,6 +198,52 @@ final class ReportManifestSemanticValidator
         if (in_array($publication, ['draft', 'blocked'], true)
             && ($supportsSubscriptions || $reproducibleSnapshot)) {
             throw new LogicException('report_manifest_scheduling_readiness_invalid');
+        }
+    }
+
+    private function assertCoreAccessContract(array $definition): void
+    {
+        $mode = $definition['core_access_mode'] ?? 'reporting_workspace';
+        $sourceModule = $definition['source_module'] ?? null;
+
+        if ($mode === 'reporting_workspace') {
+            if ($sourceModule !== null && $sourceModule !== 'reports') {
+                throw new LogicException('report_manifest_core_access_invalid');
+            }
+
+            return;
+        }
+
+        if ($mode !== 'source_module_report'
+            || ! array_key_exists('source_module', $definition)
+            || $sourceModule !== 'act-reporting') {
+            throw new LogicException('report_manifest_core_access_invalid');
+        }
+
+        $permissions = $definition['permissions'] ?? null;
+        $formats = $definition['formats'] ?? null;
+        if (! is_array($permissions) || ! is_array($formats) || ! array_is_list($formats)) {
+            throw new LogicException('report_manifest_source_permission_policy_invalid');
+        }
+        $expectedExportPermissions = [];
+        foreach ($formats as $format) {
+            $expectedExportPermissions[] = match ($format) {
+                'xlsx' => 'act_reports.export.excel',
+                'pdf' => 'act_reports.export.pdf',
+                default => throw new LogicException('report_manifest_source_permission_policy_invalid'),
+            };
+        }
+        sort($expectedExportPermissions, SORT_STRING);
+        $actualExportPermissions = $permissions['export'] ?? null;
+        if (! is_array($actualExportPermissions)) {
+            throw new LogicException('report_manifest_source_permission_policy_invalid');
+        }
+        sort($actualExportPermissions, SORT_STRING);
+        if (($permissions['view'] ?? null) !== ['act_reports.view']
+            || $actualExportPermissions !== $expectedExportPermissions
+            || ($permissions['sensitive'] ?? null) !== []
+            || ($permissions['audit'] ?? null) !== []) {
+            throw new LogicException('report_manifest_source_permission_policy_invalid');
         }
     }
 }

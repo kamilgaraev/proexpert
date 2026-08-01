@@ -38,8 +38,8 @@ final class ReportingPermissionTranslationTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), $this->rootPath('lang'));
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, $this->rootPath('lang'));
         $container->instance('translator', new Translator($loader, 'ru'));
         Facade::setFacadeApplication($container);
     }
@@ -96,6 +96,25 @@ final class ReportingPermissionTranslationTest extends TestCase
         }
     }
 
+    public function test_exact_act_report_permissions_have_russian_labels(): void
+    {
+        $permissions = [
+            'act_reports.view',
+            'act_reports.export.excel',
+            'act_reports.export.pdf',
+        ];
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => ['act-reporting' => $permissions],
+        ]);
+
+        foreach ($permissions as $permission) {
+            $label = $translated['module_permissions']['act-reporting'][$permission] ?? null;
+            self::assertIsString($label, $permission);
+            self::assertDoesNotMatchRegularExpression('/act_reports|permissions\./', $label, $permission);
+            self::assertMatchesRegularExpression('/[А-Яа-яЁё]/u', $label, $permission);
+        }
+    }
+
     public function test_report_error_translation_file_contains_no_technical_identifiers(): void
     {
         $translations = require $this->rootPath('lang/ru/reports.php');
@@ -107,6 +126,6 @@ final class ReportingPermissionTranslationTest extends TestCase
 
     private function rootPath(string $relativePath): string
     {
-        return dirname(__DIR__, 4) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+        return dirname(__DIR__, 4).DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
     }
 }

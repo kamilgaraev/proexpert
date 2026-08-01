@@ -33,11 +33,12 @@ final readonly class ReportExportController
     public function store(CreateReportExportRequest $request): JsonResponse
     {
         $key = new IdempotencyKey((string) $request->header('Idempotency-Key'));
-        $authorization = $this->authorization->createExport($request, $request->runId());
+        $data = $request->toData();
+        $authorization = $this->authorization->createExport($request, $request->runId(), $data->format);
         $export = $this->create->handle(
             $authorization['context'],
             $request->routeId(),
-            $request->toData(),
+            $data,
             $key,
         );
 

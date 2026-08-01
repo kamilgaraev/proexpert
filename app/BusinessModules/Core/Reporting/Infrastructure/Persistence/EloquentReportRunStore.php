@@ -596,6 +596,8 @@ final class EloquentReportRunStore implements ReportRunStore
             ],
             'publication_readiness' => $definition->publicationReadiness->value,
             'supports_subscriptions' => $definition->supportsSubscriptions,
+            'source_module' => $definition->sourceModule,
+            'core_access_mode' => $definition->coreAccessMode->value,
         ];
     }
 

@@ -56,6 +56,8 @@ final readonly class ReportCatalogArtifactGenerator
                 'catalog_group' => $itemMetadata->catalogGroup->value,
                 'category' => $itemMetadata->category,
                 'definition_hash' => $definition->definitionHash->value,
+                'source_module' => $definition->sourceModule,
+                'core_access_mode' => $definition->coreAccessMode->value,
                 'versions' => [
                     'contract' => $definition->contractVersion,
                     'formula' => $definition->formulaVersion,

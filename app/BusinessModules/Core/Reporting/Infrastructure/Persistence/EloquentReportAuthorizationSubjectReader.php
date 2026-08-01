@@ -91,6 +91,7 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
                 $this->string($export->run_id),
                 $artifactIdentityHash,
                 ReportExportAuthorizationIdentity::fromRecord($export),
+                $this->string($export->format),
             );
         } catch (ReportContractException $exception) {
             throw $exception;
@@ -192,7 +193,30 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
         return $left === $right;
     }
 
-    private function string(mixed $value): string { if (! is_string($value) || $value === '') { throw new \InvalidArgumentException('report_persistence_string_invalid'); } return $value; }
-    private function array(mixed $value): array { if (! is_array($value) || ! array_is_list($value)) { throw new \InvalidArgumentException('report_persistence_array_invalid'); } return $value; }
-    private function instant(mixed $value): DateTimeImmutable { if ($value instanceof DateTimeInterface) { return DateTimeImmutable::createFromInterface($value); } if (is_string($value) && $value !== '') { return new DateTimeImmutable($value); } throw new \InvalidArgumentException('report_persistence_instant_invalid'); }
+    private function string(mixed $value): string
+    {
+        if (! is_string($value) || $value === '') {
+            throw new \InvalidArgumentException('report_persistence_string_invalid');
+        }
+
+return $value;
+    }
+
+    private function array(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new \InvalidArgumentException('report_persistence_array_invalid');
+        }
+
+return $value;
+    }
+
+    private function instant(mixed $value): DateTimeImmutable
+    {
+        if ($value instanceof DateTimeInterface) {
+            return DateTimeImmutable::createFromInterface($value);
+        } if (is_string($value) && $value !== '') {
+            return new DateTimeImmutable($value);
+        } throw new \InvalidArgumentException('report_persistence_instant_invalid');
+    }
 }

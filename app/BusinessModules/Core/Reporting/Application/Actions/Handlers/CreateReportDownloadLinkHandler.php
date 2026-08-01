@@ -58,6 +58,7 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
         $fence = new ReportAuthorizationFence(
             $subject,
             $operations,
+            $subject->exportFormat,
             $this->authorizer,
             $this->contexts,
         );

@@ -77,7 +77,7 @@ final class ReportControllerContractTest extends TestCase
         parent::setUp();
         $this->app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $this->app->make(Kernel::class)->bootstrap();
-        $definition = (new ReportDefinitionBuilder)->payload();
+        $definition = (new ReportDefinitionBuilder)->formats(['xlsx', 'csv'])->payload();
         $scope = new ReportScope(41, [41], [], [], new DateTimeZone('UTC'));
         $snapshot = new ReportSnapshotRef(
             'report',
@@ -109,6 +109,8 @@ final class ReportControllerContractTest extends TestCase
             $snapshot,
             self::RUN_ID,
             new Sha256Hash(str_repeat('e', 64)),
+            null,
+            'xlsx',
         );
         $subjects = $this->createMock(ReportAuthorizationSubjectReader::class);
         $subjects->method('run')->willReturn($runSubject);
@@ -124,11 +126,21 @@ final class ReportControllerContractTest extends TestCase
                 $operation === ReportOperation::RUN ? null : $snapshot,
             ),
         );
-        $targets->method('createExport')->willReturn(
-            new CurrentReportAuthorizationTarget($definition, ReportOperation::EXPORT, $snapshot),
+        $targets->method('createExport')->willReturnCallback(
+            static fn (string $runId, ?string $format): CurrentReportAuthorizationTarget => new CurrentReportAuthorizationTarget(
+                $definition,
+                ReportOperation::EXPORT,
+                $snapshot,
+                $format,
+            ),
         );
         $targets->method('export')->willReturnCallback(
-            static fn (string $exportId, ReportOperation $operation): CurrentReportAuthorizationTarget => new CurrentReportAuthorizationTarget($definition, $operation, $snapshot),
+            static fn (string $exportId, ReportOperation $operation): CurrentReportAuthorizationTarget => new CurrentReportAuthorizationTarget(
+                $definition,
+                $operation,
+                $snapshot,
+                'xlsx',
+            ),
         );
         $targets->method('catalog')->willReturn([
             new CurrentReportAuthorizationTarget($definition, ReportOperation::VIEW, null),

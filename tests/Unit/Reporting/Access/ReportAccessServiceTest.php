@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use PHPUnit\Framework\TestCase;
@@ -264,13 +265,13 @@ final class ReportAccessServiceTest extends TestCase
     public function test_foreign_and_missing_sources_have_identical_public_denial(): void
     {
         $permissions = ['definition.view', 'reports.view'];
-        $resolver = new class implements ReportSourceAccessResolver {
+        $resolver = new class implements ReportSourceAccessResolver
+        {
             public function assertAccessible(
                 ReportExecutionContext $context,
                 ReportDefinition $definition,
                 ReportSourceRef $source,
-            ): void
-            {
+            ): void {
                 throw new \RuntimeException('foreign_source_identifier');
             }
         };
@@ -289,7 +290,8 @@ final class ReportAccessServiceTest extends TestCase
     public function test_revoked_actor_is_reloaded_and_denied_before_download(): void
     {
         $permissions = ['definition.export', 'reports.download', 'reports.export', 'reports.view'];
-        $loader = new class implements ReportActorLoader {
+        $loader = new class implements ReportActorLoader
+        {
             public function loadActive(int $actorId): ReportActor
             {
                 throw new \RuntimeException('actor_revoked');
@@ -311,17 +313,19 @@ final class ReportAccessServiceTest extends TestCase
         $context = $this->context($permissions);
         $definition = $this->definition();
         $source = $this->source();
-        $resolver = new class implements ReportSourceAccessResolver {
+        $resolver = new class implements ReportSourceAccessResolver
+        {
             public ?ReportExecutionContext $context = null;
+
             public ?ReportDefinition $definition = null;
+
             public ?ReportSourceRef $source = null;
 
             public function assertAccessible(
                 ReportExecutionContext $context,
                 ReportDefinition $definition,
                 ReportSourceRef $source,
-            ): void
-            {
+            ): void {
                 $this->context = $context;
                 $this->definition = $definition;
                 $this->source = $source;
@@ -339,7 +343,8 @@ final class ReportAccessServiceTest extends TestCase
     public function test_actor_loader_contract_error_is_scrubbed_at_operation_boundary(): void
     {
         $permissions = ['definition.export', 'reports.download', 'reports.export', 'reports.view'];
-        $loader = new class implements ReportActorLoader {
+        $loader = new class implements ReportActorLoader
+        {
             public function loadActive(int $actorId): ReportActor
             {
                 throw ReportContractException::fromCode(
@@ -362,6 +367,77 @@ final class ReportAccessServiceTest extends TestCase
         self::assertInstanceOf(ReportContractException::class, $error->getPrevious());
     }
 
+    public function test_source_module_report_uses_only_exact_definition_permissions(): void
+    {
+        $viewPermissions = ['act_reports.view'];
+        $definition = $this->sourceModuleDefinition();
+        $service = $this->service($viewPermissions);
+        $context = $this->context($viewPermissions);
+
+        self::assertTrue($service->assertOperation($context, $definition, ReportOperation::VIEW, null)->canView);
+        self::assertTrue($service->assertOperation($context, $definition, ReportOperation::RUN, null)->canRun);
+        self::assertTrue($service->assertOperation(
+            $context,
+            $definition,
+            ReportOperation::DRILL_DOWN,
+            $this->source(),
+        )->canView);
+
+        $this->expectScopeForbidden();
+        $service->assertOperation($context, $definition, ReportOperation::EXPORT, null);
+    }
+
+    public function test_source_module_report_export_needs_view_and_exact_export_permissions(): void
+    {
+        $permissions = ['act_reports.view', 'act_reports.export.excel'];
+        $definition = $this->sourceModuleDefinition();
+        $visibility = $this->service($permissions)->assertOperation(
+            $this->context($permissions),
+            $definition,
+            ReportOperation::DOWNLOAD,
+            null,
+            'xlsx',
+        );
+
+        self::assertTrue($visibility->canExport);
+        self::assertTrue($visibility->canDownload);
+        self::assertFalse($visibility->canManage);
+        self::assertFalse($visibility->canViewSensitive);
+        self::assertFalse($visibility->canViewAudit);
+    }
+
+    public function test_source_module_report_authorizes_only_the_requested_export_format(): void
+    {
+        $permissions = ['act_reports.view', 'act_reports.export.excel'];
+        $definition = $this->sourceModuleDefinition(['xlsx', 'pdf']);
+        $service = $this->service($permissions);
+        $context = $this->context($permissions);
+
+        self::assertTrue($service->assertOperation(
+            $context,
+            $definition,
+            ReportOperation::EXPORT,
+            null,
+            'xlsx',
+        )->canExport);
+
+        $this->expectScopeForbidden();
+        $service->assertOperation($context, $definition, ReportOperation::EXPORT, null, 'pdf');
+    }
+
+    public function test_generic_permissions_never_authorize_source_module_report(): void
+    {
+        $permissions = ['reports.view', 'reports.run', 'reports.export', 'reports.download'];
+        $this->expectScopeForbidden();
+
+        $this->service($permissions)->assertOperation(
+            $this->context($permissions),
+            $this->sourceModuleDefinition(),
+            ReportOperation::VIEW,
+            null,
+        );
+    }
+
     private function service(array $permissions, bool $sourceAllowed = true): ReportAccessService
     {
         return new ReportAccessService($this->loader($permissions), $this->sourceResolver($sourceAllowed));
@@ -369,10 +445,9 @@ final class ReportAccessServiceTest extends TestCase
 
     private function loader(array $permissions): ReportActorLoader
     {
-        return new class($permissions) implements ReportActorLoader {
-            public function __construct(private readonly array $permissions)
-            {
-            }
+        return new class($permissions) implements ReportActorLoader
+        {
+            public function __construct(private readonly array $permissions) {}
 
             public function loadActive(int $actorId): ReportActor
             {
@@ -383,18 +458,16 @@ final class ReportAccessServiceTest extends TestCase
 
     private function sourceResolver(bool $allowed): ReportSourceAccessResolver
     {
-        return new class($allowed) implements ReportSourceAccessResolver {
-            public function __construct(private readonly bool $allowed)
-            {
-            }
+        return new class($allowed) implements ReportSourceAccessResolver
+        {
+            public function __construct(private readonly bool $allowed) {}
 
             public function assertAccessible(
                 ReportExecutionContext $context,
                 ReportDefinition $definition,
                 ReportSourceRef $source,
-            ): void
-            {
-                if (!$this->allowed) {
+            ): void {
+                if (! $this->allowed) {
                     throw new \RuntimeException('source_forbidden');
                 }
             }
@@ -405,19 +478,43 @@ final class ReportAccessServiceTest extends TestCase
     {
         $actor = new ReportActor(41, 'active', $permissions);
 
-        return (new ReportExecutionContextBuilder())
+        return (new ReportExecutionContextBuilder)
             ->actor($actor)
             ->build();
     }
 
     private function definition(): ReportDefinition
     {
-        return (new ReportDefinitionBuilder())
+        return (new ReportDefinitionBuilder)
             ->permissionPolicy(new ReportPermissionPolicy(
                 ['definition.view'],
                 ['definition.export'],
                 ['definition.sensitive'],
                 ['definition.audit'],
+            ))
+            ->payload();
+    }
+
+    private function sourceModuleDefinition(array $formats = ['xlsx']): ReportDefinition
+    {
+        $exportPermissions = array_map(
+            static fn (string $format): string => match ($format) {
+                'xlsx' => 'act_reports.export.excel',
+                'pdf' => 'act_reports.export.pdf',
+            },
+            $formats,
+        );
+        sort($exportPermissions, SORT_STRING);
+
+        return (new ReportDefinitionBuilder)
+            ->sourceModule('act-reporting')
+            ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
+            ->formats($formats)
+            ->permissionPolicy(new ReportPermissionPolicy(
+                ['act_reports.view'],
+                $exportPermissions,
+                [],
+                [],
             ))
             ->payload();
     }

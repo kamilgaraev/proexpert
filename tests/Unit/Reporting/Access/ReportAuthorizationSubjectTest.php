@@ -41,6 +41,7 @@ final class ReportAuthorizationSubjectTest extends TestCase
                 'parentRunId' => '?string',
                 'artifactIdentityHash' => '?'.Sha256Hash::class,
                 'exportIdentityHash' => '?'.Sha256Hash::class,
+                'exportFormat' => '?string',
             ],
             array_reduce(
                 $reflection->getConstructor()?->getParameters() ?? [],
@@ -86,6 +87,8 @@ final class ReportAuthorizationSubjectTest extends TestCase
             $this->snapshot($scope, $definition),
             self::RUN_ID,
             $artifactHash,
+            null,
+            'csv',
         );
 
         self::assertSame(self::RUN_ID, $subject->parentRunId);
@@ -104,9 +107,43 @@ final class ReportAuthorizationSubjectTest extends TestCase
             $this->snapshot($scope, $definition),
             self::RUN_ID,
             null,
+            null,
+            'csv',
         );
 
         self::assertNull($subject->artifactIdentityHash);
+    }
+
+    public function test_persisted_export_format_participates_in_subject_identity(): void
+    {
+        $scope = $this->scope();
+        $definition = (new ReportDefinitionBuilder)->formats(['xlsx', 'pdf'])->payload();
+        $snapshot = $this->snapshot($scope, $definition);
+
+        $excel = new ReportAuthorizationSubject(
+            ReportDispatchAggregate::EXPORT,
+            self::EXPORT_ID,
+            $definition,
+            $scope,
+            $snapshot,
+            self::RUN_ID,
+            null,
+            null,
+            'xlsx',
+        );
+        $pdf = new ReportAuthorizationSubject(
+            ReportDispatchAggregate::EXPORT,
+            self::EXPORT_ID,
+            $definition,
+            $scope,
+            $snapshot,
+            self::RUN_ID,
+            null,
+            null,
+            'pdf',
+        );
+
+        self::assertNotSame($excel->canonicalFingerprint(), $pdf->canonicalFingerprint());
     }
 
     #[DataProvider('invalidShapeProvider')]

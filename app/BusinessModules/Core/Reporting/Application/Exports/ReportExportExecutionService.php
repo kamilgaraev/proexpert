@@ -485,6 +485,7 @@ final readonly class ReportExportExecutionService
         return new ReportAuthorizationFence(
             $subject,
             $operations,
+            $subject->exportFormat,
             $this->authorizer,
             $this->contextFactory,
         );

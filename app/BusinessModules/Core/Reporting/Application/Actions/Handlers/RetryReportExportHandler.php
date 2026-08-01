@@ -56,6 +56,7 @@ final readonly class RetryReportExportHandler implements RetryReportExportAction
         (new ReportAuthorizationFence(
             $subject,
             $operations,
+            $subject->exportFormat,
             $this->authorizer,
             $this->contexts,
         ))->assertCurrent($context);

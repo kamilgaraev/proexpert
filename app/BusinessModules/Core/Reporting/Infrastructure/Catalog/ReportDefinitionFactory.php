@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCatalogGroup;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
@@ -25,6 +26,12 @@ final class ReportDefinitionFactory
         $permissions = $this->map($row, 'permissions');
         $readiness = $this->map($row, 'readiness');
         $capabilities = $this->map($row, 'capabilities');
+        $coreAccessMode = ReportCoreAccessMode::from(
+            $this->optionalString($row, 'core_access_mode')
+                ?? ReportCoreAccessMode::REPORTING_WORKSPACE->value,
+        );
+        $sourceModule = $this->optionalString($row, 'source_module')
+            ?? ($coreAccessMode === ReportCoreAccessMode::REPORTING_WORKSPACE ? 'reports' : '');
 
         return new ReportDefinition(
             code: $this->string($row, 'code'),
@@ -54,6 +61,8 @@ final class ReportDefinitionFactory
             ),
             publicationReadiness: ReportPublicationReadiness::from($this->string($readiness, 'publication')),
             supportsSubscriptions: $this->boolean($capabilities, 'supports_subscriptions'),
+            sourceModule: $sourceModule,
+            coreAccessMode: $coreAccessMode,
         );
     }
 
@@ -119,6 +128,15 @@ final class ReportDefinitionFactory
         }
 
         return $value;
+    }
+
+    private function optionalString(array $source, string $key): ?string
+    {
+        if (! array_key_exists($key, $source)) {
+            return null;
+        }
+
+        return $this->string($source, $key);
     }
 
     private function boolean(array $source, string $key): bool

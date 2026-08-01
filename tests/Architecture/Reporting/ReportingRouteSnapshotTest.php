@@ -17,7 +17,7 @@ final class ReportingRouteSnapshotTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->harness = new HermeticReportingHttpHarness();
+        $this->harness = new HermeticReportingHttpHarness;
     }
 
     #[Test]
@@ -94,10 +94,37 @@ final class ReportingRouteSnapshotTest extends TestCase
         self::assertSame(HermeticReportingHttpHarness::expectedRawMiddlewareByRoute(), $actual);
         self::assertCount(12, $actual);
         self::assertSame(array_keys(HermeticReportingHttpHarness::expectedRoutes()), array_keys($actual));
-        self::assertSame(['authorize:reports.view'], array_slice($actual['admin.reports.catalog'], -1));
+        foreach ($actual as $middleware) {
+            self::assertNotContains('module.access:reports', $middleware);
+            self::assertSame([], array_values(array_filter(
+                $middleware,
+                static fn (string $entry): bool => str_starts_with($entry, 'authorize:reports.'),
+            )));
+        }
         self::assertSame(
-            ['authorize:reports.view', 'authorize:reports.export', 'authorize:reports.download'],
-            array_slice($actual['admin.reports.exports.download-link'], -3),
+            [\App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::class],
+            array_slice($actual['admin.reports.catalog'], -1),
+        );
+        self::assertSame(
+            [\App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::class],
+            array_slice($actual['admin.reports.exports.download-link'], -1),
+        );
+    }
+
+    #[Test]
+    public function workspace_routes_keep_generic_module_and_permission_matrix(): void
+    {
+        $routes = collect($this->harness->router()->getRoutes()->getRoutes());
+        $workspace = $routes->first(
+            static fn (Route $route): bool => $route->getName() === 'admin.reports.workspace.show',
+        );
+
+        self::assertInstanceOf(Route::class, $workspace);
+        self::assertContains('module.access:reports', $workspace->middleware());
+        self::assertContains('authorize:reports.view', $workspace->middleware());
+        self::assertNotContains(
+            \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::class,
+            $workspace->middleware(),
         );
     }
 
@@ -112,13 +139,13 @@ final class ReportingRouteSnapshotTest extends TestCase
         self::assertContains(\App\Http\Middleware\SetOrganizationContext::class, $gathered['admin.reports.catalog']);
         self::assertContains(\App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware::class.':admin.access', $gathered['admin.reports.catalog']);
         self::assertContains(\App\Domain\Authorization\Http\Middleware\InterfaceMiddleware::class.':admin', $gathered['admin.reports.catalog']);
-        self::assertContains(\App\Modules\Middleware\ModuleAccessMiddleware::class.':reports', $gathered['admin.reports.catalog']);
+        self::assertNotContains(\App\Modules\Middleware\ModuleAccessMiddleware::class.':reports', $gathered['admin.reports.catalog']);
         self::assertContains(
             \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors::class,
             $gathered['admin.reports.catalog'],
         );
         self::assertContains(
-            \App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware::class.':reports.view',
+            \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::class,
             $gathered['admin.reports.catalog'],
         );
     }

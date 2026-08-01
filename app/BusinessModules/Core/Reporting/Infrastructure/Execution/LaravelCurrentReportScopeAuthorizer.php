@@ -19,6 +19,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
 use App\Models\Organization;
@@ -248,6 +249,31 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         DateTimeImmutable $occurredAt,
     ): array {
         $policy = $target->definition->permissionPolicy;
+        if ($target->definition->coreAccessMode === ReportCoreAccessMode::SOURCE_MODULE_REPORT) {
+            $view = $this->allPermissionsGranted(
+                $actorId,
+                $scope,
+                $occurredAt,
+                $policy->viewPermissions,
+            );
+            $export = $view && $this->sourceExportAllowed(
+                $actorId,
+                $scope,
+                $target,
+                $occurredAt,
+            );
+
+            return [
+                'view' => $view,
+                'run' => $view,
+                'export' => $export,
+                'download' => $export,
+                'manage' => false,
+                'sensitive' => false,
+                'audit' => false,
+            ];
+        }
+
         $checks = [
             ...ReportingPermissionMatrix::permissionChecks(),
             'definition_view' => $policy->viewPermissions,
@@ -271,6 +297,37 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             'sensitive' => $view && $result['sensitive'] && $result['definition_sensitive'],
             'audit' => $view && $result['audit'] && $result['definition_audit'],
         ];
+    }
+
+    private function sourceExportAllowed(
+        int $actorId,
+        ReportScope $scope,
+        CurrentReportAuthorizationTarget $target,
+        DateTimeImmutable $occurredAt,
+    ): bool {
+        if ($target->exportFormat !== null) {
+            $permission = match ($target->exportFormat) {
+                'xlsx' => 'act_reports.export.excel',
+                'pdf' => 'act_reports.export.pdf',
+                default => null,
+            };
+
+            return $permission !== null
+                && in_array($permission, $target->definition->permissionPolicy->exportPermissions, true)
+                && $this->grantedForEveryFact($actorId, $scope, $occurredAt, $permission);
+        }
+
+        if (in_array($target->operation, [ReportOperation::EXPORT, ReportOperation::DOWNLOAD], true)) {
+            return false;
+        }
+
+        foreach ($target->definition->permissionPolicy->exportPermissions as $permission) {
+            if ($this->grantedForEveryFact($actorId, $scope, $occurredAt, $permission)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function allPermissionsGranted(

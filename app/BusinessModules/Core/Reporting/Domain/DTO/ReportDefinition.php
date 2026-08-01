@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Domain\DTO;
 
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -37,6 +38,8 @@ final readonly class ReportDefinition
         public ReportOutputClassification $outputClassification,
         public ReportPublicationReadiness $publicationReadiness,
         public bool $supportsSubscriptions,
+        public string $sourceModule,
+        public ReportCoreAccessMode $coreAccessMode,
     ) {
         if (preg_match('/^[a-z][a-z0-9_]{2,63}$/', $code) !== 1) {
             throw new InvalidArgumentException('report_code_invalid');
@@ -48,16 +51,39 @@ final readonly class ReportDefinition
             }
         }
 
+        if (preg_match('/^[a-z][a-z0-9-]{1,63}$/D', $sourceModule) !== 1
+            || ($coreAccessMode === ReportCoreAccessMode::REPORTING_WORKSPACE && $sourceModule !== 'reports')
+            || ($coreAccessMode === ReportCoreAccessMode::SOURCE_MODULE_REPORT && $sourceModule !== 'act-reporting')) {
+            throw new InvalidArgumentException('report_core_access_contract_invalid');
+        }
+
         $this->filters = self::normalizeItems($filters);
         $this->columns = self::normalizeItems($columns);
         $this->sorts = self::normalizeItems($sorts);
         $this->formats = self::normalizeFormats($formats);
+        if ($coreAccessMode === ReportCoreAccessMode::SOURCE_MODULE_REPORT) {
+            $expectedExportPermissions = [];
+            foreach ($this->formats as $format) {
+                $expectedExportPermissions[] = match ($format) {
+                    'xlsx' => 'act_reports.export.excel',
+                    'pdf' => 'act_reports.export.pdf',
+                    default => throw new InvalidArgumentException('report_source_module_permission_policy_invalid'),
+                };
+            }
+            sort($expectedExportPermissions, SORT_STRING);
+            if ($permissionPolicy->viewPermissions !== ['act_reports.view']
+                || $permissionPolicy->exportPermissions !== $expectedExportPermissions
+                || $permissionPolicy->sensitivePermissions !== []
+                || $permissionPolicy->auditPermissions !== []) {
+                throw new InvalidArgumentException('report_source_module_permission_policy_invalid');
+            }
+        }
         $columnIds = array_fill_keys(array_column($this->columns, 'id'), true);
         foreach (array_merge(
             $outputClassification->sensitiveColumnIds,
             $outputClassification->auditColumnIds,
         ) as $classifiedColumnId) {
-            if (!isset($columnIds[$classifiedColumnId])) {
+            if (! isset($columnIds[$classifiedColumnId])) {
                 throw new InvalidArgumentException('report_output_classification_column_invalid');
             }
         }
@@ -70,17 +96,17 @@ final readonly class ReportDefinition
 
     public function validatedSelectedColumnIds(array $columnIds): array
     {
-        if (!array_is_list($columnIds)) {
+        if (! array_is_list($columnIds)) {
             throw new InvalidArgumentException('report_selected_columns_invalid');
         }
 
         $definitionColumnIds = array_fill_keys(array_column($this->columns, 'id'), true);
         $seen = [];
         foreach ($columnIds as $columnId) {
-            if (!is_string($columnId)
+            if (! is_string($columnId)
                 || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $columnId) !== 1
                 || isset($seen[$columnId])
-                || !isset($definitionColumnIds[$columnId])) {
+                || ! isset($definitionColumnIds[$columnId])) {
                 throw new InvalidArgumentException('report_selected_columns_invalid');
             }
             $seen[$columnId] = true;
@@ -93,7 +119,7 @@ final readonly class ReportDefinition
 
     private static function normalizeItems(array $items): array
     {
-        if (!array_is_list($items)) {
+        if (! array_is_list($items)) {
             throw new InvalidArgumentException('report_definition_items_invalid');
         }
 
@@ -101,7 +127,7 @@ final readonly class ReportDefinition
         $ids = [];
 
         foreach ($items as $item) {
-            if (!is_array($item) || array_is_list($item) || !isset($item['id']) || !is_string($item['id']) || preg_match('/^[a-z][a-z0-9_]{0,63}$/', $item['id']) !== 1 || isset($ids[$item['id']])) {
+            if (! is_array($item) || array_is_list($item) || ! isset($item['id']) || ! is_string($item['id']) || preg_match('/^[a-z][a-z0-9_]{0,63}$/', $item['id']) !== 1 || isset($ids[$item['id']])) {
                 throw new InvalidArgumentException('report_definition_items_invalid');
             }
 
@@ -114,14 +140,14 @@ final readonly class ReportDefinition
 
     private static function normalizeFormats(array $formats): array
     {
-        if (!array_is_list($formats)) {
+        if (! array_is_list($formats)) {
             throw new InvalidArgumentException('report_definition_formats_invalid');
         }
 
         $seen = [];
 
         foreach ($formats as $format) {
-            if (!is_string($format) || !in_array($format, ['csv', 'xlsx', 'pdf'], true) || isset($seen[$format])) {
+            if (! is_string($format) || ! in_array($format, ['csv', 'xlsx', 'pdf'], true) || isset($seen[$format])) {
                 throw new InvalidArgumentException('report_definition_formats_invalid');
             }
 

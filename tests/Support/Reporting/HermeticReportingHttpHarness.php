@@ -16,6 +16,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunActi
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloadLinkAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportDrillDownAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
@@ -23,11 +24,9 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunAction;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorResponseFactory;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
@@ -38,8 +37,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
@@ -62,18 +61,17 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
 use Illuminate\Contracts\Auth\Guard;
 use Illuminate\Database\Connection;
-use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Providers\FormRequestServiceProvider;
-use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Routing\RoutingServiceProvider;
 use Illuminate\Support\Facades\Facade;
-use Illuminate\Support\Facades\Route;
 use Illuminate\Translation\TranslationServiceProvider;
 use Illuminate\Validation\ValidationServiceProvider;
 use Illuminate\View\ViewServiceProvider;
@@ -83,29 +81,38 @@ use ReflectionClass;
 use ReflectionObject;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
-use Throwable;
 use Tymon\JWTAuth\JWT;
 
 final class HermeticReportingHttpHarness
 {
     private const RUN_ID = '01J00000000000000000000000';
+
     private const EXPORT_ID = '01J00000000000000000000001';
 
     private readonly string $basePath;
+
     private readonly HermeticBoundaryLedger $boundaries;
+
     private readonly Application $app;
+
     private readonly Router $router;
+
     private readonly DeterministicAuthFactory $auth;
+
     private readonly DeterministicAuthorizationService $authorization;
+
     private readonly DeterministicModulePermissionService $modules;
+
     private readonly DeterministicReportActorLoader $actors;
+
     private readonly FakeReportingActions $actions;
+
     private readonly string $initialOutputFingerprint;
 
     public function __construct()
     {
         $this->basePath = dirname(__DIR__, 3);
-        $this->boundaries = new HermeticBoundaryLedger();
+        $this->boundaries = new HermeticBoundaryLedger;
         $this->boundaries->mark('boundary_objects');
         Model::setConnectionResolver(new ForbiddenConnectionResolver($this->boundaries));
         $this->boundaries->mark('eloquent_boundary');
@@ -128,7 +135,7 @@ final class HermeticReportingHttpHarness
             ],
         ]));
         $app->instance('events', new HermeticEventDispatcher($app, $this->boundaries));
-        $app->instance('files', new Filesystem());
+        $app->instance('files', new Filesystem);
         $this->installThrowingBoundaries($app);
         $this->boundaries->mark('container_boundaries');
         $app->instance('db', new ForbiddenConnectionResolver($this->boundaries));
@@ -143,13 +150,13 @@ final class HermeticReportingHttpHarness
         $app->instance(Router::class, $this->router);
         $this->registerMiddleware($this->router);
 
-        $this->auth = new DeterministicAuthFactory();
+        $this->auth = new DeterministicAuthFactory;
         $app->instance(AuthFactory::class, $this->auth);
         $app->instance('auth', $this->auth);
 
-        $this->authorization = new DeterministicAuthorizationService();
-        $this->modules = new DeterministicModulePermissionService();
-        $this->actors = new DeterministicReportActorLoader();
+        $this->authorization = new DeterministicAuthorizationService;
+        $this->modules = new DeterministicModulePermissionService;
+        $this->actors = new DeterministicReportActorLoader;
         $app->instance(AuthorizationService::class, $this->authorization);
         $app->instance(ModulePermissionService::class, $this->modules);
         $app->instance(ReportActorLoader::class, $this->actors);
@@ -187,7 +194,7 @@ final class HermeticReportingHttpHarness
     {
         $previous = Container::getInstance();
         $production = require $this->basePath.'/bootstrap/app.php';
-        if (!$production instanceof Application || $production->isBooted() || $production->hasBeenBootstrapped()) {
+        if (! $production instanceof Application || $production->isBooted() || $production->hasBeenBootstrapped()) {
             throw new LogicException('REPORT_HERMETIC_PRODUCTION_TOPOLOGY_BOOTED');
         }
 
@@ -266,27 +273,12 @@ final class HermeticReportingHttpHarness
     public static function expectedRawMiddlewareByRoute(): array
     {
         $base = \App\Support\Routing\AdminRouteStack::middleware([
-            'module.access:reports',
             \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors::class,
         ]);
-        $permissions = [
-            'admin.reports.catalog' => ['authorize:reports.view'],
-            'admin.reports.runs.store' => ['authorize:reports.view', 'authorize:reports.run'],
-            'admin.reports.runs.show' => ['authorize:reports.view'],
-            'admin.reports.runs.rows' => ['authorize:reports.view'],
-            'admin.reports.runs.drill-down' => ['authorize:reports.view'],
-            'admin.reports.runs.retry' => ['authorize:reports.view', 'authorize:reports.run'],
-            'admin.reports.runs.cancel' => ['authorize:reports.view', 'authorize:reports.run'],
-            'admin.reports.exports.store' => ['authorize:reports.view', 'authorize:reports.export'],
-            'admin.reports.exports.show' => ['authorize:reports.view'],
-            'admin.reports.exports.retry' => ['authorize:reports.view', 'authorize:reports.export'],
-            'admin.reports.exports.cancel' => ['authorize:reports.view', 'authorize:reports.export'],
-            'admin.reports.exports.download-link' => [
-                'authorize:reports.view',
-                'authorize:reports.export',
-                'authorize:reports.download',
-            ],
-        ];
+        $permissions = array_fill_keys(
+            array_keys(self::expectedRoutes()),
+            [\App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::class],
+        );
 
         return array_map(
             static fn (array $route): array => [...$base, ...$route],
@@ -357,7 +349,7 @@ final class HermeticReportingHttpHarness
 
         $result = [];
         foreach (self::actionInterfaces() as $interface) {
-            $result[$interface] = !$app->bound($interface);
+            $result[$interface] = ! $app->bound($interface);
         }
 
         return $result;
@@ -514,7 +506,7 @@ final class HermeticReportingHttpHarness
 
     private function makeActions(): FakeReportingActions
     {
-        $definition = (new ReportDefinitionBuilder())
+        $definition = (new ReportDefinitionBuilder)
             ->filters([[
                 'id' => 'period',
                 'type' => 'date',
@@ -532,9 +524,9 @@ final class HermeticReportingHttpHarness
         );
 
         return new FakeReportingActions([
-            'catalog' => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('f', 64)), [(new ReportDefinitionBuilder())->catalogView()]),
-            'createRun' => (new ReportRunBuilder())->ready(),
-            'getRun' => (new ReportRunBuilder())->queued(),
+            'catalog' => new ReportCatalogView('1.0.0', new Sha256Hash(str_repeat('f', 64)), [(new ReportDefinitionBuilder)->catalogView()]),
+            'createRun' => (new ReportRunBuilder)->ready(),
+            'getRun' => (new ReportRunBuilder)->queued(),
             'rows' => new ReportPage(
                 [['row_key' => 'row-1', 'name' => 'МОСТ']],
                 [],
@@ -546,14 +538,14 @@ final class HermeticReportingHttpHarness
                 new ReportWindowSort('name', ReportSortDirection::ASC),
             ),
             'drillDown' => new ReportDrillDownResult([['row_key' => 'row-1']], null, []),
-            'retryRun' => (new ReportRunBuilder())->queued(),
-            'cancelRun' => (new ReportRunBuilder())
+            'retryRun' => (new ReportRunBuilder)->queued(),
+            'cancelRun' => (new ReportRunBuilder)
                 ->status(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus::CANCELLED)
                 ->queued(),
-            'createExport' => (new ReportExportBuilder())->ready(),
-            'getExport' => (new ReportExportBuilder())->queued(),
-            'retryExport' => (new ReportExportBuilder())->queued(),
-            'cancelExport' => (new ReportExportBuilder())
+            'createExport' => (new ReportExportBuilder)->ready(),
+            'getExport' => (new ReportExportBuilder)->queued(),
+            'retryExport' => (new ReportExportBuilder)->queued(),
+            'cancelExport' => (new ReportExportBuilder)
                 ->status(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus::CANCELLED)
                 ->queued(),
             'downloadLink' => new ReportDownloadLink(
@@ -588,9 +580,9 @@ final class HermeticReportingHttpHarness
 
     private function bindHttpAuthorizations(Application $app): void
     {
-        $definition = (new ReportDefinitionBuilder())->payload();
+        $definition = (new ReportDefinitionBuilder)->payload();
         $scope = new ReportScope(1, [1], [], [], new \DateTimeZone('UTC'));
-        $run = (new ReportRunBuilder())->ready();
+        $run = (new ReportRunBuilder)->ready();
         if (! $run->resultMetadata instanceof \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata) {
             throw new LogicException('REPORT_HERMETIC_SNAPSHOT_INVALID');
         }
@@ -598,12 +590,13 @@ final class HermeticReportingHttpHarness
         $targets = new HermeticReportAuthorizationTargetResolver($definition, $snapshot);
         $subjects = new HermeticReportAuthorizationSubjectReader($definition, $scope, $snapshot);
         $authorizer = new HermeticCurrentReportScopeAuthorizer($this->authorization, $this->actors);
+        $app->instance(ReportHttpAuthorizationTargetResolver::class, $targets);
 
         $app->instance(
             ReportHttpAuthorizationOrchestrator::class,
             new ReportHttpAuthorizationOrchestrator(
-                new HermeticReadonlyConnection(),
-                new ReportExecutionContextFactory(),
+                new HermeticReadonlyConnection,
+                new ReportExecutionContextFactory,
                 $targets,
                 $subjects,
                 $authorizer,
@@ -647,9 +640,8 @@ final class HermeticReportingHttpHarness
         array $parameters = [],
         bool $authenticated = true,
         ?string $idempotencyKey = 'reporting-test-key',
-    ): array
-    {
-        $user = new User();
+    ): array {
+        $user = new User;
         $user->forceFill(['id' => 1, 'current_organization_id' => null]);
         $this->auth->guard->user = $user;
 
@@ -778,7 +770,8 @@ final class HermeticReportingHttpHarness
 
     private function revokedDefinitionScenario(array $permissions, array $requests): array
     {
-        $this->app->instance(CreateReportDownloadLinkAction::class, new class implements CreateReportDownloadLinkAction {
+        $this->app->instance(CreateReportDownloadLinkAction::class, new class implements CreateReportDownloadLinkAction
+        {
             public function handle(
                 \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext $context,
                 \App\BusinessModules\Core\Reporting\Application\Input\CreateReportDownloadLinkData $data,
@@ -877,7 +870,7 @@ final class HermeticReportingHttpHarness
 
     private function assertOutputFingerprint(): void
     {
-        if (!hash_equals($this->initialOutputFingerprint, $this->outputFingerprint())) {
+        if (! hash_equals($this->initialOutputFingerprint, $this->outputFingerprint())) {
             $this->boundaries->breach('filesystem');
         }
     }
@@ -892,8 +885,9 @@ final class HermeticReportingHttpHarness
             $this->basePath.'/storage/framework/views',
             $this->basePath.'/storage/logs',
         ] as $root) {
-            if (!is_dir($root)) {
+            if (! is_dir($root)) {
                 $entries[] = $root.':absent';
+
                 continue;
             }
 
@@ -901,7 +895,7 @@ final class HermeticReportingHttpHarness
                 new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
             );
             foreach ($iterator as $file) {
-                if (!$file instanceof \SplFileInfo || !$file->isFile()) {
+                if (! $file instanceof \SplFileInfo || ! $file->isFile()) {
                     continue;
                 }
                 $entries[] = $file->getPathname().':'.$file->getSize().':'.$file->getMTime();
@@ -945,6 +939,7 @@ final class HermeticEventDispatcher extends Dispatcher
 final class HermeticBoundaryLedger
 {
     private array $breaches = [];
+
     private array $events = [];
 
     public function mark(string $event): void
@@ -1008,8 +1003,17 @@ final class ForbiddenBoundary
 final class ForbiddenConnectionResolver implements ConnectionResolverInterface
 {
     public function __construct(private readonly HermeticBoundaryLedger $ledger) {}
-    public function connection($name = null): ConnectionInterface { $this->ledger->breach('eloquent'); }
-    public function getDefaultConnection(): string { return 'forbidden'; }
+
+    public function connection($name = null): ConnectionInterface
+    {
+        $this->ledger->breach('eloquent');
+    }
+
+    public function getDefaultConnection(): string
+    {
+        return 'forbidden';
+    }
+
     public function setDefaultConnection($name): void {}
 }
 
@@ -1045,14 +1049,14 @@ final readonly class HermeticReportAuthorizationTargetResolver implements Report
         return $this->target($operation);
     }
 
-    public function createExport(string $runId): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
+    public function createExport(string $runId, ?string $format): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
     {
-        return $this->target(ReportOperation::EXPORT);
+        return $this->target(ReportOperation::EXPORT, $format);
     }
 
     public function export(string $exportId, ReportOperation $operation): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
     {
-        return $this->target($operation);
+        return $this->target($operation, $this->definition->formats[0]);
     }
 
     public function catalog(): array
@@ -1064,12 +1068,15 @@ final readonly class HermeticReportAuthorizationTargetResolver implements Report
         )];
     }
 
-    private function target(ReportOperation $operation): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget
-    {
+    private function target(
+        ReportOperation $operation,
+        ?string $format = null,
+    ): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget {
         return new \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget(
             $this->definition,
             $operation,
             $operation === ReportOperation::RUN ? null : $this->snapshot,
+            $format,
         );
     }
 }
@@ -1105,6 +1112,8 @@ final readonly class HermeticReportAuthorizationSubjectReader implements ReportA
             $this->snapshot,
             '01J00000000000000000000000',
             null,
+            null,
+            $this->definition->formats[0],
         );
     }
 }
@@ -1197,6 +1206,28 @@ final readonly class HermeticCurrentReportScopeAuthorizer implements CurrentRepo
         $canView = in_array('reports.view', $permissions, true);
         $canExport = $canView && in_array('reports.export', $permissions, true);
 
+        $visibility = new ReportVisibility(
+            $canView,
+            $canView && in_array('reports.run', $permissions, true),
+            $canExport,
+            $canExport && in_array('reports.download', $permissions, true),
+            $canView && in_array('reports.manage', $permissions, true),
+            false,
+            false,
+        );
+        $allowed = match ($target->operation) {
+            ReportOperation::VIEW, ReportOperation::DRILL_DOWN => $visibility->canView,
+            ReportOperation::RUN => $visibility->canRun,
+            ReportOperation::EXPORT => $visibility->canExport,
+            ReportOperation::DOWNLOAD => $visibility->canDownload,
+            ReportOperation::MANAGE => $visibility->canManage,
+            ReportOperation::VIEW_SENSITIVE => $visibility->canViewSensitive,
+            ReportOperation::VIEW_AUDIT => $visibility->canViewAudit,
+        };
+        if (! $allowed) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
+
         return new \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization(
             $actor,
             new \App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext(
@@ -1209,15 +1240,7 @@ final readonly class HermeticCurrentReportScopeAuthorizer implements CurrentRepo
                 'reporting-hermetic-authorization',
                 null,
             ),
-            new ReportVisibility(
-                $canView,
-                $canView && in_array('reports.run', $permissions, true),
-                $canExport,
-                $canExport && in_array('reports.download', $permissions, true),
-                $canView && in_array('reports.manage', $permissions, true),
-                false,
-                false,
-            ),
+            $visibility,
             $target,
         );
     }
@@ -1226,6 +1249,7 @@ final readonly class HermeticCurrentReportScopeAuthorizer implements CurrentRepo
 final class ForbiddenLogger extends AbstractLogger
 {
     public function __construct(private readonly HermeticBoundaryLedger $ledger) {}
+
     public function log($level, string|\Stringable $message, array $context = []): void
     {
         throw new LogicException(
@@ -1237,22 +1261,65 @@ final class ForbiddenLogger extends AbstractLogger
 final class DeterministicGuard implements Guard
 {
     public ?Authenticatable $user = null;
-    public function check(): bool { return $this->user !== null; }
-    public function guest(): bool { return $this->user === null; }
-    public function user(): ?Authenticatable { return $this->user; }
-    public function id(): int|string|null { return $this->user?->getAuthIdentifier(); }
-    public function validate(array $credentials = []): bool { return false; }
-    public function hasUser(): bool { return $this->user !== null; }
-    public function setUser(Authenticatable $user): static { $this->user = $user; return $this; }
+
+    public function check(): bool
+    {
+        return $this->user !== null;
+    }
+
+    public function guest(): bool
+    {
+        return $this->user === null;
+    }
+
+    public function user(): ?Authenticatable
+    {
+        return $this->user;
+    }
+
+    public function id(): int|string|null
+    {
+        return $this->user?->getAuthIdentifier();
+    }
+
+    public function validate(array $credentials = []): bool
+    {
+        return false;
+    }
+
+    public function hasUser(): bool
+    {
+        return $this->user !== null;
+    }
+
+    public function setUser(Authenticatable $user): static
+    {
+        $this->user = $user;
+
+        return $this;
+    }
 }
 
 final class DeterministicAuthFactory implements AuthFactory
 {
     public readonly DeterministicGuard $guard;
-    public function __construct() { $this->guard = new DeterministicGuard(); }
-    public function guard($name = null): Guard { return $this->guard; }
+
+    public function __construct()
+    {
+        $this->guard = new DeterministicGuard;
+    }
+
+    public function guard($name = null): Guard
+    {
+        return $this->guard;
+    }
+
     public function shouldUse($name): void {}
-    public function user(): ?Authenticatable { return $this->guard->user(); }
+
+    public function user(): ?Authenticatable
+    {
+        return $this->guard->user();
+    }
 }
 
 final class DeterministicAuthorizationService extends AuthorizationService
@@ -1287,7 +1354,9 @@ final class DeterministicAuthorizationService extends AuthorizationService
 final class DeterministicModulePermissionService extends ModulePermissionService
 {
     public bool $allowed = true;
+
     public function __construct() {}
+
     public function userHasModuleAccess(User $user, string $moduleSlug): bool
     {
         return $moduleSlug === 'reports' && $this->allowed;
@@ -1297,6 +1366,7 @@ final class DeterministicModulePermissionService extends ModulePermissionService
 final class DeterministicReportActorLoader implements ReportActorLoader
 {
     public array $states = ['active'];
+
     public int $loads = 0;
 
     public function loadActive(int $actorId): ReportActor

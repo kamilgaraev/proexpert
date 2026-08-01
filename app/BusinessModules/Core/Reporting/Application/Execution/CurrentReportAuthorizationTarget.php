@@ -15,6 +15,7 @@ final readonly class CurrentReportAuthorizationTarget
         public ReportDefinition $definition,
         public ReportOperation $operation,
         public ?ReportSnapshotRef $snapshot,
+        public ?string $exportFormat = null,
     ) {
         $snapshotRequired = in_array($operation, [
             ReportOperation::EXPORT,
@@ -24,6 +25,7 @@ final readonly class CurrentReportAuthorizationTarget
 
         if (($operation === ReportOperation::RUN && $snapshot !== null)
             || ($snapshotRequired && $snapshot === null)
+            || ($exportFormat !== null && ! in_array($exportFormat, $definition->formats, true))
             || ($snapshot !== null
                 && (! hash_equals($definition->definitionHash->value, $snapshot->definitionHash->value)
                     || ! hash_equals($definition->formulaVersion, $snapshot->formulaVersion)))) {
@@ -38,8 +40,10 @@ final readonly class CurrentReportAuthorizationTarget
                 'code' => $this->definition->code,
                 'definition_hash' => $this->definition->definitionHash->value,
                 'contract_version' => $this->definition->contractVersion,
+                'core_access_mode' => $this->definition->coreAccessMode->value,
                 'formula_version' => $this->definition->formulaVersion,
                 'source_schema_version' => $this->definition->sourceSchemaVersion,
+                'source_module' => $this->definition->sourceModule,
                 'renderer_version' => $this->definition->rendererVersion,
                 'filters' => $this->definition->filters,
                 'columns' => $this->definition->columns,
@@ -64,6 +68,7 @@ final readonly class CurrentReportAuthorizationTarget
                 'supports_subscriptions' => $this->definition->supportsSubscriptions,
             ],
             'operation' => $this->operation->value,
+            'export_format' => $this->exportFormat,
             'snapshot' => $this->snapshot === null ? null : [
                 'kind' => $this->snapshot->kind,
                 'id' => $this->snapshot->id,

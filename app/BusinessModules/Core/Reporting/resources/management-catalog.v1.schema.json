@@ -78,6 +78,8 @@
         "category": {"type": "string", "minLength": 2},
         "grain": {"type": "string", "minLength": 2},
         "wave": {"enum": [1, 2, 3]},
+        "source_module": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+        "core_access_mode": {"enum": ["reporting_workspace", "source_module_report"]},
         "filters": {"type": "array", "items": {"type": "object"}},
         "columns": {"type": "array", "items": {"type": "object"}},
         "sorts": {"type": "array", "items": {"type": "object"}},
@@ -96,6 +98,10 @@
         {
           "if": {"properties": {"readiness": {"properties": {"publication": {"const": "published"}}}}},
           "then": {"properties": {"readiness": {"properties": {"source": {"const": "ready"}, "formula": {"const": "ready"}, "delivery": {"const": "verified"}}}}}
+        },
+        {
+          "if": {"required": ["core_access_mode"], "properties": {"core_access_mode": {"const": "source_module_report"}}},
+          "then": {"required": ["source_module"], "properties": {"source_module": {"const": "act-reporting"}}}
         }
       ]
     }

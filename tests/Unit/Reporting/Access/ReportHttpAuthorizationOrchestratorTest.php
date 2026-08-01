@@ -50,6 +50,9 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
         $scope = $this->scope();
         $definition = $this->definition();
         $snapshot = $this->snapshot($scope, $definition);
+        $exportFormat = $operation === ReportOperation::EXPORT || $aggregate === ReportDispatchAggregate::EXPORT
+            ? $definition->formats[0]
+            : null;
         $subject = $aggregate === ReportDispatchAggregate::RUN
             ? $this->runSubject($scope, $definition, $snapshot)
             : $this->exportSubject($scope, $definition, $snapshot);
@@ -59,19 +62,23 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
                 $definition,
                 $operation,
                 $operation === ReportOperation::RUN ? null : $this->snapshot($scope, $definition),
+                $exportFormat,
             ),
         );
         $authorizer = new RecordingCurrentReportScopeAuthorizer;
         $orchestrator = $this->orchestrator($resolver, $subjects, $authorizer);
         $identifier = $aggregate === ReportDispatchAggregate::RUN ? self::RUN_ID : self::EXPORT_ID;
 
-        $result = $orchestrator->{$method}($this->request(), $identifier);
+        $result = $method === 'createExport'
+            ? $orchestrator->createExport($this->request(), $identifier, (string) $exportFormat)
+            : $orchestrator->{$method}($this->request(), $identifier);
 
         self::assertSame(['context', 'authorization'], array_keys($result));
         self::assertInstanceOf(ReportExecutionContext::class, $result['context']);
         self::assertInstanceOf(CurrentReportAuthorization::class, $result['authorization']);
         self::assertSame($scope->canonicalIdentity(), $result['context']->scope->canonicalIdentity());
         self::assertSame($operation, $result['authorization']->target->operation);
+        self::assertSame($exportFormat, $result['authorization']->target->exportFormat);
         self::assertCount(1, $authorizer->exactCalls);
         self::assertSame($scope->canonicalIdentity(), $authorizer->exactCalls[0]['scope']->canonicalIdentity());
         self::assertSame($result['authorization']->target, $authorizer->exactCalls[0]['target']);
@@ -215,6 +222,40 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
         self::assertSame([], $authorizer->organizationCalls);
     }
 
+    public function test_catalog_honors_definition_module_filter_from_http_gate(): void
+    {
+        $generic = $this->definition('generic_report', 'a');
+        $source = $this->definition('source_report', 'b');
+        $resolver = new RecordingAuthorizationTargetResolver(
+            new CurrentReportAuthorizationTarget($generic, ReportOperation::VIEW, null),
+            [
+                new CurrentReportAuthorizationTarget($generic, ReportOperation::VIEW, null),
+                new CurrentReportAuthorizationTarget($source, ReportOperation::VIEW, null),
+            ],
+        );
+        $request = $this->request();
+        $request->attributes->set(
+            \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::ACCESSIBLE_DEFINITION_HASHES_ATTRIBUTE,
+            [$source->definitionHash->value],
+        );
+        $authorizer = new RecordingCurrentReportScopeAuthorizer;
+
+        $authorization = $this->orchestrator(
+            $resolver,
+            new RecordingAuthorizationSubjectReader,
+            $authorizer,
+        )->catalog($request);
+
+        self::assertSame([$source->definitionHash->value], array_keys($authorization->authorizations));
+        self::assertSame(
+            [$source->definitionHash->value],
+            array_map(
+                static fn (CurrentReportAuthorizationTarget $target): string => $target->definition->definitionHash->value,
+                $authorizer->catalogCalls[0]['targets'],
+            ),
+        );
+    }
+
     public function test_catalog_does_not_swallow_non_scope_authorization_failure(): void
     {
         $definition = $this->definition();
@@ -346,7 +387,11 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
                     'definition_hash' => $targetDefinition->definitionHash->value,
                 ]), self::RUN_ID),
                 ReportOperation::RUN => $orchestrator->retryRun($this->request(), self::RUN_ID),
-                ReportOperation::EXPORT => $orchestrator->createExport($this->request(), self::RUN_ID),
+                ReportOperation::EXPORT => $orchestrator->createExport(
+                    $this->request(),
+                    self::RUN_ID,
+                    $definition->formats[0],
+                ),
                 default => throw new \LogicException('unsupported_test_operation'),
             };
             self::fail('Persisted target replay must fail closed.');
@@ -512,6 +557,8 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
             $snapshot,
             self::RUN_ID,
             new Sha256Hash(str_repeat('e', 64)),
+            null,
+            $definition->formats[0],
         );
     }
 }
@@ -526,6 +573,8 @@ final class RecordingAuthorizationTargetResolver implements ReportHttpAuthorizat
 
     /** @var list<string> */
     public array $exportIds = [];
+
+    public array $createExportCalls = [];
 
     public function __construct(
         private readonly CurrentReportAuthorizationTarget $target,
@@ -550,9 +599,10 @@ final class RecordingAuthorizationTargetResolver implements ReportHttpAuthorizat
         return $this->target;
     }
 
-    public function createExport(string $runId): CurrentReportAuthorizationTarget
+    public function createExport(string $runId, ?string $format = null): CurrentReportAuthorizationTarget
     {
         $this->runIds[] = $runId;
+        $this->createExportCalls[] = [$runId, $format];
 
         return $this->target;
     }

@@ -35,7 +35,7 @@ final class ReportInputNormalizerTest extends TestCase
     public function filters_normalize_all_supported_scalar_types_and_operators(): void
     {
         $result = $this->filterNormalizer()->normalize(
-            (new ReportExecutionContextBuilder())->build(),
+            (new ReportExecutionContextBuilder)->build(),
             $this->definition(),
             [
                 'name' => ['value' => '  Мост  ', 'operator' => 'contains'],
@@ -65,7 +65,7 @@ final class ReportInputNormalizerTest extends TestCase
             $this->assertError(
                 ReportErrorCode::REPORT_FILTER_RANGE_INVALID,
                 fn () => $this->filterNormalizer()->normalize(
-                    (new ReportExecutionContextBuilder())->build(),
+                    (new ReportExecutionContextBuilder)->build(),
                     $this->definition(),
                     $input,
                 ),
@@ -91,7 +91,7 @@ final class ReportInputNormalizerTest extends TestCase
             $this->assertError(
                 ReportErrorCode::REPORT_FILTER_UNSUPPORTED,
                 fn () => $this->filterNormalizer()->normalize(
-                    (new ReportExecutionContextBuilder())->build(),
+                    (new ReportExecutionContextBuilder)->build(),
                     $definition,
                     $input,
                 ),
@@ -110,7 +110,7 @@ final class ReportInputNormalizerTest extends TestCase
             $this->assertError(
                 ReportErrorCode::REPORT_REQUEST_INVALID,
                 fn () => $this->filterNormalizer()->normalize(
-                    (new ReportExecutionContextBuilder())->build(),
+                    (new ReportExecutionContextBuilder)->build(),
                     $this->definition(),
                     $input,
                 ),
@@ -123,7 +123,8 @@ final class ReportInputNormalizerTest extends TestCase
     {
         $calls = [];
         $normalizer = new ReportFilterNormalizer(
-            new class($calls) implements ReportFilterReferenceResolver {
+            new class($calls) implements ReportFilterReferenceResolver
+            {
                 public function __construct(private array &$calls) {}
 
                 public function resolve(ReportScope $scope, string $filter, int|string $value): int|string
@@ -136,7 +137,7 @@ final class ReportInputNormalizerTest extends TestCase
         );
 
         $result = $normalizer->normalize(
-            (new ReportExecutionContextBuilder())->build(),
+            (new ReportExecutionContextBuilder)->build(),
             $this->definition(),
             ['projects' => ['operator' => 'in', 'value' => [4, 'external']]],
         );
@@ -149,7 +150,8 @@ final class ReportInputNormalizerTest extends TestCase
     public function missing_and_foreign_reference_values_are_indistinguishable(): void
     {
         $normalizer = new ReportFilterNormalizer(
-            new class implements ReportFilterReferenceResolver {
+            new class implements ReportFilterReferenceResolver
+            {
                 public function resolve(ReportScope $scope, string $filter, int|string $value): int|string
                 {
                     throw ReportContractException::fromCode(
@@ -164,7 +166,7 @@ final class ReportInputNormalizerTest extends TestCase
         foreach ([999, 1000] as $value) {
             try {
                 $normalizer->normalize(
-                    (new ReportExecutionContextBuilder())->build(),
+                    (new ReportExecutionContextBuilder)->build(),
                     $this->definition(),
                     ['projects' => ['operator' => 'eq', 'value' => $value]],
                 );
@@ -186,7 +188,7 @@ final class ReportInputNormalizerTest extends TestCase
         $this->assertError(
             ReportErrorCode::REPORT_REQUEST_INVALID,
             fn () => $this->filterNormalizer()->normalize(
-                (new ReportExecutionContextBuilder())->build(),
+                (new ReportExecutionContextBuilder)->build(),
                 $this->definition(),
                 ['projects' => ['operator' => 'eq', 'value' => ['id' => 1]]],
             ),
@@ -196,7 +198,7 @@ final class ReportInputNormalizerTest extends TestCase
     #[Test]
     public function rows_window_accepts_only_definition_backed_sort(): void
     {
-        $window = (new ReportRowsWindowNormalizer())->normalize(
+        $window = (new ReportRowsWindowNormalizer)->normalize(
             $this->definition(),
             ['cursor' => 'cursor', 'limit' => 100, 'sort_by' => 'created_at', 'sort_dir' => 'desc'],
         );
@@ -213,7 +215,7 @@ final class ReportInputNormalizerTest extends TestCase
         foreach (['filters', 'as_of', 'comparison'] as $sealed) {
             $this->assertError(
                 ReportErrorCode::REPORT_REQUEST_INVALID,
-                fn () => (new ReportRowsWindowNormalizer())->normalize(
+                fn () => (new ReportRowsWindowNormalizer)->normalize(
                     $this->definition(),
                     ['cursor' => null, 'limit' => 10, 'sort_by' => 'created_at', 'sort_dir' => 'asc', $sealed => []],
                 ),
@@ -231,14 +233,14 @@ final class ReportInputNormalizerTest extends TestCase
         ];
 
         foreach ($cases as [$input, $code]) {
-            $this->assertError($code, fn () => (new ReportRowsWindowNormalizer())->normalize($this->definition(), $input));
+            $this->assertError($code, fn () => (new ReportRowsWindowNormalizer)->normalize($this->definition(), $input));
         }
     }
 
     #[Test]
     public function drill_down_accepts_exact_payload(): void
     {
-        $request = (new ReportDrillDownNormalizer())->normalize(['token' => 'token', 'cursor' => null, 'limit' => 20]);
+        $request = (new ReportDrillDownNormalizer)->normalize(['token' => 'token', 'cursor' => null, 'limit' => 20]);
 
         self::assertSame('token', $request->token);
         self::assertNull($request->cursor);
@@ -253,14 +255,14 @@ final class ReportInputNormalizerTest extends TestCase
             ['token' => ' ', 'cursor' => null, 'limit' => 10],
             ['token' => 'token', 'cursor' => null, 'limit' => 0],
         ] as $input) {
-            $this->assertError(ReportErrorCode::REPORT_REQUEST_INVALID, fn () => (new ReportDrillDownNormalizer())->normalize($input));
+            $this->assertError(ReportErrorCode::REPORT_REQUEST_INVALID, fn () => (new ReportDrillDownNormalizer)->normalize($input));
         }
     }
 
     #[Test]
     public function export_normalizes_definition_backed_capabilities(): void
     {
-        $data = (new ReportExportNormalizer())->normalize(
+        $data = (new ReportExportNormalizer)->normalize(
             $this->definition(),
             [
                 'format' => 'xlsx',
@@ -284,7 +286,7 @@ final class ReportInputNormalizerTest extends TestCase
         foreach (['filters', 'as_of', 'comparison'] as $sealed) {
             $this->assertError(
                 ReportErrorCode::REPORT_REQUEST_INVALID,
-                fn () => (new ReportExportNormalizer())->normalize($this->definition(), array_replace($this->exportInput(), [$sealed => []])),
+                fn () => (new ReportExportNormalizer)->normalize($this->definition(), array_replace($this->exportInput(), [$sealed => []])),
             );
         }
     }
@@ -297,7 +299,7 @@ final class ReportInputNormalizerTest extends TestCase
             [array_replace($this->exportInput(), ['format' => 'pdf']), 'format'],
         ] as [$input, $field]) {
             try {
-                (new ReportExportNormalizer())->normalize($this->definition(), $input);
+                (new ReportExportNormalizer)->normalize($this->definition(), $input);
                 self::fail('Неизвестная возможность экспорта была принята.');
             } catch (ReportContractException $exception) {
                 self::assertSame(ReportErrorCode::REPORT_FILTER_UNSUPPORTED, $exception->errorCode);
@@ -311,14 +313,14 @@ final class ReportInputNormalizerTest extends TestCase
     {
         $this->assertError(
             ReportErrorCode::REPORT_REQUEST_INVALID,
-            fn () => (new ReportExportNormalizer())->normalize(
+            fn () => (new ReportExportNormalizer)->normalize(
                 $this->definition(),
                 array_replace($this->exportInput(), ['columns' => ['total', 'total']]),
             ),
         );
         $this->assertError(
             ReportErrorCode::REPORT_SORT_UNSUPPORTED,
-            fn () => (new ReportExportNormalizer())->normalize(
+            fn () => (new ReportExportNormalizer)->normalize(
                 $this->definition(),
                 array_replace($this->exportInput(), ['sort_by' => 'missing']),
             ),
@@ -327,7 +329,7 @@ final class ReportInputNormalizerTest extends TestCase
         foreach (['locale' => 'russian', 'timezone' => 'Mars/Base'] as $field => $value) {
             $this->assertError(
                 ReportErrorCode::REPORT_REQUEST_INVALID,
-                fn () => (new ReportExportNormalizer())->normalize(
+                fn () => (new ReportExportNormalizer)->normalize(
                     $this->definition(),
                     array_replace($this->exportInput(), [$field => $value]),
                 ),
@@ -393,7 +395,8 @@ final class ReportInputNormalizerTest extends TestCase
     private function filterNormalizer(): ReportFilterNormalizer
     {
         return new ReportFilterNormalizer(
-            new class implements ReportFilterReferenceResolver {
+            new class implements ReportFilterReferenceResolver
+            {
                 public function resolve(ReportScope $scope, string $filter, int|string $value): int|string
                 {
                     return $value;
@@ -429,6 +432,8 @@ final class ReportInputNormalizerTest extends TestCase
             new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::STANDARD, [], [], false, false, false),
             ReportPublicationReadiness::PUBLISHED,
             true,
+            'reports',
+            \App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode::REPORTING_WORKSPACE,
         );
     }
 

@@ -219,7 +219,7 @@ final class ReportExecutionContractTest extends TestCase
             ['sales_overview', 'contract', 'formula', 'source', 'renderer', [['id' => 'period']], [['id' => 'total']], [['id' => 'period']], ['json']],
         ] as $input) {
             try {
-                new ReportDefinition($input[0], $this->hash(), $input[1], $input[2], $input[3], $input[4], $input[5], $input[6], $input[7], $input[8], $this->policy(), \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OPERATIONAL, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::STANDARD, [], [], false, false, false), ReportPublicationReadiness::CANDIDATE, false);
+                new ReportDefinition($input[0], $this->hash(), $input[1], $input[2], $input[3], $input[4], $input[5], $input[6], $input[7], $input[8], $this->policy(), \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OPERATIONAL, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::STANDARD, [], [], false, false, false), ReportPublicationReadiness::CANDIDATE, false, 'reports', \App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode::REPORTING_WORKSPACE);
                 self::fail('Недопустимое определение отчёта было принято.');
             } catch (InvalidArgumentException) {
                 self::addToAssertionCount(1);
@@ -347,6 +347,8 @@ final class ReportExecutionContractTest extends TestCase
             new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::STANDARD, [], [], false, false, false),
             $readiness,
             true,
+            'reports',
+            \App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode::REPORTING_WORKSPACE,
         );
     }
 

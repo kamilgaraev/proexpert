@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
+use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use Closure;
 use DateTimeZone;
 use Illuminate\Database\ConnectionInterface;
@@ -73,9 +74,9 @@ final readonly class ReportHttpAuthorizationOrchestrator
     }
 
     /** @return array{context:ReportExecutionContext,authorization:CurrentReportAuthorization} */
-    public function createExport(Request $request, string $runId): array
+    public function createExport(Request $request, string $runId, string $format): array
     {
-        return $this->runAuthorization($request, $runId, ReportOperation::EXPORT, true);
+        return $this->runAuthorization($request, $runId, ReportOperation::EXPORT, $format);
     }
 
     /** @return array{context:ReportExecutionContext,authorization:CurrentReportAuthorization} */
@@ -106,7 +107,7 @@ final readonly class ReportHttpAuthorizationOrchestrator
     {
         return $this->transaction(function () use ($request): ReportCatalogAuthorization {
             $facts = $this->contexts->httpFacts($request);
-            $targets = $this->targets->catalog();
+            $targets = $this->catalogTargets($request, $this->targets->catalog());
             $authorization = $this->authorizer->authorizeCatalog(
                 $facts['actor_id'],
                 $facts['organization_id'],
@@ -130,24 +131,59 @@ final readonly class ReportHttpAuthorizationOrchestrator
         });
     }
 
+    private function catalogTargets(Request $request, array $targets): array
+    {
+        $allowed = $request->attributes->get(
+            AuthorizeReportDefinitionAccess::ACCESSIBLE_DEFINITION_HASHES_ATTRIBUTE,
+        );
+        if ($allowed === null) {
+            return $targets;
+        }
+        if (! is_array($allowed) || ! array_is_list($allowed) || $allowed === []) {
+            throw new InvalidArgumentException('report_catalog_authorization_invalid');
+        }
+
+        $allowedHashes = [];
+        foreach ($allowed as $hash) {
+            if (! is_string($hash)
+                || preg_match('/^[a-f0-9]{64}$/D', $hash) !== 1
+                || isset($allowedHashes[$hash])) {
+                throw new InvalidArgumentException('report_catalog_authorization_invalid');
+            }
+            $allowedHashes[$hash] = true;
+        }
+
+        $filtered = array_values(array_filter(
+            $targets,
+            static fn (CurrentReportAuthorizationTarget $target): bool => isset(
+                $allowedHashes[$target->definition->definitionHash->value],
+            ),
+        ));
+        if ($filtered === []) {
+            throw new InvalidArgumentException('report_catalog_authorization_invalid');
+        }
+
+        return $filtered;
+    }
+
     /** @return array{context:ReportExecutionContext,authorization:CurrentReportAuthorization} */
     private function runAuthorization(
         Request $request,
         string $runId,
         ReportOperation $operation,
-        bool $createExport = false,
+        ?string $createExportFormat = null,
     ): array {
-        return $this->transaction(function () use ($request, $runId, $operation, $createExport): array {
+        return $this->transaction(function () use ($request, $runId, $operation, $createExportFormat): array {
             $facts = $this->contexts->httpFacts($request);
             $subject = $this->subjects->run($runId);
             if ($subject->aggregateKind !== ReportDispatchAggregate::RUN || $subject->aggregateId !== $runId) {
                 throw new InvalidArgumentException('report_http_authorization_mismatch');
             }
-            $target = $createExport
-                ? $this->targets->createExport($runId)
+            $target = $createExportFormat !== null
+                ? $this->targets->createExport($runId, $createExportFormat)
                 : $this->targets->run($runId, $operation);
 
-            $this->assertTargetMatchesSubject($target, $subject, $operation);
+            $this->assertTargetMatchesSubject($target, $subject, $operation, $createExportFormat);
 
             return $this->exactAuthorization(
                 $facts['actor_id'],
@@ -168,7 +204,7 @@ final readonly class ReportHttpAuthorizationOrchestrator
                 throw new InvalidArgumentException('report_http_authorization_mismatch');
             }
             $target = $this->targets->export($exportId, $operation);
-            $this->assertTargetMatchesSubject($target, $subject, $operation);
+            $this->assertTargetMatchesSubject($target, $subject, $operation, $subject->exportFormat);
 
             return $this->exactAuthorization(
                 $facts['actor_id'],
@@ -241,12 +277,14 @@ final readonly class ReportHttpAuthorizationOrchestrator
         CurrentReportAuthorizationTarget $target,
         ReportAuthorizationSubject $subject,
         ReportOperation $operation,
+        ?string $exportFormat,
     ): void {
         $expectedSnapshot = $operation === ReportOperation::RUN ? null : $subject->snapshot;
         $expected = new CurrentReportAuthorizationTarget(
             $subject->definition,
             $operation,
             $expectedSnapshot,
+            $exportFormat,
         );
         if (
             $target->canonicalFingerprint() !== $expected->canonicalFingerprint()

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Domain\DTO;
 
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCatalogGroup;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 
 final readonly class ReportCatalogDefinitionView
@@ -21,6 +22,8 @@ final readonly class ReportCatalogDefinitionView
         public string $formulaVersion,
         public string $sourceSchemaVersion,
         public string $rendererVersion,
+        public string $sourceModule,
+        public ReportCoreAccessMode $coreAccessMode,
         public ReportPermissionPolicy $permissionPolicy,
         public array $filters,
         public array $columns,
@@ -50,6 +53,8 @@ final readonly class ReportCatalogDefinitionView
             $definition->formulaVersion,
             $definition->sourceSchemaVersion,
             $definition->rendererVersion,
+            $definition->sourceModule,
+            $definition->coreAccessMode,
             $definition->permissionPolicy,
             $definition->filters,
             $definition->columns,

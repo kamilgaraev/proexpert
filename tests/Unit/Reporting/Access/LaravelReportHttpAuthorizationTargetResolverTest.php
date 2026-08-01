@@ -97,6 +97,7 @@ final class LaravelReportHttpAuthorizationTargetResolverTest extends TestCase
         self::assertSame($subject->definition, $target->definition);
         self::assertSame($operation, $target->operation);
         self::assertSame($subject->snapshot, $target->snapshot);
+        self::assertSame($subject->exportFormat, $target->exportFormat);
     }
 
     public function test_create_export_uses_ready_parent_subject_and_exact_snapshot(): void
@@ -108,11 +109,12 @@ final class LaravelReportHttpAuthorizationTargetResolverTest extends TestCase
             $reader,
         );
 
-        $target = $resolver->createExport(self::RUN_ID);
+        $target = $resolver->createExport(self::RUN_ID, 'csv');
 
         self::assertSame(ReportOperation::EXPORT, $target->operation);
         self::assertSame($subject->snapshot, $target->snapshot);
         self::assertSame($subject->definition, $target->definition);
+        self::assertSame('csv', $target->exportFormat);
     }
 
     public function test_reader_cannot_replay_an_export_subject_as_a_run(): void
@@ -204,6 +206,8 @@ final class LaravelReportHttpAuthorizationTargetResolverTest extends TestCase
             $this->snapshot($scope, $definition),
             self::RUN_ID,
             new Sha256Hash(str_repeat('e', 64)),
+            null,
+            $definition->formats[0],
         );
     }
 

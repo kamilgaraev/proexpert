@@ -23,19 +23,22 @@ final readonly class ReportAuthorizationSubject
         public ?string $parentRunId,
         public ?Sha256Hash $artifactIdentityHash,
         public ?Sha256Hash $exportIdentityHash = null,
+        public ?string $exportFormat = null,
     ) {
         if (preg_match('/^[0-9A-HJKMNP-TV-Z]{26}$/D', $aggregateId) !== 1) {
             throw new InvalidArgumentException('report_authorization_subject_invalid');
         }
 
         if ($aggregateKind === ReportDispatchAggregate::RUN) {
-            if ($parentRunId !== null || $artifactIdentityHash !== null) {
+            if ($parentRunId !== null || $artifactIdentityHash !== null || $exportFormat !== null) {
                 throw new InvalidArgumentException('report_authorization_subject_invalid');
             }
         } elseif (
             $snapshot === null
             || $parentRunId === null
             || preg_match('/^[0-9A-HJKMNP-TV-Z]{26}$/D', $parentRunId) !== 1
+            || $exportFormat === null
+            || ! in_array($exportFormat, $definition->formats, true)
         ) {
             throw new InvalidArgumentException('report_authorization_subject_invalid');
         }
@@ -61,8 +64,10 @@ final readonly class ReportAuthorizationSubject
                 'code' => $this->definition->code,
                 'definition_hash' => $this->definition->definitionHash->value,
                 'contract_version' => $this->definition->contractVersion,
+                'core_access_mode' => $this->definition->coreAccessMode->value,
                 'formula_version' => $this->definition->formulaVersion,
                 'source_schema_version' => $this->definition->sourceSchemaVersion,
+                'source_module' => $this->definition->sourceModule,
                 'renderer_version' => $this->definition->rendererVersion,
             ],
             'scope' => $this->scope->canonicalIdentity(),
@@ -85,6 +90,7 @@ final readonly class ReportAuthorizationSubject
                 ],
             ],
             'parent_run_id' => $this->parentRunId,
+            'export_format' => $this->exportFormat,
             'artifact_identity_hash' => $this->artifactIdentityHash?->value,
             'export_identity_hash' => $this->exportIdentityHash?->value,
         ]));

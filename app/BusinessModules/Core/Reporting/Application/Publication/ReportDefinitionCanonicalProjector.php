@@ -15,6 +15,7 @@ final class ReportDefinitionCanonicalProjector
             'code' => $definition->code,
             'columns' => $definition->columns,
             'contract_version' => $definition->contractVersion,
+            'core_access_mode' => $definition->coreAccessMode->value,
             'definition_hash' => $definition->definitionHash->value,
             'filters' => $definition->filters,
             'formats' => $definition->formats,
@@ -38,6 +39,7 @@ final class ReportDefinitionCanonicalProjector
             'snapshot_classification' => $definition->snapshotClassification->value,
             'sorts' => $definition->sorts,
             'source_schema_version' => $definition->sourceSchemaVersion,
+            'source_module' => $definition->sourceModule,
             'supports_subscriptions' => $definition->supportsSubscriptions,
         ];
     }

@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportSchedulingCapabilityRegistry;
@@ -105,6 +106,48 @@ final class ReportDefinitionRegistryTest extends TestCase
         self::assertSame('operational', $first->snapshotClassification->value);
         self::assertSame('published', $first->publicationReadiness->value);
         self::assertTrue($first->supportsSubscriptions);
+        self::assertSame('reports', $first->sourceModule);
+        self::assertSame(ReportCoreAccessMode::REPORTING_WORKSPACE, $first->coreAccessMode);
+
+        $sourceRow = $row;
+        $sourceRow['source_module'] = 'act-reporting';
+        $sourceRow['core_access_mode'] = 'source_module_report';
+        $sourceRow['formats'] = ['xlsx'];
+        $sourceRow['permissions'] = [
+            'view' => ['act_reports.view'],
+            'export' => ['act_reports.export.excel'],
+            'sensitive' => [],
+            'audit' => [],
+        ];
+        $source = $factory->fromManifest($sourceRow);
+        self::assertSame('act-reporting', $source->sourceModule);
+        self::assertSame(ReportCoreAccessMode::SOURCE_MODULE_REPORT, $source->coreAccessMode);
+        self::assertNotSame($first->definitionHash->value, $source->definitionHash->value);
+    }
+
+    public function test_manifest_semantics_reject_arbitrary_source_modules(): void
+    {
+        $definitions = $this->manifest()->definitions;
+        $definitions[0]['source_module'] = 'finance';
+        $definitions[0]['core_access_mode'] = 'source_module_report';
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('report_manifest_core_access_invalid');
+
+        (new ReportManifestSemanticValidator)->assertManagement(['definitions' => $definitions]);
+    }
+
+    public function test_manifest_semantics_reject_source_mode_permission_fallbacks(): void
+    {
+        $definitions = $this->manifest()->definitions;
+        $definitions[0]['source_module'] = 'act-reporting';
+        $definitions[0]['core_access_mode'] = 'source_module_report';
+        $definitions[0]['formats'] = ['xlsx'];
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('report_manifest_source_permission_policy_invalid');
+
+        (new ReportManifestSemanticValidator)->assertManagement(['definitions' => $definitions]);
     }
 
     public function test_metadata_preserves_explicit_contiguous_manifest_ordinal(): void

@@ -47,6 +47,7 @@ final readonly class GetReportExportHandler implements GetReportExportAction
         (new ReportAuthorizationFence(
             $subject,
             $operations,
+            $subject->exportFormat,
             $this->authorizer,
             $this->contexts,
         ))->assertCurrent($context);

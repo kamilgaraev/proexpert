@@ -267,6 +267,7 @@ final readonly class ReconcileCompletedReportArtifacts
         return new ReportAuthorizationFence(
             $subject,
             $operations,
+            $subject->exportFormat,
             $this->authorizer,
             $this->contextFactory,
         );

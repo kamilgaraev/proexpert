@@ -167,6 +167,8 @@ final class ReportExportHandlersTest extends TestCase
             $snapshot,
             $export->runId,
             null,
+            null,
+            $export->format,
         );
         $subjects = $this->createStub(ReportAuthorizationSubjectReader::class);
         $subjects->method('export')->willReturn($subject);
@@ -239,6 +241,8 @@ final class ReportExportHandlersTest extends TestCase
             $snapshot,
             '01J00000000000000000000000',
             null,
+            null,
+            $definition->formats[0],
         );
 
         try {
