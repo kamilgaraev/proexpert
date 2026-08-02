@@ -120,7 +120,6 @@ return new class extends Migration
 
         $this->installConstraints();
         $this->installAppendOnlyTriggers([
-            'supplier_proposal_versions',
             'supplier_award_decision_versions',
             'supplier_award_snapshots',
             'supplier_award_rows',
@@ -129,11 +128,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (DB::getDriverName() === 'pgsql') {
-            DB::statement(
-                'DROP TRIGGER IF EXISTS supplier_proposal_versions_append_only ON supplier_proposal_versions',
-            );
-        }
         Schema::dropIfExists('supplier_award_rows');
         Schema::dropIfExists('supplier_award_snapshots');
         Schema::dropIfExists('supplier_award_decision_versions');
