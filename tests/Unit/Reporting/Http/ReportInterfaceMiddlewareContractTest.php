@@ -9,8 +9,11 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\CreateReportRunRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportCatalogRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ReportFormRequest;
+use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope;
 use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
@@ -84,6 +87,43 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
 
         self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
         self::assertSame([], $exception->safeFields);
+    }
+
+    public function test_project_report_scope_rejects_client_supplied_organization_or_project(): void
+    {
+        $request = $this->reportRequest(
+            CreateReportRunRequest::class,
+            'POST',
+            [],
+            [...self::validRunBody(), 'filters' => ['organization_id' => '99']],
+        );
+
+        $response = (new BindProjectReportScope)->handle($request, static fn (): Response => new Response(status: 204));
+
+        self::assertSame(422, $response->getStatusCode());
+    }
+
+    public function test_project_report_scope_binds_ids_only_from_verified_request_context(): void
+    {
+        $request = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], self::validRunBody());
+        $project = new Project;
+        $project->id = 17;
+        $organization = new Organization;
+        $organization->id = 23;
+        $request->attributes->set('project', $project);
+        $request->attributes->set('current_organization', $organization);
+
+        $response = (new BindProjectReportScope)->handle(
+            $request,
+            static function (CreateReportRunRequest $request): Response {
+                self::assertSame('17', $request->input('filters.project_id'));
+                self::assertSame('23', $request->input('filters.organization_id'));
+
+                return new Response(status: 204);
+            },
+        );
+
+        self::assertSame(204, $response->getStatusCode());
     }
 
     public function test_client_query_interface_is_rejected_after_middleware_overwrites_legacy_input(): void
