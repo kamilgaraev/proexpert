@@ -14,6 +14,7 @@ use function trans_message;
 final class EpmDataMartPayloadProjector
 {
     public const FORMULA_VERSION = 'epm_mart_v1_2026_06';
+
     private const EXCLUDED_SOURCE_OF_TRUTH_KEYS = [
         'accounting',
         'accounting_entries',
@@ -156,7 +157,7 @@ final class EpmDataMartPayloadProjector
             $payload['summary']['quality_status'] ?? null,
             $payload['summary']['freshness_status'] ?? null,
         ] as $status) {
-            if (!is_string($status)) {
+            if (! is_string($status)) {
                 continue;
             }
 
@@ -212,7 +213,7 @@ final class EpmDataMartPayloadProjector
                 'currency' => $row['currency'] ?? $scope->currency,
                 'dimensions' => $row['dimensions'] ?? [],
                 'metrics' => $row['metrics'] ?? [],
-                'source_refs' => $sourceRefs,
+                'source_refs' => is_array($row['source_refs'] ?? null) ? $row['source_refs'] : $sourceRefs,
                 'generated_at' => $generatedAt,
             ];
         }, $rows);
@@ -227,12 +228,12 @@ final class EpmDataMartPayloadProjector
         ]];
 
         foreach (($payload['aggregates'] ?? []) as $key => $aggregate) {
-            if (!is_array($aggregate)) {
+            if (! is_array($aggregate)) {
                 continue;
             }
 
             $rows[] = [
-                'aggregate_key' => 'aggregate:' . (string) $key,
+                'aggregate_key' => 'aggregate:'.(string) $key,
                 'dimensions' => ['component' => (string) $key],
                 'metrics' => $this->metricsFromArray($aggregate['summary'] ?? $aggregate),
             ];
@@ -246,7 +247,7 @@ final class EpmDataMartPayloadProjector
         $rows = [];
 
         foreach (($payload['projects'] ?? []) as $index => $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 continue;
             }
 
@@ -282,7 +283,7 @@ final class EpmDataMartPayloadProjector
         }
 
         foreach ($sourceRows as $index => $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 continue;
             }
 
@@ -295,14 +296,25 @@ final class EpmDataMartPayloadProjector
                 'counterparty' => $this->compactEntity($row['counterparty'] ?? null),
                 'budget_article' => $this->compactEntity($row['budget_article'] ?? null),
                 'responsibility_center' => $this->compactEntity($row['responsibility_center'] ?? null),
+                'scenario' => $this->compactEntity($row['scenario'] ?? null),
+                'direction' => $row['direction']
+                    ?? $row['flow_direction']
+                    ?? (is_array($row['budget_article'] ?? null)
+                        ? ($row['budget_article']['flow_direction'] ?? null)
+                        : null),
+                'cost_class' => $row['cost_class']
+                    ?? (is_array($row['budget_article'] ?? null)
+                        ? ($row['budget_article']['management_cost_class'] ?? null)
+                        : null),
             ];
 
             $rows[] = [
-                'aggregate_key' => 'row:' . hash('sha256', json_encode([$index, $dimensions, $currency], JSON_THROW_ON_ERROR)),
+                'aggregate_key' => 'row:'.hash('sha256', json_encode([$index, $dimensions, $currency], JSON_THROW_ON_ERROR)),
                 'project_id' => $projectId,
                 'currency' => $currency,
                 'dimensions' => array_filter($dimensions, static fn (mixed $value): bool => $value !== null && $value !== []),
                 'metrics' => $this->metricsFromArray($row),
+                'source_refs' => is_array($row['source_refs'] ?? null) ? $row['source_refs'] : [],
             ];
         }
 
@@ -322,8 +334,15 @@ final class EpmDataMartPayloadProjector
         $metrics = [];
 
         foreach ($value as $key => $item) {
-            if (is_int($item) || is_float($item) || is_bool($item)) {
+            if (is_float($item)) {
+                $metrics[(string) $key] = rtrim(rtrim(number_format($item, 8, '.', ''), '0'), '.');
+
+                continue;
+            }
+
+            if (is_int($item) || is_bool($item)) {
                 $metrics[(string) $key] = $item;
+
                 continue;
             }
 
@@ -390,7 +409,7 @@ final class EpmDataMartPayloadProjector
 
     private function compactEntity(mixed $value): ?array
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return null;
         }
 
@@ -405,7 +424,7 @@ final class EpmDataMartPayloadProjector
 
     private function normalize(mixed $value): mixed
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return $value;
         }
 

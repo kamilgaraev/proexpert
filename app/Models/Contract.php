@@ -45,6 +45,7 @@ class Contract extends Model
         'delivery_terms',
         'base_amount',
         'total_amount',
+        'currency',
         'gp_percentage',
         'gp_calculation_type',
         'gp_coefficient',

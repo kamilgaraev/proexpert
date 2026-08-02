@@ -2,9 +2,9 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Contract;
 
+use App\Services\Project\ProjectCustomerResolverService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use App\Services\Project\ProjectCustomerResolverService;
 
 class ContractMiniResource extends JsonResource
 {
@@ -15,6 +15,7 @@ class ContractMiniResource extends JsonResource
             'number' => $this->number,
             'date' => $this->date,
             'total_amount' => (float) ($this->total_amount ?? 0),
+            'currency' => (string) ($this->currency ?? 'RUB'),
             'status' => $this->status->value,
             'status_label' => $this->status->label(),
             'customer' => $this->resolveCustomer(),
@@ -23,7 +24,7 @@ class ContractMiniResource extends JsonResource
 
     private function resolveCustomer(): ?array
     {
-        if (!$this->project) {
+        if (! $this->project) {
             return null;
         }
 
@@ -41,4 +42,4 @@ class ContractMiniResource extends JsonResource
             'counterparty_id' => $resolved['counterparty_id'] ?? null,
         ];
     }
-} 
+}

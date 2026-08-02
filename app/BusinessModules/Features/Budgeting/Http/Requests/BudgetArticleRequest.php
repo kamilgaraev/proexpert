@@ -17,6 +17,7 @@ final class BudgetArticleRequest extends BudgetingFormRequest
             'name' => ['required', 'string', 'max:255'],
             'budget_kind' => ['required', 'string', Rule::in(['bdr', 'bdds', 'both', 'technical'])],
             'flow_direction' => ['required', 'string', Rule::in(['income', 'expense', 'inflow', 'outflow', 'neutral'])],
+            'management_cost_class' => ['required', 'string', Rule::in(['labor', 'non_labor'])],
             'is_leaf' => ['sometimes', 'boolean'],
             'is_active' => ['sometimes', 'boolean'],
             'cost_category_id' => ['sometimes', 'nullable', 'integer'],

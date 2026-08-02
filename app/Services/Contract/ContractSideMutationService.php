@@ -299,6 +299,7 @@ class ContractSideMutationService
             supplier_id: $contract->supplier_id,
             contract_category: $contract->contract_category,
             contract_side_type: $sideType,
+            currency: (string) ($contract->currency ?? 'RUB'),
         );
 
         $resolvedDto = $this->resolveContractParties($organizationId, $dto, null);
@@ -500,6 +501,7 @@ class ContractSideMutationService
             supplier_id: $supplierId,
             contract_category: $contractDTO->contract_category,
             contract_side_type: $sideType,
+            currency: $contractDTO->currency,
         );
     }
 

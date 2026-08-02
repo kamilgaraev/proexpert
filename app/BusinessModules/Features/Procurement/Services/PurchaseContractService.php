@@ -2,11 +2,11 @@
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
-use App\DTOs\Contract\ContractDTO;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\DTOs\Contract\ContractDossierCreationInput;
 use App\DTOs\Contract\ContractDossierCreationResult;
+use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
@@ -285,6 +285,7 @@ class PurchaseContractService
             contract_side_type: ! empty($data['supplier_id'])
                 ? ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER
                 : ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+            currency: mb_strtoupper((string) ($data['currency'] ?? 'RUB')),
         );
     }
 

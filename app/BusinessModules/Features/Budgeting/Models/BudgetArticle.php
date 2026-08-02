@@ -24,6 +24,7 @@ final class BudgetArticle extends Model
         'name',
         'budget_kind',
         'flow_direction',
+        'management_cost_class',
         'is_leaf',
         'is_active',
         'cost_category_id',

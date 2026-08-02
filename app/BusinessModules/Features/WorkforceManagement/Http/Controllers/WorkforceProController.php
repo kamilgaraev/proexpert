@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Http\Controllers;
 
-use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceProService;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceAttendanceService;
+use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceProService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DomainException;
@@ -21,8 +21,7 @@ final class WorkforceProController extends Controller
     public function __construct(
         private readonly WorkforceProService $service,
         private readonly WorkforceAttendanceService $attendanceService
-    ) {
-    }
+    ) {}
 
     public function departments(Request $request): JsonResponse
     {
@@ -351,6 +350,7 @@ final class WorkforceProController extends Controller
                 'period_start' => ['required', 'date'],
                 'period_end' => ['required', 'date', 'after_or_equal:period_start'],
                 'project_id' => ['nullable', 'integer'],
+                'currency' => ['nullable', 'string', 'size:3', 'regex:/^[A-Za-z]{3}$/'],
             ])), trans_message('workforce.messages.record_created'), 201);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());

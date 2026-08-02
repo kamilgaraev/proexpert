@@ -71,7 +71,7 @@ final class EpmDataMartPayloadProjectorTest extends TestCase
         $this->assertSame('2026-06-10T12:00:00+03:00', $snapshot->generatedAt);
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $snapshot->sourceHash);
         $this->assertSame('data_mart', $snapshot->freshness['calculation_source']);
-        $this->assertSame('prohelper', $snapshot->sourceRefs['management_source_of_truth']);
+        $this->assertSame('most', $snapshot->sourceRefs['management_source_of_truth']);
         $this->assertSame('freshness_confirmation_only', $snapshot->sourceRefs['external_confirmation']['1c']['role']);
         $this->assertFalse($snapshot->sourceRefs['external_confirmation']['1c']['stores_accounting_duplicate']);
         $this->assertContains('accounting_entries', $snapshot->sourceRefs['excluded']);
@@ -110,6 +110,40 @@ final class EpmDataMartPayloadProjectorTest extends TestCase
 
         $this->assertSame(EpmDataMartStatus::PARTIAL, $partial->status);
         $this->assertSame(EpmDataMartStatus::STALE, $stale->status);
+    }
+
+    public function test_plan_fact_aggregate_seals_financial_dimensions_and_decimal_metrics(): void
+    {
+        $scope = EpmDataMartScope::fromInput(EpmDataMartScope::PLAN_FACT, [
+            'organization_id' => 7,
+            'period_start' => '2026-06-01',
+            'period_end' => '2026-06-30',
+            'as_of_date' => '2026-06-30',
+            'currency' => 'RUB',
+        ]);
+        $snapshot = (new EpmDataMartPayloadProjector())->build($scope, [
+            'rows' => [[
+                'currency' => 'RUB',
+                'scenario' => ['code' => 'actual'],
+                'budget_article' => [
+                    'id' => 9,
+                    'code' => 'LABOR',
+                    'flow_direction' => 'expense',
+                    'management_cost_class' => 'labor',
+                ],
+                'actual_amount' => 123.45,
+                'source_refs' => [['type' => 'budget_line', 'id' => 41]],
+            ]],
+            'freshness' => ['status' => 'actual'],
+            'meta' => ['generated_at' => '2026-06-30T12:00:00+03:00'],
+        ]);
+
+        $aggregate = $snapshot->aggregates[0];
+        self::assertSame('actual', $aggregate['dimensions']['scenario']['code']);
+        self::assertSame('expense', $aggregate['dimensions']['direction']);
+        self::assertSame('labor', $aggregate['dimensions']['cost_class']);
+        self::assertSame('123.45', $aggregate['metrics']['actual_amount']);
+        self::assertSame([['type' => 'budget_line', 'id' => 41]], $aggregate['source_refs']);
     }
 
     public function test_error_summary_does_not_expose_stack_trace_sql_or_raw_payload(): void

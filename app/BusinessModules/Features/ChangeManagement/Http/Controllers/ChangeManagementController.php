@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ChangeManagement\Http\Controllers;
 
+use App\BusinessModules\Features\ChangeManagement\Http\Requests\ApproveChangeRequest;
+use App\BusinessModules\Features\ChangeManagement\Http\Requests\StoreChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Http\Resources\ChangeClaimResource;
 use App\BusinessModules\Features\ChangeManagement\Http\Resources\ChangeRequestResource;
 use App\BusinessModules\Features\ChangeManagement\Http\Resources\ChangeRfiResource;
@@ -16,14 +18,11 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 final class ChangeManagementController extends Controller
 {
-    public function __construct(private readonly ChangeManagementService $service)
-    {
-    }
+    public function __construct(private readonly ChangeManagementService $service) {}
 
     public function rfis(Request $request): JsonResponse
     {
@@ -104,10 +103,10 @@ final class ChangeManagementController extends Controller
         }
     }
 
-    public function storeChange(Request $request): JsonResponse
+    public function storeChange(StoreChangeRequest $request): JsonResponse
     {
         try {
-            $validated = $request->validate($this->changeRules());
+            $validated = $request->validated();
 
             return AdminResponse::success(
                 new ChangeRequestResource($this->service->createChange(
@@ -153,18 +152,19 @@ final class ChangeManagementController extends Controller
         return $this->changeAction($request, $id, fn ($change) => $this->service->startCustomerReview($change));
     }
 
-    public function approveChange(Request $request, int $id): JsonResponse
+    public function approveChange(ApproveChangeRequest $request, int $id): JsonResponse
     {
-        try {
-            $validated = $request->validate(['comment' => ['nullable', 'string', 'max:2000']]);
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        }
+        $validated = $request->validated();
 
         return $this->changeAction(
             $request,
             $id,
-            fn ($change) => $this->service->approveChange($change, (int) $request->user()?->id, $validated['comment'] ?? null)
+            fn ($change) => $this->service->approveChange(
+                $change,
+                (int) $request->user()?->id,
+                $validated['approved_cost_amount'],
+                $validated['comment'] ?? null,
+            )
         );
     }
 
@@ -306,24 +306,6 @@ final class ChangeManagementController extends Controller
         ]);
 
         return AdminResponse::error(trans_message('change_management.errors.unexpected'), 500);
-    }
-
-    private function changeRules(): array
-    {
-        return [
-            'project_id' => ['required', 'integer'],
-            'related_rfi_id' => ['nullable', 'integer'],
-            'change_number' => ['nullable', 'string', 'max:80'],
-            'title' => ['required', 'string', 'max:255'],
-            'reason' => ['required', 'string', 'max:120'],
-            'description' => ['required', 'string', 'max:5000'],
-            'initiator_type' => ['required', Rule::in(['contractor', 'customer', 'designer', 'supervision', 'internal'])],
-            'affected_schedule_task_ids' => ['nullable', 'array'],
-            'affected_schedule_task_ids.*' => ['integer'],
-            'affected_estimate_item_ids' => ['nullable', 'array'],
-            'affected_estimate_item_ids.*' => ['integer'],
-            'linked_entities' => ['nullable', 'array'],
-        ];
     }
 
     private function impactRules(): array

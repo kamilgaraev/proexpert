@@ -13,8 +13,8 @@ use App\BusinessModules\Features\Crm\Models\CrmDeal;
 use App\BusinessModules\Features\Tenders\Models\Tender;
 use App\BusinessModules\Features\Tenders\Services\TenderTimelineService;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\DTOs\Contract\ContractDTO;
 use App\DTOs\Contract\ContractDossierCreationInput;
+use App\DTOs\Contract\ContractDTO;
 use App\DTOs\Project\ProjectDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
@@ -328,8 +328,7 @@ final class DealConversionWizardService
         User $actor,
         string $idempotencyKey,
         array $context,
-    ): Contract
-    {
+    ): Contract {
         if ($preview['contract']['mode'] === 'reuse') {
             $contractId = (int) ($preview['contract']['existing']['id'] ?? $data['contract']['id'] ?? 0);
             $contract = Contract::query()
@@ -381,7 +380,8 @@ final class DealConversionWizardService
             is_self_execution: false,
             supplier_id: isset($fields['supplier_id']) ? (int) $fields['supplier_id'] : null,
             contract_category: null,
-            contract_side_type: $sideType
+            contract_side_type: $sideType,
+            currency: mb_strtoupper((string) ($fields['currency'] ?? 'RUB')),
         );
         $deal = $context['deal'];
         $proposal = $context['commercial_proposal'];

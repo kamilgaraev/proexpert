@@ -20,8 +20,7 @@ final class BudgetCatalogService
     public function __construct(
         private readonly BudgetPeriodClosureService $periodClosureService,
         private readonly BudgetPeriodReopenService $periodReopenService
-    ) {
-    }
+    ) {}
 
     public function organizationId(User $user, array $input = []): int
     {
@@ -220,12 +219,14 @@ final class BudgetCatalogService
         if ($model instanceof BudgetArticle && $model->children()->exists()) {
             $model->is_active = false;
             $model->save();
+
             return;
         }
 
         if ($model instanceof ResponsibilityCenter && $model->children()->exists()) {
             $model->is_active = false;
             $model->save();
+
             return;
         }
 
@@ -264,7 +265,7 @@ final class BudgetCatalogService
             ->where('uuid', $input['budget_article_id'])
             ->first();
 
-        if (!$article instanceof BudgetArticle) {
+        if (! $article instanceof BudgetArticle) {
             throw new \DomainException(trans_message('budgeting.articles.not_found'));
         }
 
@@ -395,6 +396,7 @@ final class BudgetCatalogService
             'name' => $article->name,
             'budget_kind' => $article->budget_kind,
             'flow_direction' => $article->flow_direction,
+            'management_cost_class' => $article->management_cost_class,
             'is_leaf' => $article->is_leaf,
             'is_active' => $article->is_active,
             'cost_category_id' => $article->cost_category_id,
@@ -421,13 +423,14 @@ final class BudgetCatalogService
 
     /**
      * @template T of \Illuminate\Database\Eloquent\Model
-     * @param Builder<T> $query
+     *
+     * @param  Builder<T>  $query
      * @return T
      */
     private function findByUuid(Builder $query, int $organizationId, string $uuid, string $message): mixed
     {
         $model = $query->where('organization_id', $organizationId)->where('uuid', $uuid)->first();
-        if (!$model) {
+        if (! $model) {
             throw new \DomainException($message);
         }
 
@@ -454,7 +457,7 @@ final class BudgetCatalogService
         }
 
         $center = ResponsibilityCenter::query()->where('organization_id', $organizationId)->where('uuid', $uuid)->first();
-        if (!$center) {
+        if (! $center) {
             throw new \DomainException(trans_message('budgeting.cfo.parent_not_found'));
         }
 
@@ -470,7 +473,7 @@ final class BudgetCatalogService
         }
 
         $article = BudgetArticle::query()->where('organization_id', $organizationId)->where('uuid', $uuid)->first();
-        if (!$article) {
+        if (! $article) {
             throw new \DomainException(trans_message('budgeting.articles.parent_not_found'));
         }
 
@@ -519,7 +522,7 @@ final class BudgetCatalogService
             ->where('id', $baseId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new \DomainException(trans_message('budgeting.mappings.one_c_base_not_found'));
         }
 
@@ -539,7 +542,7 @@ final class BudgetCatalogService
             ->where('id', $profileId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new \DomainException(trans_message('budgeting.mappings.integration_profile_not_found'));
         }
 
