@@ -3,12 +3,15 @@
 namespace App\Services\Contract;
 
 use App\DTOs\Contract\ContractPerformanceActDTO;
+use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use App\Services\Logging\LoggingService;
 use App\Services\Storage\FileService;
+use Carbon\CarbonImmutable;
 use Exception;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -24,16 +27,20 @@ class ContractPerformanceActService
 
     protected FileService $fileService;
 
+    protected ProductionAcceptanceEventRecorder $productionAcceptanceEvents;
+
     public function __construct(
         ContractPerformanceActRepositoryInterface $actRepository,
         ContractAccessService $contractAccessService,
         LoggingService $logging,
-        FileService $fileService
+        FileService $fileService,
+        ProductionAcceptanceEventRecorder $productionAcceptanceEvents,
     ) {
         $this->actRepository = $actRepository;
         $this->contractAccessService = $contractAccessService;
         $this->logging = $logging;
         $this->fileService = $fileService;
+        $this->productionAcceptanceEvents = $productionAcceptanceEvents;
     }
 
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
@@ -133,6 +140,21 @@ class ContractPerformanceActService
                 $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
                 // Пересчитываем сумму акта на основе включенных работ
                 $act->recalculateAmount();
+            }
+            if ($act->is_approved || in_array($act->status, [
+                ContractPerformanceAct::STATUS_APPROVED,
+                ContractPerformanceAct::STATUS_SIGNED,
+            ], true)) {
+                $act->refresh();
+                $this->productionAcceptanceEvents->recordTransition(
+                    $act,
+                    'pending',
+                    'approved',
+                    $act->signed_at === null
+                        ? CarbonImmutable::now()
+                        : CarbonImmutable::instance($act->signed_at),
+                    Auth::id(),
+                );
             }
 
             return $act;
@@ -238,7 +260,55 @@ class ContractPerformanceActService
         ];
 
         $updateData = $actDTO->toArray();
-        $updated = $this->actRepository->update($actId, $updateData);
+        $updated = DB::transaction(function () use ($act, $actDTO, $actId, $updateData): bool {
+            $wasAccepted = (bool) $act->is_approved || in_array($act->status, [
+                ContractPerformanceAct::STATUS_APPROVED,
+                ContractPerformanceAct::STATUS_SIGNED,
+            ], true);
+            if ($wasAccepted && $actDTO->completedWorksProvided) {
+                throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
+            }
+            if ($wasAccepted
+                && $actDTO->currency !== null
+                && strtoupper($actDTO->currency) !== strtoupper((string) $act->currency)
+            ) {
+                throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
+            }
+
+            if ($actDTO->completedWorksProvided && ! empty($actDTO->completed_works)) {
+                $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
+                $act->recalculateAmount();
+            } elseif ($act->completedWorks()->count() > 0) {
+                $act->recalculateAmount();
+            }
+
+            $updated = $this->actRepository->update($actId, $updateData);
+            if (!$updated) {
+                return false;
+            }
+
+            $current = $this->actRepository->find($actId);
+            if ($current === null) {
+                return false;
+            }
+            $isAccepted = (bool) $current->is_approved || in_array($current->status, [
+                ContractPerformanceAct::STATUS_APPROVED,
+                ContractPerformanceAct::STATUS_SIGNED,
+            ], true);
+            if ($wasAccepted !== $isAccepted) {
+                $this->productionAcceptanceEvents->recordTransition(
+                    $current,
+                    $wasAccepted ? 'approved' : 'pending',
+                    $isAccepted ? 'approved' : 'reopened',
+                    $isAccepted && $current->signed_at !== null
+                        ? CarbonImmutable::instance($current->signed_at)
+                        : CarbonImmutable::now(),
+                    Auth::id(),
+                );
+            }
+
+            return true;
+        });
 
         if (! $updated) {
             // TECHNICAL: Ошибка при обновлении в БД
@@ -252,17 +322,6 @@ class ContractPerformanceActService
         }
 
         $act = $this->actRepository->find($actId);
-
-        // Синхронизируем выполненные работы если они переданы
-        if (isset($actDTO->completed_works) && ! empty($actDTO->completed_works)) {
-            $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
-            // Пересчитываем сумму только если были переданы работы
-            $act->recalculateAmount();
-        } elseif ($act->completedWorks()->count() > 0) {
-            // Если работы уже есть в акте - пересчитываем
-            $act->recalculateAmount();
-        }
-        // Иначе сохраняем amount из DTO (уже обновлён в строке 178)
 
         // Загружаем связи для возврата полных данных
         $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
@@ -448,7 +507,9 @@ class ContractPerformanceActService
             'user_id' => request()->user()?->id,
         ], 'warning');
 
-        $result = $this->actRepository->delete($actId);
+        $result = DB::transaction(
+            fn (): bool => $this->actRepository->delete($actId),
+        );
 
         if ($result) {
             // BUSINESS: Акт успешно удален

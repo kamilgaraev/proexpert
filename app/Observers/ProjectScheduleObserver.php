@@ -1,10 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Observers;
 
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Listeners\CaptureScheduleBaselineVersion;
 use App\Models\ProjectSchedule;
 use App\Services\Analytics\EVMService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class ProjectScheduleObserver
 {
@@ -16,6 +21,19 @@ class ProjectScheduleObserver
     public function updated(ProjectSchedule $schedule): void
     {
         $this->invalidateEVMCache($schedule, true);
+        if ($schedule->wasChanged('baseline_saved_at') && $schedule->baseline_saved_at !== null) {
+            $scheduleId = (int) $schedule->id;
+            DB::afterCommit(static function () use ($scheduleId): void {
+                try {
+                    app(CaptureScheduleBaselineVersion::class)->capture($scheduleId);
+                } catch (Throwable $exception) {
+                    Log::error('Failed to capture immutable project control baseline', [
+                        'schedule_id' => $scheduleId,
+                        'exception' => $exception::class,
+                    ]);
+                }
+            });
+        }
     }
 
     public function deleted(ProjectSchedule $schedule): void
@@ -47,7 +65,7 @@ class ProjectScheduleObserver
                 ->map(fn (mixed $projectId): int => (int) $projectId)
                 ->unique()
                 ->each(fn (int $projectId): mixed => app(EVMService::class)->invalidateCache($projectId));
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             Log::warning('Failed to invalidate EVM cache for project schedule', [
                 'schedule_id' => $schedule->id,
                 'project_id' => $schedule->project_id,

@@ -13,6 +13,7 @@ use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementServi
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlanAssignment;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\WorkConstraintEventRecorder;
 use App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
@@ -25,6 +26,7 @@ use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\User;
 use DomainException;
+use DateTimeImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -35,6 +37,7 @@ class MobileProjectScheduleService
         private readonly SiteRequestService $siteRequestService,
         private readonly QualityDefectService $qualityDefectService,
         private readonly SafetyManagementService $safetyManagementService,
+        private readonly WorkConstraintEventRecorder $constraintEvents,
     ) {}
 
     public function list(User $user, ?int $projectId): array
@@ -210,6 +213,11 @@ class MobileProjectScheduleService
                 'created_at' => now()->toIso8601String(),
             ];
             $constraint->update(['metadata' => $metadata]);
+            $this->constraintEvents->pinLinkedEvidence(
+                $constraint->refresh(),
+                (int) $user->id,
+                new DateTimeImmutable(),
+            );
 
             return $action + ['created' => true];
         });

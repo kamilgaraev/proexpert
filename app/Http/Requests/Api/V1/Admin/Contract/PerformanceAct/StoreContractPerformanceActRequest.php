@@ -33,6 +33,7 @@ class StoreContractPerformanceActRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:1000'],
             'is_approved' => ['sometimes', 'boolean'],
             'approval_date' => ['nullable', 'date', 'after_or_equal:act_date'],
+            'currency' => ['required', 'string', 'size:3', 'regex:/^[A-Z]{3}$/'],
 
             // Сумма акта (если нет работ - обязательна)
             'amount' => ['nullable', 'numeric', 'min:0'],
@@ -73,7 +74,9 @@ class StoreContractPerformanceActRequest extends FormRequest
             approval_date: $this->validated('approval_date'),
             completed_works: $this->validated('completed_works', []),
             amount: $this->validated('amount', 0), // Используем переданную сумму или 0 по умолчанию
-            pdf_file: $this->file('pdf_file') // PDF файл акта (если загружен)
+            pdf_file: $this->file('pdf_file'), // PDF файл акта (если загружен)
+            currency: $this->validated('currency'),
+            completedWorksProvided: $this->has('completed_works'),
         );
     }
 }

@@ -10,6 +10,7 @@ use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlanAssignme
 use App\BusinessModules\Features\ScheduleManagement\Models\LookaheadPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\LookaheadPlanTask;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\WorkConstraintEventRecorder;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
@@ -34,6 +35,7 @@ final class LookaheadPlanningService
 
     public function __construct(
         private readonly JournalApprovalService $journalApprovalService,
+        private readonly WorkConstraintEventRecorder $constraintEvents,
     ) {
     }
 
@@ -94,20 +96,32 @@ final class LookaheadPlanningService
     {
         $this->assertPlanTaskBelongsToSchedule($planTask, $schedule);
 
-        return WorkConstraint::query()->create([
-            'organization_id' => $schedule->organization_id,
-            'project_id' => $schedule->project_id,
-            'schedule_id' => $schedule->id,
-            'lookahead_plan_task_id' => $planTask->id,
-            'schedule_task_id' => $planTask->schedule_task_id,
-            'created_by_user_id' => $userId,
-            'constraint_type' => $data['constraint_type'],
-            'title' => $data['title'],
-            'description' => $data['description'] ?? null,
-            'severity' => $data['severity'] ?? 'soft',
-            'status' => 'open',
-            'due_date' => $data['due_date'] ?? null,
-        ])->fresh(['lookaheadPlanTask']);
+        return DB::transaction(function () use ($schedule, $planTask, $userId, $data): WorkConstraint {
+            $constraint = WorkConstraint::query()->create([
+                'organization_id' => $schedule->organization_id,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'lookahead_plan_task_id' => $planTask->id,
+                'schedule_task_id' => $planTask->schedule_task_id,
+                'created_by_user_id' => $userId,
+                'constraint_type' => $data['constraint_type'],
+                'title' => $data['title'],
+                'description' => $data['description'] ?? null,
+                'severity' => $data['severity'] ?? 'soft',
+                'status' => 'open',
+                'due_date' => $data['due_date'] ?? null,
+            ])->fresh(['lookaheadPlanTask']);
+
+            $this->constraintEvents->record(
+                $constraint,
+                null,
+                'open',
+                $userId,
+                new \DateTimeImmutable(),
+            );
+
+            return $constraint;
+        });
     }
 
     public function createDailyPlan(ProjectSchedule $schedule, int $userId, array $data): DailyWorkPlan
@@ -167,11 +181,26 @@ final class LookaheadPlanningService
                 $hardConstraints
                     ->filter(static fn (WorkConstraint $constraint): bool => in_array($constraint->id, $overrideIds, true))
                     ->each(function (WorkConstraint $constraint) use ($userId, $data): void {
+                        $waiverUntil = isset($data['override_until'])
+                            ? Carbon::parse((string) $data['override_until'])->endOfDay()->toImmutable()
+                            : null;
+                        $waiverEvidenceRef = isset($data['override_evidence_ref'])
+                            ? (string) $data['override_evidence_ref']
+                            : null;
                         $constraint->update([
                             'overridden_by_user_id' => $userId,
                             'overridden_at' => now(),
                             'override_reason' => $data['override_reason'] ?? null,
                         ]);
+                        $this->constraintEvents->record(
+                            $constraint,
+                            (string) $constraint->status,
+                            'waived',
+                            $userId,
+                            new \DateTimeImmutable(),
+                            $waiverUntil,
+                            $waiverEvidenceRef,
+                        );
                     });
             }
 

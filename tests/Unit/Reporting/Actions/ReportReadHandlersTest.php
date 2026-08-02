@@ -224,6 +224,37 @@ final class ReportReadHandlersTest extends TestCase
         }
     }
 
+    public function test_drill_down_signs_provider_cursor_and_decodes_it_before_next_page(): void
+    {
+        $fixture = $this->fixture(
+            drillResult: new ReportDrillDownResult(
+                [['row_key' => 'event-1']],
+                'e:7:91',
+                [],
+            ),
+        );
+        $operations = [];
+        $cellToken = $this->cellToken($fixture, 'row-1', 'name');
+        $handler = $this->drillDownHandler($fixture, $this->authorizer($operations));
+
+        $firstPage = $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportDrillDownRequest($cellToken, null, 25),
+        );
+
+        self::assertNotNull($firstPage->nextCursor);
+        self::assertNotSame('e:7:91', $firstPage->nextCursor);
+
+        $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportDrillDownRequest($cellToken, $firstPage->nextCursor, 25),
+        );
+
+        self::assertSame('e:7:91', $fixture['drillDown']->calls()[1][2]->cursor);
+    }
+
     public function test_rows_reject_expired_status_before_authorization_or_provider_call(): void
     {
         $fixture = $this->fixture();
@@ -316,6 +347,7 @@ final class ReportReadHandlersTest extends TestCase
         ?ReportOutputClassification $classification = null,
         array $columns = [['id' => 'name']],
         ?ReportPermissionPolicy $permissions = null,
+        ?ReportDrillDownResult $drillResult = null,
         array $rows = [['row_key' => 'row-1', 'name' => 'Строка']],
     ): array {
         $definition = (new ReportDefinitionBuilder)
@@ -358,7 +390,7 @@ final class ReportReadHandlersTest extends TestCase
             $this->sort,
         );
         $rowQuery = new FakeReportRowQuery($page, []);
-        $drillResult = new ReportDrillDownResult($rows, null, []);
+        $drillResult ??= new ReportDrillDownResult($rows, null, []);
         $drillDown = new FakeReportDrillDownProvider($drillResult);
         $binding = new ReportDefinitionBinding(
             $definition->code,

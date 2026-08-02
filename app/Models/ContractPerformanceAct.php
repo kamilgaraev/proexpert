@@ -27,6 +27,7 @@ class ContractPerformanceAct extends Model
         'period_start',
         'period_end',
         'amount',
+        'currency',
         'description',
         'status',
         'is_approved',
@@ -75,7 +76,7 @@ class ContractPerformanceAct extends Model
     {
         return $this->belongsToMany(CompletedWork::class, 'performance_act_completed_works', 'performance_act_id', 'completed_work_id')
             ->using(PerformanceActCompletedWork::class)
-            ->withPivot(['included_quantity', 'included_amount', 'notes'])
+            ->withPivot(['included_quantity', 'included_amount', 'currency', 'notes'])
             ->withTimestamps();
     }
 
