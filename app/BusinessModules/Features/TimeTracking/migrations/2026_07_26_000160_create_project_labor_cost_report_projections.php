@@ -127,6 +127,67 @@ return new class extends Migration {
             );
         });
 
+        $eligibleFrom = now();
+        DB::statement('LOCK TABLE time_tracking_labor_rate_versions IN SHARE ROW EXCLUSIVE MODE');
+        DB::statement(
+            'CREATE TRIGGER time_tracking_labor_rate_versions_report_owner_fact
+             AFTER INSERT OR UPDATE OR DELETE ON time_tracking_labor_rate_versions
+             FOR EACH ROW EXECUTE FUNCTION workforce_report_capture_owner_fact()',
+        );
+        DB::statement(
+            "INSERT INTO workforce_report_owner_facts (
+                organization_id,
+                source_table,
+                source_id,
+                project_id,
+                operation,
+                recorded_at,
+                sequence,
+                payload,
+                row_hash
+             )
+             SELECT organization_id,
+                    'time_tracking_labor_rate_versions',
+                    id,
+                    NULL,
+                    'upsert',
+                    ?,
+                    1,
+                    to_jsonb(labor_rate_version),
+                    repeat(md5(to_jsonb(labor_rate_version)::text), 2)
+             FROM time_tracking_labor_rate_versions labor_rate_version",
+            [$eligibleFrom],
+        );
+        DB::statement(
+            "INSERT INTO workforce_report_owner_fact_eligibility (
+                organization_id,
+                source_table,
+                eligible_from,
+                source_row_count,
+                source_hash
+             )
+             SELECT organization_record.id,
+                    'time_tracking_labor_rate_versions',
+                    ?,
+                    COUNT(owner_fact.source_id),
+                    repeat(md5(COALESCE(
+                        string_agg(owner_fact.row_hash, '' ORDER BY owner_fact.source_id),
+                        ''
+                    )), 2)
+             FROM organizations organization_record
+             LEFT JOIN workforce_report_owner_facts owner_fact
+               ON owner_fact.organization_id = organization_record.id
+              AND owner_fact.source_table = 'time_tracking_labor_rate_versions'
+              AND owner_fact.recorded_at = ?
+             GROUP BY organization_record.id
+             ON CONFLICT (organization_id, source_table)
+             DO UPDATE SET
+                 eligible_from = EXCLUDED.eligible_from,
+                 source_row_count = EXCLUDED.source_row_count,
+                 source_hash = EXCLUDED.source_hash",
+            [$eligibleFrom, $eligibleFrom],
+        );
+
         DB::unprepared(
             <<<'SQL'
 CREATE FUNCTION time_tracking_report_guard_immutable() RETURNS trigger AS $$
