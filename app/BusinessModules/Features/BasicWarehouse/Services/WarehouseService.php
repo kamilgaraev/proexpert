@@ -11,9 +11,12 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\CanonicalWarehouseReportingIdentity;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\WarehouseInventoryEventRecorder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseReceiptStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
+use App\Models\Material;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
@@ -33,8 +36,11 @@ class WarehouseService implements WarehouseReportDataProvider
 {
     protected LoggingService $logging;
 
-    public function __construct(LoggingService $logging)
-    {
+    public function __construct(
+        LoggingService $logging,
+        private readonly WarehouseInventoryEventRecorder $inventoryEventRecorder,
+        private readonly CanonicalWarehouseReportingIdentity $reportingIdentity,
+    ) {
         $this->logging = $logging;
     }
 
@@ -114,6 +120,15 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
+            $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, $metadata);
+            if (
+                ($metadata['is_transfer'] ?? false) === true
+                && (int) ($metadata['from_warehouse_id'] ?? 0) < 1
+            ) {
+                throw new \DomainException(
+                    trans_message('warehouse_basic.validation.transfer_source_required')
+                );
+            }
             // Ищем существующую партию с такой же ценой и параметрами
             // (Стратегия: смешиваем партии только если они абсолютно идентичны по цене и срокам)
             $query = WarehouseBalance::where('organization_id', $organizationId)
@@ -172,16 +187,35 @@ class WarehouseService implements WarehouseReportDataProvider
                 'warehouse_id' => $warehouseId,
                 'cell_id' => $metadata['cell_id'] ?? null,
                 'material_id' => $materialId,
-                'movement_type' => 'receipt',
+                'movement_type' => ($metadata['is_transfer'] ?? false) === true ? 'transfer_in' : 'receipt',
                 'quantity' => $quantity,
                 'price' => $price,
                 'project_id' => $metadata['project_id'] ?? null,
+                'project_material_delivery_id' => $metadata['project_material_delivery_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
+                'operation_category' => $metadata['operation_category'] ?? null,
+                'from_warehouse_id' => ($metadata['is_transfer'] ?? false) === true
+                    ? (int) ($metadata['from_warehouse_id'] ?? 0)
+                    : null,
                 'metadata' => $metadata,
                 'movement_date' => now(),
             ]);
+            $eventType = is_string($metadata['reporting_event_type'] ?? null)
+                ? $metadata['reporting_event_type']
+                : (($metadata['is_transfer'] ?? false) === true
+                    ? 'transfer_in'
+                    : (($metadata['operation_category'] ?? null) === WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN
+                        ? 'return'
+                        : 'receipt'));
+            $this->inventoryEventRecorder->record(
+                $movement,
+                $eventType,
+                in_array($eventType, ['transfer_in', 'transfer_out'], true)
+                    ? (string) ($metadata['transfer_pair_key'] ?? '')
+                    : null,
+            );
 
             $this->logging->business('warehouse.asset.received', [
                 'organization_id' => $organizationId,
@@ -221,6 +255,7 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
+            $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, $metadata);
             // Получаем все партии с доступным количеством, сортируем по дате создания (FIFO)
             // (или по сроку годности FEFO, если есть)
             $batchesQuery = WarehouseBalance::where('organization_id', $organizationId)
@@ -296,6 +331,14 @@ class WarehouseService implements WarehouseReportDataProvider
                 'metadata' => array_merge($metadata, ['batches_source' => $writeOffDetails]),
                 'movement_date' => now(),
             ]);
+            $eventType = is_string($metadata['reporting_event_type'] ?? null)
+                ? $metadata['reporting_event_type']
+                : 'issue';
+            $this->inventoryEventRecorder->record(
+                $movement,
+                $eventType,
+                $eventType === 'transfer_out' ? (string) ($metadata['transfer_pair_key'] ?? '') : null,
+            );
 
             $this->logging->business('warehouse.asset.written_off', [
                 'organization_id' => $organizationId,
@@ -336,6 +379,13 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
+            $transferPairKey = (string) \Illuminate\Support\Str::ulid();
+            $sourceMetadata = $this->reportingMetadata(
+                $organizationId,
+                $fromWarehouseId,
+                $materialId,
+                $metadata,
+            );
             // 1. Списываем с исходного склада по FIFO
             $sourceBatchesQuery = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $fromWarehouseId)
@@ -401,16 +451,12 @@ class WarehouseService implements WarehouseReportDataProvider
                 array_merge($metadata, [
                     'reason' => 'Перемещение со склада '.$fromWarehouseId,
                     'is_transfer' => true,
+                    'transfer_pair_key' => $transferPairKey,
+                    'from_warehouse_id' => $fromWarehouseId,
                 ])
             );
 
-            // Удаляем лишнее движение, которое создал receiveAsset (нам нужны специфичные типы transfer_in/out)
-            // Или просто обновим его тип и связи
             $movementIn = $targetResult['movement'];
-            $movementIn->update([
-                'movement_type' => 'transfer_in',
-                'from_warehouse_id' => $fromWarehouseId,
-            ]);
 
             // 3. Создаем движение расхода с исходного склада
             $movementOut = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
@@ -423,12 +469,16 @@ class WarehouseService implements WarehouseReportDataProvider
                 'price' => $transferPrice,
                 'to_warehouse_id' => $toWarehouseId,
                 'project_id' => $metadata['project_id'] ?? null,
+                'project_material_delivery_id' => $metadata['project_material_delivery_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
+                'related_user_id' => $metadata['related_user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
-                'metadata' => array_merge($metadata, ['source_batches' => $sourceBatchDetails]),
+                'operation_category' => $metadata['operation_category'] ?? null,
+                'metadata' => array_merge($sourceMetadata, ['source_batches' => $sourceBatchDetails]),
                 'movement_date' => now(),
             ]);
+            $this->inventoryEventRecorder->record($movementOut, 'transfer_out', $transferPairKey);
 
             $this->logging->business('warehouse.asset.transferred', [
                 'organization_id' => $organizationId,
@@ -456,6 +506,48 @@ class WarehouseService implements WarehouseReportDataProvider
             DB::rollBack();
             throw $e;
         }
+    }
+
+    private function reportingMetadata(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        array $metadata,
+    ): array {
+        $material = Material::query()
+            ->with('measurementUnit')
+            ->where('organization_id', $organizationId)
+            ->findOrFail($materialId);
+        $unit = $material->measurementUnit;
+        $unitIdentity = $unit === null ? 'unknown' : 'measurement-unit:'.$unit->getKey();
+        $warehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->findOrFail($warehouseId);
+        $inventoryProjectId = $warehouse->project_id === null ? null : (int) $warehouse->project_id;
+        $hasMovement = WarehouseMovement::query()
+            ->where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $materialId)
+            ->exists();
+        $currentOnHand = WarehouseBalance::query()
+            ->where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $materialId)
+            ->get()
+            ->sum(static fn (WarehouseBalance $balance): float => (float) $balance->available_quantity
+                + (float) $balance->reserved_quantity);
+        $openingBasis = ! $hasMovement && $currentOnHand === 0.0 ? 'verified_zero' : null;
+
+        return $this->reportingIdentity->merge([
+            'reporting_source_version' => 1,
+            'unit_dimension' => $unitIdentity,
+            'unit_code' => $unit?->short_name ?? 'unknown',
+            'unit_conversion_version' => $unit === null ? 'unproven' : $unitIdentity.':identity-v1',
+            'reporting_inventory_project_id' => $inventoryProjectId,
+            'currency' => 'RUB',
+            'currency_source' => 'warehouse_movement.price',
+            'reporting_opening_basis' => $openingBasis,
+        ], $metadata);
     }
 
     /**
@@ -1465,6 +1557,17 @@ class WarehouseService implements WarehouseReportDataProvider
 
             $remainingToReserve -= $takeFromBatch;
         }
+        $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, []);
+        $movement = WarehouseMovement::create([
+            'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => 'reservation',
+            'quantity' => $quantity,
+            'metadata' => $metadata,
+            'movement_date' => now(),
+        ]);
+        $this->inventoryEventRecorder->record($movement, 'reservation', null);
     }
 
     /**
@@ -1509,6 +1612,85 @@ class WarehouseService implements WarehouseReportDataProvider
 
             $remainingToUnreserve -= $takeFromBatch;
         }
+        $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, []);
+        $movement = WarehouseMovement::create([
+            'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => 'unreservation',
+            'quantity' => $quantity,
+            'metadata' => $metadata,
+            'movement_date' => now(),
+        ]);
+        $this->inventoryEventRecorder->record($movement, 'unreservation', null);
+    }
+
+    public function writeOffReservedAsset(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        float $quantity,
+        array $metadata = [],
+    ): WarehouseMovement {
+        return DB::transaction(function () use (
+            $organizationId,
+            $warehouseId,
+            $materialId,
+            $quantity,
+            $metadata,
+        ): WarehouseMovement {
+            $reportingMetadata = $this->reportingMetadata(
+                $organizationId,
+                $warehouseId,
+                $materialId,
+                $metadata,
+            );
+            $batches = WarehouseBalance::query()
+                ->where('organization_id', $organizationId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('material_id', $materialId)
+                ->where('reserved_quantity', '>', 0)
+                ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
+                ->lockForUpdate()
+                ->get();
+            $reserved = (float) $batches->sum('reserved_quantity');
+            if ($reserved < $quantity) {
+                throw new \InvalidArgumentException(
+                    trans_message('warehouse_basic.validation.insufficient_reserved_stock', [
+                        'reserved' => $reserved,
+                        'requested' => $quantity,
+                    ])
+                );
+            }
+            $remaining = $quantity;
+            $cost = 0.0;
+            foreach ($batches as $batch) {
+                if ($remaining <= 0) {
+                    break;
+                }
+                $taken = min((float) $batch->reserved_quantity, $remaining);
+                $batch->writeOffReserved($taken);
+                $cost += $taken * (float) $batch->unit_price;
+                $remaining -= $taken;
+            }
+            $movement = WarehouseMovement::query()->create([
+                'organization_id' => $organizationId,
+                'warehouse_id' => $warehouseId,
+                'material_id' => $materialId,
+                'movement_type' => 'reserved_issue',
+                'quantity' => $quantity,
+                'price' => $quantity > 0 ? $cost / $quantity : 0,
+                'project_id' => $metadata['project_id'] ?? null,
+                'user_id' => $metadata['user_id'] ?? null,
+                'reason' => $metadata['reason'] ?? null,
+                'metadata' => $reportingMetadata,
+                'movement_date' => now(),
+            ]);
+            $this->inventoryEventRecorder->record($movement, 'reserved_issue', null);
+            $this->clearWarehouseCache($organizationId);
+
+            return $movement;
+        }, 3);
     }
 
     /**

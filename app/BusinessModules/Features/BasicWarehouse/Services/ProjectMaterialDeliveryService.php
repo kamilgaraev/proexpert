@@ -18,8 +18,7 @@ class ProjectMaterialDeliveryService
 {
     public function __construct(
         private readonly ProjectWarehouseService $projectWarehouseService
-    ) {
-    }
+    ) {}
 
     public function createFromAllocation(
         WarehouseProjectAllocation $allocation,
@@ -77,7 +76,7 @@ class ProjectMaterialDeliveryService
         array $metadata = []
     ): ProjectMaterialDelivery {
         return DB::transaction(function () use ($siteRequest, $user, $purchaseRequest, $requestedQuantity, $metadata): ProjectMaterialDelivery {
-            if (!$siteRequest->material_id) {
+            if (! $siteRequest->material_id) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.material_required'));
             }
 
@@ -131,7 +130,7 @@ class ProjectMaterialDeliveryService
         ?string $notes = null
     ): ProjectMaterialDelivery {
         return DB::transaction(function () use ($siteRequest, $user, $warehouseId, $quantity, $reservationId, $notes): ProjectMaterialDelivery {
-            if (!$siteRequest->material_id) {
+            if (! $siteRequest->material_id) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.material_required'));
             }
 
@@ -222,6 +221,10 @@ class ProjectMaterialDeliveryService
     public function ship(ProjectMaterialDelivery $delivery, User $user, array $data): ProjectMaterialDelivery
     {
         return DB::transaction(function () use ($delivery, $user, $data): ProjectMaterialDelivery {
+            $delivery = ProjectMaterialDelivery::query()
+                ->where('organization_id', $delivery->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($delivery->id);
             $quantity = (float) ($data['quantity'] ?? $delivery->remainingQuantityToShip());
             $newShippedQuantity = (float) $delivery->shipped_quantity + $quantity;
             $expectedQuantity = max((float) $delivery->reserved_quantity, (float) $delivery->requested_quantity);
@@ -231,18 +234,20 @@ class ProjectMaterialDeliveryService
             }
 
             $fromStatus = $delivery->status;
-            $movement = $this->projectWarehouseService->shipToProject(
+            $shipment = $this->projectWarehouseService->shipToProject(
                 $delivery,
                 $user,
                 $quantity,
                 isset($data['responsible_user_id']) ? (int) $data['responsible_user_id'] : null,
                 $data['notes'] ?? null
             );
+            $movement = $shipment['movement'];
+            $projectWarehouse = $shipment['project_warehouse'];
 
             $delivery->forceFill([
                 'shipped_quantity' => $newShippedQuantity,
                 'outbound_movement_id' => $movement->id,
-                'project_warehouse_id' => $movement->to_warehouse_id,
+                'project_warehouse_id' => $projectWarehouse->id,
                 'status' => ProjectMaterialDeliveryStatusEnum::IN_TRANSIT,
                 'shipped_at' => $delivery->shipped_at ?? now(),
                 'responsible_user_id' => $data['responsible_user_id'] ?? $delivery->responsible_user_id ?? $user->id,
@@ -264,7 +269,11 @@ class ProjectMaterialDeliveryService
         ?string $notes = null
     ): ProjectMaterialDelivery {
         return DB::transaction(function () use ($delivery, $user, $quantity, $notes): ProjectMaterialDelivery {
-            if (!$delivery->canReceive()) {
+            $delivery = ProjectMaterialDelivery::query()
+                ->where('organization_id', $delivery->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($delivery->id);
+            if (! $delivery->canReceive()) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.cannot_receive'));
             }
 
@@ -337,15 +346,15 @@ class ProjectMaterialDeliveryService
 
     private function assertDeliveryCanBeSaved(ProjectMaterialDelivery $delivery): void
     {
-        if (!$delivery->organization_id || !$delivery->project_id || !$delivery->material_id) {
+        if (! $delivery->organization_id || ! $delivery->project_id || ! $delivery->material_id) {
             throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.required_context'));
         }
 
         if (
-            !$delivery->warehouse_project_allocation_id
-            && !$delivery->site_request_id
-            && !$delivery->purchase_request_id
-            && !$delivery->purchase_order_id
+            ! $delivery->warehouse_project_allocation_id
+            && ! $delivery->site_request_id
+            && ! $delivery->purchase_request_id
+            && ! $delivery->purchase_order_id
         ) {
             throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.source_required'));
         }

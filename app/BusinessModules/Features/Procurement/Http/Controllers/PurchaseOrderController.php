@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
+use App\BusinessModules\Features\Procurement\Http\Requests\CancelPurchaseOrderRequest;
+use App\BusinessModules\Features\Procurement\Http\Requests\ReturnPurchaseReceiptLineRequest;
+use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\ProcurementAuditLogResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseContractResource;
@@ -14,12 +17,12 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptDocumentPdfService;
-use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -194,8 +197,8 @@ class PurchaseOrderController extends Controller
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
             return AdminResponse::error(trans_message('procurement.purchase_requests.not_found'), 404);
-        } catch (\DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.store.error', [
                 'user_id' => auth()->id(),
@@ -225,8 +228,8 @@ class PurchaseOrderController extends Controller
                 new PurchaseOrderResource($sent),
                 trans_message('procurement.purchase_orders.sent')
             );
-        } catch (\DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.send.error', [
                 'id' => $id,
@@ -263,8 +266,8 @@ class PurchaseOrderController extends Controller
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
-        } catch (\DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.confirm.error', [
                 'id' => $id,
@@ -273,6 +276,38 @@ class PurchaseOrderController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('procurement.purchase_orders.confirm_error'), 500);
+        }
+    }
+
+    public function cancel(CancelPurchaseOrderRequest $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $request->validated();
+            $order = PurchaseOrder::forOrganization($organizationId)->find($id);
+            if (! $order) {
+                return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
+            }
+
+            return AdminResponse::success(
+                new PurchaseOrderResource($this->service->cancel($order, (string) $validated['reason'])),
+                trans_message('procurement.purchase_orders.cancelled'),
+            );
+        } catch (\DomainException) {
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.cancel_rejected'),
+                422,
+            );
+        } catch (\Throwable $exception) {
+            Log::error('procurement.purchase_orders.cancel.error', [
+                'id' => $id,
+                'user_id' => $request->user()?->getAuthIdentifier(),
+            ]);
+
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.cancel_error'),
+                500,
+            );
         }
     }
 
@@ -300,8 +335,8 @@ class PurchaseOrderController extends Controller
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
-        } catch (\DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.create_contract.error', [
                 'id' => $id,
@@ -354,8 +389,8 @@ class PurchaseOrderController extends Controller
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
-        } catch (\DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.receive_materials.error', [
                 'id' => $id,
@@ -364,6 +399,79 @@ class PurchaseOrderController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('procurement.purchase_orders.receive_error'), 500);
+        }
+    }
+
+    public function reverseReceiptLine(
+        ReversePurchaseReceiptLineRequest $request,
+        int $id,
+        int $line,
+    ): JsonResponse {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $order = $this->service->reverseReceiptLine(
+                $organizationId,
+                $id,
+                $line,
+                (string) $request->validated('reason_code'),
+                (string) $request->validated('idempotency_key'),
+                (int) $request->user()->getAuthIdentifier(),
+            );
+
+            return AdminResponse::success(
+                new PurchaseOrderResource($order),
+                trans_message('procurement.purchase_orders.receipt_line_reversed'),
+            );
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
+        } catch (\Throwable $exception) {
+            Log::error('procurement.purchase_orders.reverse_receipt_line.error', [
+                'purchase_order_id' => $id,
+                'purchase_receipt_line_id' => $line,
+                'user_id' => $request->user()?->getAuthIdentifier(),
+            ]);
+
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.receipt_line_reverse_error'),
+                500,
+            );
+        }
+    }
+
+    public function returnReceiptLine(
+        ReturnPurchaseReceiptLineRequest $request,
+        int $id,
+        int $line,
+    ): JsonResponse {
+        try {
+            $order = $this->service->returnReceiptLine(
+                (int) $request->attributes->get('current_organization_id'),
+                $id,
+                $line,
+                (string) $request->validated('quantity'),
+                (string) $request->validated('reason_code'),
+                (string) $request->validated('idempotency_key'),
+                $request->user(),
+            );
+
+            return AdminResponse::success(
+                new PurchaseOrderResource($order),
+                trans_message('procurement.purchase_orders.receipt_line_returned'),
+            );
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
+        } catch (\Throwable $exception) {
+            Log::error('procurement.purchase_orders.return_receipt_line.error', [
+                'purchase_order_id' => $id,
+                'purchase_receipt_line_id' => $line,
+                'user_id' => $request->user()?->getAuthIdentifier(),
+                'exception_class' => $exception::class,
+            ]);
+
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.receipt_line_return_error'),
+                500,
+            );
         }
     }
 
@@ -398,8 +506,8 @@ class PurchaseOrderController extends Controller
             return $this->receiptDocumentPdfService->download($order, $document);
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
-        } catch (\DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.receipt_document_pdf.error', [
                 'id' => $id,
@@ -475,8 +583,8 @@ class PurchaseOrderController extends Controller
                 new PurchaseOrderResource($updated),
                 trans_message('procurement.purchase_orders.marked_in_delivery')
             );
-        } catch (\DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.mark_in_delivery.error', [
                 'id' => $id,

@@ -120,6 +120,9 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/confirm', [PurchaseOrderController::class, 'confirm'])
                 ->middleware('authorize:procurement.purchase_orders.confirm')
                 ->name('confirm');
+            Route::post('/{id}/cancel', [PurchaseOrderController::class, 'cancel'])
+                ->middleware('authorize:procurement.purchase_orders.delete')
+                ->name('cancel');
             Route::post('/{id}/mark-in-delivery', [PurchaseOrderController::class, 'markInDelivery'])
                 ->middleware('authorize:procurement.purchase_orders.mark_delivery')
                 ->name('mark_in_delivery');
@@ -135,6 +138,12 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/receive-materials', [PurchaseOrderController::class, 'receiveMaterials'])
                 ->middleware('authorize:procurement.purchase_orders.receive')
                 ->name('receive_materials');
+            Route::post('/{id}/receipt-lines/{line}/reverse', [PurchaseOrderController::class, 'reverseReceiptLine'])
+                ->middleware('authorize:procurement.purchase_orders.receive')
+                ->name('receipt_lines.reverse');
+            Route::post('/{id}/receipt-lines/{line}/return', [PurchaseOrderController::class, 'returnReceiptLine'])
+                ->middleware('authorize:procurement.purchase_orders.receive')
+                ->name('receipt_lines.return');
             Route::post('/{id}/create-contract', [PurchaseOrderController::class, 'createContract'])
                 ->middleware('authorize:procurement.contracts.create')
                 ->name('create_contract');

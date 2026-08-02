@@ -41,6 +41,8 @@ return [
         'cancelled' => 'Поставка отменена',
         'received' => 'Приемка материала подтверждена',
         'in_transit_from_purchase_order' => 'Поставка переведена в доставку по заказу поставщику',
+        'project_warehouse_name' => 'Объектовый склад: :project',
+        'transit_warehouse_name' => 'Материалы в пути: :project',
     ],
     'messages' => [
         'project_warehouse_auto_created' => 'Объектовый склад создан автоматически.',

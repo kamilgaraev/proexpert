@@ -20,4 +20,5 @@ enum ProcurementAuditEventTypeEnum: string
     case PURCHASE_ORDER_CREATED = 'purchase_order_created';
     case PURCHASE_ORDER_COMMENTED = 'purchase_order_commented';
     case MATERIALS_RECEIVED = 'materials_received';
+    case MATERIALS_RECEIPT_REVERSED = 'materials_receipt_reversed';
 }

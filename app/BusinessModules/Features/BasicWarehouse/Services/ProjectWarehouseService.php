@@ -17,8 +17,7 @@ final class ProjectWarehouseService
 {
     public function __construct(
         private readonly WarehouseService $warehouseService
-    ) {
-    }
+    ) {}
 
     public function getOrCreateProjectWarehouse(int $organizationId, int $projectId, User $actor): OrganizationWarehouse
     {
@@ -40,8 +39,10 @@ final class ProjectWarehouseService
         return OrganizationWarehouse::query()->create([
             'organization_id' => $organizationId,
             'project_id' => $projectId,
-            'name' => 'Объектовый склад: ' . $project->name,
-            'code' => 'PRJ-' . $projectId,
+            'name' => trans_message('basic_warehouse.project_material_deliveries.project_warehouse_name', [
+                'project' => $project->name,
+            ]),
+            'code' => 'PRJ-'.$projectId,
             'warehouse_type' => OrganizationWarehouse::TYPE_PROJECT,
             'is_main' => false,
             'is_active' => true,
@@ -58,8 +59,8 @@ final class ProjectWarehouseService
         float $quantity,
         ?int $responsibleUserId,
         ?string $notes
-    ): WarehouseMovement {
-        if (!$delivery->warehouse_id) {
+    ): array {
+        if (! $delivery->warehouse_id) {
             throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.source_required'));
         }
 
@@ -68,10 +69,15 @@ final class ProjectWarehouseService
             (int) $delivery->project_id,
             $actor
         );
-
-        $result = $this->warehouseService->writeOffAsset(
+        $transitWarehouse = $this->getOrCreateTransitWarehouse(
+            (int) $delivery->organization_id,
+            (int) $delivery->project_id,
+            $actor,
+        );
+        $result = $this->warehouseService->transferAsset(
             (int) $delivery->organization_id,
             (int) $delivery->warehouse_id,
+            (int) $transitWarehouse->id,
             (int) $delivery->material_id,
             $quantity,
             [
@@ -85,16 +91,17 @@ final class ProjectWarehouseService
         );
 
         /** @var WarehouseMovement $movement */
-        $movement = $result['movement'];
+        $movement = $result['movement_out'];
         $movement->forceFill([
-            'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
-            'to_warehouse_id' => $projectWarehouse->id,
             'related_user_id' => $responsibleUserId,
             'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
             'project_material_delivery_id' => $delivery->id,
         ])->save();
 
-        return $movement->refresh();
+        return [
+            'movement' => $movement->refresh(),
+            'project_warehouse' => $projectWarehouse,
+        ];
     }
 
     public function receiveOnProject(
@@ -110,32 +117,63 @@ final class ProjectWarehouseService
                 ->findOrFail((int) $delivery->project_warehouse_id)
             : $this->getOrCreateProjectWarehouse((int) $delivery->organization_id, (int) $delivery->project_id, $actor);
 
-        $price = (float) ($delivery->outboundMovement?->price ?? $delivery->material?->default_price ?? 0);
-
-        $result = $this->warehouseService->receiveAsset(
+        $transitWarehouse = $this->getOrCreateTransitWarehouse(
             (int) $delivery->organization_id,
+            (int) $delivery->project_id,
+            $actor,
+        );
+        $result = $this->warehouseService->transferAsset(
+            (int) $delivery->organization_id,
+            (int) $transitWarehouse->id,
             (int) $projectWarehouse->id,
             (int) $delivery->material_id,
             $quantity,
-            $price,
             [
                 'project_id' => (int) $delivery->project_id,
                 'user_id' => $actor->id,
                 'project_material_delivery_id' => $delivery->id,
                 'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
                 'reason' => $notes ?? trans_message('basic_warehouse.project_material_deliveries.received'),
-            ]
+            ],
         );
 
-        /** @var WarehouseMovement $movement */
-        $movement = $result['movement'];
-        $movement->forceFill([
-            'movement_type' => WarehouseMovement::TYPE_TRANSFER_IN,
-            'from_warehouse_id' => $delivery->warehouse_id,
-            'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
-            'project_material_delivery_id' => $delivery->id,
-        ])->save();
+        return $result['movement_in'];
+    }
 
-        return $movement->refresh();
+    private function getOrCreateTransitWarehouse(
+        int $organizationId,
+        int $projectId,
+        User $actor,
+    ): OrganizationWarehouse {
+        $warehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('warehouse_type', OrganizationWarehouse::TYPE_EXTERNAL)
+            ->where('settings->purpose', 'project_delivery_transit')
+            ->first();
+        if ($warehouse instanceof OrganizationWarehouse) {
+            return $warehouse;
+        }
+
+        $project = Project::query()
+            ->where('organization_id', $organizationId)
+            ->findOrFail($projectId);
+
+        return OrganizationWarehouse::query()->create([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'name' => trans_message('basic_warehouse.project_material_deliveries.transit_warehouse_name', [
+                'project' => $project->name,
+            ]),
+            'code' => 'TRN-PRJ-'.$projectId,
+            'warehouse_type' => OrganizationWarehouse::TYPE_EXTERNAL,
+            'is_main' => false,
+            'is_active' => true,
+            'settings' => [
+                'purpose' => 'project_delivery_transit',
+                'auto_created' => true,
+                'created_by_user_id' => $actor->id,
+            ],
+        ]);
     }
 }
