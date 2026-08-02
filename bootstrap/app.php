@@ -54,6 +54,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
             'project.context' => \App\Http\Middleware\ProjectContextMiddleware::class,
+            'report.project-scope' => \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope::class,
 
             // Дополнительные middleware
             'request.dedup' => \App\Http\Middleware\RequestDedupMiddleware::class,
