@@ -299,4 +299,3 @@ class SiteManagementService
         $site->clearCache();
     }
 }
-

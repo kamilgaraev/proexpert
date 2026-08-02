@@ -33,4 +33,3 @@ return [
     'supports_credentials' => true,
     'allow_any_origin_in_dev' => false,
 ];
-

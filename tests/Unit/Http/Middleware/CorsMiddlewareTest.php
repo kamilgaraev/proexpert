@@ -76,4 +76,3 @@ class CorsMiddlewareTest extends TestCase
         config()->set('web_auth.origins.public', ['https://www.example.test']);
     }
 }
-

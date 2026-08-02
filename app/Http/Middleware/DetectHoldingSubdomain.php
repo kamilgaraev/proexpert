@@ -50,4 +50,3 @@ class DetectHoldingSubdomain
         return $next($request);
     }
 }
-

@@ -126,4 +126,3 @@ final class CorsMiddleware
         return null;
     }
 }
-

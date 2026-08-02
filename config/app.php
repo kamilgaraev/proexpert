@@ -240,4 +240,3 @@ return [
     'customer_frontend_url' => env('CUSTOMER_FRONTEND_URL', 'https://customer.1мост.рф'),
 
 ];
-
