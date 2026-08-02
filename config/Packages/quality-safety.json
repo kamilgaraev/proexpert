@@ -12,8 +12,8 @@
             "price": 9900,
             "billing_model": "subscription",
             "duration_days": 30,
-            "modules": ["budget-estimates", "file-management", "quality-control", "safety-management"],
-            "highlights": ["Инспекции и дефекты", "Инструктажи и безопасность"]
+            "modules": ["budget-estimates", "file-management", "quality-control", "safety-management", "access_recertification"],
+            "highlights": ["Инспекции и дефекты", "Инструктажи и безопасность", "Пересмотр доступов"]
         }
     }
 }

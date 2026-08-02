@@ -50,6 +50,7 @@ return [
         'change-management' => 'package',
         'handover-acceptance' => 'package',
         'multi-organization' => 'package',
+        'access_recertification' => 'package',
         'material-analytics' => 'addon',
         'data-export' => 'integration',
         'advance-accounting' => 'addon',

@@ -12,8 +12,8 @@
             "price": 12900,
             "billing_model": "subscription",
             "duration_days": 30,
-            "modules": ["budget-estimates", "budgeting", "change-management", "advance-accounting"],
-            "highlights": ["Бюджетирование", "Изменения и претензии", "Подотчётные средства"]
+            "modules": ["budget-estimates", "budgeting", "change-management", "advance-accounting", "one-c-basic-exchange"],
+            "highlights": ["Бюджетирование", "Изменения и претензии", "Подотчётные средства", "Обмен с 1С"]
         }
     }
 }

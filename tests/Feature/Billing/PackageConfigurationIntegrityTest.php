@@ -26,7 +26,13 @@ class PackageConfigurationIntegrityTest extends TestCase
         'projects-processes' => ['site-requests', 'file-management'],
         'planning-schedules' => ['schedule-management'],
         'estimates-norms' => ['budget-estimates', 'rate-management'],
-        'quality-safety' => ['budget-estimates', 'file-management', 'quality-control', 'safety-management'],
+        'quality-safety' => [
+            'budget-estimates',
+            'file-management',
+            'quality-control',
+            'safety-management',
+            'access_recertification',
+        ],
         'pto-handover' => [
             'budget-estimates',
             'file-management',
@@ -42,6 +48,7 @@ class PackageConfigurationIntegrityTest extends TestCase
             'budgeting',
             'change-management',
             'advance-accounting',
+            'one-c-basic-exchange',
         ],
         'workforce-output' => [
             'time-tracking',
@@ -96,6 +103,27 @@ class PackageConfigurationIntegrityTest extends TestCase
             $this->assertSame([], array_values(array_intersect($foundationModules, $moduleSlugs)));
             $this->assertModulesExist($modules, $moduleSlugs, $package['slug']);
             $this->assertDependenciesClosed($modules, $moduleSlugs, $foundationModules, $package['slug']);
+        }
+    }
+
+    public function test_commercial_modules_are_not_available_without_an_entitlement(): void
+    {
+        $modules = $this->loadModules();
+
+        foreach ($this->catalog()->moduleClassifications() as $moduleSlug => $classification) {
+            if (! in_array($classification, ['package', 'addon', 'integration'], true)) {
+                continue;
+            }
+
+            $this->assertArrayHasKey($moduleSlug, $modules);
+            $this->assertFalse(
+                (bool) ($modules[$moduleSlug]['auto_activate'] ?? false),
+                "{$moduleSlug} must not be activated without an entitlement",
+            );
+            $this->assertTrue(
+                (bool) ($modules[$moduleSlug]['can_deactivate'] ?? true),
+                "{$moduleSlug} must be removable when its entitlement ends",
+            );
         }
     }
 
