@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
@@ -74,6 +75,17 @@ final class PipelineRunnerTest extends TestCase
         self::assertSame(CheckpointClaimStatus::Acquired, $claim->status);
         self::assertNull($this->runner([$stage])->runNext($context));
         self::assertSame(0, $stage->executions);
+    }
+
+    #[Test]
+    public function stale_claim_is_treated_as_obsolete_work_without_stage_failure(): void
+    {
+        $stage = new CountingStage(ProcessingStage::UnderstandObject);
+        $this->store->claimException = new StaleEstimateGenerationState(10, 3);
+
+        self::assertNull($this->runner([$stage])->runNext($this->context()));
+        self::assertSame(0, $stage->executions);
+        self::assertSame(0, $this->store->count());
     }
 
     #[Test]
@@ -682,6 +694,8 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
 
     public ?Throwable $failException = null;
 
+    public ?Throwable $claimException = null;
+
     public bool $forceFailFalse = false;
 
     public function claim(
@@ -690,6 +704,10 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
         DateTimeImmutable $now,
         DateTimeImmutable $leaseExpiresAt,
     ): CheckpointClaim {
+        if ($this->claimException !== null) {
+            throw $this->claimException;
+        }
+
         $key = $this->key($context, $stage);
         $item = $this->items[$key] ?? null;
 
