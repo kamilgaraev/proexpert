@@ -101,12 +101,40 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
             if (! is_array($decoded)) {
                 continue;
             }
-            if (PermissionSet::fromJsonRole($decoded)->hasPermission($permission)) {
+            if ($this->systemRoleGrants($decoded, $permission)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function systemRoleGrants(array $role, string $permission): bool
+    {
+        $permissions = [];
+        foreach ($role['system_permissions'] ?? [] as $systemPermission) {
+            if (is_string($systemPermission)) {
+                $permissions[] = $systemPermission;
+            }
+        }
+
+        foreach ($role['module_permissions'] ?? [] as $module => $modulePermissions) {
+            if (! is_string($module) || ! is_array($modulePermissions)) {
+                continue;
+            }
+
+            foreach ($modulePermissions as $modulePermission) {
+                if (! is_string($modulePermission)) {
+                    continue;
+                }
+
+                $permissions[] = $modulePermission === '*' || str_starts_with($modulePermission, $module.'.')
+                    ? ($modulePermission === '*' ? $module.'.*' : $modulePermission)
+                    : $module.'.'.$modulePermission;
+            }
+        }
+
+        return (new PermissionSet($permissions))->hasSystemPermission($permission);
     }
 
     private function conditionsPass(array $conditions, int $actorId, DateTimeImmutable $occurredAt): bool
