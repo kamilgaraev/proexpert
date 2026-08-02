@@ -1,0 +1,96 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill;
+
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectTransitionRecorder;
+use Illuminate\Support\Collection;
+
+final readonly class QualityDefectFlowBackfill
+{
+    public function __construct(private QualityDefectTransitionRecorder $recorder) {}
+
+    public function sourceCode(): string
+    {
+        return 'quality_defect_status_history';
+    }
+
+    public function sourceSchemaVersion(): string
+    {
+        return 'quality_defect_flow_v1';
+    }
+
+    public function nextBatch(int $organizationId, int $afterHistoryId, int $limit = 500): Collection
+    {
+        return QualityDefectStatusHistory::query()
+            ->with('defect')
+            ->where('organization_id', $organizationId)
+            ->where('id', '>', $afterHistoryId)
+            ->orderBy('id')
+            ->limit(min(max($limit, 1), 500))
+            ->get();
+    }
+
+    public function apply(Collection $batch): array
+    {
+        $inputHashes = [];
+        $outputHashes = [];
+        $gaps = 0;
+        $unknownOwnerKeys = [];
+        foreach ($batch as $history) {
+            if (! $history instanceof QualityDefectStatusHistory || $history->defect === null) {
+                $gaps++;
+
+                continue;
+            }
+            if ($history->changed_at === null) {
+                $gaps++;
+
+                continue;
+            }
+            $dimensions = $history->reporting_dimensions;
+            $missingDimensions = array_filter(
+                ['contractor_id', 'due_date', 'project_id', 'schedule_task_id', 'severity'],
+                static fn (string $key): bool => ! is_array($dimensions) || ! array_key_exists($key, $dimensions),
+            );
+            if (! is_array($dimensions)
+                || $missingDimensions !== []
+                || ! is_array($history->reporting_evidence_refs)) {
+                $gaps++;
+                $unknownOwnerKeys[] = 'quality_defect_status_history:'.(int) $history->id;
+
+                continue;
+            }
+            $inputHashes[] = hash('sha256', CanonicalJson::encode([
+                'changed_at' => $history->changed_at?->toAtomString(),
+                'changed_by' => $history->changed_by,
+                'comment_hash' => hash('sha256', trim((string) $history->comment)),
+                'contractor_id' => $dimensions['contractor_id'],
+                'defect_id' => $history->quality_defect_id,
+                'due_date' => $dimensions['due_date'],
+                'evidence_refs' => $history->reporting_evidence_refs,
+                'from_status' => $history->from_status?->value,
+                'history_id' => $history->id,
+                'project_id' => $dimensions['project_id'],
+                'schedule_task_id' => $dimensions['schedule_task_id'],
+                'severity' => $dimensions['severity'],
+                'to_status' => $history->to_status->value,
+            ]));
+            $outputHashes[] = $this->recorder->record($history->defect, $history)->event_hash;
+        }
+
+        return [
+            'source_count' => $batch->count(),
+            'projected_count' => count($outputHashes),
+            'gap_count' => $gaps,
+            'unknown_count' => count($unknownOwnerKeys),
+            'unknown_owner_keys' => $unknownOwnerKeys,
+            'input_hash' => hash('sha256', implode('', $inputHashes)),
+            'output_hash' => hash('sha256', implode('', $outputHashes)),
+            'source_watermark' => $batch->max('changed_at'),
+        ];
+    }
+}

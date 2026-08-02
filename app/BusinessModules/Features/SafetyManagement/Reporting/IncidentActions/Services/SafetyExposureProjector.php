@@ -1,0 +1,82 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services;
+
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetySite;
+use DateTimeInterface;
+use DomainException;
+
+final readonly class SafetyExposureProjector
+{
+    public function project(
+        int $organizationId,
+        int $projectId,
+        int $siteId,
+        DateTimeInterface $date,
+        string $exposureHours,
+        int $personShifts,
+        string $sourceCode,
+        string $sourceWatermark,
+        bool $complete,
+    ): SafetyExposureDay {
+        $siteExists = SafetySite::query()
+            ->whereKey($siteId)
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->whereDate('active_from', '<=', $date->format('Y-m-d'))
+            ->where(static function ($query) use ($date): void {
+                $query->whereNull('active_until')->orWhereDate('active_until', '>=', $date->format('Y-m-d'));
+            })
+            ->exists();
+        if (! $siteExists || preg_match('/^(0|[1-9][0-9]*)(?:\.[0-9]{1,4})?$/D', $exposureHours) !== 1 || $personShifts < 0) {
+            throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
+        }
+
+        $payload = [
+            'complete' => $complete,
+            'exposure_date' => $date->format('Y-m-d'),
+            'exposure_hours' => $exposureHours,
+            'organization_id' => $organizationId,
+            'person_shifts' => $personShifts,
+            'project_id' => $projectId,
+            'safety_site_id' => $siteId,
+            'source_code' => $sourceCode,
+            'source_watermark' => $sourceWatermark,
+        ];
+
+        $sourceHash = hash('sha256', CanonicalJson::encode($payload));
+
+        return ReportSnapshotFirstWriter::run(
+            'safety_exposure:'.$organizationId.':'.$siteId.':'.$date->format('Y-m-d'),
+            static function () use ($organizationId, $siteId, $date, $payload, $sourceHash): SafetyExposureDay {
+                $existing = SafetyExposureDay::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('safety_site_id', $siteId)
+                    ->whereDate('exposure_date', $date->format('Y-m-d'))
+                    ->lockForUpdate()
+                    ->first();
+                if ($existing instanceof SafetyExposureDay && hash_equals((string) $existing->source_hash, $sourceHash)) {
+                    return $existing;
+                }
+                if ($existing instanceof SafetyExposureDay) {
+                    $existing->forceFill($payload + [
+                        'source_hash' => $sourceHash,
+                        'projected_at' => now(),
+                    ])->save();
+
+                    return $existing->refresh();
+                }
+
+                return SafetyExposureDay::query()->create($payload + [
+                    'source_hash' => $sourceHash,
+                    'projected_at' => now(),
+                ]);
+            },
+        );
+    }
+}

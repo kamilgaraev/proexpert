@@ -16,12 +16,20 @@ class QualityDefectPhoto extends Model
         'uploaded_by',
         'type',
         'url',
+        'storage_version_id',
+        'storage_etag',
+        'storage_sha256',
+        'size_bytes',
+        'mime_type',
+        'storage_identity_verified',
         'caption',
         'metadata',
     ];
 
     protected $casts = [
         'metadata' => 'array',
+        'size_bytes' => 'integer',
+        'storage_identity_verified' => 'boolean',
     ];
 
     public function defect(): BelongsTo

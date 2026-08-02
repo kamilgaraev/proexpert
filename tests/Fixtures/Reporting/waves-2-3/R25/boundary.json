@@ -1,0 +1,51 @@
+{
+  "report_code": "workforce_admission",
+  "formula_version": "admission.v1",
+  "input": {
+    "assignment_id": 1,
+    "person_id": 20,
+    "site_id": 30,
+    "date": "2026-07-26",
+    "requirements": [
+      {
+        "code": "training",
+        "type": "training",
+        "status": "fulfilled",
+        "mandatory": true,
+        "verified": true,
+        "valid_until": "2026-08-01",
+        "evidence_type": "training",
+        "evidence_id": 101
+      },
+      {
+        "code": "medical",
+        "type": "medical_exam",
+        "status": "fulfilled",
+        "mandatory": true,
+        "verified": true,
+        "valid_until": "2026-07-25",
+        "evidence_type": "medical_exam",
+        "evidence_id": 102
+      },
+      {
+        "code": "ppe",
+        "type": "ppe",
+        "status": "missing",
+        "mandatory": true,
+        "verified": false,
+        "valid_until": null,
+        "evidence_type": null,
+        "evidence_id": null
+      }
+    ]
+  },
+  "expected": {
+    "status": "not_admitted",
+    "blocked": true,
+    "blocker_codes": [
+      "medical",
+      "ppe"
+    ],
+    "person_denominator": 1
+  }
+}

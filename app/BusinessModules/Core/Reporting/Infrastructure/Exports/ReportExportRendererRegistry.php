@@ -15,7 +15,7 @@ final readonly class ReportExportRendererRegistry
     public function __construct(
         private CsvReportExportRenderer $csv,
         private XlsxReportExportRenderer $xlsx,
-        private PdfReportExportRenderer $pdf,
+        private ?PdfReportExportRenderer $pdf = null,
     ) {
     }
 
@@ -38,7 +38,7 @@ final readonly class ReportExportRendererRegistry
         return match ($data->format) {
             'csv' => $this->csv->forDefinition($definition),
             'xlsx' => $this->xlsx->forDefinition($definition),
-            'pdf' => $this->pdf->forDefinition($definition),
+            'pdf' => $this->pdf?->forDefinition($definition) ?? throw $this->rejected(),
             default => throw $this->rejected(),
         };
     }

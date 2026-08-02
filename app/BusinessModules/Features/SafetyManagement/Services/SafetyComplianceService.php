@@ -14,14 +14,18 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyPpeIssue;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyPpeNorm;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyTrainingRecord;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Services\SafetyEvidenceVersionResolver;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 final class SafetyComplianceService
 {
+    public function __construct(private readonly SafetyEvidenceVersionResolver $evidenceVersions) {}
+
     public function check(SafetyComplianceContext $context): SafetyComplianceResult
     {
         $date = $context->date === null
@@ -80,14 +84,95 @@ final class SafetyComplianceService
         );
     }
 
+    public function checkPinnedRequirements(SafetyComplianceContext $context, array $requirements): array
+    {
+        $date = $context->date === null
+            ? CarbonImmutable::today()
+            : CarbonImmutable::instance($context->date);
+        $this->findEmployee($context);
+        $asOf = $this->evidenceCutoff($context);
+        $results = [];
+
+        foreach ($requirements as $requirement) {
+            if (! is_array($requirement)) {
+                throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
+            }
+
+            $normalized = $this->normalizeRequirementEntry([
+                'type' => $requirement['type'] ?? null,
+                'code' => $requirement['code'] ?? null,
+                'label' => $requirement['label'] ?? $requirement['code'] ?? null,
+                'required' => $requirement['mandatory'] ?? true,
+            ]);
+            if ($normalized === null) {
+                throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
+            }
+
+            $results[] = $this->evidenceVersions->requirement(
+                $context->organizationId,
+                $context->employeeId,
+                $normalized,
+                $date,
+                $asOf,
+                $context->projectId,
+            );
+        }
+
+        return $results;
+    }
+
+    public function pinnedLifecycleFlags(SafetyComplianceContext $context): array
+    {
+        $date = $context->date === null
+            ? CarbonImmutable::today()
+            : CarbonImmutable::instance($context->date);
+
+        $employee = $this->findEmployee($context);
+        $asOf = $this->evidenceCutoff($context);
+        $lifecycle = DB::table('safety_workforce_lifecycle_events')
+            ->where('organization_id', $context->organizationId)
+            ->where('subject_type', 'employee')
+            ->where('subject_id', $context->employeeId)
+            ->where('occurred_at', '<=', $asOf)
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('event_version')
+            ->first();
+        if ($lifecycle === null || ! (bool) $lifecycle->history_complete) {
+            return [$this->flag('employee_lifecycle_unverified', 'critical')];
+        }
+
+        return $this->lifecycleEventFlags($lifecycle, $date);
+    }
+
+    private function lifecycleEventFlags(object $event, CarbonInterface $date): array
+    {
+        $flags = [];
+        if ($event->valid_from !== null && CarbonImmutable::parse((string) $event->valid_from)->greaterThan($date)) {
+            $flags[] = $this->flag('employee_not_hired', 'critical');
+        }
+        if ($event->valid_to !== null && CarbonImmutable::parse((string) $event->valid_to)->lessThanOrEqualTo($date)) {
+            $flags[] = $this->flag('employee_dismissed', 'critical');
+        } elseif ($event->status !== 'active') {
+            $flags[] = $this->flag('employee_inactive', 'critical');
+        }
+
+        return $flags;
+    }
+
     private function findEmployee(SafetyComplianceContext $context): WorkforceEmployee
     {
+        $asOf = $this->evidenceCutoff($context);
         $employee = WorkforceEmployee::query()
+            ->withTrashed()
             ->where('organization_id', $context->organizationId)
             ->whereKey($context->employeeId)
+            ->where('created_at', '<=', $asOf)
+            ->where(static function (Builder $builder) use ($asOf): void {
+                $builder->whereNull('deleted_at')->orWhere('deleted_at', '>', $asOf);
+            })
             ->first();
 
-        if (!$employee instanceof WorkforceEmployee) {
+        if (! $employee instanceof WorkforceEmployee) {
             throw new DomainException(trans_message('safety_management.errors.employee_not_found'));
         }
 
@@ -148,7 +233,7 @@ final class SafetyComplianceService
         $requirements = [];
 
         foreach ($matrices as $matrix) {
-            if (!$matrix instanceof SafetyRequirementMatrix) {
+            if (! $matrix instanceof SafetyRequirementMatrix) {
                 continue;
             }
 
@@ -207,11 +292,11 @@ final class SafetyComplianceService
         }
 
         foreach ($requirements as $type => $items) {
-            if (!is_array($items)) {
+            if (! is_array($items)) {
                 continue;
             }
 
-            if (!array_is_list($items)) {
+            if (! array_is_list($items)) {
                 $items = [$items];
             }
 
@@ -268,16 +353,14 @@ final class SafetyComplianceService
     {
         $flags = [];
 
-        if ($employee->employment_status !== 'active') {
-            $flags[] = $this->flag('employee_inactive', 'critical');
-        }
-
         if ($employee->hire_date !== null && $employee->hire_date->greaterThan($date)) {
             $flags[] = $this->flag('employee_not_hired', 'critical');
         }
 
         if ($employee->dismissal_date !== null && $employee->dismissal_date->lessThanOrEqualTo($date)) {
             $flags[] = $this->flag('employee_dismissed', 'critical');
+        } elseif ($employee->employment_status !== 'active' && $employee->dismissal_date === null) {
+            $flags[] = $this->flag('employee_inactive', 'critical');
         }
 
         return $flags;
@@ -316,12 +399,19 @@ final class SafetyComplianceService
         array $requirement,
         CarbonInterface $date
     ): ?SafetyEmployeeRequirement {
+        $asOf = $this->evidenceCutoff($context);
+
         return SafetyEmployeeRequirement::query()
+            ->withTrashed()
             ->forOrganization($context->organizationId)
             ->where('employee_id', $context->employeeId)
             ->where('requirement_type', $requirement['type'])
             ->where('requirement_code', $requirement['code'])
             ->whereIn('status', ['fulfilled', 'valid', 'approved', 'completed', 'waived'])
+            ->where('created_at', '<=', $asOf)
+            ->where(static function (Builder $builder) use ($asOf): void {
+                $builder->whereNull('deleted_at')->orWhere('deleted_at', '>', $asOf);
+            })
             ->where(static function (Builder $query) use ($date): void {
                 $query->whereNull('valid_from')->orWhereDate('valid_from', '<=', $date->toDateString());
             })
@@ -343,6 +433,8 @@ final class SafetyComplianceService
                 static fn (Builder $query): Builder => $query->whereNull('work_type_id'),
             )
             ->latest('valid_until')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->first();
     }
 
@@ -351,15 +443,23 @@ final class SafetyComplianceService
         array $requirement,
         CarbonInterface $date
     ): SafetyComplianceRequirementResult {
+        $asOf = $this->evidenceCutoff($context);
         $record = SafetyTrainingRecord::query()
+            ->withTrashed()
             ->forOrganization($context->organizationId)
             ->where('employee_id', $context->employeeId)
             ->where('program_code', $requirement['code'])
+            ->where('completed_at', '<=', $asOf)
+            ->where('created_at', '<=', $asOf)
+            ->where(static function (Builder $builder) use ($asOf): void {
+                $builder->whereNull('deleted_at')->orWhere('deleted_at', '>', $asOf);
+            })
             ->orderByDesc('valid_until')
             ->orderByDesc('completed_at')
+            ->orderByDesc('id')
             ->first();
 
-        if (!$record instanceof SafetyTrainingRecord) {
+        if (! $record instanceof SafetyTrainingRecord) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 
@@ -367,7 +467,7 @@ final class SafetyComplianceService
             return $this->result($requirement, 'failed', $this->severity($requirement), $record->valid_until, 'training', (int) $record->id);
         }
 
-        if (!$this->validOn($record->valid_until, $date)) {
+        if (! $this->validOn($record->valid_until, $date)) {
             return $this->result($requirement, 'expired', $this->severity($requirement), $record->valid_until, 'training', (int) $record->id);
         }
 
@@ -379,15 +479,23 @@ final class SafetyComplianceService
         array $requirement,
         CarbonInterface $date
     ): SafetyComplianceRequirementResult {
+        $asOf = $this->evidenceCutoff($context);
         $exam = SafetyMedicalExam::query()
+            ->withTrashed()
             ->forOrganization($context->organizationId)
             ->where('employee_id', $context->employeeId)
             ->where('exam_type', $requirement['code'])
+            ->where('completed_at', '<=', $asOf)
+            ->where('created_at', '<=', $asOf)
+            ->where(static function (Builder $builder) use ($asOf): void {
+                $builder->whereNull('deleted_at')->orWhere('deleted_at', '>', $asOf);
+            })
             ->orderByDesc('valid_until')
             ->orderByDesc('completed_at')
+            ->orderByDesc('id')
             ->first();
 
-        if (!$exam instanceof SafetyMedicalExam) {
+        if (! $exam instanceof SafetyMedicalExam) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 
@@ -395,7 +503,7 @@ final class SafetyComplianceService
             return $this->result($requirement, 'not_fit', $this->severity($requirement), $exam->valid_until, 'medical_exam', (int) $exam->id);
         }
 
-        if (!$this->validOn($exam->valid_until, $date)) {
+        if (! $this->validOn($exam->valid_until, $date)) {
             return $this->result($requirement, 'expired', $this->severity($requirement), $exam->valid_until, 'medical_exam', (int) $exam->id);
         }
 
@@ -411,20 +519,28 @@ final class SafetyComplianceService
         array $requirement,
         CarbonInterface $date
     ): SafetyComplianceRequirementResult {
+        $asOf = $this->evidenceCutoff($context);
         $issue = SafetyPpeIssue::query()
+            ->withTrashed()
             ->forOrganization($context->organizationId)
             ->where('employee_id', $context->employeeId)
             ->where('ppe_code', $requirement['code'])
             ->where('status', 'issued')
+            ->where('issued_at', '<=', $asOf)
+            ->where('created_at', '<=', $asOf)
+            ->where(static function (Builder $builder) use ($asOf): void {
+                $builder->whereNull('deleted_at')->orWhere('deleted_at', '>', $asOf);
+            })
             ->orderByDesc('valid_until')
             ->orderByDesc('issued_at')
+            ->orderByDesc('id')
             ->first();
 
-        if (!$issue instanceof SafetyPpeIssue) {
+        if (! $issue instanceof SafetyPpeIssue) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 
-        if (!$this->validOn($issue->valid_until, $date)) {
+        if (! $this->validOn($issue->valid_until, $date)) {
             return $this->result($requirement, 'expired', $this->severity($requirement), $issue->valid_until, 'ppe', (int) $issue->id);
         }
 
@@ -437,6 +553,7 @@ final class SafetyComplianceService
         array $requirement,
         CarbonInterface $date
     ): SafetyComplianceRequirementResult {
+        $asOf = $this->evidenceCutoff($context);
         $participant = SafetyBriefingParticipant::query()
             ->where(function (Builder $query) use ($employee): void {
                 $query->where('employee_id', $employee->id);
@@ -447,17 +564,20 @@ final class SafetyComplianceService
             })
             ->where('signature_status', 'signed')
             ->whereNotNull('signed_at')
-            ->whereHas('briefing', static function (Builder $query) use ($context, $requirement, $date): void {
+            ->where('signed_at', '<=', $asOf)
+            ->whereHas('briefing', static function (Builder $query) use ($context, $requirement, $asOf): void {
                 $query->where('organization_id', $context->organizationId)
                     ->where('briefing_type', $requirement['code'])
                     ->where('status', 'completed')
-                    ->whereDate('conducted_at', '<=', $date->toDateString())
+                    ->where('conducted_at', '<=', $asOf)
+                    ->where('completed_at', '<=', $asOf)
                     ->when($context->projectId !== null, static fn (Builder $query): Builder => $query->where('project_id', $context->projectId));
             })
             ->latest('signed_at')
+            ->orderByDesc('id')
             ->first();
 
-        if (!$participant instanceof SafetyBriefingParticipant) {
+        if (! $participant instanceof SafetyBriefingParticipant) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 
@@ -547,5 +667,16 @@ final class SafetyComplianceService
         }
 
         return false;
+    }
+
+    private function evidenceCutoff(SafetyComplianceContext $context): CarbonImmutable
+    {
+        if ($context->evidenceCutoff !== null) {
+            return CarbonImmutable::instance($context->evidenceCutoff);
+        }
+
+        return $context->date === null
+            ? CarbonImmutable::now()
+            : CarbonImmutable::instance($context->date)->endOfDay();
     }
 }

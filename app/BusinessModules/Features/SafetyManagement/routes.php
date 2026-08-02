@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\SafetyManagement\Http\Controllers\SafetyManagementController;
+use App\BusinessModules\Features\SafetyManagement\Http\Controllers\SafetyWorkforceSiteAssignmentController;
 use App\BusinessModules\Features\SafetyManagement\Http\Controllers\Mobile\SafetyManagementController as MobileSafetyManagementController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
@@ -22,6 +23,9 @@ Route::prefix('api/v1/admin/safety-management')
         Route::post('/admission/check', [SafetyManagementController::class, 'checkAdmission'])
             ->middleware('authorize:safety-management.view')
             ->name('admission.check');
+        Route::post('/workforce-site-assignments', [SafetyWorkforceSiteAssignmentController::class, 'store'])
+            ->middleware('authorize:safety-management.settings.manage')
+            ->name('workforce_site_assignments.store');
 
         Route::get('/requirement-matrices', [SafetyManagementController::class, 'requirementMatrices'])
             ->middleware('authorize:safety-management.view')

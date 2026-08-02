@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotIdentityBuilder;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
@@ -60,6 +61,33 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             self::BASELINE_HASH,
             (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result)->value,
         );
+    }
+
+    public function test_snapshot_identity_builder_accepts_equal_authoritative_source_hashes(): void
+    {
+        [$query, $snapshot, $result] = $this->fixture($this->baselineSources());
+
+        self::assertMatchesRegularExpression(
+            '/^[a-f0-9]{64}$/D',
+            (new ReportSnapshotIdentityBuilder(new CanonicalReportSourceHashBuilder))
+                ->build($query, $snapshot, $result)->value,
+        );
+    }
+
+    public function test_build_rejects_snapshot_and_provenance_source_hash_mismatch(): void
+    {
+        [$query, $snapshot, $result] = $this->fixture($this->baselineSources());
+        [, , $mismatched] = $this->fixture(
+            $this->baselineSources(),
+            [],
+            ['source_hash' => str_repeat('f', 64)],
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_source_hash_identity_mismatch');
+
+        (new ReportSnapshotIdentityBuilder(new CanonicalReportSourceHashBuilder))
+            ->build($query, $snapshot, $mismatched);
     }
 
     #[DataProvider('closedProjectionMutationProvider')]

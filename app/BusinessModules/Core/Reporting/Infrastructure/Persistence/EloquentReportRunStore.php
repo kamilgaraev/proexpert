@@ -12,6 +12,8 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotIdentityBuilder;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -37,6 +39,8 @@ final class EloquentReportRunStore implements ReportRunStore
         private readonly ReportExecutionClock $clock,
         private readonly ReportTransitionAudit $audit,
         private readonly ReportRunHydrator $hydrator,
+        private readonly ReportSnapshotSealValidator $sealValidator,
+        private readonly ReportSnapshotIdentityBuilder $snapshotIdentities,
         private readonly ReportDispatchIntentStore $dispatchIntents,
         private readonly int $runTtlSeconds,
         private readonly int $pollAfterMs,
@@ -245,7 +249,8 @@ final class EloquentReportRunStore implements ReportRunStore
         return DB::transaction(function () use ($context, $runId, $leaseToken, $snapshot, $result, $sourceHash, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $query = $this->hydrator->query($record);
-            $identity = $this->sealedPayload($snapshot, $result, $sourceHash, $occurredAt);
+            $identity = $this->sealedPayload($query, $snapshot, $result, $sourceHash, $occurredAt);
+            $this->sealValidator->assertSealable($query, $snapshot, $result, $sourceHash);
             $this->assertSealedInput($record, $query, $snapshot, $result, $sourceHash);
 
             if ($record->status === ReportRunStatus::READY->value) {
@@ -499,8 +504,14 @@ final class EloquentReportRunStore implements ReportRunStore
         ];
     }
 
-    private function sealedPayload(ReportSnapshotRef $snapshot, ReportResult $result, Sha256Hash $sourceHash, DateTimeImmutable $occurredAt): array
-    {
+    private function sealedPayload(
+        ReportQuery $query,
+        ReportSnapshotRef $snapshot,
+        ReportResult $result,
+        Sha256Hash $sourceHash,
+        DateTimeImmutable $occurredAt,
+    ): array {
+        $snapshotIdentity = $this->snapshotIdentities->build($query, $snapshot, $result);
         $quality = $this->qualityPayload($result);
         $provenance = $this->provenancePayload($result);
         $resultSnapshot = $result->metadata->snapshot;
@@ -559,6 +570,7 @@ final class EloquentReportRunStore implements ReportRunStore
             'snapshot_sealed_payload_hash' => $snapshot->seal?->sealedPayloadHash->value,
             'snapshot_seal_signature' => $snapshot->seal?->signature,
             'snapshot_sealed_at' => $snapshot->seal?->sealedAt,
+            'snapshot_identity_hash' => $snapshotIdentity->value,
             'ready_at' => $occurredAt,
             'updated_at' => $occurredAt,
         ];

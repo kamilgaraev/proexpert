@@ -1,0 +1,12 @@
+{
+  "report_code": "safety_incident_actions",
+  "formula_version": "safety-actions.v1",
+  "input": {
+    "qualifying_incident_count": 2,
+    "exposure_hours": "400000.0000",
+    "frequency_multiplier": 200000
+  },
+  "expected": {
+    "incident_frequency": "1.0000"
+  }
+}
