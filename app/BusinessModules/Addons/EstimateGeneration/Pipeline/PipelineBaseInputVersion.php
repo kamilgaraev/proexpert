@@ -9,7 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class PipelineBaseInputVersion
 {
-    public const SCHEMA_VERSION = 6;
+    public const SCHEMA_VERSION = 7;
 
     /**
      * @param  list<array{id: int, source_version: string, status: string, derived_version: string}>  $documents
@@ -33,8 +33,8 @@ final class PipelineBaseInputVersion
     }
 
     /**
-     * @param  array{content_version?: string, model?: array<string, mixed>}|null  $buildingModel
-     * @return array{content_version: string, scale_status: string, evidence_ids: list<int>}|null
+     * @param  array{content_version?: string, model?: array<string, mixed>, effective_values?: list<array<string, mixed>>}|null  $buildingModel
+     * @return array{content_version: string, scale_status: string, evidence_ids: list<int>, effective_values: list<array<string, mixed>>}|null
      */
     private static function buildingModelProjection(?array $buildingModel): ?array
     {
@@ -55,6 +55,7 @@ final class PipelineBaseInputVersion
             'content_version' => $contentVersion,
             'scale_status' => (string) $model['scale_status'],
             'evidence_ids' => $evidenceIds,
+            'effective_values' => array_values(is_array($buildingModel['effective_values'] ?? null) ? $buildingModel['effective_values'] : []),
         ];
     }
 

@@ -82,6 +82,15 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 (int) $unit->document->session->state_version,
                 $unit->document->session->status->value,
                 $pageId,
+                function () use ($claim): bool {
+                    $now = now()->toDateTimeImmutable();
+
+                    return $this->renew(
+                        $claim,
+                        $now,
+                        $now->modify(sprintf('+%d seconds', \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisLeasePolicy::UNIT_LEASE_SECONDS)),
+                    );
+                },
             );
         }, 3);
     }

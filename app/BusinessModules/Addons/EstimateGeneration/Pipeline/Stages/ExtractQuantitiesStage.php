@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -14,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\EffectiveProjectModelQuantityInputProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCalculationResult;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
@@ -33,6 +33,7 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         private BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
         private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
         private ResidentialQuantityScenarioCatalog $residentialScenarios = new ResidentialQuantityScenarioCatalog,
+        private EffectiveProjectModelQuantityInputProjector $effectiveProjection = new EffectiveProjectModelQuantityInputProjector,
     ) {}
 
     public function stage(): ProcessingStage
@@ -55,27 +56,19 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         $diagnostics = [];
         $metrics = [];
         $model = null;
+        $hasEffectiveAreaCorrections = false;
         if (is_array($normalized)) {
             $model = NormalizedBuildingModelData::fromArray($normalized);
-            $calculation = $this->calculator->calculate($this->inputMapper->map($model));
+            $effectiveValues = is_array($analysis['effective_project_model_values'] ?? null)
+                ? $analysis['effective_project_model_values'] : [];
+            $hasEffectiveAreaCorrections = $this->effectiveProjection->hasAreaCorrections($effectiveValues);
+            $calculation = $this->calculator->calculate($this->effectiveProjection->project($this->inputMapper->map($model), $effectiveValues));
             $quantities = $calculation->all();
             $diagnostics = $calculation->diagnostics;
             $metrics = $calculation->metrics;
         }
-        if ($model !== null && $context->baseInputVersion !== null) {
-            $expectedFloorCount = $this->positiveInteger($analysis['object']['floors'] ?? null);
-            $roomAreas = $this->roomAnnotationFloorArea->makeAll(new BuildingModelOperationContext(
-                $context->organizationId,
-                $context->projectId,
-                $context->sessionId,
-                $context->baseInputVersion,
-            ), $model, $expectedFloorCount);
-            foreach ($roomAreas as $roomArea) {
-                $quantities[$roomArea->key] = $roomArea;
-            }
-        }
         $documentArea = $this->analysisFloorArea->make($analysis);
-        if ($documentArea !== null
+        if (! $hasEffectiveAreaCorrections && $documentArea !== null
             && ($documentArea->source === QuantitySource::Evidenced
                 || ! isset($quantities['floor_area']))) {
             $quantities[$documentArea->key] = $documentArea;
@@ -111,12 +104,4 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         return $this->results->make($context, $this->stage(), $data, ['hints_count' => count($hints)]);
     }
 
-    private function positiveInteger(mixed $value): ?int
-    {
-        if (! is_numeric($value) || (float) $value < 1 || (float) $value > 100 || floor((float) $value) !== (float) $value) {
-            return null;
-        }
-
-        return (int) $value;
-    }
 }

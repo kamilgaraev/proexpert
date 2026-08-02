@@ -469,6 +469,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateGenerationUnitJobDispatcher::class, LaravelEstimateGenerationUnitJobDispatcher::class);
         $this->app->singleton(DocumentUnitExhaustionHandler::class, EloquentDocumentUnitExhaustionHandler::class);
         $this->app->singleton(DocumentUnitContentReader::class, S3DocumentUnitContentReader::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetRoleClassifier::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter::class);
         $this->app->singleton(DocumentUnitProcessor::class, ProductionDocumentUnitProcessor::class);
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);

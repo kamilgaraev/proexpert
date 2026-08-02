@@ -30,7 +30,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         $vector = VectorGeometryData::fromArray($vectorPayload);
         $confirmation = $this->confirmation($vector);
         $service = $this->service([(object) [
-            'id' => 81, 'document_id' => 71, 'normalized_payload' => ['vector_geometry' => $vectorPayload],
+            'id' => 81, 'document_id' => 71, 'normalized_payload' => ['source_kind' => 'cad', 'vector_geometry' => $vectorPayload],
         ]]);
 
         $result = $service->handle(new GeometryConfirmationCommand(
@@ -93,14 +93,14 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         $sourceVersion = 'sha256:'.str_repeat('b', 64);
         $payload = $this->vectorPayload($sourceVersion);
         $confirmation = (new GeometrySourceConfirmationFactory)->makeFromNormalizedPayload(
-            ['vector_geometry' => $payload],
+            ['source_kind' => 'cad', 'vector_geometry' => $payload],
             $sourceVersion,
         );
         self::assertIsArray($confirmation);
         $service = $this->service([(object) [
             'id' => 81,
             'document_id' => 71,
-            'normalized_payload' => ['vector_geometry' => $payload],
+            'normalized_payload' => ['source_kind' => 'cad', 'vector_geometry' => $payload],
         ]]);
 
         $result = $service->handle(new GeometryConfirmationCommand(
@@ -131,7 +131,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         $service = $this->service([(object) [
             'id' => 81,
             'document_id' => 71,
-            'normalized_payload' => ['vector_geometry' => $payload],
+            'normalized_payload' => ['source_kind' => 'cad', 'vector_geometry' => $payload],
         ]]);
 
         $this->expectException(\InvalidArgumentException::class);
@@ -144,7 +144,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
 
     private function service(array $rows): AssemblePersistedVectorGeometry
     {
-        $unit = $rows === [] ? null : (object) [...get_object_vars($rows[0]), 'source_version' => 'sha256:'.str_repeat('b', 64)];
+        $unit = $rows === [] ? null : (object) [...get_object_vars($rows[0]), 'source_version' => 'sha256:'.str_repeat('b', 64), 'unit_type' => 'cad_drawing'];
         $normalizedPayload = $rows === [] ? [] : $rows[0]->normalized_payload;
         $documents = Mockery::mock();
         foreach ([['id', 71], ['organization_id', 11], ['project_id', 22], ['session_id', 33], ['status', '<>', 'ignored']] as $where) {
@@ -170,9 +170,8 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         foreach ([['id', 81], ['organization_id', 11], ['project_id', 22], ['session_id', 33], ['document_id', 71], ['status', 'completed']] as $where) {
             $units->shouldReceive('where')->once()->with(...$where)->andReturnSelf();
         }
-        $units->shouldReceive('whereIn')->once()->with('unit_type', ['pdf_page', 'cad_drawing'])->andReturnSelf();
         $units->shouldReceive('lockForUpdate')->once()->andReturnSelf();
-        $units->shouldReceive('first')->once()->with(['id', 'document_id', 'source_version'])->andReturn($unit);
+        $units->shouldReceive('first')->once()->with(['id', 'document_id', 'source_version', 'unit_type'])->andReturn($unit);
         $database = Mockery::mock(DatabaseManager::class);
         $database->shouldReceive('table')->once()->with('estimate_generation_documents')->andReturn($documents);
         $database->shouldReceive('table')->once()->with('estimate_generation_document_pages')->andReturn($pages);

@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 interface BuildingModelReadDataSource
 {
-    /** @return array{content_version: string, model: array<string, mixed>}|null */
+    /** @return array{content_version: string, model: array<string, mixed>, effective_values?: list<array<string, mixed>>}|null */
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array;
 
     /** @param list<int> $ids @return array<int, array<string, mixed>> */

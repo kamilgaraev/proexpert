@@ -12,9 +12,9 @@ final readonly class BuildingModelRepository
 {
     public function __construct(private BuildingModelStore $store, private EvidenceRepository $evidence) {}
 
-    public function store(BuildingModelOperationContext $context, NormalizedBuildingModelData $model): StoredBuildingModel
+    public function store(BuildingModelOperationContext $context, NormalizedBuildingModelData $model, ?callable $afterStore = null): StoredBuildingModel
     {
-        return $this->store->transaction($context, function () use ($context, $model): StoredBuildingModel {
+        return $this->store->transaction($context, function () use ($context, $model, $afterStore): StoredBuildingModel {
             $nodes = $this->evidence->activeNodesForUpdate(
                 $context->organizationId,
                 $context->projectId,
@@ -26,6 +26,9 @@ final readonly class BuildingModelRepository
             }
             $stored = $this->store->insertOrGet($context, $model);
             $this->store->attachEvidence($stored, $model->evidenceIds);
+            if ($afterStore !== null) {
+                $afterStore($stored);
+            }
 
             return $stored;
         });

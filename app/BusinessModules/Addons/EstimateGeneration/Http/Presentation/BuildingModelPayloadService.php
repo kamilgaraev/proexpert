@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBu
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\EffectiveProjectModelQuantityInputProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use Brick\Math\BigDecimal;
@@ -17,6 +18,7 @@ final readonly class BuildingModelPayloadService
     public function __construct(
         private BuildingModelReadDataSource $data,
         private NormalizedBuildingModelQuantityInputMapper $mapper = new NormalizedBuildingModelQuantityInputMapper,
+        private EffectiveProjectModelQuantityInputProjector $effectiveProjection = new EffectiveProjectModelQuantityInputProjector,
         private BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
         private QuantityFormulaInputsPresenter $formulaInputs = new QuantityFormulaInputsPresenter,
         private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
@@ -44,14 +46,15 @@ final readonly class BuildingModelPayloadService
             || ! hash_equals($model->contentVersion(), $contentVersion)) {
             throw new \UnexpectedValueException('Building model content version is invalid.');
         }
-        $calculation = $this->calculator->calculate($this->mapper->map($model));
+        $effectiveValues = is_array($head['effective_values'] ?? null) ? $head['effective_values'] : [];
+        $calculation = $this->calculator->calculate($this->effectiveProjection->project($this->mapper->map($model), $effectiveValues));
         $quantitiesByKey = $calculation->all();
         $totalArea = $this->data->totalArea($organizationId, $projectId, $sessionId);
         $documentArea = $this->analysisFloorArea->make([
             'normalized_building_model' => $model->toArray(),
             'document_total_area' => $totalArea,
         ]);
-        if ($documentArea !== null) {
+        if (! $this->effectiveProjection->hasAreaCorrections($effectiveValues) && $documentArea !== null) {
             $quantitiesByKey[$documentArea->key] = $documentArea;
         }
         $quantities = array_values($quantitiesByKey);
@@ -73,6 +76,7 @@ final readonly class BuildingModelPayloadService
             'state_version' => (int) $session->state_version,
             'content_version' => $contentVersion,
             'building_model' => $model->toArray(),
+            'effective_values' => $effectiveValues,
             'quantities' => [
                 'data' => array_map(fn (QuantityData $quantity): array => $this->quantity($quantity, $evidence, $model), $pageItems),
                 'meta' => $this->meta($total, $page, $perPage),

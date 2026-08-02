@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\BuildingModelReadDataSource;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use Illuminate\Database\DatabaseManager;
@@ -22,7 +20,6 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
 
     public function __construct(
         private DatabaseManager $database,
-        private BuildingModelRepository $buildingModels,
         private BuildingModelReadDataSource $buildingModelReadData,
     ) {}
 
@@ -100,18 +97,18 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
             }
         }
 
-        $model = $this->buildingModels->latestCurrentModel(new BuildingModelOperationContext(
+        $model = $this->buildingModelReadData->latestModel(
             $context->organizationId,
             $context->projectId,
             $context->sessionId,
-            $context->baseInputVersion,
-        ));
+        );
 
         return [
             'input' => $this->json($session->input_payload),
             'documents' => array_values($documents),
             'user_id' => $session->user_id === null ? null : (int) $session->user_id,
-            'normalized_building_model' => $model?->toArray(),
+            'normalized_building_model' => is_array($model['model'] ?? null) ? $model['model'] : null,
+            'effective_project_model_values' => is_array($model['effective_values'] ?? null) ? $model['effective_values'] : [],
             'document_total_area' => $this->buildingModelReadData->totalArea(
                 $context->organizationId,
                 $context->projectId,
