@@ -13,7 +13,7 @@ return new class extends Migration
             return;
         }
 
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_processing_units
     ADD CONSTRAINT eg_units_locator_provenance_ck
     CHECK (
