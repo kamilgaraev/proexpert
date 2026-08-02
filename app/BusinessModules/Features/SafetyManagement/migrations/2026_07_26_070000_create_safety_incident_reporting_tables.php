@@ -174,7 +174,7 @@ return new class extends Migration
 
         DB::statement('ALTER TABLE safety_incident_policy_versions ADD CONSTRAINT safety_incident_policy_dates_check CHECK (effective_until IS NULL OR effective_until >= effective_from)');
         DB::statement("ALTER TABLE safety_incident_policy_versions ADD CONSTRAINT safety_incident_policy_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')");
-        DB::statement("ALTER TABLE safety_incident_policy_versions ADD CONSTRAINT safety_incident_policy_terminal_statuses_check CHECK (jsonb_typeof(terminal_statuses) = 'object' AND terminal_statuses ?& ARRAY['incident', 'violation', 'corrective_action'])");
+        DB::unprepared("ALTER TABLE safety_incident_policy_versions ADD CONSTRAINT safety_incident_policy_terminal_statuses_check CHECK (jsonb_typeof(terminal_statuses) = 'object' AND terminal_statuses ?& ARRAY['incident', 'violation', 'corrective_action'])");
         DB::statement("ALTER TABLE safety_incident_policy_versions ADD CONSTRAINT safety_incident_policy_rules_check CHECK (overdue_rule = 'site_local_end_of_day' AND calendar_code = 'calendar_days')");
         DB::statement('CREATE UNIQUE INDEX safety_incident_policy_scope_version_unique ON safety_incident_policy_versions (organization_id, COALESCE(project_id, 0), version)');
         DB::statement("ALTER TABLE safety_incident_policy_versions ADD CONSTRAINT safety_incident_policy_no_overlap EXCLUDE USING gist (organization_id WITH =, (COALESCE(project_id, 0)) WITH =, (daterange(effective_from, COALESCE(effective_until, 'infinity'::date), '[]')) WITH &&)");
