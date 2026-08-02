@@ -34,7 +34,7 @@ return new class extends Migration
                 'contractor_membership_event_scope_idx',
             );
         });
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             CREATE OR REPLACE FUNCTION most_capture_contractor_scorecard_membership_v1()
             RETURNS trigger
             LANGUAGE plpgsql
