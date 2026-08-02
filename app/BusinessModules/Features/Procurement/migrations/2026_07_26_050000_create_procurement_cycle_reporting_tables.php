@@ -11,34 +11,6 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('procurement_process_events', function (Blueprint $table): void {
-            $table->bigIncrements('id');
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('purchase_request_id');
-            $table->unsignedBigInteger('purchase_request_line_id');
-            $table->unsignedBigInteger('project_id')->nullable();
-            $table->unsignedBigInteger('supplier_request_id')->nullable();
-            $table->unsignedBigInteger('supplier_proposal_version_id')->nullable();
-            $table->unsignedBigInteger('purchase_order_id')->nullable();
-            $table->unsignedBigInteger('purchase_receipt_id')->nullable();
-            $table->string('event_code', 32);
-            $table->string('stage', 32);
-            $table->unsignedBigInteger('actor_id')->nullable();
-            $table->timestampTz('occurred_at');
-            $table->unsignedInteger('event_version');
-            $table->string('source_event_id', 128);
-            $table->char('source_hash', 64);
-            $table->jsonb('evidence')->nullable();
-            $table->timestampTz('recorded_at')->useCurrent();
-            $table->unique(
-                ['organization_id', 'purchase_request_line_id', 'event_code', 'source_event_id'],
-                'proc_cycle_event_source_unique',
-            );
-            $table->index(
-                ['organization_id', 'purchase_request_line_id', 'occurred_at', 'id'],
-                'proc_cycle_event_timeline_idx',
-            );
-        });
         Schema::create('procurement_cycle_owner_expectation_versions', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -57,28 +29,6 @@ return new class extends Migration
             $table->unique(
                 ['organization_id', 'purchase_request_line_id', 'source_event_id'],
                 'proc_cycle_expectation_source_unique',
-            );
-        });
-
-        Schema::create('procurement_cycle_policy_versions', function (Blueprint $table): void {
-            $table->bigIncrements('id');
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedInteger('policy_version');
-            $table->string('timezone', 64);
-            $table->jsonb('business_weekdays');
-            $table->time('business_day_start');
-            $table->time('business_day_end');
-            $table->jsonb('stage_sla_seconds');
-            $table->unsignedInteger('freshness_ttl_seconds')->default(86400);
-            $table->unsignedInteger('cohort_maturity_seconds')->default(0);
-            $table->timestampTz('effective_from');
-            $table->timestampTz('effective_to')->nullable();
-            $table->char('source_hash', 64);
-            $table->timestampTz('created_at')->useCurrent();
-            $table->unique(['organization_id', 'policy_version'], 'proc_cycle_policy_version_unique');
-            $table->index(
-                ['organization_id', 'effective_from', 'effective_to'],
-                'proc_cycle_policy_effective_idx',
             );
         });
 
@@ -141,9 +91,7 @@ return new class extends Migration
 
         $this->installConstraints();
         $this->installAppendOnlyTriggers([
-            'procurement_process_events',
             'procurement_cycle_owner_expectation_versions',
-            'procurement_cycle_policy_versions',
             'procurement_cycle_snapshots',
             'procurement_cycle_rows',
         ]);
@@ -153,9 +101,7 @@ return new class extends Migration
     {
         Schema::dropIfExists('procurement_cycle_rows');
         Schema::dropIfExists('procurement_cycle_snapshots');
-        Schema::dropIfExists('procurement_cycle_policy_versions');
         Schema::dropIfExists('procurement_cycle_owner_expectation_versions');
-        Schema::dropIfExists('procurement_process_events');
     }
 
     private function installConstraints(): void
@@ -164,10 +110,6 @@ return new class extends Migration
             return;
         }
 
-        DB::statement("ALTER TABLE procurement_process_events ADD CONSTRAINT proc_cycle_event_code_check CHECK (event_code IN ('request_created','request_approved','solicitation_sent','supplier_responded','award_decided','order_sent','first_receipt','fully_received','cancelled'))");
-        DB::statement('ALTER TABLE procurement_process_events ADD CONSTRAINT proc_cycle_event_version_check CHECK (event_version > 0)');
-        DB::statement('ALTER TABLE procurement_cycle_policy_versions ADD CONSTRAINT proc_cycle_policy_interval_check CHECK (effective_to IS NULL OR effective_to > effective_from)');
-        DB::statement('ALTER TABLE procurement_cycle_policy_versions ADD CONSTRAINT proc_cycle_policy_day_check CHECK (business_day_end > business_day_start)');
         DB::statement("ALTER TABLE procurement_cycle_snapshots ADD CONSTRAINT proc_cycle_quality_check CHECK (quality_status IN ('complete','partial','invalid'))");
         DB::statement("ALTER TABLE procurement_cycle_snapshots ADD CONSTRAINT proc_cycle_reconciliation_check CHECK (reconciliation_status IN ('matched','mismatch','not_applicable'))");
         DB::statement('ALTER TABLE procurement_cycle_snapshots ADD CONSTRAINT proc_cycle_sla_count_check CHECK (sla_numerator <= eligible_count)');
