@@ -23,6 +23,7 @@ final readonly class ReadinessEvent
         public ReadinessEventType $eventType,
         public DateTimeImmutable $occurredAt,
         public int $actorId,
+        public string $aggregateId,
         public array $payload,
         public ?array $evidence,
         public ?string $priorEventId,
@@ -64,6 +65,11 @@ final readonly class ReadinessEvent
             || ($commitmentTaskId !== null && (! is_int($commitmentTaskId) || $commitmentTaskId <= 0))) {
             throw new InvalidArgumentException('lookahead_readiness_event_task_lineage_invalid');
         }
+        $aggregateId = $data['aggregate_id'] ?? null;
+        if (! is_string($aggregateId)
+            || preg_match('/^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9:_-]{1,190}$/D', $aggregateId) !== 1) {
+            throw new InvalidArgumentException('lookahead_readiness_event_aggregate_invalid');
+        }
         $payload = $data['payload'] ?? null;
         $evidence = $data['evidence'] ?? null;
         if (! is_array($payload) || ($evidence !== null && ! self::validEvidence($policy, $evidence))) {
@@ -85,6 +91,7 @@ final readonly class ReadinessEvent
             $type,
             $occurredAt,
             $data['actor_id'],
+            $aggregateId,
             $payload,
             $evidence,
             is_string($data['prior_event_id'] ?? null) ? $data['prior_event_id'] : null,
@@ -108,6 +115,7 @@ final readonly class ReadinessEvent
     {
         return LookaheadReadinessCanonicalJson::hash([
             'actor_id' => (string) $this->actorId,
+            'aggregate_id' => $this->aggregateId,
             'commitment_revision_id' => (string) $this->commitmentRevisionId,
             'commitment_task_id' => $this->commitmentTaskId === null ? null : (string) $this->commitmentTaskId,
             'event_id' => $this->eventId,
@@ -148,7 +156,6 @@ final readonly class ReadinessEvent
         return in_array($payload['category'] ?? null, $waiver['allowed_categories'], true)
             && is_string($payload['reason'] ?? null)
             && trim($payload['reason']) !== ''
-            && ($payload['approver_permission'] ?? null) === $waiver['approver_permission']
             && preg_match('/^[a-f0-9]{64}$/D', $payload['schedule_revision_hash'] ?? '') === 1
             && $validUntil instanceof DateTimeImmutable
             && $validUntil > $occurredAt

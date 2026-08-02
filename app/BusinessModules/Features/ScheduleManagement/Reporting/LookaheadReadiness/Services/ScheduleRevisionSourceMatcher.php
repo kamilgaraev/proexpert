@@ -49,11 +49,17 @@ final class ScheduleRevisionSourceMatcher
                 || $expectedParent === false
                 || $task['wbs_code'] !== (string) ($sourceTask['wbs_code'] ?? '')
                 || $task['name'] !== (string) ($sourceTask['name'] ?? '')
+                || $task['task_class'] !== $this->taskClass($sourceTask['task_type'] ?? null)
                 || $task['planned_start'] !== $this->date($sourceTask['planned_start_date'] ?? null)
                 || $task['planned_end'] !== $this->date($sourceTask['planned_end_date'] ?? null)
+                || $task['duration_minutes'] !== $this->durationMinutes($sourceTask['planned_duration_days'] ?? null)
                 || $this->decimal($task['planned_quantity'] ?? null) !== $this->decimal($sourceTask['quantity'] ?? null)
                 || $this->decimal($task['planned_work_hours'] ?? null) !== $this->decimal($sourceTask['planned_work_hours'] ?? null)
                 || $task['critical'] !== (bool) ($sourceTask['is_critical'] ?? false)
+                || $task['constraint_point'] !== $this->constraintPoint(
+                    $sourceTask['constraint_type'] ?? null,
+                    $sourceTask['constraint_date'] ?? null,
+                )
                 || $task['parent_external_id'] !== $expectedParent) {
                 throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
             }
@@ -105,7 +111,21 @@ final class ScheduleRevisionSourceMatcher
 
     private function decimal(mixed $value): ?string
     {
-        return $value === null ? null : number_format((float) $value, 4, '.', '');
+        if ($value === null) {
+            return null;
+        }
+
+        $decimal = (string) $value;
+        if (preg_match('/^-?\d+(?:\.\d+)?$/D', $decimal) !== 1) {
+            throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
+        }
+
+        [$whole, $fraction] = array_pad(explode('.', $decimal, 2), 2, '');
+        if (strlen($fraction) > 4 && trim(substr($fraction, 4), '0') !== '') {
+            throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
+        }
+
+        return $whole.'.'.str_pad(substr($fraction, 0, 4), 4, '0');
     }
 
     private function lagMinutes(array $dependency): int
@@ -115,9 +135,63 @@ final class ScheduleRevisionSourceMatcher
             throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
         }
 
-        return (int) round(
-            ((float) ($dependency['lag_days'] ?? 0) * 1440)
-            + ((float) ($dependency['lag_hours'] ?? 0) * 60),
-        );
+        $scaledMinutes = $this->scaledDecimal($dependency['lag_days'] ?? 0) * 1440
+            + $this->scaledDecimal($dependency['lag_hours'] ?? 0) * 60;
+        if ($scaledMinutes % 10000 !== 0) {
+            throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
+        }
+
+        return intdiv($scaledMinutes, 10000);
+    }
+
+    private function scaledDecimal(mixed $value): int
+    {
+        $normalized = $this->decimal($value);
+        if ($normalized === null) {
+            throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
+        }
+
+        $negative = str_starts_with($normalized, '-');
+        $unsigned = ltrim($normalized, '-');
+        [$whole, $fraction] = explode('.', $unsigned, 2);
+        $scaled = ((int) $whole * 10000) + (int) $fraction;
+
+        return $negative ? -$scaled : $scaled;
+    }
+
+    private function taskClass(mixed $value): string
+    {
+        if ($value instanceof BackedEnum) {
+            $value = $value->value;
+        }
+
+        return match ($value) {
+            'task' => 'standard',
+            default => throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch'),
+        };
+    }
+
+    private function durationMinutes(mixed $days): int
+    {
+        if (! is_int($days) && ! (is_string($days) && preg_match('/^\d+$/D', $days) === 1)) {
+            throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
+        }
+
+        return (int) $days * 1440;
+    }
+
+    private function constraintPoint(mixed $type, mixed $date): ?string
+    {
+        if ($type instanceof BackedEnum) {
+            $type = $type->value;
+        }
+        if ($type === null && $date === null) {
+            return null;
+        }
+        if (! is_string($type) || $type === '' || $date === null) {
+            throw new LogicException('lookahead_readiness_schedule_snapshot_mismatch');
+        }
+
+        return $type.'@'.$this->date($date);
     }
 }

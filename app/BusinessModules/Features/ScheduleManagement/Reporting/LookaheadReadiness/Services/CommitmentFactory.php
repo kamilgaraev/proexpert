@@ -46,6 +46,7 @@ final class CommitmentFactory
                 || $start > $end
                 || $task['committed_start'] < $draft->windowStart
                 || $task['committed_start'] > $draft->windowEnd
+                || $task['committed_end'] > $draft->windowEnd
                 || ! is_string($task['inclusion_reason'] ?? null)
                 || $task['inclusion_reason'] === '') {
                 throw new InvalidArgumentException('lookahead_readiness_commitment_task_invalid');

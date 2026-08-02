@@ -9,7 +9,6 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\CommitmentDraft;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessEvent;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessPolicyDefinition;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ScheduleRevisionDraft;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\SourceWriteReceipt;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Enums\ReadinessEventType;
@@ -31,24 +30,33 @@ final readonly class LookaheadReadinessOwnerWriter
         DateTimeImmutable $approvedAt,
         string $idempotencyKey,
     ): SourceWriteReceipt {
-        $this->authorizer->assertAllowed(
-            $actorId,
-            LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION,
-            $draft->organizationId,
-            $draft->projectId,
-        );
         $contentHash = $this->scheduleRevisionFactory->contentHash($draft);
         $approvedAtUtc = $approvedAt
             ->setTimezone(new DateTimeZone('UTC'))
             ->format('Y-m-d\TH:i:s.u\Z');
 
-        return $this->store->transaction(fn (): SourceWriteReceipt => $this->store->approveScheduleRevision(
+        return $this->store->transaction(function () use (
             $draft,
             $contentHash,
             $actorId,
             $approvedAtUtc,
             $idempotencyKey,
-        ));
+        ): SourceWriteReceipt {
+            $authorizationDecision = $this->authorizer->authorize(
+                $actorId,
+                LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION,
+                $draft->organizationId,
+                $draft->projectId,
+            );
+
+            return $this->store->approveScheduleRevision(
+                $draft,
+                $contentHash,
+                $authorizationDecision,
+                $approvedAtUtc,
+                $idempotencyKey,
+            );
+        });
     }
 
     public function publishPolicy(
@@ -56,16 +64,57 @@ final readonly class LookaheadReadinessOwnerWriter
         int $actorId,
         string $idempotencyKey,
     ): SourceWriteReceipt {
-        $this->authorizer->assertAllowed(
-            $actorId,
-            LookaheadReadinessAbility::PUBLISH_POLICY,
-            $policy->organizationId,
-            0,
-        );
+        return $this->store->transaction(function () use ($policy, $actorId, $idempotencyKey): SourceWriteReceipt {
+            $authorizationDecision = $this->authorizer->authorize(
+                $actorId,
+                LookaheadReadinessAbility::PUBLISH_POLICY,
+                $policy->organizationId,
+                0,
+            );
 
-        return $this->store->transaction(
-            fn (): SourceWriteReceipt => $this->store->publishPolicy($policy, $actorId, $idempotencyKey),
-        );
+            return $this->store->publishPolicy($policy, $authorizationDecision, $idempotencyKey);
+        });
+    }
+
+    public function transitionScheduleRevision(
+        int $scheduleRevisionId,
+        int $organizationId,
+        int $projectId,
+        string $targetState,
+        DateTimeImmutable $effectiveAt,
+        int $actorId,
+        string $idempotencyKey,
+    ): SourceWriteReceipt {
+        $effectiveAtUtc = $effectiveAt
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->format('Y-m-d\TH:i:s.u\Z');
+
+        return $this->store->transaction(function () use (
+            $scheduleRevisionId,
+            $organizationId,
+            $projectId,
+            $targetState,
+            $effectiveAtUtc,
+            $actorId,
+            $idempotencyKey,
+        ): SourceWriteReceipt {
+            $decision = $this->authorizer->authorize(
+                $actorId,
+                LookaheadReadinessAbility::APPROVE_SCHEDULE_REVISION,
+                $organizationId,
+                $projectId,
+            );
+
+            return $this->store->transitionScheduleRevision(
+                $scheduleRevisionId,
+                $organizationId,
+                $projectId,
+                $targetState,
+                $effectiveAtUtc,
+                $decision,
+                $idempotencyKey,
+            );
+        });
     }
 
     public function publishCommitment(
@@ -79,12 +128,6 @@ final readonly class LookaheadReadinessOwnerWriter
         DateTimeImmutable $publishedAt,
         string $idempotencyKey,
     ): SourceWriteReceipt {
-        $this->authorizer->assertAllowed(
-            $actorId,
-            LookaheadReadinessAbility::PUBLISH_COMMITMENT,
-            $draft->organizationId,
-            $draft->projectId,
-        );
         $commitment = $this->commitmentFactory->publish(
             $draft,
             $scheduleRevision,
@@ -102,10 +145,17 @@ final readonly class LookaheadReadinessOwnerWriter
             $policy,
             $publishedAt,
         ): SourceWriteReceipt {
+            $authorizationDecision = $this->authorizer->authorize(
+                $commitment->publishedByUserId,
+                LookaheadReadinessAbility::PUBLISH_COMMITMENT,
+                $commitment->organizationId,
+                $commitment->projectId,
+            );
             $receipt = $this->store->publishCommitment(
                 $commitment,
                 $scheduleRevisionId,
                 $policyId,
+                $authorizationDecision,
                 $idempotencyKey,
             );
             $eventIdempotencyKey = $idempotencyKey.':published-event';
@@ -123,6 +173,7 @@ final readonly class LookaheadReadinessOwnerWriter
                 'event_type' => ReadinessEventType::COMMITMENT_PUBLISHED->value,
                 'occurred_at' => $publishedAt->format(DateTimeImmutable::ATOM),
                 'actor_id' => $commitment->publishedByUserId,
+                'aggregate_id' => 'commitment:'.$receipt->entityId,
                 'payload' => [
                     'commitment_content_hash' => $commitment->contentHash,
                     'policy_hash' => $commitment->policyHash,
@@ -134,7 +185,7 @@ final readonly class LookaheadReadinessOwnerWriter
                 'evidence' => null,
                 'prior_event_id' => null,
             ], $policy);
-            $this->store->appendEvent($event);
+            $this->store->appendEvent($event, $authorizationDecision);
 
             return $receipt;
         });
@@ -142,39 +193,73 @@ final readonly class LookaheadReadinessOwnerWriter
 
     public function appendEvent(ReadinessEvent $event): SourceWriteReceipt
     {
+        if ($event->eventType === ReadinessEventType::READINESS_EVALUATED) {
+            throw new \RuntimeException('lookahead_readiness_owner_materialization_required');
+        }
         $permission = match ($event->eventType) {
-            ReadinessEventType::WAIVER_APPROVED => LookaheadReadinessAbility::APPROVE_WAIVER,
+            ReadinessEventType::WAIVER_APPROVED,
+            ReadinessEventType::WAIVER_REJECTED,
+            ReadinessEventType::WAIVER_REVOKED,
+            ReadinessEventType::WAIVER_EXPIRED => LookaheadReadinessAbility::APPROVE_WAIVER,
             ReadinessEventType::COMMITMENT_PUBLISHED,
             ReadinessEventType::COMMITMENT_SUPERSEDED,
             ReadinessEventType::COMMITMENT_WITHDRAWN => LookaheadReadinessAbility::PUBLISH_COMMITMENT,
             default => LookaheadReadinessAbility::MANAGE_CONSTRAINTS,
         };
-        $this->authorizer->assertAllowed(
-            $event->actorId,
-            $permission,
-            $event->organizationId,
-            $event->projectId,
-        );
 
-        return $this->store->transaction(
-            fn (): SourceWriteReceipt => $this->store->appendEvent($event),
-        );
+        return $this->store->transaction(function () use ($event, $permission): SourceWriteReceipt {
+            $authorizationDecision = $this->authorizer->authorize(
+                $event->actorId,
+                $permission,
+                $event->organizationId,
+                $event->projectId,
+            );
+
+            return $this->store->appendEvent($event, $authorizationDecision);
+        });
     }
 
-    public function sealSnapshot(
-        ReadinessSnapshot $snapshot,
+    public function materializeReadiness(
+        int $organizationId,
+        int $projectId,
+        int $scheduleId,
+        int $commitmentRevisionId,
+        int $commitmentTaskId,
+        DateTimeImmutable $asOf,
         int $actorId,
         string $idempotencyKey,
     ): SourceWriteReceipt {
-        $this->authorizer->assertAllowed(
-            $actorId,
-            LookaheadReadinessAbility::SEAL_EVALUATION,
-            $snapshot->organizationId,
-            $snapshot->projectId,
-        );
+        $asOfUtc = $asOf
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->format('Y-m-d\TH:i:s.u\Z');
 
-        return $this->store->transaction(
-            fn (): SourceWriteReceipt => $this->store->sealSnapshot($snapshot, $idempotencyKey),
-        );
+        return $this->store->transaction(function () use (
+            $organizationId,
+            $projectId,
+            $scheduleId,
+            $commitmentRevisionId,
+            $commitmentTaskId,
+            $asOfUtc,
+            $actorId,
+            $idempotencyKey,
+        ): SourceWriteReceipt {
+            $authorizationDecision = $this->authorizer->authorize(
+                $actorId,
+                LookaheadReadinessAbility::SEAL_EVALUATION,
+                $organizationId,
+                $projectId,
+            );
+
+            return $this->store->materializeReadiness([
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'schedule_id' => $scheduleId,
+                'commitment_revision_id' => $commitmentRevisionId,
+                'commitment_task_id' => $commitmentTaskId,
+                'as_of_utc' => $asOfUtc,
+                'actor_id' => $actorId,
+                'idempotency_key' => $idempotencyKey,
+            ], $authorizationDecision);
+        });
     }
 }

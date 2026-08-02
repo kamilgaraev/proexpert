@@ -96,7 +96,7 @@ final class ReadinessPolicyEvaluator
             } elseif ($outcome === 'expiring') {
                 $hasRisk = true;
                 $reasons[] = 'expiry_threshold_breached';
-            } elseif ($outcome === 'not_applicable' && ($component['policy_declared'] ?? false) === true) {
+            } elseif ($outcome === 'not_applicable' && ($rule['not_applicable'] ?? false) === true) {
                 $hasNotApplicable = true;
                 $normalized['policy_declared'] = true;
             } else {
@@ -138,10 +138,10 @@ final class ReadinessPolicyEvaluator
             : false;
 
         return in_array($component['category'] ?? null, $waiver['allowed_categories'], true)
-            && ($component['approved_permission'] ?? null) === $waiver['approver_permission']
+            && ($component['authorization_decision_valid'] ?? false) === true
             && ($component['revoked'] ?? true) === false
             && $validUntil instanceof DateTimeImmutable
-            && $validUntil >= $asOf
+            && $validUntil > $asOf
             && (($waiver['cross_schedule_revision'] ?? false)
                 || ($component['schedule_revision_hash'] ?? null) === $scheduleRevisionHash)
             && $this->validEvidence($policy, $component)

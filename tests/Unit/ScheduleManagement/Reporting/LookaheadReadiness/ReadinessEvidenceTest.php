@@ -25,6 +25,7 @@ final class ReadinessEvidenceTest extends TestCase
             'event_type' => ReadinessEventType::CONSTRAINT_REGISTERED->value,
             'occurred_at' => '2026-08-05T08:00:00.123456+03:00',
             'actor_id' => 9,
+            'aggregate_id' => 'constraint:permit:900',
             'payload' => [
                 'category' => 'permit',
                 'severity' => 'hard',
@@ -61,6 +62,7 @@ final class ReadinessEvidenceTest extends TestCase
             'event_type' => ReadinessEventType::WAIVER_APPROVED->value,
             'occurred_at' => '2026-08-05T08:00:00+03:00',
             'actor_id' => 9,
+            'aggregate_id' => 'waiver:permit:900',
             'payload' => [
                 'category' => 'permit',
                 'reason' => '',
@@ -86,6 +88,7 @@ final class ReadinessEvidenceTest extends TestCase
             'event_type' => ReadinessEventType::CONSTRAINT_REGISTERED->value,
             'occurred_at' => '2026-08-05T08:00:00.123456+03:00',
             'actor_id' => 9,
+            'aggregate_id' => 'constraint:permit:900',
             'payload' => ['category' => 'permit', 'severity' => 'hard', 'owner_ref' => 'user:77'],
             'evidence' => null,
             'prior_event_id' => null,
@@ -105,5 +108,27 @@ final class ReadinessEvidenceTest extends TestCase
 
             self::assertNotSame($expected, $changed->evidenceHash(), $field);
         }
+    }
+
+    public function test_task_event_requires_a_stable_aggregate_identity(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('lookahead_readiness_event_aggregate_invalid');
+
+        ReadinessEvent::fromArray([
+            'event_id' => '018f6f5a-4ca2-7a11-bf61-0242ac120002',
+            'idempotency_key' => 'constraint-900-created-v1',
+            'organization_id' => 10,
+            'project_id' => 20,
+            'schedule_id' => 40,
+            'commitment_revision_id' => 50,
+            'commitment_task_id' => 60,
+            'event_type' => ReadinessEventType::CONSTRAINT_REGISTERED->value,
+            'occurred_at' => '2026-08-05T08:00:00+03:00',
+            'actor_id' => 9,
+            'payload' => ['category' => 'permit', 'severity' => 'hard', 'owner_ref' => 'user:77'],
+            'evidence' => null,
+            'prior_event_id' => null,
+        ], ReadinessPolicyDefinition::v1(10));
     }
 }

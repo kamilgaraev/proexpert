@@ -88,6 +88,41 @@ final class CommitmentFactoryTest extends TestCase
         );
     }
 
+    public function test_rejects_task_whose_end_is_outside_the_closed_commitment_window(): void
+    {
+        $schedule = ScheduleRevisionDraft::fromArray($this->schedule());
+        $draft = CommitmentDraft::fromArray([
+            'organization_id' => 10,
+            'project_id' => 20,
+            'schedule_id' => 40,
+            'window_start' => '2026-08-10',
+            'window_end' => '2026-08-16',
+            'planning_timezone' => 'Europe/Moscow',
+            'tasks' => [[
+                'schedule_task_external_id' => 'task-a',
+                'committed_start' => '2026-08-16',
+                'committed_end' => '2026-12-31',
+                'planned_quantity' => '2.0000',
+                'planned_work_hours' => '16.0000',
+                'responsible_role' => null,
+                'responsible_user_id' => null,
+                'inclusion_reason' => 'starts_in_window',
+            ]],
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('lookahead_readiness_commitment_task_invalid');
+
+        (new CommitmentFactory)->publish(
+            $draft,
+            $schedule,
+            (new ScheduleRevisionFactory)->contentHash($schedule),
+            ReadinessPolicyDefinition::v1(10),
+            9,
+            new DateTimeImmutable('2026-08-05T08:00:00+03:00'),
+        );
+    }
+
     private function schedule(): array
     {
         return [
