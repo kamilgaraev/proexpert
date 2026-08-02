@@ -141,7 +141,11 @@ class SiteManagementService
             ->first();
 
         if (!$site) {
+<<<<<<< HEAD
             $slug = str_replace(['.1мост.рф', '.xn--1-xtbgmf.xn--p1ai'], '', $normalizedDomain);
+=======
+            $slug = str_replace('.1мост.рф', '', $normalizedDomain);
+>>>>>>> fix/glitchtip-257-upload-error-reporting
 
             $site = HoldingSite::query()
                 ->whereHas('organizationGroup', function ($query) use ($slug) {

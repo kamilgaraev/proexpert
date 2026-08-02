@@ -224,7 +224,11 @@ return [
     |
     */
 
+<<<<<<< HEAD
     'domain' => env('APP_DOMAIN', 'xn--1-xtbgmf.xn--p1ai'),
+=======
+    'domain' => env('APP_DOMAIN', '1мост.рф'),
+>>>>>>> fix/glitchtip-257-upload-error-reporting
 
     /*
     |--------------------------------------------------------------------------

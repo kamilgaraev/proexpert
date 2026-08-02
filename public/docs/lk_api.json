@@ -11342,9 +11342,13 @@
             "items": {
               "type": "string"
             },
+<<<<<<< HEAD
             "minItems": 0,
             "maxItems": 10,
             "description": "Массив слагов ролей, которые будут назначены приглашенному пользователю.\n\n**Типы ролей:**\n- `organization_owner` - владелец организации (полные права)\n- `organization_admin` - администратор организации\n- `foreman` - прораб (мобильное приложение)\n- `accountant` - бухгалтер\n- `web_admin` - веб-администратор\n- `worker` - рабочий\n\n**Влияние на ссылку приглашения:**\n- `foreman` → мобильное приложение (APK загрузка)\n- `organization_admin`, `accountant`, `web_admin` → admin.1мост.рф\n- `organization_owner` или пустой массив → 1мост.рф (основной ЛК)\n\nЕсли массив пустой, пользователь получит базовые права.\n",
+=======
+            "description": "Слаги ролей, которые будут назначены приглашённому пользователю. \nОт них зависит ссылка в письме:\n  • foreman → ссылка на APK \n  • organization_admin / accountant / web_admin → admin.1мост.рф\n  • organization_owner или пустой массив → 1мост.рф\n",
+>>>>>>> fix/glitchtip-257-upload-error-reporting
             "example": [
               "foreman"
             ]

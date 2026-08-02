@@ -224,7 +224,11 @@
         </div>
 
         <div class="footer">
+<<<<<<< HEAD
             <p>Создано с ❤️ командой МОСТ</p>
+=======
+            <p>Создано с ❤️ командой ProHelper</p>
+>>>>>>> fix/glitchtip-257-upload-error-reporting
             <p>Версия системы: 1.0.0 | <a href="https://1мост.рф" target="_blank">1мост.рф</a></p>
         </div>
     </div>

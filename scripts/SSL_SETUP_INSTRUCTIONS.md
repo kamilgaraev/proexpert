@@ -47,7 +47,11 @@ A      *      89.111.153.146     3600
 **Проверьте DNS перед продолжением:**
 ```bash
 nslookup 1мост.рф
+<<<<<<< HEAD
 nslookup api.1мост.рф
+=======
+nslookup api.1мост.рф  
+>>>>>>> fix/glitchtip-257-upload-error-reporting
 nslookup test.1мост.рф
 ```
 
@@ -129,7 +133,11 @@ sudo systemctl start nginx
 ```
 
 ### Ошибка "Domain is redundant with wildcard"
+<<<<<<< HEAD
 Это означает что в запросе есть конфликт между `api.1мост.рф` и `*.1мост.рф`.
+=======
+Это означает что в запросе есть конфликт между `api.1мост.рф` и `*.1мост.рф`. 
+>>>>>>> fix/glitchtip-257-upload-error-reporting
 Обновленный скрипт исправляет эту проблему.
 
 ### DNS записи не распространились

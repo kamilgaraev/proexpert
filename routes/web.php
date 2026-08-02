@@ -13,7 +13,11 @@ Route::get('/ready', function (ImmutableAuditWriterReadinessService $readiness) 
 
 // Роуты для холдинговых поддоменов (исключая служебные)
 // Например: stroitelnyj-holding-alfa.1мост.рф
+<<<<<<< HEAD
 Route::domain('{holding}.'.config('app.domain', 'xn--1-xtbgmf.xn--p1ai'))
+=======
+Route::domain('{holding}.' . config('app.domain', '1мост.рф'))
+>>>>>>> fix/glitchtip-257-upload-error-reporting
     ->middleware(['holding.subdomain'])
     ->where(['holding' => '^(?!www|lk|api|admin|mail|ftp).*$'])
     ->group(base_path('routes/subdomain/holding.php'));
