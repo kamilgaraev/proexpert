@@ -19,7 +19,7 @@ CREATE FUNCTION eg_geometry_confirmation_semantic_valid_v2(payload jsonb) RETURN
     AND (SELECT count(*) FROM jsonb_object_keys(payload)) = 6
     AND payload ?& ARRAY['schema_version','source_fingerprint','geometry_payload_sha256','scale_evidence','elements','source_confirmation_context']
     AND jsonb_typeof(payload->'source_confirmation_context') = 'object'
-    AND (payload->'source_confirmation_context' - ARRAY['document_id','page_id','source_version']) = '{}'::jsonb
+    AND ((payload->'source_confirmation_context') - ARRAY['document_id','page_id','source_version']) = '{}'::jsonb
     AND payload->'source_confirmation_context' ?& ARRAY['document_id','page_id','source_version']
     AND jsonb_typeof(payload->'source_confirmation_context'->'document_id') = 'number'
     AND jsonb_typeof(payload->'source_confirmation_context'->'page_id') = 'number'
