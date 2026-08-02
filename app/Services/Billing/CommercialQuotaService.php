@@ -26,12 +26,110 @@ class CommercialQuotaService
 
     public function getEffectiveLimits(Organization $organization): array
     {
-        $summary = $this->buildLimitSummary($organization, $this->getUsage($organization));
+        $summary = $this->buildLimitSummary($organization, []);
 
         return array_combine(
             array_column($summary, 'key'),
             array_column($summary, 'limit'),
         );
+    }
+
+    /**
+     * @param  list<int>  $organizationIds
+     * @return array<int, int|null>
+     */
+    public function getEffectiveAiEstimateMonthlyLimits(array $organizationIds): array
+    {
+        $organizationIds = array_values(array_unique(array_filter(
+            array_map('intval', $organizationIds),
+            static fn (int $organizationId): bool => $organizationId > 0,
+        )));
+
+        if ($organizationIds === []) {
+            return [];
+        }
+
+        $baseLimit = (float) config('commercial_limits.free.ai_estimates_month', 0);
+        $limits = array_fill_keys($organizationIds, $baseLimit);
+        $packageLimits = array_fill_keys($organizationIds, 0.0);
+        $resourceLimits = array_fill_keys($organizationIds, 0.0);
+        $corporateOverrides = [];
+
+        $subscriptions = OrganizationPackageSubscription::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->where(function ($query): void {
+                $query->where(function ($period): void {
+                    $period->whereIn('status', ['active', 'scheduled_for_removal', 'grace'])
+                        ->where(function ($dates): void {
+                            $dates->whereNull('current_period_end_at')
+                                ->orWhere('current_period_end_at', '>', now());
+                        });
+                })->orWhere(function ($trial): void {
+                    $trial->where('status', 'trialing')
+                        ->whereNotNull('trial_ends_at')
+                        ->where('trial_ends_at', '>', now());
+                });
+            })
+            ->get(['organization_id', 'package_slug']);
+
+        foreach ($subscriptions as $subscription) {
+            $organizationId = (int) $subscription->organization_id;
+            if (! array_key_exists($organizationId, $packageLimits)) {
+                continue;
+            }
+
+            $package = $this->packageCatalog->package((string) $subscription->package_slug);
+            $packageLimits[$organizationId] += (float) ($package['limits']['ai_estimates_month'] ?? 0);
+        }
+
+        $allocations = OrganizationResourceAllocation::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->where('limit_key', 'ai_estimates_month')
+            ->whereIn('source', ['paid_addon', 'manual_grant', 'corporate_override'])
+            ->active()
+            ->orderByDesc('id')
+            ->get(['id', 'organization_id', 'quantity', 'source']);
+
+        foreach ($allocations as $allocation) {
+            $organizationId = (int) $allocation->organization_id;
+            if (! array_key_exists($organizationId, $limits)) {
+                continue;
+            }
+
+            if ($allocation->source === 'corporate_override') {
+                if (! array_key_exists($organizationId, $corporateOverrides)) {
+                    $corporateOverrides[$organizationId] = $allocation->quantity === null
+                        ? null
+                        : (float) $allocation->quantity;
+                }
+
+                continue;
+            }
+
+            $resourceLimits[$organizationId] += (float) $allocation->quantity;
+        }
+
+        foreach ($organizationIds as $organizationId) {
+            $limit = array_key_exists($organizationId, $corporateOverrides)
+                ? $corporateOverrides[$organizationId]
+                : $limits[$organizationId] + $packageLimits[$organizationId] + $resourceLimits[$organizationId];
+            $limits[$organizationId] = $limit === null ? null : max(0, (int) $limit);
+        }
+
+        return $limits;
+    }
+
+    /** @return array{limit: int|null, used: int} */
+    public function getAiEstimateQuota(Organization $organization): array
+    {
+        $limits = $this->getEffectiveLimits($organization);
+        $usage = $this->getUsage($organization);
+        $limit = $limits['ai_estimates_month'] ?? null;
+
+        return [
+            'limit' => $limit === null ? null : max(0, (int) $limit),
+            'used' => max(0, (int) ($usage['ai_estimates_month'] ?? 0)),
+        ];
     }
 
     public function getUsage(Organization $organization): array
@@ -49,7 +147,7 @@ class CommercialQuotaService
                 ? Organization::query()->where('parent_organization_id', $organizationId)->count()
                 : 0,
             'ai_requests_month' => 0,
-            'ai_estimates_month' => 0,
+            'ai_estimates_month' => $this->confirmedAiEstimateReservations($organizationId),
             'document_pages_month' => 0,
             'exports_month' => 0,
             'commercial_proposals_month' => 0,
@@ -469,6 +567,19 @@ class CommercialQuotaService
             ->where('organization_user.is_active', true)
             ->where('users.is_active', true)
             ->whereNull('users.deleted_at')
+            ->count();
+    }
+
+    private function confirmedAiEstimateReservations(int $organizationId): int
+    {
+        if (! Schema::hasTable('estimate_generation_ai_estimate_quota_reservations')) {
+            return 0;
+        }
+
+        return DB::table('estimate_generation_ai_estimate_quota_reservations')
+            ->where('organization_id', $organizationId)
+            ->where('monthly_period', now()->startOfMonth()->toDateString())
+            ->where('status', 'confirmed')
             ->count();
     }
 

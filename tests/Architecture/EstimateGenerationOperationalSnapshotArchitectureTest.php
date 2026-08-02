@@ -58,7 +58,7 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
             self::assertStringContainsString($watermark, $source);
         }
         self::assertStringNotContainsString('CURRENT_TIMESTAMP - lease_expires_at', $source);
-        self::assertStringContainsString('public const QUERY_BUDGET = 11;', $source);
+        self::assertStringContainsString('public const QUERY_BUDGET = 14;', $source);
     }
 
     #[Test]

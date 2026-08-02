@@ -67,7 +67,7 @@ class SpreadsheetDocumentExtractor
 
         try {
             $reader = IOFactory::createReaderForFile($path);
-            $reader->setReadDataOnly(true);
+            $reader->setReadDataOnly(false);
             $spreadsheet = $reader->load($path);
 
             try {
@@ -118,6 +118,9 @@ class SpreadsheetDocumentExtractor
             );
             $highestColumn = Coordinate::stringFromColumnIndex($highestColumnIndex);
             $lines = ['Sheet: '.$worksheet->getTitle()];
+            $cells = [];
+            $headings = [];
+            $firstPopulatedRow = null;
 
             foreach ($worksheet->getRowIterator(1, $highestRow) as $row) {
                 $values = [];
@@ -129,11 +132,20 @@ class SpreadsheetDocumentExtractor
 
                     if ($value !== '') {
                         $values[] = $value;
+                        $cells[] = [
+                            'address' => $cell->getCoordinate(),
+                            'value' => $value,
+                            'formula' => $this->formula($cell),
+                        ];
+                        if ($firstPopulatedRow === null) {
+                            $headings[] = $cell->getCoordinate();
+                        }
                     }
                 }
 
                 if ($values !== []) {
                     $lines[] = implode(' ', $values);
+                    $firstPopulatedRow ??= $row->getRowIndex();
                 }
             }
 
@@ -149,6 +161,12 @@ class SpreadsheetDocumentExtractor
                     'sheet_title' => $worksheet->getTitle(),
                     'rows_scanned' => $highestRow,
                     'columns_scanned' => $highestColumnIndex,
+                    'native_structure' => [
+                        'status' => 'available',
+                        'sheet' => $worksheet->getTitle(),
+                        'headings' => $headings,
+                        'cells' => $cells,
+                    ],
                 ],
             );
         }
@@ -171,5 +189,12 @@ class SpreadsheetDocumentExtractor
         }
 
         return '';
+    }
+
+    private function formula(Cell $cell): ?string
+    {
+        $value = $cell->getValue();
+
+        return is_string($value) && str_starts_with($value, '=') ? $value : null;
     }
 }

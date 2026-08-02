@@ -20,6 +20,7 @@ class PdfTextLayerExtractorTest extends TestCase
         $this->assertNotNull($result);
         $this->assertSame(PdfTextLayerExtractor::PROVIDER, $result->provider);
         $this->assertCount(2, $result->pages);
+        $this->assertSame('available', $result->rawPayload['capability']['text_layer']);
         $this->assertStringContainsString('Общая площадь дома 151,76 м2', $result->pages[0]->text);
         $this->assertStringContainsString('Жилая площадь 80,21 м2', $result->pages[1]->text);
     }

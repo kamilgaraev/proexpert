@@ -21,6 +21,7 @@ final class RetryEstimateGenerationSession
     public function __construct(
         private RetryableEstimateGenerationSessionRepository $repository,
         private EstimateGenerationWorkflow $workflow,
+        private AdvanceEstimateGeneration $advance,
         private EstimateGenerationRetryDispatcher $dispatcher,
         private EstimateGenerationRegionalContextResolver $regionalContextResolver,
         ?Closure $attemptIdFactory = null,
@@ -158,18 +159,7 @@ final class RetryEstimateGenerationSession
     private function startGeneration(EstimateGenerationSession $session): EstimateGenerationSession
     {
         $attemptId = ($this->attemptIdFactory)();
-        $session = $this->workflow->transition($session, EstimateGenerationEvent::GenerationStarted, [
-            'processing_stage' => 'generating',
-            'processing_progress' => 40,
-            'last_error' => null,
-            'failure_code' => null,
-            'input_payload' => [
-                ...($session->input_payload ?? []),
-                ...$this->refreshedRegionalContext($session),
-                'generation_attempt_id' => $attemptId,
-                'generation_requested' => false,
-            ],
-        ]);
+        $session = $this->advance->generationStarted($session, $attemptId, $this->refreshedRegionalContext($session));
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
         return $session;
@@ -178,18 +168,7 @@ final class RetryEstimateGenerationSession
     private function retryGeneration(EstimateGenerationSession $session): EstimateGenerationSession
     {
         $attemptId = ($this->attemptIdFactory)();
-        $session = $this->workflow->transition($session, EstimateGenerationEvent::Retried, [
-            'processing_stage' => 'generating',
-            'processing_progress' => 40,
-            'last_error' => null,
-            'failure_code' => null,
-            'input_payload' => [
-                ...($session->input_payload ?? []),
-                ...$this->refreshedRegionalContext($session),
-                'generation_attempt_id' => $attemptId,
-                'generation_requested' => false,
-            ],
-        ]);
+        $session = $this->advance->generationRetried($session, $attemptId, $this->refreshedRegionalContext($session));
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
         return $session;
@@ -198,18 +177,7 @@ final class RetryEstimateGenerationSession
     private function restartGeneration(EstimateGenerationSession $session): EstimateGenerationSession
     {
         $attemptId = ($this->attemptIdFactory)();
-        $session = $this->workflow->update($session, [EstimateGenerationStatus::Generating], [
-            'processing_stage' => 'generating',
-            'processing_progress' => 40,
-            'last_error' => null,
-            'failure_code' => null,
-            'input_payload' => [
-                ...($session->input_payload ?? []),
-                ...$this->refreshedRegionalContext($session),
-                'generation_attempt_id' => $attemptId,
-                'generation_requested' => false,
-            ],
-        ]);
+        $session = $this->advance->generationRestarted($session, $attemptId, $this->refreshedRegionalContext($session));
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
         return $session;

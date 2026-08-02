@@ -9,6 +9,7 @@ final readonly class DocumentSourceReplacementCoordinator
     public function __construct(
         private DocumentSourceReplacementTransaction $transaction,
         private EvidenceSourceReplacementInvalidator $invalidator,
+        private DocumentSourceReplacementPageStore $pages,
     ) {}
 
     public function commit(
@@ -16,7 +17,7 @@ final readonly class DocumentSourceReplacementCoordinator
         int $projectId,
         int $sessionId,
         int $documentId,
-        string $previousSourceVersion,
+        ?string $previousSourceVersion,
         string $acceptedSourceVersion,
         callable $accept,
     ): mixed {
@@ -29,18 +30,26 @@ final readonly class DocumentSourceReplacementCoordinator
             $acceptedSourceVersion,
             $accept,
         ): mixed {
-            $result = $accept();
-            if ($previousSourceVersion !== '' && $previousSourceVersion !== $acceptedSourceVersion) {
-                $this->invalidator->invalidateReplacedDocumentSource(
+            if ($previousSourceVersion !== $acceptedSourceVersion) {
+                $this->pages->removeStalePages(
                     $organizationId,
                     $projectId,
                     $sessionId,
                     $documentId,
-                    $previousSourceVersion,
+                    $acceptedSourceVersion,
                 );
+                if ($previousSourceVersion !== null && $previousSourceVersion !== '') {
+                    $this->invalidator->invalidateReplacedDocumentSource(
+                        $organizationId,
+                        $projectId,
+                        $sessionId,
+                        $documentId,
+                        $previousSourceVersion,
+                    );
+                }
             }
 
-            return $result;
+            return $accept();
         });
     }
 }

@@ -53,6 +53,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                 $document->drawingElements()->delete();
                 $document->quantityTakeoffs()->delete();
                 $document->scopeInferences()->delete();
+                $document->pages()->where('source_version', '<>', $sourceVersion)->delete();
                 $document->pages()->whereNotIn('processing_unit_id', $currentUnitIds)->delete();
                 $pages = $document->pages()
                     ->whereIn('processing_unit_id', $currentUnitIds)

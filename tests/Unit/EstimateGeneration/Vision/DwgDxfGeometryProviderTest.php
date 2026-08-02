@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProvenance;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadConversionRuntime;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\DwgDxfGeometryProvider;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\BoundedStorageReader;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
-use Illuminate\Contracts\Filesystem\Filesystem;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\Attributes\WithoutErrorHandler;
@@ -44,22 +46,16 @@ final class DwgDxfGeometryProviderTest extends TestCase
     {
         $root = dirname(__DIR__, 4);
         $content = file_get_contents($root.'/tests/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
-        $disk = Mockery::mock(Filesystem::class);
-        $disk->shouldReceive('size')->once()->andReturn(strlen($content));
-        $stream = fopen('php://temp', 'w+b');
-        fwrite($stream, $content);
-        rewind($stream);
-        $disk->shouldReceive('readStream')->once()->andReturn($stream);
         $files = Mockery::mock(FileService::class);
-        $files->shouldReceive('disk')->once()->andReturn($disk);
+        $this->expectPinnedRead($files, 'org-42/drawings/house.dxf', $content);
         $organization = new Organization;
         $organization->id = 42;
         $runtime = new CadConversionRuntime('python', $root.'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py');
-        $provider = new DwgDxfGeometryProvider($files, new BoundedStorageReader, $runtime);
+        $provider = new DwgDxfGeometryProvider(new BoundedVersionedS3ObjectReader($files), $runtime);
 
-        self::assertNotEmpty($provider->extract('org-42/drawings/house.dxf', $organization)->entities);
+        self::assertNotEmpty($provider->extract($this->source('org-42/drawings/house.dxf', $content), $organization)->entities);
         $this->expectExceptionMessage('cad_storage_scope_invalid');
-        $provider->extract('../org-42/drawings/house.dxf', $organization);
+        $provider->extract($this->source('../org-42/drawings/house.dxf', $content), $organization);
     }
 
     #[Test]
@@ -68,28 +64,80 @@ final class DwgDxfGeometryProviderTest extends TestCase
     {
         $root = dirname(__DIR__, 4);
         $content = file_get_contents($root.'/tests/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
-        $disk = Mockery::mock(Filesystem::class);
-        $disk->shouldReceive('size')->once()->andReturn(strlen($content));
-        $stream = fopen('php://temp', 'w+b');
-        fwrite($stream, $content);
-        rewind($stream);
-        $disk->shouldReceive('readStream')->once()->andReturn($stream);
         $files = Mockery::mock(FileService::class);
-        $files->shouldReceive('disk')->once()->andReturn($disk);
+        $this->expectPinnedRead($files, 'org-42/drawings/house.dxf', $content);
         $organization = new Organization;
         $organization->id = 42;
         $invalidRoot = tempnam(sys_get_temp_dir(), 'cad-root-file-');
         try {
             $provider = new DwgDxfGeometryProvider(
-                $files,
-                new BoundedStorageReader,
+                new BoundedVersionedS3ObjectReader($files),
                 new CadConversionRuntime('python', $root.'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py'),
                 workspaceRoot: $invalidRoot,
             );
             $this->expectExceptionMessage('cad_workspace_failed');
-            $provider->extract('org-42/drawings/house.dxf', $organization);
+            $provider->extract($this->source('org-42/drawings/house.dxf', $content), $organization);
         } finally {
             @unlink($invalidRoot);
         }
+    }
+
+    #[Test]
+    public function provider_rejects_a_source_that_does_not_match_its_pinned_hash(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $content = file_get_contents($root.'/tests/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
+        $files = Mockery::mock(FileService::class);
+        $this->expectPinnedRead($files, 'org-42/drawings/house.dxf', $content);
+        $organization = new Organization;
+        $organization->id = 42;
+        $provider = new DwgDxfGeometryProvider(
+            new BoundedVersionedS3ObjectReader($files),
+            new CadConversionRuntime('python', $root.'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py'),
+        );
+        $source = DocumentUnitProvenance::fromLocator(DocumentUnitType::CadDrawing, 'sha256:'.str_repeat('a', 64), [
+            'source_kind' => 'cad',
+            'source_version' => 'sha256:'.str_repeat('a', 64),
+            'coordinate_space' => 'cad_model',
+            'artifact_path' => 'org-42/drawings/house.dxf',
+            'artifact_bytes' => strlen($content),
+            'artifact_sha256' => 'sha256:'.str_repeat('a', 64),
+            'artifact_version_id' => 'source-v1',
+        ]);
+
+        $this->expectException(S3ObjectLocatorException::class);
+        $provider->extract($source, $organization);
+    }
+
+    private function expectPinnedRead(FileService $files, string $path, string $content): void
+    {
+        $files->shouldReceive('describeVersion')->once()->with(
+            $path,
+            'source-v1',
+            Mockery::type('int'),
+        )->andReturn([
+            'path' => $path,
+            'body' => $content,
+            'size' => strlen($content),
+            'sha256' => hash('sha256', $content),
+            'etag' => null,
+            'version_id' => 'source-v1',
+            'content_type' => 'application/dxf',
+        ]);
+    }
+
+    private function source(string $path, string $content): DocumentUnitProvenance
+    {
+        $sha256 = 'sha256:'.hash('sha256', $content);
+
+        return DocumentUnitProvenance::fromLocator(DocumentUnitType::CadDrawing, $sha256, [
+            'source_kind' => 'cad',
+            'source_version' => $sha256,
+            'coordinate_space' => 'cad_model',
+            'artifact_path' => $path,
+            'artifact_bytes' => strlen($content),
+            'artifact_sha256' => $sha256,
+            'artifact_version_id' => 'source-v1',
+        ]);
     }
 }

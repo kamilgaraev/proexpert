@@ -66,6 +66,27 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             );
         }
 
+        if ($this->isNativeSpreadsheetArtifact($context)) {
+            $payload = json_decode($content, true, 64, JSON_THROW_ON_ERROR);
+            if (! is_array($payload) || ($payload['schema_version'] ?? null) !== 1
+                || ($payload['source_kind'] ?? null) !== 'spreadsheet'
+                || ! is_string($payload['text'] ?? null)
+                || ! is_array($payload['native_structure'] ?? null)
+                || ($payload['native_structure']['status'] ?? null) !== 'available') {
+                throw new DocumentUnitProcessingException('spreadsheet_native_structure_contract_invalid');
+            }
+
+            return new DocumentUnitOutput(
+                version: hash('sha256', $content),
+                text: $payload['text'],
+                confidence: 1.0,
+                normalizedPayload: $payload,
+                unitType: $context->type,
+                unitIndex: $context->index,
+                sourceVersion: $context->sourceVersion,
+            );
+        }
+
         $correlationId = AiOperationContext::deterministicId(implode('|', [
             'unit', $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion,
             $context->claimToken, $context->unitAttemptCount,
@@ -113,5 +134,22 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
                 ],
             ],
         );
+    }
+
+    private function isNativeSpreadsheetArtifact(DocumentUnitExecutionContext $context): bool
+    {
+        $locator = $context->locator;
+
+        if ($context->type !== DocumentUnitType::SpreadsheetSheet
+            || (array_key_exists('source_kind', $locator) && ($locator['source_kind'] ?? null) !== 'spreadsheet')) {
+            return false;
+        }
+
+        return (($locator['content_type'] ?? null) === 'application/json'
+                && ($locator['artifact_kind'] ?? null) === 'spreadsheet_sheet'
+                && ($locator['artifact_schema_version'] ?? null) === 1)
+            || (($locator['content_type'] ?? null) === 'application/vnd.most.spreadsheet-sheet+json'
+                && ! array_key_exists('artifact_kind', $locator)
+                && ! array_key_exists('artifact_schema_version', $locator));
     }
 }

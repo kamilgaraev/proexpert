@@ -15,47 +15,44 @@ final class MetadataDocumentUnitDetector implements DocumentUnitDetector
         $meta = is_array($document->meta) ? $document->meta : [];
 
         if ($mime === 'application/pdf' || $extension === 'pdf') {
-            return $this->indexed(DocumentUnitType::PdfPage, max(1, (int) $document->page_count), $sourceVersion, 'page');
+            return $this->indexed($document, DocumentUnitType::PdfPage, max(1, (int) $document->page_count), $sourceVersion, 'page');
         }
 
         if (in_array($extension, ['xlsx', 'xls', 'ods', 'csv'], true)) {
-            return $this->indexed(DocumentUnitType::SpreadsheetSheet, max(1, (int) ($meta['sheet_count'] ?? 1)), $sourceVersion, 'sheet');
+            return $this->indexed($document, DocumentUnitType::SpreadsheetSheet, max(1, (int) ($meta['sheet_count'] ?? 1)), $sourceVersion, 'sheet');
         }
 
         if (in_array($extension, ['dwg', 'dxf', 'ifc'], true)) {
-            return [new DocumentUnitData(DocumentUnitType::CadDrawing, 1, $sourceVersion, ['drawing' => 1])];
+            return $this->indexed($document, DocumentUnitType::CadDrawing, 1, $sourceVersion, 'drawing');
         }
 
         if (str_starts_with($mime, 'image/') || in_array($extension, ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff'], true)) {
             $type = ($meta['is_sketch'] ?? false) === true ? DocumentUnitType::Sketch : DocumentUnitType::RasterImage;
-            $units = $this->indexed($type, max(1, (int) ($meta['frame_count'] ?? 1)), $sourceVersion, 'frame');
-
-            return array_map(static fn (DocumentUnitData $unit): DocumentUnitData => new DocumentUnitData(
-                $unit->type,
-                $unit->index,
-                $unit->sourceVersion,
-                [...$unit->locator,
-                    'artifact_path' => (string) $document->storage_path,
-                    'artifact_bytes' => (int) $document->file_size_bytes,
-                    'artifact_sha256' => $sourceVersion,
-                    'artifact_source_version' => $sourceVersion,
-                    'artifact_version_id' => is_string($meta['storage_version_id'] ?? null) ? $meta['storage_version_id'] : '',
-                    'content_type' => $mime,
-                ],
-            ), $units);
+            return $this->indexed($document, $type, max(1, (int) ($meta['frame_count'] ?? 1)), $sourceVersion, 'frame');
         }
 
-        return $this->indexed(DocumentUnitType::TextPage, max(1, (int) ($document->page_count ?? 1)), $sourceVersion, 'page');
+        return $this->indexed($document, DocumentUnitType::TextPage, max(1, (int) ($document->page_count ?? 1)), $sourceVersion, 'page');
     }
 
     /** @return list<DocumentUnitData> */
-    private function indexed(DocumentUnitType $type, int $count, string $sourceVersion, string $locatorKey): array
+    private function indexed(
+        EstimateGenerationDocument $document,
+        DocumentUnitType $type,
+        int $count,
+        string $sourceVersion,
+        string $locatorKey,
+    ): array
     {
         $count = min($count, DocumentUnitData::MAX_INDEX);
         $units = [];
 
         for ($index = 1; $index <= $count; $index++) {
-            $units[] = new DocumentUnitData($type, $index, $sourceVersion, [$locatorKey => $index]);
+            $units[] = new DocumentUnitData(
+                $type,
+                $index,
+                $sourceVersion,
+                OriginalDocumentArtifactLocator::forUnit($document, $type, $index, $sourceVersion, [$locatorKey => $index]),
+            );
         }
 
         return $units;

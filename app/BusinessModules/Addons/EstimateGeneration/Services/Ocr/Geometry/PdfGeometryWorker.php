@@ -142,9 +142,9 @@ class PdfGeometryWorker
             '--preview-dir',
             $workspace.DIRECTORY_SEPARATOR.'previews',
             '--max-preview-page-bytes',
-            (string) self::MAX_PREVIEW_PAGE_BYTES,
+            (string) $this->maxPreviewPageBytes(),
             '--max-preview-page-pixels',
-            (string) self::MAX_PREVIEW_PAGE_PIXELS,
+            (string) $this->maxPreviewPagePixels(),
             '--max-preview-total-bytes',
             (string) $this->maxPreviewTotalBytes(),
             '--max-preview-total-pixels',
@@ -186,7 +186,7 @@ class PdfGeometryWorker
             $pageNumber = $this->positiveInt($page['page_number'] ?? null);
             $size = filesize($real);
             if ($width === null || $height === null || $pageNumber === null || ! is_int($size) || $size < 1
-                || $size > self::MAX_PREVIEW_PAGE_BYTES || $width * $height > self::MAX_PREVIEW_PAGE_PIXELS) {
+                || $size > $this->maxPreviewPageBytes() || $width * $height > $this->maxPreviewPagePixels()) {
                 throw new PdfGeometryExtractionException('pdf_preview_invalid');
             }
             $totalBytes += $size;
@@ -266,6 +266,22 @@ class PdfGeometryWorker
         return min(
             self::MAX_PREVIEW_TOTAL_BYTES,
             max(1, $this->maxPreviewTotalBytes ?? $this->configInt('estimate-generation.ocr.geometry.max_preview_total_bytes', self::MAX_PREVIEW_TOTAL_BYTES)),
+        );
+    }
+
+    private function maxPreviewPageBytes(): int
+    {
+        return min(
+            self::MAX_PREVIEW_PAGE_BYTES,
+            max(1, $this->configInt('estimate-generation.ocr.geometry.max_preview_page_bytes', self::MAX_PREVIEW_PAGE_BYTES)),
+        );
+    }
+
+    private function maxPreviewPagePixels(): int
+    {
+        return min(
+            self::MAX_PREVIEW_PAGE_PIXELS,
+            max(1, $this->configInt('estimate-generation.ocr.geometry.max_preview_page_pixels', self::MAX_PREVIEW_PAGE_PIXELS)),
         );
     }
 

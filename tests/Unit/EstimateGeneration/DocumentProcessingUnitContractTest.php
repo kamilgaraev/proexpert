@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DispatchDocumentProcessingUnits;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus;
@@ -18,13 +19,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ImageDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\InMemoryDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PdfDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StoredDocumentArtifact;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
@@ -64,7 +68,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     #[Test]
     public function duplicate_detector_units_are_normalized_to_one_stable_identity(): void
     {
-        $unit = new DocumentUnitData(DocumentUnitType::PdfPage, 1, 'sha256:source', ['page' => 1]);
+        $unit = $this->unit(DocumentUnitType::PdfPage, 1, 'sha256:source', ['page' => 1]);
 
         $normalized = DocumentUnitData::normalize([$unit, $unit]);
 
@@ -84,7 +88,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function only_one_worker_can_claim_a_unit_and_expired_owner_cannot_publish(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(10, 20, 30, 40, new DocumentUnitData(
+        $unit = $store->create(10, 20, 30, 40, $this->unit(
             DocumentUnitType::Sketch,
             1,
             'sha256:source',
@@ -104,7 +108,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function duplicate_delivery_reuses_completed_output(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(10, 20, 30, 40, new DocumentUnitData(
+        $unit = $store->create(10, 20, 30, 40, $this->unit(
             DocumentUnitType::SpreadsheetSheet,
             1,
             'sha256:source',
@@ -128,7 +132,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function replaced_source_makes_old_units_stale_and_non_claimable(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $old = $store->create(10, 20, 30, 40, new DocumentUnitData(DocumentUnitType::TextPage, 1, 'old'));
+        $old = $store->create(10, 20, 30, 40, $this->unit(DocumentUnitType::TextPage, 1, 'old'));
 
         $store->supersedeDocumentSource(40, 'new');
         $claim = $store->claim(
@@ -151,15 +155,20 @@ final class DocumentProcessingUnitContractTest extends TestCase
             'filename' => 'plan.pdf',
             'mime_type' => 'application/pdf',
             'page_count' => 3,
+            'storage_path' => 'org-1/tests/plan.pdf',
+            'file_size_bytes' => 1,
+            'meta' => ['storage_version_id' => 'pdf-v1'],
         ]);
         $sketch = new EstimateGenerationDocument([
             'filename' => 'sketch.tiff',
             'mime_type' => 'image/tiff',
-            'meta' => ['frame_count' => 2, 'is_sketch' => true],
+            'storage_path' => 'org-1/tests/sketch.tiff',
+            'file_size_bytes' => 1,
+            'meta' => ['frame_count' => 2, 'is_sketch' => true, 'storage_version_id' => 'sketch-v1'],
         ]);
 
-        $pdfUnits = $detector->detect($pdf, 'sha256:pdf');
-        $sketchUnits = $detector->detect($sketch, 'sha256:sketch');
+        $pdfUnits = $detector->detect($pdf, 'sha256:'.str_repeat('a', 64));
+        $sketchUnits = $detector->detect($sketch, 'sha256:'.str_repeat('b', 64));
 
         self::assertSame([1, 2, 3], array_column($pdfUnits, 'index'));
         self::assertSame(DocumentUnitType::PdfPage, $pdfUnits[0]->type);
@@ -169,9 +178,11 @@ final class DocumentProcessingUnitContractTest extends TestCase
         $workbook = new EstimateGenerationDocument([
             'filename' => 'estimate.xlsx',
             'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'meta' => ['sheet_count' => 75],
+            'storage_path' => 'org-1/tests/estimate.xlsx',
+            'file_size_bytes' => 1,
+            'meta' => ['sheet_count' => 75, 'storage_version_id' => 'xlsx-v1'],
         ]);
-        $sheetUnits = $detector->detect($workbook, 'sha256:workbook');
+        $sheetUnits = $detector->detect($workbook, 'sha256:'.str_repeat('c', 64));
 
         self::assertCount(75, $sheetUnits);
         self::assertSame(range(1, 75), array_column($sheetUnits, 'index'));
@@ -206,7 +217,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function duplicate_usecase_delivery_processes_publishes_and_reconciles_once(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::Sketch, 1, 'source'));
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::Sketch, 1, 'source'));
         $processor = new class implements DocumentUnitProcessor
         {
             public int $calls = 0;
@@ -242,7 +253,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function failed_unit_retries_only_that_unit(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::RasterImage, 1, 'source'));
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::RasterImage, 1, 'source'));
         $processor = new class implements DocumentUnitProcessor
         {
             public int $calls = 0;
@@ -295,7 +306,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function mismatched_unit_output_is_rejected_without_publication(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::PdfPage, 1, 'source'));
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, 1, 'source'));
         $processor = new class implements DocumentUnitProcessor
         {
             public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -335,7 +346,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             /** @var list<string> */
             public array $paths = [];
 
-            public function open(EstimateGenerationDocument $document): SeekableDocumentSource
+            public function open(EstimateGenerationDocument $document, string $sourceVersion): SeekableDocumentSource
             {
                 $this->reads++;
                 $stream = tmpfile();
@@ -409,7 +420,12 @@ final class DocumentProcessingUnitContractTest extends TestCase
             }
         });
         $document = new EstimateGenerationDocument(['filename' => 'house.pdf', 'mime_type' => 'application/pdf', 'page_count' => 200]);
-        $detector = new ArtifactDocumentUnitDetector($storage, $pdf, $geometry, $spreadsheet, new MetadataDocumentUnitDetector);
+        $detector = new ArtifactDocumentUnitDetector(
+            new PdfDocumentAdapter($storage, $pdf, $geometry),
+            new ImageDocumentAdapter,
+            new CadDocumentAdapter,
+            new SpreadsheetDocumentAdapter($storage, $spreadsheet),
+        );
 
         $units = $detector->detect($document, 'sha256:source');
 
@@ -428,7 +444,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         {
             public int $writes = 0;
 
-            public function open(EstimateGenerationDocument $document): SeekableDocumentSource
+            public function open(EstimateGenerationDocument $document, string $sourceVersion): SeekableDocumentSource
             {
                 $stream = tmpfile();
                 fwrite($stream, 'scanned-pdf');
@@ -486,7 +502,12 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 }
             }
         });
-        $detector = new ArtifactDocumentUnitDetector($storage, $pdf, $geometry, $spreadsheet, new MetadataDocumentUnitDetector);
+        $detector = new ArtifactDocumentUnitDetector(
+            new PdfDocumentAdapter($storage, $pdf, $geometry),
+            new ImageDocumentAdapter,
+            new CadDocumentAdapter,
+            new SpreadsheetDocumentAdapter($storage, $spreadsheet),
+        );
         $document = new EstimateGenerationDocument(['filename' => 'scan.pdf', 'mime_type' => 'application/pdf', 'page_count' => 30]);
 
         $units = $detector->detect($document, 'sha256:scan');
@@ -510,7 +531,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function published_unit_is_not_failed_when_finalization_throws_and_retry_only_finalizes(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::PdfPage, 1, 'source'));
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, 1, 'source'));
         $processor = new class implements DocumentUnitProcessor
         {
             public int $calls = 0;
@@ -622,7 +643,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     {
         Carbon::setTestNow('2026-07-11 10:00:00');
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::Sketch, 1, 'source'));
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::Sketch, 1, 'source'));
         $now = Carbon::now()->toDateTimeImmutable();
         $store->claim($unit->id, 'source', $now, $now->modify('+60 seconds'), 3);
         $processor = new class implements DocumentUnitProcessor
@@ -660,7 +681,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function exhausted_unit_invokes_actionable_handler_instead_of_silent_success(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
-        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::RasterImage, 1, 'source'));
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::RasterImage, 1, 'source'));
         $now = new DateTimeImmutable('2026-07-11T10:00:00+00:00');
 
         for ($attempt = 0; $attempt < ProcessDocumentUnit::MAX_ATTEMPTS; $attempt++) {
@@ -806,5 +827,19 @@ final class DocumentProcessingUnitContractTest extends TestCase
         };
 
         return new ProcessDocumentUnit($store, $processor, $reconciler, new FailureRecorder($failures), $exhaustion);
+    }
+
+    /** @param array<string, scalar|null> $locator */
+    private function unit(DocumentUnitType $type, int $index, string $sourceVersion, array $locator = []): DocumentUnitData
+    {
+        return new DocumentUnitData($type, $index, $sourceVersion, [
+            ...$locator,
+            'source_kind' => $type->sourceKind(),
+            'source_version' => $sourceVersion,
+            'coordinate_space' => $type->coordinateSpace(),
+            'artifact_path' => 'org-1/tests/'.$type->value.'-'.$index,
+            'artifact_sha256' => 'sha256:'.hash('sha256', $sourceVersion),
+            'artifact_version_id' => 'test-'.$type->value.'-'.$index,
+        ]);
     }
 }

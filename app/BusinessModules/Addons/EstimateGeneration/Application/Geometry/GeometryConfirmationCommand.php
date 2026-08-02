@@ -11,6 +11,8 @@ final readonly class GeometryConfirmationCommand
     /** @var list<array{op: string, path: string, floor_key: string, collection: string, element_key: string, field: string, value: mixed}> */
     public array $operations;
 
+    public ?GeometryReviewedSource $sourceConfirmationContext;
+
     public function __construct(
         public int $organizationId,
         public int $projectId,
@@ -22,6 +24,7 @@ final readonly class GeometryConfirmationCommand
         public ?array $scale,
         array $operations,
         public ?array $sourceConfirmation = null,
+        ?array $sourceConfirmationContext = null,
     ) {
         if (! preg_match('/^sha256:[a-f0-9]{64}$/', $expectedModelVersion)
             || ! preg_match('/^sha256:[a-f0-9]{64}$/', $expectedInputVersion)) {
@@ -32,6 +35,9 @@ final readonly class GeometryConfirmationCommand
         }
         if ($sourceConfirmation !== null && ($scale !== null || $operations !== [])) {
             throw new InvalidArgumentException('Geometry source confirmation cannot be combined with geometry mutations.');
+        }
+        if (($sourceConfirmation === null) !== ($sourceConfirmationContext === null)) {
+            throw new InvalidArgumentException('Geometry reviewed source confirmation is required.');
         }
         if ($scale !== null) {
             if (array_keys($scale) !== ['pixel_start', 'pixel_end', 'meters']
@@ -44,7 +50,12 @@ final readonly class GeometryConfirmationCommand
         if (count($operations) > 100) {
             throw new InvalidArgumentException('Too many geometry operations.');
         }
-        $encoded = json_encode(['scale' => $scale, 'operations' => $operations, 'source_confirmation' => $sourceConfirmation]);
+        $encoded = json_encode([
+            'scale' => $scale,
+            'operations' => $operations,
+            'source_confirmation' => $sourceConfirmation,
+            'source_confirmation_context' => $sourceConfirmationContext,
+        ]);
         if (is_string($encoded) && strlen($encoded) > 262144) {
             throw new InvalidArgumentException('Geometry confirmation payload is too large.');
         }
@@ -86,6 +97,9 @@ final readonly class GeometryConfirmationCommand
         $this->operations = $normalized;
         if ($sourceConfirmation !== null) {
             \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData::fromArray($sourceConfirmation);
+            $this->sourceConfirmationContext = GeometryReviewedSource::fromArray($sourceConfirmationContext);
+        } else {
+            $this->sourceConfirmationContext = null;
         }
     }
 

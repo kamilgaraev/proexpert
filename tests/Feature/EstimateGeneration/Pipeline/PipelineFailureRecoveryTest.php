@@ -27,7 +27,14 @@ final class PipelineFailureRecoveryTest extends TestCase
     public function unit_failure_is_recorded_once_and_successful_retry_resolves_active_failure(): void
     {
         $units = new InMemoryDocumentProcessingUnitStore;
-        $unit = $units->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::Sketch, 1, 'source'));
+        $unit = $units->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::Sketch, 1, 'source', [
+            'source_kind' => 'image',
+            'source_version' => 'source',
+            'coordinate_space' => 'image_pixels',
+            'artifact_path' => 'org-1/tests/sketch-1',
+            'artifact_sha256' => 'sha256:'.hash('sha256', 'source'),
+            'artifact_version_id' => 'test-sketch-1',
+        ]));
         $processor = new class implements DocumentUnitProcessor
         {
             public int $calls = 0;

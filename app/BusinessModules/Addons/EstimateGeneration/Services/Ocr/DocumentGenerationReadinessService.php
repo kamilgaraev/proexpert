@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentLifecycleState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -18,6 +19,21 @@ class DocumentGenerationReadinessService
     private const PENDING_STATUSES = ['uploaded', 'queued', 'processing'];
 
     private const ACTION_REQUIRED_STATUSES = ['failed', 'needs_review'];
+
+    private const REQUIRED_CAPABILITY_KEYS = [
+        'has_room_areas',
+        'has_dimensions',
+        'has_axes',
+        'has_title_block',
+        'has_pdf_geometry',
+        'has_quantity_takeoffs',
+        'has_work_volume_statement_markers',
+        'has_specification_markers',
+        'has_estimate_markers',
+        'has_strong_estimate_markers',
+        'requires_cad_geometry_pipeline',
+        'requires_manual_review',
+    ];
 
     private EstimateGenerationQualityReviewPolicy $qualityReview;
 
@@ -55,13 +71,7 @@ class DocumentGenerationReadinessService
             EstimateGenerationStatus::ReadyToApply,
             EstimateGenerationStatus::Applied,
         ], true) || $this->cancelledAfterGeneration($session);
-        $canGenerate = $summary['can_generate'] || (
-            $reviewAcknowledged
-            && $summary['ready_count'] > 0
-            && $summary['pending_count'] === 0
-            && $summary['failed_count'] === 0
-            && $summary['needs_review_count'] === 0
-        );
+        $canGenerate = $summary['can_generate'];
         $summary['review_acknowledged'] = $reviewAcknowledged;
         $summary['can_generate'] = $canGenerate;
 
@@ -84,7 +94,7 @@ class DocumentGenerationReadinessService
         $failed = $items->where('status', 'failed');
         $needsReview = $items->where('status', 'needs_review');
         $ignored = $items->where('status', 'ignored');
-        $ready = $items->where('status', 'ready');
+        $ready = $items->where('is_ready', true);
         $actionRequired = $items
             ->where('is_action_required', true)
             ->where('status', '!=', 'ignored');
@@ -93,6 +103,8 @@ class DocumentGenerationReadinessService
         $understandingReviewDocuments = $items->where('requires_document_review', true)->where('status', '!=', 'ignored');
         $qualityReviewDocuments = $items->where('requires_quality_review', true)->where('status', '!=', 'ignored');
         $lowQualityDocuments = $items->where('has_low_quality', true)->where('status', '!=', 'ignored');
+        $structureIncompleteDocuments = $items->where('structure_complete', false)->where('status', '!=', 'ignored');
+        $capabilityIncompleteDocuments = $items->where('capabilities_complete', false)->where('status', '!=', 'ignored');
         $actionRequiredCount = $actionRequired->count();
         $hasDocuments = $items->isNotEmpty();
 
@@ -107,6 +119,8 @@ class DocumentGenerationReadinessService
             'understanding_review_count' => $understandingReviewDocuments->count(),
             'quality_review_count' => $qualityReviewDocuments->count(),
             'low_quality_count' => $lowQualityDocuments->count(),
+            'structure_incomplete_count' => $structureIncompleteDocuments->count(),
+            'capability_incomplete_count' => $capabilityIncompleteDocuments->count(),
             'action_required_count' => $actionRequiredCount,
             'has_documents' => $hasDocuments,
             'has_pending' => $pending->isNotEmpty(),
@@ -133,6 +147,8 @@ class DocumentGenerationReadinessService
         $qualityFlags = is_array($document->quality_flags) ? $document->quality_flags : [];
         $hasConflicts = (is_array($factsSummary['conflicts'] ?? null) && $factsSummary['conflicts'] !== []);
         $hasLowQuality = in_array($document->quality_level, ['low', 'unusable'], true);
+        $structureComplete = $isPending || $this->hasCompleteStructure($document);
+        $capabilitiesComplete = $isPending || $this->hasCompleteCapabilities($factsSummary);
         $missingDocumentUnderstanding = ! $isPending && $this->missingDocumentUnderstanding($factsSummary);
         $requiresDocumentReview = ! $isPending && $this->requiresDocumentReview($factsSummary);
         $qualitySignals = is_array($factsSummary['quality_signals'] ?? null) ? $factsSummary['quality_signals'] : [];
@@ -146,6 +162,7 @@ class DocumentGenerationReadinessService
             'filename' => $document->filename,
             'status' => $status,
             'processing_stage' => $document->processing_stage,
+            'lifecycle' => DocumentLifecycleState::forDocument($document),
             'progress_percent' => $document->progress_percent,
             'page_count' => $document->page_count,
             'processed_page_count' => $document->processed_page_count,
@@ -160,10 +177,15 @@ class DocumentGenerationReadinessService
             'requires_document_review' => $requiresDocumentReview,
             'requires_quality_review' => $requiresQualityReview,
             'quality_review_reasons' => $qualityDecision?->reasons ?? [],
+            'structure_complete' => $structureComplete,
+            'capabilities_complete' => $capabilitiesComplete,
+            'is_ready' => $status === 'ready' && $structureComplete && $capabilitiesComplete,
             'is_pending' => $isPending,
             'is_action_required' => $isActionStatus
                 || $hasConflicts
                 || $hasLowQuality
+                || (! $isPending && ! $structureComplete)
+                || (! $isPending && ! $capabilitiesComplete)
                 || $missingDocumentUnderstanding
                 || $requiresDocumentReview
                 || $requiresQualityReview,
@@ -216,6 +238,42 @@ class DocumentGenerationReadinessService
             : [];
 
         return trim((string) ($understanding['role_for_estimation'] ?? '')) === '';
+    }
+
+    private function hasCompleteStructure(EstimateGenerationDocument $document): bool
+    {
+        $sourceVersion = trim((string) $document->source_version);
+        $pageCount = (int) $document->page_count;
+        $processedPageCount = (int) $document->processed_page_count;
+        $payload = is_array($document->structured_payload) ? $document->structured_payload : [];
+        $pages = is_array($payload['pages'] ?? null) ? $payload['pages'] : [];
+
+        return $sourceVersion !== ''
+            && (string) $document->units_finalized_source_version === $sourceVersion
+            && (string) $document->units_reconciled_source_version === $sourceVersion
+            && $pageCount > 0
+            && $processedPageCount === $pageCount
+            && ($payload['source_version'] ?? null) === $sourceVersion
+            && count($pages) === $pageCount;
+    }
+
+    /** @param array<string, mixed> $factsSummary */
+    private function hasCompleteCapabilities(array $factsSummary): bool
+    {
+        $understanding = is_array($factsSummary['document_understanding'] ?? null)
+            ? $factsSummary['document_understanding']
+            : [];
+        $capabilities = is_array($understanding['extracted_capabilities'] ?? null)
+            ? $understanding['extracted_capabilities']
+            : [];
+
+        foreach (self::REQUIRED_CAPABILITY_KEYS as $key) {
+            if (! is_bool($capabilities[$key] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function cancelledAfterGeneration(EstimateGenerationSession $session): bool

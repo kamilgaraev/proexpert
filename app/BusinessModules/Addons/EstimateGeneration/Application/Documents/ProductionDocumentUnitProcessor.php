@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
@@ -32,16 +33,17 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
     {
         try {
-            if ($context->type === DocumentUnitType::PdfPage
-                && ($context->locator['content_type'] ?? null) === 'image/png') {
-                return $this->processRaster($context);
-            }
-
-            return match ($context->type) {
-                DocumentUnitType::CadDrawing => $this->processCad($context),
-                DocumentUnitType::RasterImage, DocumentUnitType::Sketch => $this->processRaster($context),
+            $provenance = DocumentUnitProvenance::fromLocator($context->type, $context->sourceVersion, $context->locator);
+            $output = match (true) {
+                $context->type === DocumentUnitType::PdfPage && ($context->locator['content_type'] ?? null) === 'image/png'
+                    => $this->processRaster($context, $provenance),
+                $context->type === DocumentUnitType::CadDrawing => $this->processCad($context, $provenance),
+                $context->type === DocumentUnitType::RasterImage, $context->type === DocumentUnitType::Sketch
+                    => $this->processRaster($context, $provenance),
                 default => $this->ocr->process($context),
             };
+
+            return $this->withSourceProvenance($output, $provenance);
         } catch (DocumentUnitProcessingException $exception) {
             throw $exception;
         } catch (S3ObjectLocatorException $exception) {
@@ -55,11 +57,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         }
     }
 
-    private function processCad(DocumentUnitExecutionContext $context): DocumentUnitOutput
+    private function processCad(DocumentUnitExecutionContext $context, DocumentUnitProvenance $provenance): DocumentUnitOutput
     {
         $organization = new Organization;
         $organization->id = $context->organizationId;
-        $geometry = $this->cad->extract($context->storagePath, $organization);
+        $geometry = $this->cad->extract($provenance, $organization);
         $payload = $geometry->toArray();
         $text = implode("\n", array_values(array_filter(array_map(
             static fn (mixed $item): string => is_array($item) ? trim((string) ($item['text'] ?? '')) : '',
@@ -72,8 +74,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             confidence: $geometry->unitStatus === 'confirmed' ? 1.0 : 0.7,
             normalizedPayload: [
                 'schema_version' => 1,
-                'source_kind' => 'cad',
+                'source_kind' => $provenance->sourceKind,
+                'source' => $provenance->toArray(),
                 'vector_geometry' => $payload,
+                ...(new CadDocumentAdapter)->extract($geometry),
                 'provenance' => [
                     'provider' => 'cad_geometry',
                     'runtime_version' => $geometry->runtimeVersion,
@@ -93,21 +97,17 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         );
     }
 
-    private function processRaster(DocumentUnitExecutionContext $context): DocumentUnitOutput
+    private function processRaster(DocumentUnitExecutionContext $context, DocumentUnitProvenance $provenance): DocumentUnitOutput
     {
         if ($context->pageId === null) {
             throw new DocumentUnitProcessingException('vision_page_identity_required');
         }
-        $storageKey = is_string($context->locator['artifact_path'] ?? null)
-            ? $context->locator['artifact_path']
-            : $context->storagePath;
-        $artifactVersion = is_string($context->locator['artifact_source_version'] ?? null)
-            ? $context->locator['artifact_source_version']
-            : $context->sourceVersion;
+        $storageKey = $provenance->artifactPath;
+        $artifactVersion = $context->locator['artifact_source_version'] ?? null;
         $sourceBytes = $context->locator['artifact_bytes'] ?? null;
         $sourceSha256 = $context->locator['artifact_sha256'] ?? null;
         $sourceVersionId = $context->locator['artifact_version_id'] ?? null;
-        if (! is_int($sourceBytes) || ! is_string($sourceSha256) || ! is_string($sourceVersionId)) {
+        if (! is_string($artifactVersion) || ! is_int($sourceBytes) || ! is_string($sourceSha256) || ! is_string($sourceVersionId)) {
             throw new DocumentUnitProcessingException('raster_source_locator_invalid');
         }
         $preprocessed = $this->raster->preprocess(new RasterPreprocessInput(
@@ -177,7 +177,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'geometry_incomplete',
         ]));
         $pdfGeometry = null;
+        $nativePdfText = null;
         $geometryPath = $context->locator['geometry_artifact_path'] ?? null;
+        if ($context->type === DocumentUnitType::PdfPage && ! is_string($geometryPath)) {
+            throw new DocumentUnitProcessingException('pdf_page_geometry_locator_invalid');
+        }
         if (is_string($geometryPath)) {
             $geometryBytes = $context->locator['geometry_artifact_bytes'] ?? null;
             $geometrySha256 = $context->locator['geometry_artifact_sha256'] ?? null;
@@ -194,22 +198,31 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 $geometryVersionId,
             )->body;
             $decoded = json_decode($geometryContent, true, 64, JSON_THROW_ON_ERROR);
-            if (! is_array($decoded) || ! is_array($decoded['geometry'] ?? null)) {
+            if (! is_array($decoded) || ($decoded['schema_version'] ?? null) !== 1
+                || ! is_string($decoded['text'] ?? null)
+                || ! is_array($decoded['geometry'] ?? null)
+                || ! is_array($decoded['sources'] ?? null)
+                || ! is_array($decoded['provenance'] ?? null)) {
                 throw new DocumentUnitProcessingException('pdf_page_geometry_contract_invalid');
             }
             $pdfGeometry = $decoded;
+            $nativePdfText = $decoded['text'];
         }
 
         return new DocumentUnitOutput(
-            version: hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
-            text: implode("\n", array_values(array_filter(array_map(
+            version: hash('sha256', json_encode([
+                'vision_analysis' => $payload,
+                'pdf_native_text' => $nativePdfText,
+            ], JSON_THROW_ON_ERROR)),
+            text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
                 $payload['elements'],
             )))),
             confidence: $analysis->warnings === [] ? 1.0 : 0.7,
             normalizedPayload: [
                 'schema_version' => 1,
-                'source_kind' => $context->type->value,
+                'source_kind' => $provenance->sourceKind,
+                'source' => $provenance->toArray(),
                 'vision_analysis' => $payload,
                 'pdf_geometry' => $pdfGeometry,
                 'preprocessing' => [
@@ -236,6 +249,23 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     'hard_blockers' => $hardGeometryWarnings,
                 ],
             ],
+        );
+    }
+
+    private function withSourceProvenance(DocumentUnitOutput $output, DocumentUnitProvenance $provenance): DocumentUnitOutput
+    {
+        return new DocumentUnitOutput(
+            version: $output->version,
+            text: $output->text,
+            confidence: $output->confidence,
+            normalizedPayload: [...$output->normalizedPayload, 'source' => $provenance->toArray()],
+            width: $output->width,
+            height: $output->height,
+            rotation: $output->rotation,
+            unitType: $output->unitType,
+            unitIndex: $output->unitIndex,
+            sourceVersion: $output->sourceVersion,
+            qualitySignals: $output->qualitySignals,
         );
     }
 }

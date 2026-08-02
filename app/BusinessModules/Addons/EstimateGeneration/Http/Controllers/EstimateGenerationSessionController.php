@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerat
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\NormativeContextPinUnavailable;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeDatasetPinPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -38,6 +39,7 @@ final class EstimateGenerationSessionController extends Controller
         private readonly EstimateGenerationRegionalContextResolver $regionalContextResolver,
         private readonly SessionOperationalSnapshotBuilder $operationalSnapshot,
         private readonly NormativeDatasetPinPolicy $normativePins,
+        private readonly AiEstimateQuotaService $aiEstimateQuota,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -53,6 +55,7 @@ final class EstimateGenerationSessionController extends Controller
                 ->withCount('documents')
                 ->orderByDesc('id')
                 ->paginate((int) ($validated['per_page'] ?? 10), ['*'], 'page', (int) ($validated['page'] ?? 1));
+            $this->aiEstimateQuota->attachSnapshots($sessions->getCollection());
 
             return AdminResponse::paginated(
                 EstimateGenerationSessionListResource::collection($sessions),

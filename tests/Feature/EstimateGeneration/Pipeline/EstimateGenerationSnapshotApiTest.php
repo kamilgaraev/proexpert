@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSess
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -71,6 +72,118 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $this->withHeader('If-None-Match', '*')
             ->get('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
             ->assertForbidden();
+    }
+
+    #[Test]
+    public function snapshot_exposes_current_month_ai_estimate_quota_and_reservation_status(): void
+    {
+        config(['commercial_limits.free.ai_estimates_month' => 3]);
+        [$user, $project, $session] = $this->fixture();
+        app(AiEstimateQuotaService::class)->reserve($session);
+        $this->route($project, $session);
+        $this->actingAs($user);
+
+        $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota', [
+                'limit' => 3,
+                'used' => 1,
+                'available' => 2,
+                'reservation_status' => 'confirmed',
+            ]);
+
+        DB::table('estimate_generation_ai_estimate_quota_reservations')
+            ->where('organization_id', $project->organization_id)
+            ->where('session_id', $session->id)
+            ->update(['status' => 'released', 'released_at' => now()]);
+
+        $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota', [
+                'limit' => 3,
+                'used' => 0,
+                'available' => 3,
+                'reservation_status' => 'released',
+            ]);
+    }
+
+    #[Test]
+    public function confirmed_reservation_in_another_session_invalidates_the_snapshot_etag(): void
+    {
+        config(['commercial_limits.free.ai_estimates_month' => 3]);
+        [$user, $project, $session] = $this->fixture();
+        $otherSession = $this->anotherSession($user, $project);
+        $this->route($project, $session);
+        $this->actingAs($user);
+
+        $first = $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
+        $etag = (string) $first->headers->get('ETag');
+
+        app(AiEstimateQuotaService::class)->reserve($otherSession);
+
+        $second = $this->withHeader('If-None-Match', $etag)
+            ->get('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
+
+        $second->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota.used', 1);
+        self::assertNotSame($etag, $second->headers->get('ETag'));
+    }
+
+    #[Test]
+    public function quota_snapshot_batches_limits_usage_and_reservation_status_in_three_queries(): void
+    {
+        [$user, $project, $session] = $this->fixture();
+        $otherSession = $this->anotherSession($user, $project);
+        $selects = 0;
+        DB::listen(static function (QueryExecuted $query) use (&$selects): void {
+            if (str_starts_with(ltrim(strtolower($query->sql)), 'select')) {
+                $selects++;
+            }
+        });
+
+        $snapshots = app(AiEstimateQuotaService::class)->snapshots([$session, $otherSession]);
+
+        self::assertSame(AiEstimateQuotaService::SNAPSHOT_QUERY_BUDGET, $selects);
+        self::assertSame(2, count($snapshots));
+        self::assertSame(0, $snapshots[(int) $session->id]['used']);
+    }
+
+    #[Test]
+    public function quota_snapshot_never_returns_negative_available_when_confirmed_usage_exceeds_limit(): void
+    {
+        config(['commercial_limits.free.ai_estimates_month' => 1]);
+        [$user, $project, $session] = $this->fixture();
+        $otherSession = $this->anotherSession($user, $project);
+        $now = now();
+        DB::table('estimate_generation_ai_estimate_quota_reservations')->insert([
+            [
+                'organization_id' => $project->organization_id,
+                'session_id' => $session->id,
+                'monthly_period' => $now->copy()->startOfMonth()->toDateString(),
+                'status' => 'confirmed',
+                'confirmed_at' => $now,
+                'released_at' => null,
+            ],
+            [
+                'organization_id' => $project->organization_id,
+                'session_id' => $otherSession->id,
+                'monthly_period' => $now->copy()->startOfMonth()->toDateString(),
+                'status' => 'confirmed',
+                'confirmed_at' => $now,
+                'released_at' => null,
+            ],
+        ]);
+        $this->route($project, $session);
+        $this->actingAs($user);
+
+        $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()
+            ->assertJsonPath('data.ai_estimate_quota', [
+                'limit' => 1,
+                'used' => 2,
+                'available' => 0,
+                'reservation_status' => 'confirmed',
+            ]);
     }
 
     #[Test]
@@ -173,6 +286,23 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $after = $builder->handle($session, [])->operationalVersion;
 
         self::assertNotSame($before, $after, $source);
+    }
+
+    private function anotherSession(User $user, Project $project): EstimateGenerationSession
+    {
+        return EstimateGenerationSession::query()->create([
+            'organization_id' => $project->organization_id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => EstimateGenerationStatus::Draft->value,
+            'processing_stage' => 'draft',
+            'processing_progress' => 0,
+            'state_version' => 1,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+        ]);
     }
 
     /** @return array{User, Project, EstimateGenerationSession} */

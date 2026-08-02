@@ -5,8 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Geometry;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationBuildingModel;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -25,7 +24,7 @@ final class ConfirmBuildingGeometry
         private GeometryDependencyInvalidator $invalidator,
         private GeometryConfirmationFaultInjector $faultInjector,
         private AssemblePersistedVectorGeometry $sourceAssembler,
-        private SessionStateStore $stateStore,
+        private AdvanceEstimateGeneration $advance,
     ) {}
 
     /** @return array<string, mixed> */
@@ -49,23 +48,23 @@ final class ConfirmBuildingGeometry
                 throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
             }
             $this->faultInjector->afterLocksAcquired();
-            $provisional = $command->sourceConfirmation === null
-                ? $this->mutator->mutate($head->model, $command)
-                : $this->sourceAssembler->handle($command);
+            $provisionalSource = $command->sourceConfirmation === null ? null : $this->sourceAssembler->handle($command);
+            $provisional = $provisionalSource?->model ?? $this->mutator->mutate($head->model, $command);
             if ($provisional->contentVersion() === $head->content_version) {
                 throw new InvalidArgumentException('Geometry confirmation does not change the model.');
             }
             $evidenceId = $this->reserveEvidenceId();
-            $normalized = $command->sourceConfirmation === null
-                ? $this->mutator->mutate($head->model, $command, $evidenceId)
-                : $this->sourceAssembler->handle($command, $evidenceId);
+            $normalizedSource = $command->sourceConfirmation === null ? null : $this->sourceAssembler->handle($command, $evidenceId);
+            $normalized = $normalizedSource?->model ?? $this->mutator->mutate($head->model, $command, $evidenceId);
+            $serverSourceConfirmation = $normalizedSource?->sourceConfirmation;
             $newInputVersion = 'sha256:'.hash('sha256', $command->expectedInputVersion.'|'.$normalized->contentVersion().'|'.($command->expectedStateVersion + 1));
             $sourceEvidenceIds = array_values(array_map('intval', $head->model['evidence_ids'] ?? []));
             $evidenceValue = [
                 'source_class' => 'user_geometry_confirmation', 'actor_id' => $command->actorId,
                 'reviewer_ref' => 'user:'.$command->actorId, 'confirmed_at' => now()->toIso8601String(),
                 'operations' => $command->operations, 'scale' => $command->scale,
-                'source_confirmation' => $command->sourceConfirmation, 'source_evidence_ids' => $sourceEvidenceIds,
+                'source_confirmation' => $serverSourceConfirmation,
+                'source_evidence_ids' => $sourceEvidenceIds,
                 'previous_state_version' => $command->expectedStateVersion, 'new_state_version' => $command->expectedStateVersion + 1,
                 'previous_model_version' => $command->expectedModelVersion, 'new_model_version' => $normalized->contentVersion(),
                 'previous_input_version' => $command->expectedInputVersion, 'new_input_version' => $newInputVersion,
@@ -99,7 +98,10 @@ final class ConfirmBuildingGeometry
                     'confirmed_input_version' => $new->input_version, 'confirmed_content_version' => $new->content_version,
                     'source_class' => 'user_geometry_confirmation', 'reviewer_ref' => 'user:'.$command->actorId,
                     'confirmed_at' => now(),
-                    'semantic_payload' => json_encode($command->sourceConfirmation, JSON_THROW_ON_ERROR),
+                    'semantic_payload' => json_encode([
+                        ...$serverSourceConfirmation,
+                        'source_confirmation_context' => $normalizedSource->sourceConfirmationContext->toArray(),
+                    ], JSON_THROW_ON_ERROR),
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
             }
@@ -110,22 +112,7 @@ final class ConfirmBuildingGeometry
             $invalidation = $this->invalidator->invalidate($command->sessionId, $command->expectedInputVersion, $command->expectedStateVersion + 1);
             $this->faultInjector->afterInvalidation();
             $attemptId = (string) Str::uuid();
-            $session = $this->stateStore->compareAndSet(
-                $session,
-                $command->expectedStateVersion,
-                EstimateGenerationStatus::Generating,
-                [
-                    'processing_stage' => 'generating',
-                    'processing_progress' => 40,
-                    'last_error' => null,
-                    'failure_code' => null,
-                    'input_payload' => [
-                        ...($session->input_payload ?? []),
-                        'generation_attempt_id' => $attemptId,
-                        'generation_requested' => false,
-                    ],
-                ],
-            );
+            $session = $this->advance->generationStarted($session, $attemptId);
             $intentId = $this->outbox->append(new GeometryRegenerationIntent(
                 $command->organizationId, $command->projectId, $command->sessionId, (int) $session->state_version,
                 $command->expectedInputVersion, $newInputVersion, $normalized->contentVersion(), $attemptId,
