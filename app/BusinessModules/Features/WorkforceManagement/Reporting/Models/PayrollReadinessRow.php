@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 
 final class PayrollReadinessRow extends Model
 {
-    protected $table = 'workforce_payroll_readiness_rows';
+    protected $table = 'workforce_payroll_reporting_rows';
 
     protected $guarded = [];
 

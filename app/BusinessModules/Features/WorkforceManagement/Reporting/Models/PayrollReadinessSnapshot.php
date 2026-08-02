@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 final class PayrollReadinessSnapshot extends Model
 {
-    protected $table = 'workforce_payroll_readiness_snapshots';
+    protected $table = 'workforce_payroll_reporting_snapshots';
 
     protected $guarded = [];
 

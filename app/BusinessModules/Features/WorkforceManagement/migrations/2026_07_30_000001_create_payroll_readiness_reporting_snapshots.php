@@ -14,7 +14,7 @@ return new class extends Migration
             $table->char('currency', 3)->default('RUB')->after('period_end');
         });
 
-        Schema::create('workforce_payroll_readiness_snapshots', function (Blueprint $table): void {
+        Schema::create('workforce_payroll_reporting_snapshots', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('payroll_period_id');
@@ -40,7 +40,7 @@ return new class extends Migration
             );
         });
 
-        Schema::create('workforce_payroll_readiness_rows', function (Blueprint $table): void {
+        Schema::create('workforce_payroll_reporting_rows', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('snapshot_id');
             $table->unsignedBigInteger('organization_id');
@@ -53,7 +53,7 @@ return new class extends Migration
             $table->char('source_hash', 64);
             $table->timestampsTz();
 
-            $table->foreign('snapshot_id')->references('id')->on('workforce_payroll_readiness_snapshots');
+            $table->foreign('snapshot_id')->references('id')->on('workforce_payroll_reporting_snapshots');
             $table->unique(
                 ['organization_id', 'snapshot_id', 'source_row_id'],
                 'workforce_payroll_readiness_row_identity_unique',
@@ -63,8 +63,8 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('workforce_payroll_readiness_rows');
-        Schema::dropIfExists('workforce_payroll_readiness_snapshots');
+        Schema::dropIfExists('workforce_payroll_reporting_rows');
+        Schema::dropIfExists('workforce_payroll_reporting_snapshots');
 
         Schema::table('workforce_payroll_periods', function (Blueprint $table): void {
             $table->dropColumn('currency');
