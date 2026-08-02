@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
         env:
           POSTGRES_DB: most_lookahead_readiness_testing
           POSTGRES_USER: postgres
@@ -68,7 +68,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45
         with:
           php-version: 8.2
           extensions: mbstring, pcntl, pdo_pgsql, pgsql, posix

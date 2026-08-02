@@ -42,6 +42,54 @@ final class ScheduleRevisionSourceMatcherTest extends TestCase
         self::addToAssertionCount(1);
     }
 
+    /**
+     * @dataProvider policyDrivingPlanningFactProvider
+     */
+    public function test_rejects_policy_driving_task_fact_that_differs_from_locked_source(
+        array $taskOverrides,
+        array $sourceOverrides,
+    ): void {
+        $draft = ScheduleRevisionDraft::fromArray($this->draftData($taskOverrides));
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('lookahead_readiness_schedule_snapshot_mismatch');
+
+        (new ScheduleRevisionSourceMatcher)->assertMatches(
+            $draft,
+            $this->scheduleRow(),
+            [[...$this->taskRow(), ...$sourceOverrides]],
+            [],
+        );
+    }
+
+    public static function policyDrivingPlanningFactProvider(): array
+    {
+        return [
+            'task class' => [['task_class' => 'standard'], ['task_type' => 'milestone']],
+            'duration' => [['duration_minutes' => 1440], ['planned_duration_days' => 2]],
+            'constraint type' => [['constraint_point' => null], ['constraint_type' => 'finish_no_later_than']],
+            'constraint date' => [['constraint_point' => null], ['constraint_date' => '2026-08-12']],
+        ];
+    }
+
+    public function test_decimal_and_dependency_lag_comparison_is_exact_without_binary_float_rounding(): void
+    {
+        $draft = ScheduleRevisionDraft::fromArray($this->draftData([
+            'duration_minutes' => 1440,
+            'planned_quantity' => '9007199254740993.0000',
+        ]));
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('lookahead_readiness_schedule_snapshot_mismatch');
+
+        (new ScheduleRevisionSourceMatcher)->assertMatches(
+            $draft,
+            $this->scheduleRow(),
+            [[...$this->taskRow(), 'quantity' => '9007199254740992.0000']],
+            [],
+        );
+    }
+
     private function draftData(array $taskOverrides = []): array
     {
         return [
@@ -65,11 +113,11 @@ final class ScheduleRevisionSourceMatcherTest extends TestCase
                     'task_class' => 'standard',
                     'planned_start' => '2026-08-10',
                     'planned_end' => '2026-08-11',
-                    'duration_minutes' => 960,
+                    'duration_minutes' => 1440,
                     'planned_quantity' => '2.0000',
                     'planned_work_hours' => '16.0000',
                     'critical' => true,
-                    'constraint_point' => 'finish',
+                    'constraint_point' => 'finish_no_later_than@2026-08-11',
                     'parent_external_id' => null,
                 ],
                 ...$taskOverrides,
@@ -100,6 +148,10 @@ final class ScheduleRevisionSourceMatcherTest extends TestCase
             'planned_work_hours' => '16.0000',
             'quantity' => '2.0000',
             'is_critical' => true,
+            'task_type' => 'task',
+            'planned_duration_days' => 1,
+            'constraint_type' => 'finish_no_later_than',
+            'constraint_date' => '2026-08-11',
         ];
     }
 }

@@ -49,3 +49,21 @@ Acceptance source хранит только `acceptance_scope_id` и `acceptance
 ## Граница публикации
 
 R23 остаётся заблокированным для runtime publication до отдельного reader/provider блока с bounded filters, keyset pagination, source watermark/snapshot admission и definition-aware ABAC. CI workflow в этом коммите не изменяется: общий workflow сейчас принадлежит параллельному publication-блоку; R23 job будет добавлен отдельным безопасным follow-up после его коммита.
+
+## Follow-up: обязательный PostgreSQL CI gate
+
+После publication workflow commit `fc3db348f` добавлен отдельный job `quality-defect-flow-postgres-contract` в существующий `.github/workflows/notification-concurrency.yml`.
+
+- Job использует отдельную базу `most_quality_defect_flow_testing`, `DB_URL: ''` и явный `QUALITY_DEFECT_FLOW_POSTGRES_TESTS=1`.
+- Checkout закреплён на SHA action и `github.sha`; соответствие `git rev-parse HEAD = GITHUB_SHA` проверяется до подготовки схемы и повторно непосредственно перед `migrate:fresh`.
+- Отсутствие `pdo_pgsql`, `pcntl`, `posix`, точного migration/test-файла, пустого `DB_URL` или суффикса `_testing` завершает job ошибкой до теста.
+- Запускается только `tests/Feature/QualityControl/Reporting/DefectFlow/QualityDefectFlowSourcePostgresTest.php` с `--group=postgresql --fail-on-skipped`.
+- Существующие notification, R15, saved-view, RBAC и publication jobs не изменялись. PHP test safety harness уже был pre-connection safe и поэтому не менялся.
+
+Commit: `d8f874740` (`test[reports]: добавлен PostgreSQL-шлюз потока дефектов`).
+
+Статическая проверка: Symfony YAML parse — PASS; четыре существующих workflow contract suites — `16 tests, 216 assertions`, PASS; scoped `git diff --check` — PASS. Локальная БД и миграции не запускались.
+
+### Fix round 1
+
+Первичное scoped review выявило один Important gap: изменения DB-free unit-контрактов R23 не запускали PostgreSQL job. В commit `bea541385` обе trigger-матрицы дополнены точным путём `tests/Unit/QualityControl/Reporting/DefectFlow/**`. Symfony YAML parse, проверка наличия trigger в pull_request/push и scoped `git diff --check` — PASS; исполняемый PHP-код не менялся, поэтому тестовые suites повторно не запускались.

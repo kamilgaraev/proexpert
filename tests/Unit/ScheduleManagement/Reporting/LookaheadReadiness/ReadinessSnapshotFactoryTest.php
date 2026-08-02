@@ -34,6 +34,10 @@ final class ReadinessSnapshotFactoryTest extends TestCase
             'source_watermark' => 'events:60:4',
             'blocker_event_ids' => ['018f6f5a-4ca2-7a11-bf61-0242ac120002'],
             'waiver_event_ids' => [],
+            'evaluation_event_id' => '018f6f5a-4ca2-7a11-bf61-0242ac120010',
+            'sealed_by_actor_id' => 9,
+            'authorization_decision_hash' => str_repeat('d', 64),
+            'as_of_utc' => '2026-08-05T05:00:00.000000Z',
         ];
 
         $withoutActual = $factory->seal(
@@ -44,6 +48,9 @@ final class ReadinessSnapshotFactoryTest extends TestCase
         );
         self::assertSame(ReadinessState::BLOCKED, $withoutActual->state);
         self::assertNull($withoutActual->actualComparison);
+        self::assertSame('018f6f5a-4ca2-7a11-bf61-0242ac120010', $withoutActual->evaluationEventId);
+        self::assertSame(9, $withoutActual->sealedByActorId);
+        self::assertSame(str_repeat('d', 64), $withoutActual->authorizationDecisionHash);
     }
 
     public function test_rejects_mutable_or_untyped_actual_comparison(): void
@@ -66,6 +73,10 @@ final class ReadinessSnapshotFactoryTest extends TestCase
                 'source_watermark' => 'events:60:4',
                 'blocker_event_ids' => [],
                 'waiver_event_ids' => [],
+                'evaluation_event_id' => '018f6f5a-4ca2-7a11-bf61-0242ac120010',
+                'sealed_by_actor_id' => 9,
+                'authorization_decision_hash' => str_repeat('d', 64),
+                'as_of_utc' => '2026-08-05T05:00:00.000000Z',
             ],
             new ReadinessEvaluation(ReadinessState::UNKNOWN, [], ['missing_source']),
             new DateTimeImmutable('2026-08-05T08:00:00+03:00'),
@@ -93,6 +104,10 @@ final class ReadinessSnapshotFactoryTest extends TestCase
                 'source_watermark' => 'events:60:4',
                 'blocker_event_ids' => [],
                 'waiver_event_ids' => [],
+                'evaluation_event_id' => '018f6f5a-4ca2-7a11-bf61-0242ac120010',
+                'sealed_by_actor_id' => 9,
+                'authorization_decision_hash' => str_repeat('d', 64),
+                'as_of_utc' => '2026-08-05T05:00:00.000000Z',
             ],
             new ReadinessEvaluation(ReadinessState::UNKNOWN, [], ['missing_source']),
             new DateTimeImmutable('2026-08-05T08:00:00+03:00'),

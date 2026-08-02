@@ -38,6 +38,12 @@ final readonly class EloquentScheduleRevisionSourceGuard
 
     private function source(int $organizationId, int $projectId, int $scheduleId): array
     {
+        if (DB::transactionLevel() > 0 && DB::getDriverName() === 'pgsql') {
+            DB::selectOne(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ["lookahead-schedule-source:{$scheduleId}"],
+            );
+        }
         $scheduleQuery = DB::table('project_schedules')
             ->where('id', $scheduleId)
             ->where('organization_id', $organizationId)

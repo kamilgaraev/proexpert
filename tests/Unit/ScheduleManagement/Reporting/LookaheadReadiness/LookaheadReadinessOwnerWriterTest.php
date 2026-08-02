@@ -6,14 +6,15 @@ namespace Tests\Unit\ScheduleManagement\Reporting\LookaheadReadiness;
 
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Contracts\LookaheadReadinessAuthorizer;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Contracts\LookaheadReadinessSourceStore;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\AuthorizationDecision;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\CommitmentDraft;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessEvent;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessPolicyDefinition;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ReadinessSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ScheduleRevisionDraft;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\SourceWriteReceipt;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Enums\ReadinessEventType;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\LookaheadReadinessAbility;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\LookaheadReadinessCanonicalJson;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\LookaheadReadinessOwnerWriter;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\ScheduleRevisionFactory;
 use DateTimeImmutable;
@@ -125,6 +126,104 @@ final class LookaheadReadinessOwnerWriterTest extends TestCase
         ], $authorizer->checks);
     }
 
+    public function test_authorization_decision_is_made_inside_the_write_transaction(): void
+    {
+        $store = new InMemoryLookaheadReadinessSourceStore;
+        $authorizer = new RecordingLookaheadReadinessAuthorizer($store);
+        $writer = new LookaheadReadinessOwnerWriter($store, $authorizer, new ScheduleRevisionFactory);
+
+        $writer->approveScheduleRevision(
+            ScheduleRevisionDraft::fromArray($this->scheduleDraft()),
+            9,
+            new DateTimeImmutable('2026-08-05T08:00:00+03:00'),
+            'schedule-40-v7-approved',
+        );
+
+        self::assertSame([true], $authorizer->transactionStates);
+    }
+
+    public function test_readiness_evaluation_requires_seal_permission_and_cannot_use_constraint_permission(): void
+    {
+        $store = new InMemoryLookaheadReadinessSourceStore;
+        $authorizer = new RecordingLookaheadReadinessAuthorizer;
+        $writer = new LookaheadReadinessOwnerWriter($store, $authorizer, new ScheduleRevisionFactory);
+        $event = ReadinessEvent::fromArray([
+            'event_id' => '018f6f5a-4ca2-7a11-bf61-0242ac120002',
+            'idempotency_key' => 'evaluation-60-v1',
+            'organization_id' => 10,
+            'project_id' => 20,
+            'schedule_id' => 40,
+            'commitment_revision_id' => 50,
+            'commitment_task_id' => 60,
+            'event_type' => ReadinessEventType::READINESS_EVALUATED->value,
+            'occurred_at' => '2026-08-10T09:00:00+03:00',
+            'actor_id' => 9,
+            'aggregate_id' => 'evaluation:60:1',
+            'payload' => [
+                'as_of_utc' => '2026-08-10T06:00:00.000000Z',
+                'policy_hash' => ReadinessPolicyDefinition::v1(10)->hash(),
+                'schedule_revision_hash' => str_repeat('a', 64),
+                'state' => 'unknown',
+                'component_outcomes' => [],
+            ],
+            'evidence' => null,
+            'prior_event_id' => null,
+        ], ReadinessPolicyDefinition::v1(10));
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('lookahead_readiness_owner_materialization_required');
+
+        $writer->appendEvent($event);
+    }
+
+    public function test_materialization_owner_accepts_only_identity_as_of_actor_and_idempotency(): void
+    {
+        $store = new InMemoryLookaheadReadinessSourceStore;
+        $authorizer = new RecordingLookaheadReadinessAuthorizer($store);
+        $writer = new LookaheadReadinessOwnerWriter($store, $authorizer, new ScheduleRevisionFactory);
+
+        self::assertTrue(
+            method_exists($writer, 'materializeReadiness'),
+            'The source owner must expose the event-sourced materialization command.',
+        );
+
+        $receipt = $writer->materializeReadiness(
+            10,
+            20,
+            40,
+            50,
+            60,
+            new DateTimeImmutable('2026-08-10T09:00:00+03:00'),
+            9,
+            'evaluation-60-v1',
+        );
+
+        self::assertSame(71, $receipt->entityId);
+        self::assertSame([true], $authorizer->transactionStates);
+        self::assertSame(LookaheadReadinessAbility::SEAL_EVALUATION, $authorizer->checks[0][1]);
+        self::assertSame([
+            'organization_id' => 10,
+            'project_id' => 20,
+            'schedule_id' => 40,
+            'commitment_revision_id' => 50,
+            'commitment_task_id' => 60,
+            'as_of_utc' => '2026-08-10T06:00:00.000000Z',
+            'actor_id' => 9,
+            'idempotency_key' => 'evaluation-60-v1',
+        ], $store->materializationCommands[0]);
+    }
+
+    public function test_caller_supplied_snapshot_has_no_owner_write_path(): void
+    {
+        $writer = new LookaheadReadinessOwnerWriter(
+            new InMemoryLookaheadReadinessSourceStore,
+            new RecordingLookaheadReadinessAuthorizer,
+            new ScheduleRevisionFactory,
+        );
+
+        self::assertFalse(method_exists($writer, 'sealSnapshot'));
+    }
+
     private function scheduleDraft(): array
     {
         return [
@@ -163,17 +262,75 @@ final class RecordingLookaheadReadinessAuthorizer implements LookaheadReadinessA
 {
     public array $checks = [];
 
-    public function assertAllowed(int $actorId, string $permission, int $organizationId, int $projectId): void
-    {
+    public array $transactionStates = [];
+
+    public function __construct(private readonly ?InMemoryLookaheadReadinessSourceStore $store = null) {}
+
+    public function authorize(
+        int $actorId,
+        string $permission,
+        int $organizationId,
+        int $projectId,
+    ): AuthorizationDecision {
         $this->checks[] = [$actorId, $permission, $organizationId, $projectId];
+        if ($this->store !== null) {
+            $this->transactionStates[] = $this->store->transactionDepth > 0;
+        }
+
+        $contextFactors = [
+            'organization_membership' => [
+                'organization_id' => (string) $organizationId,
+                'project_access_mode' => 'all_projects',
+                'updated_at' => '2026-08-10T05:59:00.000000Z',
+            ],
+            'project_membership' => null,
+            'context_ids' => ['1', '2'],
+        ];
+        $roleDefinition = [
+            'module_permissions' => [],
+            'slug' => 'project_manager',
+            'system_permissions' => [$permission],
+        ];
+        $grants = [[
+            'assignment_id' => '100',
+            'context_id' => '2',
+            'matched_permission' => $permission,
+            'role_definition' => $roleDefinition,
+            'role_definition_hash' => LookaheadReadinessCanonicalJson::hash($roleDefinition),
+            'role_slug' => 'project_manager',
+            'role_type' => 'system',
+            'assignment_updated_at' => '2026-08-10T05:59:00.000000Z',
+            'conditions_hash' => str_repeat('d', 64),
+        ]];
+
+        return new AuthorizationDecision(
+            $actorId,
+            $permission,
+            $organizationId,
+            $projectId,
+            LookaheadReadinessCanonicalJson::hash($grants),
+            LookaheadReadinessCanonicalJson::hash([
+                'context_factors' => $contextFactors,
+                'granting_assignments' => $grants,
+                'permission' => $permission,
+            ]),
+            ['project_manager'],
+            '2026-08-10T06:00:00.000000Z',
+            $contextFactors,
+            $grants,
+        );
     }
 }
 
 final class InMemoryLookaheadReadinessSourceStore implements LookaheadReadinessSourceStore
 {
+    public int $transactionDepth = 0;
+
     public array $scheduleRevisions = [];
 
     public array $events = [];
+
+    public array $materializationCommands = [];
 
     private array $idempotency = [];
 
@@ -183,18 +340,22 @@ final class InMemoryLookaheadReadinessSourceStore implements LookaheadReadinessS
         $beforeIdempotency = $this->idempotency;
 
         try {
+            $this->transactionDepth++;
+
             return $operation();
         } catch (\Throwable $exception) {
             $this->scheduleRevisions = $before;
             $this->idempotency = $beforeIdempotency;
             throw $exception;
+        } finally {
+            $this->transactionDepth--;
         }
     }
 
     public function approveScheduleRevision(
         ScheduleRevisionDraft $draft,
         string $contentHash,
-        int $actorId,
+        AuthorizationDecision $authorizationDecision,
         string $approvedAtUtc,
         string $idempotencyKey,
     ): SourceWriteReceipt {
@@ -208,35 +369,53 @@ final class InMemoryLookaheadReadinessSourceStore implements LookaheadReadinessS
         }
 
         $id = count($this->scheduleRevisions) + 1;
-        $this->scheduleRevisions[] = [$draft, $contentHash, $actorId, $approvedAtUtc];
+        $this->scheduleRevisions[] = [$draft, $contentHash, $authorizationDecision->actorId, $approvedAtUtc];
         $this->idempotency[$idempotencyKey] = ['id' => $id, 'hash' => $contentHash];
 
         return new SourceWriteReceipt($id, 1, $contentHash, false);
     }
 
-    public function publishPolicy(ReadinessPolicyDefinition $policy, int $actorId, string $idempotencyKey): SourceWriteReceipt
-    {
+    public function publishPolicy(
+        ReadinessPolicyDefinition $policy,
+        AuthorizationDecision $authorizationDecision,
+        string $idempotencyKey,
+    ): SourceWriteReceipt {
         throw new RuntimeException('not_used');
+    }
+
+    public function transitionScheduleRevision(
+        int $scheduleRevisionId,
+        int $organizationId,
+        int $projectId,
+        string $targetState,
+        string $effectiveAtUtc,
+        AuthorizationDecision $authorizationDecision,
+        string $idempotencyKey,
+    ): SourceWriteReceipt {
+        return new SourceWriteReceipt(41, 3, str_repeat('f', 64), false);
     }
 
     public function publishCommitment(
         \App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\PublishedCommitment $commitment,
         int $scheduleRevisionId,
         int $policyId,
+        AuthorizationDecision $authorizationDecision,
         string $idempotencyKey,
     ): SourceWriteReceipt {
         return new SourceWriteReceipt(31, 1, $commitment->contentHash, false);
     }
 
-    public function appendEvent(ReadinessEvent $event): SourceWriteReceipt
+    public function appendEvent(ReadinessEvent $event, AuthorizationDecision $authorizationDecision): SourceWriteReceipt
     {
         $this->events[] = $event;
 
         return new SourceWriteReceipt($event->eventId, 1, $event->evidenceHash(), false);
     }
 
-    public function sealSnapshot(ReadinessSnapshot $snapshot, string $idempotencyKey): SourceWriteReceipt
+    public function materializeReadiness(array $command, AuthorizationDecision $authorizationDecision): SourceWriteReceipt
     {
-        throw new RuntimeException('not_used');
+        $this->materializationCommands[] = $command;
+
+        return new SourceWriteReceipt(71, 1, str_repeat('c', 64), false);
     }
 }

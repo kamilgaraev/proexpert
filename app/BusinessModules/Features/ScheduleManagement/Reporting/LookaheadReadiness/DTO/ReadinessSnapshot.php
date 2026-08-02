@@ -28,5 +28,9 @@ final readonly class ReadinessSnapshot
         public ?array $actualComparison,
         public string $readinessHash,
         public string $snapshotHash,
+        public string $evaluationEventId,
+        public int $sealedByActorId,
+        public string $authorizationDecisionHash,
+        public string $asOfUtc,
     ) {}
 }

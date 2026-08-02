@@ -3,8 +3,8 @@
 namespace App\Domain\Authorization\Services;
 
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
@@ -14,8 +14,11 @@ use InvalidArgumentException;
 class RoleScanner
 {
     private const ROLES_PATH = 'config/RoleDefinitions';
+
     private const CACHE_KEY = 'authorization_roles:v2';
+
     private const CACHE_REVISION_KEY = 'authorization_roles_revision';
+
     private const CACHE_TTL = 3600; // 1 час
 
     /**
@@ -35,8 +38,15 @@ class RoleScanner
     {
         $roles = $this->getAllRoles();
         $role = $roles->get($slug);
-        
+
         return $role;
+    }
+
+    public function getRoleUncached(string $slug): ?array
+    {
+        $role = $this->scanRoles()->get($slug);
+
+        return is_array($role) ? $role : null;
     }
 
     /**
@@ -74,7 +84,7 @@ class RoleScanner
     {
         $role = $this->getRole($roleSlug);
         $permissions = $role['system_permissions'] ?? [];
-        
+
         return $permissions;
     }
 
@@ -89,6 +99,7 @@ class RoleScanner
     public function getModulePermissions(string $roleSlug): array
     {
         $role = $this->getRole($roleSlug);
+
         return $role['module_permissions'] ?? [];
     }
 
@@ -98,19 +109,20 @@ class RoleScanner
     public function canManageRole(string $managerRole, string $targetRole): bool
     {
         $role = $this->getRole($managerRole);
-        
-        if (!$role) {
+
+        if (! $role) {
             return false;
         }
 
         $hierarchy = $role['hierarchy'] ?? [];
-        
+
         // Проверяем, может ли управлять
         $canManage = $hierarchy['can_manage_roles'] ?? [];
         if (in_array('*', $canManage) || in_array($targetRole, $canManage)) {
             // Проверяем исключения
             $cannotManage = $hierarchy['cannot_manage'] ?? [];
-            return !in_array('*', $cannotManage) && !in_array($targetRole, $cannotManage);
+
+            return ! in_array('*', $cannotManage) && ! in_array($targetRole, $cannotManage);
         }
 
         return false;
@@ -122,6 +134,7 @@ class RoleScanner
     public function getInterfaceAccess(string $roleSlug): array
     {
         $role = $this->getRole($roleSlug);
+
         return $role['interface_access'] ?? [];
     }
 
@@ -141,6 +154,7 @@ class RoleScanner
     public function reload(): Collection
     {
         $this->clearCache();
+
         return $this->getAllRoles();
     }
 
@@ -150,28 +164,28 @@ class RoleScanner
     public function validateRole(array $role): array
     {
         $errors = [];
-        
+
         $required = ['name', 'slug', 'context', 'interface'];
         foreach ($required as $field) {
-            if (!isset($role[$field]) || empty($role[$field])) {
+            if (! isset($role[$field]) || empty($role[$field])) {
                 $errors[] = "Поле '$field' обязательно";
             }
         }
 
-        if (isset($role['context']) && !in_array($role['context'], ['system', 'organization', 'project'])) {
+        if (isset($role['context']) && ! in_array($role['context'], ['system', 'organization', 'project'])) {
             $errors[] = "Недопустимый контекст: {$role['context']}";
         }
 
-        if (isset($role['interface_access']) && !is_array($role['interface_access'])) {
-            $errors[] = "interface_access должен быть массивом";
+        if (isset($role['interface_access']) && ! is_array($role['interface_access'])) {
+            $errors[] = 'interface_access должен быть массивом';
         }
 
-        if (isset($role['system_permissions']) && !is_array($role['system_permissions'])) {
-            $errors[] = "system_permissions должен быть массивом";
+        if (isset($role['system_permissions']) && ! is_array($role['system_permissions'])) {
+            $errors[] = 'system_permissions должен быть массивом';
         }
 
-        if (isset($role['module_permissions']) && !is_array($role['module_permissions'])) {
-            $errors[] = "module_permissions должен быть массивом";
+        if (isset($role['module_permissions']) && ! is_array($role['module_permissions'])) {
+            $errors[] = 'module_permissions должен быть массивом';
         }
 
         return $errors;
@@ -185,7 +199,7 @@ class RoleScanner
         $roles = collect();
         $basePath = base_path(self::ROLES_PATH);
 
-        if (!File::exists($basePath)) {
+        if (! File::exists($basePath)) {
             throw new InvalidArgumentException("Папка ролей не найдена: $basePath");
         }
 
@@ -193,25 +207,25 @@ class RoleScanner
 
         foreach ($directories as $dir) {
             $dirPath = "$basePath/$dir";
-            
-            if (!File::exists($dirPath)) {
+
+            if (! File::exists($dirPath)) {
                 continue;
             }
 
             $files = File::files($dirPath);
-            
+
             foreach ($files as $file) {
                 if ($file->getExtension() === 'json') {
                     $content = File::get($file->getPathname());
                     $roleData = json_decode($content, true);
-                    
+
                     if (json_last_error() === JSON_ERROR_NONE && isset($roleData['slug'])) {
                         // Валидация роли
                         $errors = $this->validateRole($roleData);
                         if (empty($errors)) {
                             $roles->put($roleData['slug'], $roleData);
                         } else {
-                            Log::warning("Ошибка в роли {$file->getFilename()}: " . implode(', ', $errors));
+                            Log::warning("Ошибка в роли {$file->getFilename()}: ".implode(', ', $errors));
                         }
                     } else {
                         Log::warning("Неверный JSON в файле роли: {$file->getFilename()}");
@@ -229,7 +243,7 @@ class RoleScanner
     public function getStats(): array
     {
         $roles = $this->getAllRoles();
-        
+
         $stats = [
             'total' => $roles->count(),
             'by_context' => [],
@@ -240,7 +254,7 @@ class RoleScanner
             // Статистика по контексту
             $context = $role['context'] ?? 'unknown';
             $stats['by_context'][$context] = ($stats['by_context'][$context] ?? 0) + 1;
-            
+
             // Статистика по интерфейсам
             $interfaces = $role['interface_access'] ?? [];
             foreach ($interfaces as $interface) {
