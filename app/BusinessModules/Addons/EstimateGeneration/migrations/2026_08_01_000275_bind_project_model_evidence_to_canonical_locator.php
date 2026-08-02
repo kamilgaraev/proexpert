@@ -92,12 +92,16 @@ return new class extends Migration
             DB::statement('ALTER TABLE '.self::TABLE.' DISABLE TRIGGER eg_project_model_evidence_binding_append_trg');
             DB::statement('ALTER TABLE '.self::TABLE.' DISABLE TRIGGER eg_project_model_evidence_binding_guard_trg');
             DB::unprepared(<<<'SQL'
-UPDATE estimate_generation_project_model_evidence_bindings binding
-SET candidate_value_fingerprint = eg_project_model_value_fingerprint(
-        CASE WHEN binding.assertion_id IS NOT NULL THEN assertion.payload - 'source' ELSE correction_assertion.payload - 'source' END
-    ),
-    candidate_locator_fingerprint = eg_project_model_locator_fingerprint(evidence.locator)
-FROM estimate_generation_evidence evidence
+WITH canonical_bindings AS (
+SELECT binding.id,
+    CASE WHEN binding.assertion_id IS NOT NULL THEN assertion.payload - 'source' ELSE correction_assertion.payload - 'source' END AS candidate_value,
+    evidence.locator AS candidate_locator
+FROM estimate_generation_project_model_evidence_bindings binding
+JOIN estimate_generation_evidence evidence
+    ON evidence.id = binding.evidence_id
+    AND evidence.organization_id = binding.organization_id
+    AND evidence.project_id = binding.project_id
+    AND evidence.session_id = binding.session_id
 LEFT JOIN estimate_generation_project_model_assertions assertion
     ON assertion.id = binding.assertion_id
     AND assertion.building_model_id = binding.building_model_id
@@ -119,10 +123,12 @@ LEFT JOIN estimate_generation_project_model_assertions correction_assertion
     AND correction_assertion.project_id = binding.project_id
     AND correction_assertion.session_id = binding.session_id
     AND correction_assertion.source_version = binding.source_version
-WHERE evidence.id = binding.evidence_id
-  AND evidence.organization_id = binding.organization_id
-  AND evidence.project_id = binding.project_id
-  AND evidence.session_id = binding.session_id
+)
+UPDATE estimate_generation_project_model_evidence_bindings target
+SET candidate_value_fingerprint = eg_project_model_value_fingerprint(canonical_bindings.candidate_value),
+    candidate_locator_fingerprint = eg_project_model_locator_fingerprint(canonical_bindings.candidate_locator)
+FROM canonical_bindings
+WHERE canonical_bindings.id = target.id
 SQL);
             DB::statement('ALTER TABLE '.self::TABLE.' ENABLE TRIGGER eg_project_model_evidence_binding_guard_trg');
             DB::statement('ALTER TABLE '.self::TABLE.' ENABLE TRIGGER eg_project_model_evidence_binding_append_trg');
