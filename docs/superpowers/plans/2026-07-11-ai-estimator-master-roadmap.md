@@ -1,6 +1,6 @@
 # AI-сметчик МОСТ: Master Roadmap Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Полностью заменить внутренний контур AI-сметчика МОСТ четырьмя последовательно поставляемыми программами, не изменяя существующие обычные сметы.
 
@@ -155,7 +155,7 @@ git commit -m "test[lk]: зафиксированы границы и baseline A
 
 - [ ] **Step 1: Выполнить все checkbox Plan 1 в порядке документа**
 
-Run: применять `superpowers:subagent-driven-development` либо `superpowers:executing-plans`.
+Run: применять `TDD-цикл (красный тест → минимальная реализация → рефакторинг)` либо `последовательное выполнение задач с проверками после каждого шага`.
 
 Expected: каждый task имеет красный тест, минимальную реализацию, зеленую проверку и отдельный коммит.
 
