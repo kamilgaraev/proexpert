@@ -766,6 +766,24 @@ final class QualityDefectFlowSourcePostgresTest extends TestCase
             ->value('status'));
     }
 
+    public function test_contractors_can_update_sync_timestamp_without_schedule_task_columns(): void
+    {
+        [$organization] = $this->identityFixture();
+        $contractorId = DB::table('contractors')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Synchronization contractor',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('contractors')->where('id', $contractorId)->update([
+            'last_sync_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        self::assertNotNull(DB::table('contractors')->where('id', $contractorId)->value('last_sync_at'));
+    }
+
     public function test_append_only_source_supports_bounded_keyset_order_at_project_scale(): void
     {
         [$organization, $project, $actor] = $this->identityFixture();
