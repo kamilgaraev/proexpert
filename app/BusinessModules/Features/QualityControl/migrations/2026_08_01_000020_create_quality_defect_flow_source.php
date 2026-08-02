@@ -675,9 +675,12 @@ SQL);
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION quality_defect_flow_reject_lineage_retarget()
 RETURNS trigger AS $$
+DECLARE
+    new_row jsonb := to_jsonb(NEW);
+    old_row jsonb := to_jsonb(OLD);
 BEGIN
     IF TG_TABLE_NAME = 'quality_defects' THEN
-        IF NEW.organization_id <> OLD.organization_id
+        IF new_row->>'organization_id' <> old_row->>'organization_id'
            AND (
                 EXISTS (SELECT 1 FROM quality_defect_flow_events WHERE quality_defect_id = OLD.id)
                 OR EXISTS (SELECT 1 FROM quality_defect_flow_gaps WHERE quality_defect_id = OLD.id)
@@ -685,29 +688,29 @@ BEGIN
             RAISE EXCEPTION 'quality defect flow defect organization cannot be retargeted' USING ERRCODE = '55000';
         END IF;
 
-        IF NEW.project_id <> OLD.project_id
+        IF new_row->>'project_id' <> old_row->>'project_id'
            AND EXISTS (SELECT 1 FROM quality_defect_flow_events WHERE quality_defect_id = OLD.id) THEN
             RAISE EXCEPTION 'quality defect flow defect project cannot be retargeted' USING ERRCODE = '55000';
         END IF;
     ELSIF TG_TABLE_NAME = 'projects'
-       AND NEW.organization_id <> OLD.organization_id
+       AND new_row->>'organization_id' <> old_row->>'organization_id'
        AND EXISTS (SELECT 1 FROM quality_defect_flow_events WHERE project_id = OLD.id) THEN
         RAISE EXCEPTION 'quality defect flow project organization cannot be retargeted' USING ERRCODE = '55000';
     ELSIF TG_TABLE_NAME = 'contractors'
-       AND NEW.organization_id <> OLD.organization_id
+       AND new_row->>'organization_id' <> old_row->>'organization_id'
        AND EXISTS (SELECT 1 FROM quality_defect_flow_events WHERE contractor_id = OLD.id) THEN
         RAISE EXCEPTION 'quality defect flow contractor organization cannot be retargeted' USING ERRCODE = '55000';
     ELSIF TG_TABLE_NAME = 'schedule_tasks'
        AND (
-            NEW.organization_id <> OLD.organization_id
-            OR NEW.schedule_id <> OLD.schedule_id
+            new_row->>'organization_id' <> old_row->>'organization_id'
+            OR new_row->>'schedule_id' <> old_row->>'schedule_id'
        )
        AND EXISTS (SELECT 1 FROM quality_defect_flow_events WHERE schedule_task_id = OLD.id) THEN
         RAISE EXCEPTION 'quality defect flow schedule task cannot be retargeted' USING ERRCODE = '55000';
     ELSIF TG_TABLE_NAME = 'project_schedules'
        AND (
-            NEW.organization_id <> OLD.organization_id
-            OR NEW.project_id <> OLD.project_id
+            new_row->>'organization_id' <> old_row->>'organization_id'
+            OR new_row->>'project_id' <> old_row->>'project_id'
        )
        AND EXISTS (
             SELECT 1
