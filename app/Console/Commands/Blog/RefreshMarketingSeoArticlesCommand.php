@@ -222,11 +222,7 @@ final class RefreshMarketingSeoArticlesCommand extends Command
             ],
             'publisher' => [
                 '@type' => 'Organization',
-<<<<<<< HEAD
                 'name' => 'МОСТ',
-=======
-                'name' => 'ProHelper',
->>>>>>> fix/glitchtip-257-upload-error-reporting
                 'url' => 'https://1мост.рф',
             ],
             'mainEntityOfPage' => [

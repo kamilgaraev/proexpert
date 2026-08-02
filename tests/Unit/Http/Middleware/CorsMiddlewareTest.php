@@ -18,11 +18,7 @@ class CorsMiddlewareTest extends TestCase
         $request = Request::create(
             '/api/v1/admin/design-management/model-versions/1/derivatives',
             'POST',
-<<<<<<< HEAD
             server: ['HTTP_ORIGIN' => 'https://lk.example.test']
-=======
-            server: ['HTTP_ORIGIN' => 'https://1мост.рф']
->>>>>>> fix/glitchtip-257-upload-error-reporting
         );
 
         $response = $this->middleware()->handle($request, static function (): never {
@@ -33,7 +29,6 @@ class CorsMiddlewareTest extends TestCase
         self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
     }
 
-<<<<<<< HEAD
     public function test_allows_matching_interface_origin_and_credentials(): void
     {
         $this->configureOrigins();
@@ -79,10 +74,6 @@ class CorsMiddlewareTest extends TestCase
         config()->set('web_auth.origins.admin', ['https://admin.example.test']);
         config()->set('web_auth.origins.lk', ['https://lk.example.test']);
         config()->set('web_auth.origins.public', ['https://www.example.test']);
-=======
-            self::assertSame('https://1мост.рф', $headers['Access-Control-Allow-Origin'] ?? null);
-            self::assertSame('true', $headers['Access-Control-Allow-Credentials'] ?? null);
-        }
->>>>>>> fix/glitchtip-257-upload-error-reporting
     }
 }
+

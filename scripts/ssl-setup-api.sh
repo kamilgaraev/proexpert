@@ -99,11 +99,7 @@ if [ $? -eq 0 ]; then
     echo "🎉 SSL успешно настроен!"
     echo "📋 Ваши домены теперь доступны по HTTPS:"
     echo "   • https://1мост.рф"
-<<<<<<< HEAD
     echo "   • https://api.1мост.рф"
-=======
-    echo "   • https://api.1мост.рф" 
->>>>>>> fix/glitchtip-257-upload-error-reporting
     echo "   • https://любой-холдинг.1мост.рф"
     echo ""
     echo "🔄 Автообновление настроено и будет выполняться ежедневно"

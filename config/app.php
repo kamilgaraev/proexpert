@@ -224,11 +224,7 @@ return [
     |
     */
 
-<<<<<<< HEAD
     'domain' => env('APP_DOMAIN', 'xn--1-xtbgmf.xn--p1ai'),
-=======
-    'domain' => env('APP_DOMAIN', '1мост.рф'),
->>>>>>> fix/glitchtip-257-upload-error-reporting
 
     /*
     |--------------------------------------------------------------------------
@@ -244,3 +240,4 @@ return [
     'customer_frontend_url' => env('CUSTOMER_FRONTEND_URL', 'https://customer.1мост.рф'),
 
 ];
+

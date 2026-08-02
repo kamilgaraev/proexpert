@@ -14,13 +14,8 @@ class DetectHoldingSubdomain
     public function handle(Request $request, Closure $next): Response
     {
         $host = $request->getHost();
-<<<<<<< HEAD
         $domain = config('app.domain', 'xn--1-xtbgmf.xn--p1ai');
 
-=======
-        $domain = config('app.domain', '1мост.рф');
-        
->>>>>>> fix/glitchtip-257-upload-error-reporting
         if (!str_ends_with($host, $domain)) {
             return $next($request);
         }
@@ -55,3 +50,4 @@ class DetectHoldingSubdomain
         return $next($request);
     }
 }
+

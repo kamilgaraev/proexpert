@@ -24,7 +24,6 @@ final class CorsMiddleware
         if (! is_string($origin) || $origin === '') {
             return $next($request);
         }
-<<<<<<< HEAD
 
         $audience = $this->audienceFor($request);
         $credentials = $audience !== null;
@@ -34,90 +33,6 @@ final class CorsMiddleware
 
         if (! $this->origins->matches($origin, $allowedOrigins)) {
             return $this->forbidden($request);
-=======
-        
-        // Получаем конфигурацию CORS
-        $allowedOrigins = Config::get('cors.allowed_origins', []);
-        $allowedOriginsPatterns = Config::get('cors.allowed_origins_patterns', []);
-        $allowedMethods = Config::get('cors.allowed_methods', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-        $allowedHeaders = Config::get('cors.allowed_headers', ['Content-Type', 'X-Auth-Token', 'Origin', 'Authorization', 'X-Requested-With']);
-        $exposedHeaders = Config::get('cors.exposed_headers', []);
-        $maxAge = Config::get('cors.max_age', 86400);
-        $allowAnyOriginInDev = Config::get('cors.allow_any_origin_in_dev', false);
-        
-        // Определяем, доступен ли запрошенный origin
-        $allowedOrigin = null;
-        $allowCredentials = 'false';
-        $originMatched = false;
-        
-        // Если мы в режиме разработки и настройка разрешает любой origin
-        if (app()->environment('local') && $allowAnyOriginInDev) {
-            $allowedOrigin = $origin ?: '*';
-            $allowCredentials = ($allowedOrigin === '*') ? 'false' : 'true';
-            $originMatched = true;
-        } 
-        // Иначе проверяем по списку разрешенных
-        else if ($origin) {
-            if (in_array($origin, $allowedOrigins)) {
-                $allowedOrigin = $origin;
-                $allowCredentials = 'true';
-                $originMatched = true;
-            } else {
-                foreach ($allowedOriginsPatterns as $pattern) {
-                    if (preg_match($pattern, $origin)) {
-                        $allowedOrigin = $origin;
-                        $allowCredentials = 'true';
-                        $originMatched = true;
-                        break;
-                    }
-                }
-            }
-            
-            if (!$originMatched) {
-                // В режиме разработки можем быть более снисходительными
-                if (app()->environment('local')) {
-                    // SECURITY: Разрешение неизвестного origin в dev среде
-                    $this->logging->security('cors.origin.allowed.dev', [
-                        'origin' => $origin,
-                        'environment' => 'local',
-                        'uri' => $request->getRequestUri()
-                    ], 'info');
-                    $allowedOrigin = $origin;
-                    $allowCredentials = 'true';
-                    $originMatched = true;
-                } else {
-                    // В продакшене для 1мост.рф доменов разрешаем
-                    if ($origin && (strpos($origin, '.1мост.рф') !== false || $origin === 'https://1мост.рф')) {
-                        // SECURITY: Разрешение 1мост.рф домена не из списка
-                        $this->logging->security('cors.origin.allowed.prohelper', [
-                            'origin' => $origin,
-                            'uri' => $request->getRequestUri(),
-                            'auto_approved' => true
-                        ], 'info');
-                        $allowedOrigin = $origin;
-                        $allowCredentials = 'true';
-                        $originMatched = true;
-                    } else {
-                        // SECURITY: КРИТИЧНО - Отклонен запрос с недопустимого origin
-                        $this->logging->security('cors.origin.rejected', [
-                            'origin' => $origin,
-                            'uri' => $request->getRequestUri(),
-                            'user_agent' => $request->header('User-Agent'),
-                            'ip_address' => $request->ip(),
-                            'allowed_origins' => $allowedOrigins,
-                            'potential_security_threat' => true
-                        ], 'warning');
-                        $allowedOrigin = 'null';
-                        $allowCredentials = 'false';
-                    }
-                }
-            }
-        } else {
-            // Если origin не указан, используем wildcard (только для запросов без credentials)
-            $allowedOrigin = '*';
-            $allowCredentials = 'false';
-            $originMatched = true;
->>>>>>> fix/glitchtip-257-upload-error-reporting
         }
 
         $headers = $this->headersFor($origin, $credentials);
@@ -211,3 +126,4 @@ final class CorsMiddleware
         return null;
     }
 }
+

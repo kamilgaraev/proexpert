@@ -61,10 +61,5 @@ fi
 echo ""
 echo "🎉 Готово! Теперь можно создавать поддомены:"
 echo "   test.1мост.рф"
-<<<<<<< HEAD
 echo "   company.1мост.рф"
 echo "   и т.д."
-=======
-echo "   company.1мост.рф" 
-echo "   и т.д." 
->>>>>>> fix/glitchtip-257-upload-error-reporting
