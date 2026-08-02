@@ -12,7 +12,7 @@ final class LookaheadReadinessSnapshot extends Model
 
     protected $keyType = 'string';
 
-    protected $table = 'lookahead_readiness_snapshots';
+    protected $table = 'lookahead_reporting_snapshots';
 
     protected $guarded = [];
 

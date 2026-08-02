@@ -10,7 +10,7 @@ final class WorkConstraintTransitionEvent extends Model
 {
     public $timestamps = false;
 
-    protected $table = 'work_constraint_transition_events';
+    protected $table = 'lookahead_reporting_constraint_transition_events';
 
     protected $guarded = [];
 

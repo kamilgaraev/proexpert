@@ -29,7 +29,7 @@ final readonly class LookaheadReadinessPolicyVersionWriter
             }
 
             $version = (int) $this->scope($definition)->max('version') + 1;
-            $id = DB::table('lookahead_readiness_policy_versions')->insertGetId([
+            $id = DB::table('lookahead_reporting_policy_versions')->insertGetId([
                 'organization_id' => $definition->organizationId,
                 'project_id' => $definition->projectId,
                 'horizon_days' => $definition->horizonDays,
@@ -51,7 +51,7 @@ final readonly class LookaheadReadinessPolicyVersionWriter
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
-            $record = DB::table('lookahead_readiness_policy_versions')->find($id);
+            $record = DB::table('lookahead_reporting_policy_versions')->find($id);
             if ($record === null) {
                 throw new InvalidArgumentException('lookahead_policy_publish_failed');
             }
@@ -62,7 +62,7 @@ final readonly class LookaheadReadinessPolicyVersionWriter
 
     private function scope(LookaheadReadinessPolicyDefinition $definition): Builder
     {
-        return DB::table('lookahead_readiness_policy_versions')
+        return DB::table('lookahead_reporting_policy_versions')
             ->where('organization_id', $definition->organizationId)
             ->when(
                 $definition->projectId === null,

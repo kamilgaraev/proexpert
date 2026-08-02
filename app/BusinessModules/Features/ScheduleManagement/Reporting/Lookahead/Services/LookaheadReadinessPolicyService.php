@@ -34,7 +34,7 @@ final readonly class LookaheadReadinessPolicyService
             throw new InvalidArgumentException('lookahead_policy_scope_invalid');
         }
 
-        $records = DB::table('lookahead_readiness_policy_versions')
+        $records = DB::table('lookahead_reporting_policy_versions')
             ->where('organization_id', $organizationId)
             ->where(function ($query) use ($projectIds): void {
                 $query->whereNull('project_id')->orWhereIn('project_id', $projectIds);

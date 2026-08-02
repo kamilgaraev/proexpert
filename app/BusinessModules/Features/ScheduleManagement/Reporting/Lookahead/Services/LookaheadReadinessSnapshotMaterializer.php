@@ -167,7 +167,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 ->whereNotExists(static function ($builder) use ($scope, $query): void {
                     $builder
                         ->selectRaw('1')
-                        ->from('work_constraint_transition_events as captured_event')
+                        ->from('lookahead_reporting_constraint_transition_events as captured_event')
                         ->whereColumn('captured_event.constraint_id', 'work_constraints.id')
                         ->where('captured_event.organization_id', $scope->organizationId)
                         ->where('captured_event.occurred_at', '<=', $query->asOf);
@@ -426,12 +426,12 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                         'source_refs' => CanonicalJson::encode($rowSourceRefs),
                     ];
                     if (count($rowBatch) === 500) {
-                        DB::table('lookahead_readiness_rows')->insert($rowBatch);
+                        DB::table('lookahead_reporting_rows')->insert($rowBatch);
                         $rowBatch = [];
                     }
                 }
                 if ($rowBatch !== []) {
-                    DB::table('lookahead_readiness_rows')->insert($rowBatch);
+                    DB::table('lookahead_reporting_rows')->insert($rowBatch);
                 }
 
                 return $this->reference($scope, $query, $snapshot);

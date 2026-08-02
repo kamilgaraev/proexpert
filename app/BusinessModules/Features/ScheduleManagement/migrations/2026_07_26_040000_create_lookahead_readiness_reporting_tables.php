@@ -11,7 +11,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('lookahead_readiness_policy_versions', function (Blueprint $table): void {
+        Schema::create('lookahead_reporting_policy_versions', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('project_id')->nullable();
@@ -30,7 +30,7 @@ return new class extends Migration
         });
         DB::statement(
             'CREATE UNIQUE INDEX lookahead_policy_version_unique
-            ON lookahead_readiness_policy_versions (
+            ON lookahead_reporting_policy_versions (
                 organization_id,
                 COALESCE(project_id, 0),
                 version
@@ -45,11 +45,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER lookahead_policy_versions_append_only
-BEFORE UPDATE OR DELETE ON lookahead_readiness_policy_versions
+BEFORE UPDATE OR DELETE ON lookahead_reporting_policy_versions
 FOR EACH ROW EXECUTE FUNCTION lookahead_reporting_history_append_only_guard();
 SQL);
 
-        Schema::create('work_constraint_transition_events', function (Blueprint $table): void {
+        Schema::create('lookahead_reporting_constraint_transition_events', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('project_id');
@@ -73,12 +73,12 @@ SQL);
             $table->index(['organization_id', 'project_id', 'occurred_at', 'id'], 'constraint_event_order');
         });
         DB::statement(
-            'CREATE TRIGGER work_constraint_transition_events_append_only
-            BEFORE UPDATE OR DELETE ON work_constraint_transition_events
+            'CREATE TRIGGER lookahead_reporting_constraint_transition_events_append_only
+            BEFORE UPDATE OR DELETE ON lookahead_reporting_constraint_transition_events
             FOR EACH ROW EXECUTE FUNCTION lookahead_reporting_history_append_only_guard()'
         );
 
-        Schema::create('lookahead_readiness_snapshots', function (Blueprint $table): void {
+        Schema::create('lookahead_reporting_snapshots', function (Blueprint $table): void {
             $table->string('id', 26)->primary();
             $table->unsignedBigInteger('organization_id');
             $table->jsonb('policy_version_ids');
@@ -98,7 +98,7 @@ SQL);
             $table->unique(['organization_id', 'query_hash', 'source_hash'], 'lookahead_snapshot_unique');
         });
 
-        Schema::create('lookahead_readiness_rows', function (Blueprint $table): void {
+        Schema::create('lookahead_reporting_rows', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
             $table->string('snapshot_id', 26);
@@ -133,10 +133,10 @@ SQL);
 
     public function down(): void
     {
-        Schema::dropIfExists('lookahead_readiness_rows');
-        Schema::dropIfExists('lookahead_readiness_snapshots');
-        Schema::dropIfExists('work_constraint_transition_events');
-        Schema::dropIfExists('lookahead_readiness_policy_versions');
+        Schema::dropIfExists('lookahead_reporting_rows');
+        Schema::dropIfExists('lookahead_reporting_snapshots');
+        Schema::dropIfExists('lookahead_reporting_constraint_transition_events');
+        Schema::dropIfExists('lookahead_reporting_policy_versions');
         DB::statement('DROP FUNCTION IF EXISTS lookahead_reporting_history_append_only_guard()');
     }
 };

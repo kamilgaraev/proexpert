@@ -62,11 +62,11 @@ final readonly class LookaheadResourceCandidateQuery
                 ->where('occurred_at', '<=', $asOf)
                 ->whereRaw(
                     'NOT EXISTS (
-                        SELECT 1 FROM work_constraint_transition_events later
-                        WHERE later.organization_id = work_constraint_transition_events.organization_id
-                          AND later.constraint_id = work_constraint_transition_events.constraint_id
+                        SELECT 1 FROM lookahead_reporting_constraint_transition_events later
+                        WHERE later.organization_id = lookahead_reporting_constraint_transition_events.organization_id
+                          AND later.constraint_id = lookahead_reporting_constraint_transition_events.constraint_id
                           AND later.occurred_at <= ?
-                          AND later.event_version > work_constraint_transition_events.event_version
+                          AND later.event_version > lookahead_reporting_constraint_transition_events.event_version
                     )',
                     [$asOf->format(DATE_ATOM)],
                 )

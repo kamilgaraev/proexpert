@@ -10,7 +10,7 @@ final class LookaheadReadinessRow extends Model
 {
     public $timestamps = false;
 
-    protected $table = 'lookahead_readiness_rows';
+    protected $table = 'lookahead_reporting_rows';
 
     protected $guarded = [];
 
