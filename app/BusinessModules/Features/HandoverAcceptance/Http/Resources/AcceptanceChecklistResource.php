@@ -15,7 +15,7 @@ final class AcceptanceChecklistResource extends JsonResource
     {
         $checklist = $this->resource;
 
-        if (!$checklist instanceof AcceptanceChecklist) {
+        if (! $checklist instanceof AcceptanceChecklist) {
             return [];
         }
 
@@ -26,6 +26,7 @@ final class AcceptanceChecklistResource extends JsonResource
             'status' => $checklist->status,
             'items' => $checklist->relationLoaded('items') ? $checklist->items->map(fn ($item): array => [
                 'id' => $item->id,
+                'code' => $item->code,
                 'title' => $item->title,
                 'is_required' => $item->is_required,
                 'status' => $item->status,

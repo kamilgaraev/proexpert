@@ -58,6 +58,22 @@ final readonly class SignedReportCursorCodec
         'token_type',
     ];
 
+    private const DRILL_DOWN_PAGE_PAYLOAD_FIELDS = [
+        'definition_hash',
+        'expires_at',
+        'issued_at',
+        'key_id',
+        'last_stable_row_key',
+        'organization_id',
+        'parent_row_key',
+        'query_hash',
+        'report_code',
+        'run_id',
+        'snapshot_id',
+        'source_hash',
+        'token_type',
+    ];
+
     private array $keys;
 
     public function __construct(
@@ -124,6 +140,7 @@ final readonly class SignedReportCursorCodec
         } catch (Throwable $exception) {
             throw $this->invalid('cursor', $exception);
         }
+
         return $this->sign($payload, 'cursor');
     }
 
@@ -262,6 +279,94 @@ final readonly class SignedReportCursorCodec
             }
 
             throw $this->invalid('token', $exception);
+        }
+    }
+
+    public function encodeDrillDownPage(
+        int $organizationId,
+        string $reportCode,
+        string $runId,
+        ReportSnapshotRef $snapshot,
+        Sha256Hash $queryHash,
+        string $parentRowKey,
+        string $lastStableRowKey,
+        DateTimeImmutable $expiresAt,
+    ): string {
+        $issuedAt = $this->clock->now();
+        if (
+            $organizationId < 1
+            || $organizationId !== $snapshot->scope->organizationId
+            || preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $reportCode) !== 1
+            || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $runId) !== 1
+            || ! self::isCanonicalRowKey($parentRowKey)
+            || ! self::isCanonicalRowKey($lastStableRowKey)
+            || $expiresAt <= $issuedAt
+        ) {
+            throw $this->invalid();
+        }
+
+        try {
+            $payload = CanonicalJson::encode([
+                'definition_hash' => $snapshot->definitionHash->value,
+                'expires_at' => $expiresAt->format(DATE_ATOM),
+                'issued_at' => $issuedAt->format(DATE_ATOM),
+                'key_id' => $this->activeKeyId,
+                'last_stable_row_key' => $lastStableRowKey,
+                'organization_id' => $organizationId,
+                'parent_row_key' => $parentRowKey,
+                'query_hash' => $queryHash->value,
+                'report_code' => $reportCode,
+                'run_id' => $runId,
+                'snapshot_id' => $snapshot->id,
+                'source_hash' => $snapshot->sourceHash->value,
+                'token_type' => 'report_drill_down_page',
+            ]);
+        } catch (Throwable $exception) {
+            throw $this->invalid('cursor', $exception);
+        }
+
+        return $this->sign($payload, 'cursor');
+    }
+
+    public function decodeDrillDownPage(
+        string $token,
+        int $organizationId,
+        string $reportCode,
+        string $runId,
+        ReportSnapshotRef $snapshot,
+        Sha256Hash $queryHash,
+        string $parentRowKey,
+    ): string {
+        try {
+            $payload = $this->verifiedPayload($token, self::DRILL_DOWN_PAGE_PAYLOAD_FIELDS);
+            $this->assertLifetime($payload);
+            if (
+                ! is_string($payload['token_type'])
+                || ! is_string($payload['parent_row_key'])
+                || ! is_string($payload['last_stable_row_key'])
+                || $payload['token_type'] !== 'report_drill_down_page'
+                || $payload['organization_id'] !== $organizationId
+                || $organizationId !== $snapshot->scope->organizationId
+                || ! hash_equals($payload['report_code'], $reportCode)
+                || ! hash_equals($payload['run_id'], $runId)
+                || ! hash_equals($payload['snapshot_id'], $snapshot->id)
+                || ! hash_equals($payload['definition_hash'], $snapshot->definitionHash->value)
+                || ! hash_equals($payload['query_hash'], $queryHash->value)
+                || ! hash_equals($payload['source_hash'], $snapshot->sourceHash->value)
+                || ! hash_equals($payload['parent_row_key'], $parentRowKey)
+                || ! self::isCanonicalRowKey($payload['parent_row_key'])
+                || ! self::isCanonicalRowKey($payload['last_stable_row_key'])
+            ) {
+                throw new InvalidArgumentException('report_drill_down_page_identity_mismatch');
+            }
+
+            return $payload['last_stable_row_key'];
+        } catch (Throwable $exception) {
+            if ($exception instanceof ReportContractException) {
+                throw $exception;
+            }
+
+            throw $this->invalid('cursor', $exception);
         }
     }
 

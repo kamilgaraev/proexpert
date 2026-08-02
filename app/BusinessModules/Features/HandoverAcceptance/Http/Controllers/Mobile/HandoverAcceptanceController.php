@@ -17,8 +17,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\ValidationException;
 
 final class HandoverAcceptanceController extends Controller
@@ -34,9 +34,7 @@ final class HandoverAcceptanceController extends Controller
         'rejected',
     ];
 
-    public function __construct(private readonly HandoverAcceptanceService $service)
-    {
-    }
+    public function __construct(private readonly HandoverAcceptanceService $service) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -98,6 +96,7 @@ final class HandoverAcceptanceController extends Controller
 
             $reviewed = $this->service->reviewChecklistItem(
                 $this->service->findChecklistItem((int) $request->attributes->get('current_organization_id'), $item),
+                (int) $request->user()?->id,
                 $validated
             );
 
@@ -262,7 +261,7 @@ final class HandoverAcceptanceController extends Controller
             ]);
             $file = $request->file('file');
 
-            if (!$file instanceof UploadedFile) {
+            if (! $file instanceof UploadedFile) {
                 throw ValidationException::withMessages([
                     'file' => [trans_message('handover_acceptance.validation.document_file_required')],
                 ]);

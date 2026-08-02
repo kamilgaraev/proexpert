@@ -22,9 +22,7 @@ use Illuminate\Validation\ValidationException;
 
 final class HandoverAcceptanceController extends Controller
 {
-    public function __construct(private readonly HandoverAcceptanceService $service)
-    {
-    }
+    public function __construct(private readonly HandoverAcceptanceService $service) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -94,6 +92,7 @@ final class HandoverAcceptanceController extends Controller
             $validated = $request->validate([
                 'title' => ['required', 'string', 'max:255'],
                 'items' => ['required', 'array', 'min:1'],
+                'items.*.code' => ['required', 'string', 'regex:/^[a-z][a-z0-9_]{0,63}$/'],
                 'items.*.title' => ['required', 'string', 'max:255'],
                 'items.*.is_required' => ['nullable', 'boolean'],
                 'items.*.comment' => ['nullable', 'string', 'max:1000'],
@@ -222,7 +221,7 @@ final class HandoverAcceptanceController extends Controller
                 'documents.*.title' => ['required', 'string', 'max:255'],
                 'documents.*.document_type' => ['required', 'string', 'max:80'],
                 'documents.*.is_required' => ['required', 'boolean'],
-                'documents.*.status' => ['required', 'string', Rule::in(['missing', 'draft', 'approved'])],
+                'documents.*.status' => ['required', 'string', Rule::in(['missing', 'draft'])],
                 'documents.*.external_url' => ['nullable', 'string', 'max:1000'],
             ]);
 
@@ -245,7 +244,11 @@ final class HandoverAcceptanceController extends Controller
         try {
             $validated = $request->validate(['external_url' => ['required', 'string', 'max:1000']]);
 
-            return AdminResponse::success($this->service->approveDocument($this->service->findPackageDocument($this->organizationId($request), $document), $validated));
+            return AdminResponse::success($this->service->approveDocument(
+                $this->service->findPackageDocument($this->organizationId($request), $document),
+                (int) $request->user()?->id,
+                $validated,
+            ));
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (DomainException $e) {

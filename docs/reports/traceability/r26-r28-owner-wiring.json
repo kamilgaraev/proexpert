@@ -1,0 +1,58 @@
+{
+  "schema_version": "reports-owner-wiring.v1",
+  "publication_owner": "plan-1c",
+  "activation_allowed": false,
+  "reports": [
+    {
+      "code": "contractor_scorecard",
+      "provider": "App\\BusinessModules\\ContractorMarketplace\\Reporting\\Scorecard\\Providers\\ContractorScorecardReportProvider",
+      "row_query": "App\\BusinessModules\\ContractorMarketplace\\Reporting\\Scorecard\\Queries\\ContractorScorecardRowQuery",
+      "drill_down": "App\\BusinessModules\\ContractorMarketplace\\Reporting\\Scorecard\\DrillDown\\ContractorScorecardDrillDownProvider",
+      "readiness_probe": "App\\BusinessModules\\ContractorMarketplace\\Reporting\\Scorecard\\Readiness\\ContractorScorecardReadinessProbe",
+      "formula_version": "contractor-scorecard.v1",
+      "source_schema_version": "contractor-scorecard.v1",
+      "delivery": "admin",
+      "later_wiring": [
+        "Plan 1c must add the keyed seven-field candidate binding and assemble it into the 28-code registry.",
+        "The cross-owner adapter must map pinned R06/R17/R23/R24 row identities to contractor profile/category/cohort component signals without recomputing owner formulas.",
+        "The adapter must preserve every source snapshot id, source hash, formula version, source schema version and watermark from ContractorScorecardSourceTuple."
+      ]
+    },
+    {
+      "code": "handover_readiness",
+      "provider": "App\\BusinessModules\\Features\\HandoverAcceptance\\Reporting\\Readiness\\Providers\\HandoverReadinessReportProvider",
+      "row_query": "App\\BusinessModules\\Features\\HandoverAcceptance\\Reporting\\Readiness\\Queries\\HandoverReadinessRowQuery",
+      "drill_down": "App\\BusinessModules\\Features\\HandoverAcceptance\\Reporting\\Readiness\\DrillDown\\HandoverReadinessDrillDownProvider",
+      "readiness_probe": "App\\BusinessModules\\Features\\HandoverAcceptance\\Reporting\\Readiness\\Readiness\\HandoverReadinessProbe",
+      "formula_version": "handover.v1",
+      "source_schema_version": "handover-readiness.v1",
+      "delivery": "admin",
+      "later_wiring": [
+        "Plan 1c must add the keyed seven-field candidate binding and assemble it into the 28-code registry.",
+        "The Plan 1c drill-down authorization map must resolve RFI, change, constraint, defect and document evidence through their owner ABAC checks and redact inaccessible identities."
+      ]
+    },
+    {
+      "code": "customer_sla",
+      "provider": "App\\Services\\Customer\\Reporting\\Sla\\Providers\\CustomerSlaReportProvider",
+      "row_query": "App\\Services\\Customer\\Reporting\\Sla\\Queries\\CustomerSlaRowQuery",
+      "drill_down": "App\\Services\\Customer\\Reporting\\Sla\\DrillDown\\CustomerSlaDrillDownProvider",
+      "readiness_probe": "App\\Services\\Customer\\Reporting\\Sla\\Readiness\\CustomerSlaReadinessProbe",
+      "formula_version": "customer-sla.v1",
+      "source_schema_version": "customer-sla.v1",
+      "delivery": "admin_only",
+      "later_wiring": [
+        "Plan 1c must add the keyed seven-field candidate binding and assemble it into the 28-code registry.",
+        "Plan 1c must reject customer routes and CustomerResponse delivery for this report.",
+        "The Plan 1c drill-down authorization map must repeat current issue/request ABAC before exposing timeline event or document identities."
+      ]
+    }
+  ],
+  "forbidden_in_this_slice": [
+    "management-catalog.v1.yaml mutation",
+    "active manifest mutation",
+    "registry or assembler mutation",
+    "candidate to published transition",
+    "customer report controller or route"
+  ]
+}
