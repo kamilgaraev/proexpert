@@ -33,13 +33,26 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
 
         foreach ([
             'foundation.prep',
+            'foundation.formwork',
+            'foundation.rebar',
+            'foundation.concrete',
+            'foundation.waterproofing',
+            'earth.trench',
+            'earth.backfill',
+            'earth.plan',
+            'walls.external_volume',
+            'walls.internal',
             'walls.lintels',
+            'slabs.formwork',
+            'slabs.concrete',
+            'slabs.rebar',
             'stairs.flights',
             'stairs.landings',
             'stairs.railings',
             'roof.area',
             'openings.windows',
             'openings.doors',
+            'facade.area',
             'electrical.main_cable',
             'electrical.power_lines',
             'electrical.panel',
@@ -57,10 +70,12 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'ventilation.distribution_devices',
             'sanitary.waterproofing',
             'rough.floor',
+            'rough.walls',
             'sanitary.tile',
             'sanitary.showers',
             'sanitary.toilets',
             'sanitary.washbasins',
+            'finish.baseboard',
         ] as $quantityKey) {
             self::assertArrayHasKey($quantityKey, $result->quantities, $quantityKey);
             self::assertTrue(ResidentialQuantityScenarioCatalog::owns($result->quantities[$quantityKey]), $quantityKey);
@@ -86,6 +101,23 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         ], $this->model(), ['object' => ['object_type' => 'house', 'floors' => 2, 'roof_type' => 'pitched']]);
 
         self::assertSame('152.955000', $result->quantities['roof.area']->amount);
+        self::assertSame('50.985000', $result->quantities['earth.trench']->amount);
+        self::assertSame('113.300000', $result->quantities['earth.plan']->amount);
+        self::assertSame('16.995000', $result->quantities['foundation.concrete']->amount);
+        self::assertSame('2039.400000', $result->quantities['foundation.rebar']->amount);
+        self::assertSame('79.500000', $result->quantities['slabs.formwork']->amount);
+        self::assertSame('9.540000', $result->quantities['slabs.concrete']->amount);
+        self::assertSame('954.000000', $result->quantities['slabs.rebar']->amount);
+        self::assertSame('86.760000', $result->quantities['walls.external_volume']->amount);
+        self::assertSame('578.400000', $result->quantities['rough.walls']->amount);
+        self::assertSame('269.920000', $result->quantities['facade.area']->amount);
+        self::assertSame('154.240000', $result->quantities['finish.baseboard']->amount);
+        self::assertSame('first_floor_internal_area', $result->quantities['foundation.concrete']->formulaInputs['source_quantity']['key']);
+        self::assertSame('upper_floor_internal_area', $result->quantities['slabs.concrete']->formulaInputs['source_quantity']['key']);
+        self::assertContains(
+            'preliminary_structural_from_internal_area:v1',
+            $result->quantities['foundation.concrete']->assumptions,
+        );
         foreach (['roof.rafters', 'roof.vapor_barrier', 'roof.membrane', 'roof.battens', 'roof.gutter'] as $key) {
             self::assertArrayNotHasKey($key, $result->quantities);
         }

@@ -18,13 +18,22 @@ final class ResidentialQuantityScenarioCatalog
     public const SCENARIO_ID = 'residential_preliminary_scenario:v17';
 
     private const UNITS = [
+        'earth.backfill' => 'm3',
+        'earth.plan' => 'm2',
+        'earth.trench' => 'm3',
         'electrical.grounding' => 'm',
         'electrical.main_cable' => 'm',
         'electrical.outlets' => 'pcs',
         'electrical.panel' => 'pcs',
         'electrical.power_lines' => 'm',
         'electrical.switches' => 'pcs',
+        'facade.area' => 'm2',
+        'finish.baseboard' => 'm',
         'foundation.prep' => 'm3',
+        'foundation.concrete' => 'm3',
+        'foundation.formwork' => 'm2',
+        'foundation.rebar' => 'kg',
+        'foundation.waterproofing' => 'm2',
         'finish.floor' => 'm2',
         'finish.paint' => 'm2',
         'heating.pipe' => 'm',
@@ -44,6 +53,7 @@ final class ResidentialQuantityScenarioCatalog
         'roof.vapor_barrier' => 'm2',
         'rough.floor' => 'm2',
         'rough.ceiling' => 'm2',
+        'rough.walls' => 'm2',
         'sanitary.showers' => 'pcs',
         'sanitary.floor_tile' => 'm2',
         'sanitary.toilets' => 'pcs',
@@ -52,11 +62,16 @@ final class ResidentialQuantityScenarioCatalog
         'sanitary.waterproofing' => 'm2',
         'sewerage.pipe' => 'm',
         'sewerage.outlet_route' => 'm',
+        'slabs.concrete' => 'm3',
+        'slabs.formwork' => 'm2',
+        'slabs.rebar' => 'kg',
         'stairs.flights' => 'm2',
         'stairs.landings' => 'm2',
         'stairs.railings' => 'm',
         'sewerage.revisions' => 'pcs',
         'sewerage.risers' => 'pcs',
+        'walls.external_volume' => 'm3',
+        'walls.internal' => 'm2',
         'walls.lintels' => 'pcs',
         'finish.ceiling' => 'm2',
         'ventilation.air_exchange' => 'm2',
@@ -89,6 +104,19 @@ final class ResidentialQuantityScenarioCatalog
                 $floorArea,
                 (string) BigDecimal::one()->dividedBy($floorCount, 8, RoundingMode::HalfUp),
                 ['equal_floor_area_distribution_by_documented_floor_count'],
+            );
+        }
+        $upperFloorArea = $this->scenarioBasis($this->quantity($baseQuantities['upper_floor_internal_area'] ?? null), $model);
+        if ($upperFloorArea === null && $floorArea !== null && $floorCount > 1) {
+            $upperFactor = $firstFloorArea !== null && BigDecimal::of($floorArea->amount)->isGreaterThan(BigDecimal::of($firstFloorArea->amount))
+                ? BigDecimal::of($floorArea->amount)->minus($firstFloorArea->amount)->dividedBy($floorArea->amount, 8, RoundingMode::HalfUp)
+                : BigDecimal::of($floorCount - 1)->dividedBy($floorCount, 8, RoundingMode::HalfUp);
+            $upperFloorArea = $this->scaled(
+                'upper_floor_internal_area',
+                'm2',
+                $floorArea,
+                (string) $upperFactor,
+                ['upper_floor_area_distribution_by_documented_floor_count'],
             );
         }
         $rooms = $floors === []
@@ -422,6 +450,34 @@ final class ResidentialQuantityScenarioCatalog
             );
         }
 
+        foreach ($this->mappedPreliminaryQuantities([
+            'earth.trench',
+            'earth.backfill',
+            'earth.plan',
+            'foundation.formwork',
+            'foundation.rebar',
+            'foundation.concrete',
+            'foundation.waterproofing',
+            'walls.external_volume',
+            'walls.internal',
+            'slabs.formwork',
+            'slabs.concrete',
+            'slabs.rebar',
+            'facade.area',
+            'rough.walls',
+            'finish.baseboard',
+        ], array_filter([
+            'floor_area' => $floorArea,
+            'first_floor_internal_area' => $firstFloorArea,
+            'upper_floor_internal_area' => $upperFloorArea,
+            'net_wall_area' => $this->quantity($baseQuantities['net_wall_area'] ?? null),
+            'gross_wall_area' => $this->quantity($baseQuantities['gross_wall_area'] ?? null),
+        ], static fn (mixed $quantity): bool => $quantity instanceof QuantityData)) as $quantityKey => $quantity) {
+            if (! isset($quantities[$quantityKey])) {
+                $quantities[$quantityKey] = $quantity;
+            }
+        }
+
         $omissions[] = $this->omission('electrical.trays', 'not_applicable_to_residential_preliminary_scenario');
         $omissions[] = $this->omission('networks.external', 'external_network_route_missing');
         $omissions[] = $this->omission('site.geodesy', 'site_geodetic_inputs_missing');
@@ -673,6 +729,36 @@ final class ResidentialQuantityScenarioCatalog
                 ...$areaBasisAssumptions,
             ],
         );
+    }
+
+    /**
+     * @param  list<string>  $keys
+     * @param  array<string, QuantityData>  $sources
+     * @return array<string, QuantityData>
+     */
+    private function mappedPreliminaryQuantities(array $keys, array $sources): array
+    {
+        $mapper = new WorkItemQuantityMapper;
+        $quantities = [];
+
+        foreach ($keys as $key) {
+            $mapped = $mapper->map($key, $sources);
+            if ($mapped === null || $mapped->evidenceIds === [] || $mapped->reviewBlockers !== []) {
+                continue;
+            }
+
+            $quantities[$key] = $this->make(
+                $key,
+                $mapped->unit,
+                $mapped->amount,
+                $mapped->formulaInputs,
+                $mapped->evidenceIds,
+                $mapped->modelVersion,
+                $mapped->assumptions,
+            );
+        }
+
+        return $quantities;
     }
 
     private function make(
