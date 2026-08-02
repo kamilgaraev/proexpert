@@ -30,7 +30,9 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotIdentityViolationReason;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
+use App\BusinessModules\Core\Reporting\Domain\Exceptions\ReportSnapshotIdentityViolation;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -58,6 +60,66 @@ final class ReportWireDtoContractTest extends TestCase
             new ReportSnapshotRef('sales_snapshot', 'snapshot_1', $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $this->at('+1 minute'), $this->at(), [], ReportSnapshotClassification::OPERATIONAL, null);
             self::fail('Допущен устаревший снимок.');
         } catch (InvalidArgumentException $exception) {
+            self::assertSame('snapshot_identity_invalid', $exception->getMessage());
+        }
+    }
+
+    #[Test]
+    public function snapshot_identity_violation_contract_is_closed_and_safe(): void
+    {
+        self::assertSame([
+            'INVALID_KIND' => 'invalid_kind',
+            'INVALID_ID' => 'invalid_id',
+            'OFFICIAL_SEAL_REQUIRED' => 'official_seal_required',
+            'OPERATIONAL_SEAL_FORBIDDEN' => 'operational_seal_forbidden',
+            'SEAL_TIME_INVALID' => 'seal_time_invalid',
+        ], array_column(ReportSnapshotIdentityViolationReason::cases(), 'value', 'name'));
+
+        $reflection = new ReflectionClass(ReportSnapshotIdentityViolation::class);
+        self::assertTrue($reflection->isFinal());
+        $reason = $reflection->getProperty('reason');
+        self::assertTrue($reason->isPublic());
+        self::assertTrue($reason->isReadOnly());
+        self::assertSame(ReportSnapshotIdentityViolationReason::class, $reason->getType()?->getName());
+
+        foreach (ReportSnapshotIdentityViolationReason::cases() as $case) {
+            $exception = new ReportSnapshotIdentityViolation($case);
+            self::assertSame('snapshot_identity_invalid', $exception->getMessage());
+            self::assertSame($case, $exception->reason);
+        }
+    }
+
+    #[Test]
+    public function snapshot_identity_conditions_have_precise_typed_reasons(): void
+    {
+        $seal = $this->seal();
+        $cases = [
+            [ReportSnapshotIdentityViolationReason::INVALID_KIND, '', 'snapshot_1', ReportSnapshotClassification::OPERATIONAL, null, $this->at()],
+            [ReportSnapshotIdentityViolationReason::INVALID_ID, 'sales_snapshot', '', ReportSnapshotClassification::OPERATIONAL, null, $this->at()],
+            [ReportSnapshotIdentityViolationReason::OFFICIAL_SEAL_REQUIRED, 'sales_snapshot', 'snapshot_1', ReportSnapshotClassification::OFFICIAL, null, $this->at()],
+            [ReportSnapshotIdentityViolationReason::OPERATIONAL_SEAL_FORBIDDEN, 'sales_snapshot', 'snapshot_1', ReportSnapshotClassification::OPERATIONAL, $seal, $this->at()],
+            [ReportSnapshotIdentityViolationReason::SEAL_TIME_INVALID, 'sales_snapshot', 'snapshot_1', ReportSnapshotClassification::OFFICIAL, $seal, $this->at('+1 second')],
+        ];
+
+        foreach ($cases as [$expectedReason, $kind, $id, $classification, $candidateSeal, $generatedAt]) {
+            try {
+                new ReportSnapshotRef($kind, $id, $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $generatedAt, null, [], $classification, $candidateSeal);
+                self::fail('Допущена недопустимая идентичность снимка.');
+            } catch (ReportSnapshotIdentityViolation $exception) {
+                self::assertSame($expectedReason, $exception->reason);
+                self::assertSame('snapshot_identity_invalid', $exception->getMessage());
+            }
+        }
+    }
+
+    #[Test]
+    public function stale_time_violation_is_not_mapped_to_a_seal_reason(): void
+    {
+        try {
+            new ReportSnapshotRef('sales_snapshot', 'snapshot_1', $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $this->at('+1 minute'), $this->at(), [], ReportSnapshotClassification::OPERATIONAL, null);
+            self::fail('Допущено время устаревания до генерации.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertNotInstanceOf(ReportSnapshotIdentityViolation::class, $exception);
             self::assertSame('snapshot_identity_invalid', $exception->getMessage());
         }
     }
@@ -452,6 +514,11 @@ final class ReportWireDtoContractTest extends TestCase
     private function snapshot(): ReportSnapshotRef
     {
         return new ReportSnapshotRef('sales_snapshot', 'snapshot_1', $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $this->at(), null, ['erp' => 'watermark_1'], ReportSnapshotClassification::OPERATIONAL, null);
+    }
+
+    private function seal(): ReportSnapshotSeal
+    {
+        return new ReportSnapshotSeal('key_1', 'ed25519-sha256', $this->hash('b'), str_repeat('A', 86), $this->at());
     }
 
     private function source(): ReportSourceRef

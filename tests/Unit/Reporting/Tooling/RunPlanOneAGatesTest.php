@@ -18,9 +18,73 @@ final class RunPlanOneAGatesTest extends TestCase
 
     private array $temporaryDirectories = [];
 
+    public function test_runner_declares_the_exact_task_four_a2_subject_parent_manifest_and_lineage(): void
+    {
+        $constants = (new ReflectionClass(\PlanOneAGates::class))->getConstants();
+
+        self::assertSame('fix[reports]: типизировать нарушения идентичности снимков', $constants['TASK_FOUR_A2_SUBJECT']);
+        self::assertSame('973aabb17516c0ff9bc7d5a87b3ab6eb8732f333', $constants['TASK_FOUR_A2_PARENT']);
+        self::assertCount(16, $constants['TASK_FOUR_A2_PATHS']);
+        self::assertSame($constants['TASK_FOUR_A2_PATHS'], array_values(array_unique($constants['TASK_FOUR_A2_PATHS'])));
+        $sorted = $constants['TASK_FOUR_A2_PATHS'];
+        sort($sorted, SORT_STRING);
+        self::assertSame($sorted, $constants['TASK_FOUR_A2_PATHS']);
+        self::assertSame(['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16'], $constants['TASK_FOUR_A2_LINEAGE']);
+    }
+
+    public function test_historical_task_four_a_and_four_b_mutation_families_are_rejected(): void
+    {
+        [$repository, $mutations] = $this->historicalMutationCommits();
+        $constants = (new ReflectionClass(\PlanOneAGates::class))->getConstants();
+        $cases = [
+            'task4a_wrong_parent' => [$constants['TASK_FOUR_A_PARENT'], $constants['TASK_FOUR_A_TREE'], $constants['TASK_FOUR_A_SUBJECT'], $constants['TASK_FOUR_A_PATHS'], 'parent', 'PLAN_1A_GATE_TASK_4A_HISTORY_PARENT_INVALID'],
+            'task4a_altered_blob' => [$constants['TASK_FOUR_A_PARENT'], $constants['TASK_FOUR_A_TREE'], $constants['TASK_FOUR_A_SUBJECT'], $constants['TASK_FOUR_A_PATHS'], 'tree', 'PLAN_1A_GATE_TASK_4A_HISTORY_TREE_INVALID'],
+            'task4b_wrong_subject' => [$constants['TASK_FOUR_A_COMMIT'], $constants['TASK_FOUR_B_TREE'], $constants['TASK_FOUR_B_SUBJECT'], $constants['TASK_FOUR_B_PATHS'], 'subject', 'PLAN_1A_GATE_TASK_4B_HISTORY_SUBJECT_INVALID'],
+            'task4b_same_count_different_paths' => [$constants['TASK_FOUR_A_COMMIT'], $this->git($repository, ['show', '-s', '--format=%T', $mutations['task4b_same_count_different_paths']]), $constants['TASK_FOUR_B_SUBJECT'], $constants['TASK_FOUR_B_PATHS'], 'paths', 'PLAN_1A_GATE_TASK_4B_HISTORY_PATHS_INVALID'],
+            'task4b_altered_blob' => [$constants['TASK_FOUR_A_COMMIT'], $constants['TASK_FOUR_B_TREE'], $constants['TASK_FOUR_B_SUBJECT'], $constants['TASK_FOUR_B_PATHS'], 'tree', 'PLAN_1A_GATE_TASK_4B_HISTORY_TREE_INVALID'],
+        ];
+
+        foreach ($cases as $name => [$parent, $tree, $subject, $paths, $boundary, $message]) {
+            $arguments = [$repository, $mutations[$name], $mutations[$name], $parent, $tree, $subject, $paths, str_starts_with($name, 'task4a_') ? 'PLAN_1A_GATE_TASK_4A_HISTORY' : 'PLAN_1A_GATE_TASK_4B_HISTORY'];
+            self::assertTrue($this->historicalMutationRejected($arguments, $message), $name);
+            $this->setStaticProperty('historicalPredicateOverride', static fn (string $actualBoundary, bool $actual): bool => $actualBoundary === $boundary ? true : $actual);
+            self::assertFalse($this->historicalMutationRejected($arguments, $message), $name.' predicate bypass was not detected');
+            $this->setStaticProperty('historicalPredicateOverride', null);
+        }
+
+        self::assertTrue($this->historicalWrapperRejected($repository, 'validateHistoricalTaskFourACommit', $mutations['task4a_wrong_parent'], 'PLAN_1A_GATE_TASK_4A_HISTORY_COMMIT_INVALID'));
+        self::assertTrue($this->historicalWrapperRejected($repository, 'validateHistoricalTaskFourBCommit', $mutations['task4b_wrong_subject'], 'PLAN_1A_GATE_TASK_4B_HISTORY_COMMIT_INVALID'));
+        $this->git($repository, ['replace', '-f', '0b581469a3ad39d4ce5eff5c41072f5ef3f745f7', $mutations['task4a_wrong_parent']]);
+        $this->git($repository, ['replace', '-f', '973aabb17516c0ff9bc7d5a87b3ab6eb8732f333', $mutations['task4b_wrong_subject']]);
+        $this->invokeStatic('validateHistoricalTaskLineage', [$repository]);
+        self::assertCount(2, $this->gitPaths($repository, ['replace', '-l']));
+    }
+
+    private function historicalMutationRejected(array $arguments, string $message): bool
+    {
+        try {
+            $this->invokeStatic('validateHistoricalCommit', $arguments);
+        } catch (\PlanOneAGatesFailure $failure) {
+            return $failure->getMessage() === $message;
+        }
+
+        return false;
+    }
+
+    private function historicalWrapperRejected(string $repository, string $method, string $commit, string $message): bool
+    {
+        try {
+            $this->invokeStatic($method, [$repository, $commit]);
+        } catch (\PlanOneAGatesFailure $failure) {
+            return $failure->getMessage() === $message;
+        }
+
+        return false;
+    }
+
     protected function tearDown(): void
     {
-        foreach (['processOverride', 'topologyOverride', 'harnessOverride', 'faultOverride', 'phpHashOverride', 'phpVersionOverride', 'branchOverride'] as $property) {
+        foreach (['processOverride', 'topologyOverride', 'harnessOverride', 'faultOverride', 'phpHashOverride', 'phpVersionOverride', 'branchOverride', 'historicalPredicateOverride'] as $property) {
             $this->setStaticProperty($property, null);
         }
         foreach (array_reverse($this->temporaryDirectories) as $directory) {
@@ -752,7 +816,7 @@ final class RunPlanOneAGatesTest extends TestCase
         }
     }
 
-    public function test_precommit_exact_unstaged_task_four_a_set_is_accepted(): void
+    public function test_precommit_exact_unstaged_task_four_a2_set_is_accepted(): void
     {
         [$repository, $head] = $this->precommitRepository();
 
@@ -761,10 +825,10 @@ final class RunPlanOneAGatesTest extends TestCase
         self::assertSame([], $this->gitPaths($repository, ['diff', '--cached', '--name-only']));
     }
 
-    public function test_precommit_partial_staged_task_four_a_set_is_rejected(): void
+    public function test_precommit_partial_staged_task_four_a2_set_is_rejected(): void
     {
         [$repository, $head] = $this->precommitRepository();
-        $this->git($repository, ['add', $this->taskFourAPaths()[0]]);
+        $this->git($repository, ['add', $this->taskFourA2Paths()[0]]);
 
         $this->expectException(\PlanOneAGatesFailure::class);
 
@@ -774,14 +838,14 @@ final class RunPlanOneAGatesTest extends TestCase
     public function test_precommit_extra_untracked_path_is_rejected(): void
     {
         [$repository, $head] = $this->precommitRepository();
-        file_put_contents($repository.'/foreign.txt', 'foreign');
+        file_put_contents($repository.'/composer.json', "\n", FILE_APPEND);
 
         $this->expectException(\PlanOneAGatesFailure::class);
 
         $this->invokeStatic('validateGitState', [$repository, $head]);
     }
 
-    public function test_clean_canonical_task_four_a_commit_is_accepted(): void
+    public function test_clean_canonical_task_four_a2_commit_is_accepted(): void
     {
         [$repository, $commit] = $this->canonicalRepository();
 
@@ -806,7 +870,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
         $this->expectException(\PlanOneAGatesFailure::class);
 
-        $this->invokeStatic('validateCanonicalTaskFourACommit', [$repository, $commit]);
+        $this->invokeStatic('validateCanonicalTaskFourA2Commit', [$repository, $commit]);
     }
 
     public function test_canonical_tracked_schema_byte_drift_is_rejected(): void
@@ -816,7 +880,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
         $this->expectException(\PlanOneAGatesFailure::class);
 
-        $this->invokeStatic('validateCanonicalTaskFourACommit', [$repository, $commit]);
+        $this->invokeStatic('validateCanonicalTaskFourA2Commit', [$repository, $commit]);
     }
 
     public function test_canonical_tracked_output_is_rejected(): void
@@ -829,7 +893,7 @@ final class RunPlanOneAGatesTest extends TestCase
         $trackedCommit = $this->git($repository, ['rev-parse', 'HEAD']);
 
         try {
-            $this->invokeStatic('validateCanonicalTaskFourACommit', [$repository, $trackedCommit]);
+            $this->invokeStatic('validateCanonicalTaskFourA2Commit', [$repository, $trackedCommit]);
             self::fail('Expected tracked output rejection');
         } catch (\PlanOneAGatesFailure $failure) {
             self::assertSame(3, $failure->exitStatus);
@@ -969,9 +1033,14 @@ final class RunPlanOneAGatesTest extends TestCase
 
     private function precommitRepository(): array
     {
-        $repository = $this->repository();
-        foreach ($this->taskFourAPaths() as $path) {
-            $this->write($repository.'/'.$path, $path);
+        $repository = $this->temporaryDirectory().'/repository';
+        $process = new Process(['git', 'clone', '--no-hardlinks', '--quiet', $this->root(), $repository]);
+        $process->setTimeout(30);
+        $process->mustRun();
+        $this->git($repository, ['config', 'user.email', 'reports@example.test']);
+        $this->git($repository, ['config', 'user.name', 'Reports Test']);
+        foreach ($this->taskFourA2Paths() as $path) {
+            $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
 
         return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
@@ -985,25 +1054,70 @@ final class RunPlanOneAGatesTest extends TestCase
         $process->mustRun();
         $this->git($repository, ['config', 'user.email', 'reports@example.test']);
         $this->git($repository, ['config', 'user.name', 'Reports Test']);
-        foreach ($this->taskFourAPaths() as $path) {
+        foreach ($this->taskFourA2Paths() as $path) {
             $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
 
         return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
     }
 
-    private function canonicalRepository(string $subject = 'fix[reports]: зафиксировать классификацию и печать снимков'): array
+    private function canonicalRepository(string $subject = 'fix[reports]: типизировать нарушения идентичности снимков'): array
     {
         [$repository] = $this->precommitRepository();
-        $this->git($repository, ['add', '--', ...$this->taskFourAPaths()]);
+        $this->git($repository, ['add', '--', ...$this->taskFourA2Paths()]);
         $this->git($repository, ['commit', '-m', $subject]);
 
         return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
     }
 
-    private function taskFourAPaths(): array
+    private function historicalMutationCommits(): array
     {
-        $constant = (new ReflectionClass(\PlanOneAGates::class))->getReflectionConstant('TASK_FOUR_A_PATHS');
+        $repository = $this->temporaryDirectory().'/history-mutations';
+        $process = new Process(['git', 'clone', '--no-hardlinks', '--quiet', $this->root(), $repository]);
+        $process->setTimeout(30);
+        $process->mustRun();
+        $this->git($repository, ['config', 'user.email', 'reports@example.test']);
+        $this->git($repository, ['config', 'user.name', 'Reports Test']);
+        $taskFourA = '0b581469a3ad39d4ce5eff5c41072f5ef3f745f7';
+        $taskFourAParent = '786e5f3433d04baf35c81789178e1e83012e0916';
+        $taskFourB = '973aabb17516c0ff9bc7d5a87b3ab6eb8732f333';
+        $taskFourATree = $this->git($repository, ['show', '-s', '--format=%T', $taskFourA]);
+        $taskFourBTree = $this->git($repository, ['show', '-s', '--format=%T', $taskFourB]);
+        $wrongParent = $this->git($repository, ['commit-tree', $taskFourATree, '-p', $taskFourAParent.'^', '-m', 'fix[reports]: зафиксировать классификацию и печать снимков']);
+        $wrongSubject = $this->git($repository, ['commit-tree', $taskFourBTree, '-p', $taskFourA, '-m', 'wrong subject']);
+
+        $this->git($repository, ['checkout', '--detach', $taskFourA]);
+        file_put_contents($repository.'/app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php', "\n", FILE_APPEND);
+        $this->git($repository, ['add', 'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php']);
+        $alteredTaskFourATree = $this->git($repository, ['write-tree']);
+        $alteredTaskFourABlob = $this->git($repository, ['commit-tree', $alteredTaskFourATree, '-p', $taskFourAParent, '-m', 'fix[reports]: зафиксировать классификацию и печать снимков']);
+
+        $this->git($repository, ['reset', '--hard', $taskFourB]);
+        file_put_contents($repository.'/app/BusinessModules/Core/Reporting/Application/Dispatch/ReportAuditIntent.php', "\n", FILE_APPEND);
+        $this->git($repository, ['add', 'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportAuditIntent.php']);
+        $alteredTaskFourBTree = $this->git($repository, ['write-tree']);
+        $alteredTaskFourBBlob = $this->git($repository, ['commit-tree', $alteredTaskFourBTree, '-p', $taskFourA, '-m', 'feat[reports]: добавить надежную доставку заданий отчетов']);
+
+        $this->git($repository, ['reset', '--hard', $taskFourB]);
+        $this->git($repository, ['rm', '--cached', '--', 'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php']);
+        unlink($repository.'/app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php');
+        file_put_contents($repository.'/composer.json', "\n", FILE_APPEND);
+        $this->git($repository, ['add', 'composer.json']);
+        $differentPathsTree = $this->git($repository, ['write-tree']);
+        $differentPaths = $this->git($repository, ['commit-tree', $differentPathsTree, '-p', $taskFourA, '-m', 'feat[reports]: добавить надежную доставку заданий отчетов']);
+
+        return [$repository, [
+            'task4a_wrong_parent' => $wrongParent,
+            'task4a_altered_blob' => $alteredTaskFourABlob,
+            'task4b_wrong_subject' => $wrongSubject,
+            'task4b_same_count_different_paths' => $differentPaths,
+            'task4b_altered_blob' => $alteredTaskFourBBlob,
+        ]];
+    }
+
+    private function taskFourA2Paths(): array
+    {
+        $constant = (new ReflectionClass(\PlanOneAGates::class))->getReflectionConstant('TASK_FOUR_A2_PATHS');
         self::assertNotFalse($constant);
 
         return $constant->getValue();
@@ -1016,7 +1130,7 @@ final class RunPlanOneAGatesTest extends TestCase
         self::assertNotFalse($staticPaths);
 
         $expected = array_values(array_filter(
-            $this->taskFourAPaths(),
+            $this->taskFourA2Paths(),
             static fn (string $path): bool => (
                 str_starts_with($path, 'tests/Architecture/')
                 || str_starts_with($path, 'tests/Feature/')

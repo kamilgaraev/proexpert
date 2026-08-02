@@ -25,7 +25,7 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertFileExists($this->lockPath());
         self::assertFileExists($this->hashPath());
         self::assertSame(hash_file('sha256', $this->lockPath())."\n", file_get_contents($this->hashPath()));
-        self::assertSame(['plan', 'contract_version', 'resources', 'permissions', 'error_count', 'definition_lifecycle', 'binding_lifecycle', 'owner_port_arity', 'route_contract', 'task_4a', 'composer_contract'], array_keys($this->lock()));
+        self::assertSame(['plan', 'contract_version', 'resources', 'permissions', 'error_count', 'definition_lifecycle', 'binding_lifecycle', 'owner_port_arity', 'route_contract', 'task_4a', 'task_4a2', 'composer_contract'], array_keys($this->lock()));
     }
 
     public function test_contract_lock_preserves_resources_permissions_and_errors(): void
@@ -50,6 +50,28 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertSame(['operational', 'official'], $task['snapshot_classifications']);
         self::assertSame(['standard', 'sensitive'], $task['data_classifications']);
         self::assertCount(6, $task['output_classification_methods']);
+    }
+
+    public function test_contract_lock_binds_the_forward_only_task_four_a2_lineage(): void
+    {
+        $task = $this->lock()['task_4a2'];
+
+        self::assertSame([
+            'subject',
+            'parent_commit_sha',
+            'tracked_paths',
+            'lineage',
+            'identity_violation_reasons',
+            'exception_message',
+            'contract_command_counts',
+        ], array_keys($task));
+        self::assertSame('fix[reports]: типизировать нарушения идентичности снимков', $task['subject']);
+        self::assertSame('973aabb17516c0ff9bc7d5a87b3ab6eb8732f333', $task['parent_commit_sha']);
+        self::assertCount(16, $task['tracked_paths']);
+        self::assertSame($task['tracked_paths'], array_values(array_unique($task['tracked_paths'])));
+        self::assertSame(['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16'], $task['lineage']);
+        self::assertSame(['invalid_kind', 'invalid_id', 'official_seal_required', 'operational_seal_forbidden', 'seal_time_invalid'], $task['identity_violation_reasons']);
+        self::assertSame('snapshot_identity_invalid', $task['exception_message']);
     }
 
     public function test_definition_registries_keep_nominal_wrappers(): void

@@ -27,6 +27,9 @@ final class PlanOneAGates
     private const PHP_SHA256 = 'f515db26936a2702886ca19523518556972fdf25dee699b78e1c78863a08b680';
     private const CANONICAL_BRANCH = 'feat/reports-canonical-backend';
     private const TASK_FOUR_A_SUBJECT = 'fix[reports]: зафиксировать классификацию и печать снимков';
+    private const TASK_FOUR_A_COMMIT = '0b581469a3ad39d4ce5eff5c41072f5ef3f745f7';
+    private const TASK_FOUR_A_PARENT = '786e5f3433d04baf35c81789178e1e83012e0916';
+    private const TASK_FOUR_A_TREE = '5174bf55c4e13e76a2232fed4e4cb4745578e536';
     private const TASK_FOUR_A_PATHS = [
         'app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php',
         'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunStore.php',
@@ -82,6 +85,70 @@ final class PlanOneAGates
         'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
         'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
     ];
+    private const TASK_FOUR_A2_SUBJECT = 'fix[reports]: типизировать нарушения идентичности снимков';
+    private const TASK_FOUR_A2_PARENT = '973aabb17516c0ff9bc7d5a87b3ab6eb8732f333';
+    private const TASK_FOUR_B_SUBJECT = 'feat[reports]: добавить надежную доставку заданий отчетов';
+    private const TASK_FOUR_B_TREE = '26a315fb485828c66fcd3e9c9b1035f7b3e33800';
+    private const TASK_FOUR_B_PATHS = [
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditIntentStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportDispatchIntentStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportAuditIntent.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportAuditIntentLease.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchAggregate.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchBackoffPolicy.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchIntent.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchIntentPublisher.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchIntentReconciler.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchLease.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchPublishSummary.php',
+        'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportDispatchTopic.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunExportSource.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunRetrySource.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Audit/OutboxReportTransitionAudit.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Console/PublishReportDispatchIntentsCommand.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Console/ReconcileReportDispatchIntentsCommand.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportAuditIntentStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportDispatchIntentStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/Models/ReportAuditIntentRecord.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/Models/ReportDispatchIntentRecord.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/Models/ReportRunRecord.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/ReportRunHydrator.php',
+        'database/migrations/2026_07_26_000001_create_report_runs_table.php',
+        'database/migrations/2026_07_26_000002_create_report_dispatch_intents_table.php',
+        'database/migrations/2026_07_26_000003_create_report_audit_intents_table.php',
+        'tests/Feature/Reporting/Dispatch/EloquentReportAuditIntentStoreTest.php',
+        'tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php',
+        'tests/Unit/Reporting/Dispatch/ReportAuditIntentContractTest.php',
+        'tests/Unit/Reporting/Dispatch/ReportDispatchBackoffPolicyTest.php',
+        'tests/Unit/Reporting/Dispatch/ReportDispatchIntentPublisherTest.php',
+        'tests/Unit/Reporting/Dispatch/ReportDispatchIntentReconcilerTest.php',
+        'tests/Unit/Reporting/Execution/ExecutionContractsTest.php',
+        'tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php',
+    ];
+    private const TASK_FOUR_A2_PATHS = [
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php',
+        'app/BusinessModules/Core/Reporting/Domain/Enums/ReportSnapshotIdentityViolationReason.php',
+        'app/BusinessModules/Core/Reporting/Domain/Exceptions/ReportSnapshotIdentityViolation.php',
+        'docs/reports/contracts/plan-1a-completion.schema.json',
+        'docs/reports/contracts/plan-1a-contract-lock.json',
+        'docs/reports/contracts/plan-1a-contract-lock.sha256',
+        'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+        'scripts/reporting/build-plan-1a-evidence.php',
+        'scripts/reporting/run-plan-1a-gates.php',
+        'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json',
+        'tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php',
+        'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
+        'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
+    ];
+    private const TASK_FOUR_A2_LINEAGE = ['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16'];
     private const OUTPUTS = [
         'plan-1a-route-snapshot.json',
         'plan-1a-ci-authorization.json',
@@ -238,6 +305,7 @@ final class PlanOneAGates
     private static ?Closure $phpHashOverride = null;
     private static ?Closure $phpVersionOverride = null;
     private static ?Closure $branchOverride = null;
+    private static ?Closure $historicalPredicateOverride = null;
 
     public static function execute(array $argv): int
     {
@@ -717,33 +785,124 @@ final class PlanOneAGates
         $untracked = self::gitPaths(['ls-files', '--others', '--exclude-standard', '-z'], $root);
         $working = array_values(array_unique([...$unstaged, ...$untracked]));
         sort($working, SORT_STRING);
-        if ($staged === self::TASK_FOUR_A_PATHS && $working === []) {
+        if ($commit === self::TASK_FOUR_A2_PARENT
+            && $staged === self::TASK_FOUR_A2_PATHS
+            && $working === []) {
+            self::validateHistoricalTaskLineage($root);
+
             return;
         }
-        if ($staged === [] && $working === self::TASK_FOUR_A_PATHS) {
+        if ($commit === self::TASK_FOUR_A2_PARENT
+            && $staged === []
+            && $working === self::TASK_FOUR_A2_PATHS) {
+            self::validateHistoricalTaskLineage($root);
+
             return;
         }
         self::guard($staged === [] && $working === [], 3, 'PLAN_1A_GATE_WORKTREE_DIRTY');
-        self::validateCanonicalTaskFourACommit($root, $commit);
+        self::validateCanonicalTaskFourA2Commit($root, $commit);
     }
 
-    private static function validateCanonicalTaskFourACommit(string $root, string $commit): void
+    private static function validateHistoricalTaskLineage(string $root): void
     {
+        self::validateHistoricalTaskFourACommit($root, self::TASK_FOUR_A_COMMIT);
+        self::validateHistoricalTaskFourBCommit($root, self::TASK_FOUR_A2_PARENT);
+    }
+
+    private static function validateHistoricalTaskFourACommit(string $root, string $commit): void
+    {
+        self::validateHistoricalCommit(
+            $root,
+            $commit,
+            self::TASK_FOUR_A_COMMIT,
+            self::TASK_FOUR_A_PARENT,
+            self::TASK_FOUR_A_TREE,
+            self::TASK_FOUR_A_SUBJECT,
+            self::TASK_FOUR_A_PATHS,
+            'PLAN_1A_GATE_TASK_4A_HISTORY',
+        );
+    }
+
+    private static function validateHistoricalTaskFourBCommit(string $root, string $commit): void
+    {
+        self::validateHistoricalCommit(
+            $root,
+            $commit,
+            self::TASK_FOUR_A2_PARENT,
+            self::TASK_FOUR_A_COMMIT,
+            self::TASK_FOUR_B_TREE,
+            self::TASK_FOUR_B_SUBJECT,
+            self::TASK_FOUR_B_PATHS,
+            'PLAN_1A_GATE_TASK_4B_HISTORY',
+        );
+    }
+
+    private static function validateHistoricalCommit(
+        string $root,
+        string $commit,
+        string $expectedCommit,
+        string $expectedParent,
+        string $expectedTree,
+        string $expectedSubject,
+        array $expectedPaths,
+        string $failure,
+    ): void {
+        $type = trim(self::process(['git', '--no-replace-objects', 'cat-file', '-t', $commit], $root)[0]);
+        $metadata = explode("\0", rtrim(self::process([
+            'git',
+            '--no-replace-objects',
+            'show',
+            '-s',
+            '--format=%H%x00%P%x00%T%x00%s',
+            $commit,
+        ], $root)[0], "\r\n"));
+        $paths = self::gitPaths([
+            '--no-replace-objects',
+            'diff-tree',
+            '--no-renames',
+            '--no-commit-id',
+            '--name-only',
+            '-r',
+            '-z',
+            $commit,
+        ], $root);
+        self::guard(self::historicalPredicate('commit', $type === 'commit' && ($metadata[0] ?? null) === $expectedCommit), 3, $failure.'_COMMIT_INVALID');
+        self::guard(self::historicalPredicate('parent', ($metadata[1] ?? null) === $expectedParent), 3, $failure.'_PARENT_INVALID');
+        self::guard(self::historicalPredicate('tree', ($metadata[2] ?? null) === $expectedTree), 3, $failure.'_TREE_INVALID');
+        self::guard(self::historicalPredicate('subject', ($metadata[3] ?? null) === $expectedSubject), 3, $failure.'_SUBJECT_INVALID');
+        self::guard(self::historicalPredicate('paths', $paths === $expectedPaths), 3, $failure.'_PATHS_INVALID');
+    }
+
+    private static function historicalPredicate(string $boundary, bool $actual): bool
+    {
+        if (self::$historicalPredicateOverride instanceof Closure) {
+            $overridden = (self::$historicalPredicateOverride)($boundary, $actual);
+            self::guard(is_bool($overridden), 3, 'PLAN_1A_GATE_HISTORICAL_PREDICATE_OVERRIDE_INVALID');
+
+            return $overridden;
+        }
+
+        return $actual;
+    }
+
+    private static function validateCanonicalTaskFourA2Commit(string $root, string $commit): void
+    {
+        self::validateHistoricalTaskLineage($root);
         self::guard(
-            trim(self::process(['git', 'show', '-s', '--format=%s', $commit], $root)[0]) === self::TASK_FOUR_A_SUBJECT,
+            trim(self::process(['git', 'show', '-s', '--format=%s', $commit], $root)[0]) === self::TASK_FOUR_A2_SUBJECT,
             3,
-            'PLAN_1A_GATE_TASK_4A_SUBJECT_INVALID',
+            'PLAN_1A_GATE_TASK_4A2_SUBJECT_INVALID',
         );
         $parents = preg_split('/\s+/', trim(self::process(['git', 'show', '-s', '--format=%P', $commit], $root)[0])) ?: [];
-        self::guard(count($parents) === 1, 3, 'PLAN_1A_GATE_TASK_4A_PARENT_INVALID');
+        self::guard($parents === [self::TASK_FOUR_A2_PARENT], 3, 'PLAN_1A_GATE_TASK_4A2_PARENT_INVALID');
         $paths = self::gitPaths(['diff-tree', '--no-renames', '--no-commit-id', '--name-only', '-r', '-z', $commit], $root);
-        self::guard($paths === self::TASK_FOUR_A_PATHS, 3, 'PLAN_1A_GATE_TASK_4A_PATHS_INVALID');
-        foreach (self::TASK_FOUR_A_PATHS as $path) {
+        self::guard($paths === self::TASK_FOUR_A2_PATHS, 3, 'PLAN_1A_GATE_TASK_4A2_PATHS_INVALID');
+        foreach (self::TASK_FOUR_A2_PATHS as $path) {
             $gitBytes = self::process(['git', 'show', $commit.':'.$path], $root)[0];
             self::guard(
                 is_file($root.'/'.$path) && hash_equals(hash('sha256', $gitBytes), hash_file('sha256', $root.'/'.$path)),
                 3,
-                'PLAN_1A_GATE_TASK_4A_BYTES_INVALID',
+                'PLAN_1A_GATE_TASK_4A2_BYTES_INVALID',
             );
         }
     }
