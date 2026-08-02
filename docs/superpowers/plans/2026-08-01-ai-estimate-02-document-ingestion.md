@@ -1,6 +1,6 @@
 # Универсальный вход документов AI-смет: план реализации
 
-> **Для агентных исполнителей:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Для агентных исполнителей:** придерживаться TDD: сначала написать падающий тест, затем минимальную реализацию, после этого выполнить рефакторинг и релевантные проверки. В плане используются флажки `- [ ]`.
 
 **Цель:** создать единый версионированный вход для всех документов, прикреплённых к AI-смете.
 

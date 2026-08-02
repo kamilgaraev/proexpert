@@ -1,6 +1,6 @@
 # AI-сметчик без воздуха Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** довести AI-генерацию смет до режима, где каждая строка сметы имеет проверяемое основание: документ/чертеж/спецификацию, объем, норму ФСНБ/ФСБЦ, цену/ресурс или явный ручной выбор сметчика.
 
