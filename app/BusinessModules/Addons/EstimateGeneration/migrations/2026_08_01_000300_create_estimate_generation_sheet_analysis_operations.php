@@ -143,7 +143,7 @@ SQL);
     private function ensureIdentityAndScopeColumns(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         foreach (['operation_id', 'organization_id', 'project_id', 'session_id', 'document_id', 'unit_id', 'source_version'] as $column) {
-            $runtime->ensureConstraint(self::TABLE, 'eg_sheet_analysis_'.$column.'_nn', sprintf('%s IS NOT NULL', $column));
+            $runtime->ensureConstraint(self::TABLE, 'eg_sheet_analysis_'.$column.'_nn', sprintf('CHECK (%s IS NOT NULL)', $column));
             $runtime->validateConstraint(self::TABLE, 'eg_sheet_analysis_'.$column.'_nn');
             DB::statement(sprintf('ALTER TABLE %s ALTER COLUMN %s SET NOT NULL', self::TABLE, $column));
         }
