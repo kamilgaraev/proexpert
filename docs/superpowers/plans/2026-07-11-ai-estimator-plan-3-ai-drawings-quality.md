@@ -1,6 +1,6 @@
 # AI-сметчик МОСТ: AI, чертежи и качество Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Реализовать доказуемое понимание PDF, DWG/DXF, изображений, фотографий и ручных набросков, извлечение объемов, безопасный нормативный подбор, версионированные цены и измеримый quality/learning pipeline.
 

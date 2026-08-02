@@ -1,6 +1,6 @@
 # AI Estimator Training Dataset Model Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a durable backend data model for эталонные наборы AI-сметчика: смета из Гранд-Сметы, проектные документы, чертежи, строки эталона и связь с learning examples.
 

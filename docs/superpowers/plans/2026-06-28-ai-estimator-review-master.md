@@ -1,6 +1,6 @@
 # AI Estimator Review Master Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Block saving AI-generated estimates with unresolved zero-price positions and add a review master where the user confirms or replaces norms/prices before applying the draft.
 
