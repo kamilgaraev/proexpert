@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorResponseFactory;
 use App\Services\Logging\SafeLogWriter;
+use App\Services\Logging\Context\RequestContext;
 use App\Services\Monitoring\GlitchTipReportPolicy;
 use App\Services\Monitoring\SentryScopeService;
 use Illuminate\Foundation\Application;
@@ -175,6 +178,17 @@ $app = Application::configure(basePath: dirname(__DIR__))
             $responseClass = $responseClassForRequest($request);
 
             return $responseClass::error($message, $exception->status, $errors);
+        });
+
+        $exceptions->render(function (ReportContractException $exception, Request $request) {
+            if (! str_starts_with($request->path(), 'api/v1/admin/reports/')) {
+                return null;
+            }
+
+            return app(ReportErrorResponseFactory::class)->make(
+                $exception,
+                app(RequestContext::class)->getCorrelationId(),
+            );
         });
 
         // Ошибки авторизации -> logs/auth/auth.log
