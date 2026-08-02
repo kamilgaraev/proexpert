@@ -53,6 +53,22 @@ final class LaravelCurrentReportAbacEvaluatorTest extends TestCase
         ));
     }
 
+    public function test_system_role_wildcard_grants_reporting_permission(): void
+    {
+        $assignment = new UserRoleAssignment([
+            'role_slug' => 'web_admin',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+        ]);
+        $method = new ReflectionMethod(LaravelCurrentReportAbacEvaluator::class, 'roleGrants');
+
+        self::assertTrue($method->invoke(
+            new LaravelCurrentReportAbacEvaluator,
+            $assignment,
+            'reports.view',
+            1,
+        ));
+    }
+
     public static function malformedTimeConditions(): array
     {
         return [
