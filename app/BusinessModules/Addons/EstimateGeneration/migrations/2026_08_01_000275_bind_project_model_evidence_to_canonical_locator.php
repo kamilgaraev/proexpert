@@ -91,8 +91,7 @@ return new class extends Migration
 
             DB::statement('ALTER TABLE '.self::TABLE.' DISABLE TRIGGER eg_project_model_evidence_binding_append_trg');
             DB::statement('ALTER TABLE '.self::TABLE.' DISABLE TRIGGER eg_project_model_evidence_binding_guard_trg');
-            try {
-                DB::unprepared(<<<'SQL'
+            DB::unprepared(<<<'SQL'
 UPDATE estimate_generation_project_model_evidence_bindings binding
 SET candidate_value_fingerprint = eg_project_model_value_fingerprint(
         CASE WHEN binding.assertion_id IS NOT NULL THEN assertion.payload - 'source' ELSE correction_assertion.payload - 'source' END
@@ -125,10 +124,8 @@ WHERE evidence.id = binding.evidence_id
   AND evidence.project_id = binding.project_id
   AND evidence.session_id = binding.session_id
 SQL);
-            } finally {
-                DB::statement('ALTER TABLE '.self::TABLE.' ENABLE TRIGGER eg_project_model_evidence_binding_guard_trg');
-                DB::statement('ALTER TABLE '.self::TABLE.' ENABLE TRIGGER eg_project_model_evidence_binding_append_trg');
-            }
+            DB::statement('ALTER TABLE '.self::TABLE.' ENABLE TRIGGER eg_project_model_evidence_binding_guard_trg');
+            DB::statement('ALTER TABLE '.self::TABLE.' ENABLE TRIGGER eg_project_model_evidence_binding_append_trg');
 
             $this->assertCanonicalLocatorBindings();
             $runtime->checkpoint('project_model_locator.backfill.completed');
