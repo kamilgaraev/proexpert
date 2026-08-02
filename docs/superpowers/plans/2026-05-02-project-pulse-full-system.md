@@ -1,6 +1,6 @@
 # Полный системный пульс проектов Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Превратить “Пульс проектов” в полноценный ежедневный управленческий отчет внутри админки, который покрывает проекты, заявки, закупки, снабжение, склад, финансы, договоры, графики, работы, отчеты и исполнителей.
 

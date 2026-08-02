@@ -1,6 +1,6 @@
 # Evidence-bound AI Estimate Completion Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Подготовить AI-смету МОСТ к безопасному конечному состоянию: она содержит только доказанные позиции и ясно показывает невключённые части без возможности выдать результат за полный бюджет.
 

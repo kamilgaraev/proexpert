@@ -1,6 +1,6 @@
 # AI Estimate Completeness Arbiter Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Follow TDD for every implementation task: write a failing test first, implement the smallest change that makes it pass, then refactor and run the relevant checks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prevent an AI estimate with partial confirmed work from being presented or applied as a full object budget, while adding a safe AI arbiter that can request one evidence-bounded targeted rebuild.
 
@@ -590,4 +590,4 @@ git commit -m "feat[lk]: отмечается неполная AI-смета"
 
 ## Execution choice
 
-The user explicitly requested autonomous work without further questions. Execute inline using `superpowers:executing-plans`, reviewing and committing each independently testable task.
+The user explicitly requested autonomous work without further questions. Execute inline using `последовательное выполнение задач с проверками после каждого шага`, reviewing and committing each independently testable task.
