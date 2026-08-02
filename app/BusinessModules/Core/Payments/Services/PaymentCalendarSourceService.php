@@ -17,6 +17,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLine;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
@@ -47,19 +48,20 @@ final class PaymentCalendarSourceService
         $withoutKey = [];
 
         foreach ($items as $item) {
-            if (!$item instanceof PaymentCalendarItem || !$filters->matches($item)) {
+            if (! $item instanceof PaymentCalendarItem || ! $filters->matches($item)) {
                 continue;
             }
 
             if ($item->cashFlowKey === '') {
                 $withoutKey[] = $item;
+
                 continue;
             }
 
             $current = $byCashFlowKey[$item->cashFlowKey] ?? null;
 
             if (
-                !$current instanceof PaymentCalendarItem
+                ! $current instanceof PaymentCalendarItem
                 || $this->calendarPriority($item) > $this->calendarPriority($current)
             ) {
                 $byCashFlowKey[$item->cashFlowKey] = $item;
@@ -90,16 +92,16 @@ final class PaymentCalendarSourceService
     {
         $status = $this->documentStatusValue($document);
 
-        if (!in_array($status, $this->activeDocumentStatuses(), true)) {
+        if (! in_array($status, $this->activeDocumentStatuses(), true)) {
             return null;
         }
 
         $direction = $this->paymentDocumentDirection($document);
         $date = $this->effectiveDocumentDate($document);
-        $amount = $this->positive((float) $document->amount);
+        $amount = $this->positive((string) $document->amount);
         $remainingAmount = $this->documentRemainingAmount($document);
 
-        if ($direction === null || $date === null || $amount <= 0.0 || $remainingAmount <= 0.0) {
+        if ($direction === null || $date === null || $this->notPositive($amount) || $this->notPositive($remainingAmount)) {
             return null;
         }
 
@@ -147,15 +149,15 @@ final class PaymentCalendarSourceService
     {
         $document = $this->loadedPaymentDocument($schedule);
         $date = $this->dateString($schedule->due_date);
-        $amount = $this->positive((float) $schedule->amount);
-        $remainingAmount = $this->positive($amount - (float) $schedule->paid_amount);
+        $amount = $this->positive((string) $schedule->amount);
+        $remainingAmount = $this->positive(PortfolioDecimal::subtract($amount, (string) $schedule->paid_amount));
 
         if (
-            !$document instanceof PaymentDocument
+            ! $document instanceof PaymentDocument
             || $schedule->status !== 'pending'
             || $date === null
-            || $amount <= 0.0
-            || $remainingAmount <= 0.0
+            || $this->notPositive($amount)
+            || $this->notPositive($remainingAmount)
         ) {
             return null;
         }
@@ -178,7 +180,7 @@ final class PaymentCalendarSourceService
             amount: $amount,
             remainingAmount: $remainingAmount,
             currency: $this->currency($document->currency),
-            probability: 1.0,
+            probability: '1',
             status: (string) $schedule->status,
             sourceType: 'payment_schedule',
             sourceId: $sourceId,
@@ -207,13 +209,13 @@ final class PaymentCalendarSourceService
         $valueDate = $this->dateString($transaction->value_date);
         $transactionDate = $this->dateString($transaction->transaction_date);
         $date = $valueDate ?? $transactionDate;
-        $amount = $this->positive((float) $transaction->amount);
+        $amount = $this->positive((string) $transaction->amount);
         $document = $this->loadedPaymentDocument($transaction);
         $direction = $document instanceof PaymentDocument
             ? $this->paymentDocumentDirection($document)
             : $this->transactionDirection($transaction);
 
-        if ($date === null || $direction === null || $amount <= 0.0) {
+        if ($date === null || $direction === null || $this->notPositive($amount)) {
             return null;
         }
 
@@ -228,7 +230,7 @@ final class PaymentCalendarSourceService
             amount: $amount,
             remainingAmount: $amount,
             currency: $this->currency($transaction->currency),
-            probability: 1.0,
+            probability: '1',
             status: PaymentTransactionStatus::COMPLETED->value,
             sourceType: 'payment_transaction',
             sourceId: $sourceId,
@@ -250,8 +252,7 @@ final class PaymentCalendarSourceService
     public function fromBudgetLimitReservation(
         BudgetLimitReservation $reservation,
         ?DateTimeInterface $today = null,
-    ): ?PaymentCalendarItem
-    {
+    ): ?PaymentCalendarItem {
         if ($reservation->status !== BudgetLimitReservation::STATUS_RESERVED) {
             return null;
         }
@@ -260,9 +261,9 @@ final class PaymentCalendarSourceService
         $date = $document instanceof PaymentDocument
             ? $this->effectiveDocumentDate($document)
             : $this->dateString($reservation->period_month);
-        $amount = $this->positive((float) $reservation->amount);
+        $amount = $this->positive((string) $reservation->amount);
 
-        if ($date === null || $amount <= 0.0) {
+        if ($date === null || $this->notPositive($amount)) {
             return null;
         }
 
@@ -277,7 +278,7 @@ final class PaymentCalendarSourceService
             amount: $amount,
             remainingAmount: $amount,
             currency: $this->currency($reservation->currency),
-            probability: 1.0,
+            probability: '1',
             status: BudgetLimitReservation::STATUS_RESERVED,
             sourceType: 'budget_limit_reservation',
             sourceId: $sourceId,
@@ -302,22 +303,22 @@ final class PaymentCalendarSourceService
         $version = $line instanceof BudgetLine ? $this->loadedBudgetVersion($line) : null;
         $article = $line instanceof BudgetLine ? $this->loadedBudgetArticle($line) : null;
 
-        if (!$line instanceof BudgetLine || !$version instanceof BudgetVersion) {
+        if (! $line instanceof BudgetLine || ! $version instanceof BudgetVersion) {
             return null;
         }
 
         $direction = $article instanceof BudgetArticle
             ? $this->budgetArticleDirection((string) $article->flow_direction)
             : null;
-        $calendarAmount = $this->positive((float) $amount->forecast_amount);
+        $calendarAmount = $this->positive((string) $amount->forecast_amount);
 
-        if ($calendarAmount <= 0.0) {
-            $calendarAmount = $this->positive((float) $amount->plan_amount);
+        if ($this->notPositive($calendarAmount)) {
+            $calendarAmount = $this->positive((string) $amount->plan_amount);
         }
 
         $date = $this->dateString($amount->month);
 
-        if ($direction === null || $date === null || $calendarAmount <= 0.0) {
+        if ($direction === null || $date === null || $this->notPositive($calendarAmount)) {
             return null;
         }
 
@@ -333,7 +334,7 @@ final class PaymentCalendarSourceService
             amount: $calendarAmount,
             remainingAmount: $calendarAmount,
             currency: $currency,
-            probability: 0.6,
+            probability: '0.6',
             status: (string) $version->status,
             sourceType: 'budget_amount',
             sourceId: $sourceId,
@@ -386,8 +387,7 @@ final class PaymentCalendarSourceService
     private function collectPaymentScheduleItems(
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
-    ): array
-    {
+    ): array {
         $schedules = PaymentSchedule::query()
             ->with('paymentDocument')
             ->where('status', 'pending')
@@ -403,7 +403,7 @@ final class PaymentCalendarSourceService
         foreach ($schedules as $schedule) {
             $item = $this->fromPaymentSchedule($schedule, $today);
 
-            if (!$item instanceof PaymentCalendarItem) {
+            if (! $item instanceof PaymentCalendarItem) {
                 continue;
             }
 
@@ -421,8 +421,7 @@ final class PaymentCalendarSourceService
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
         array $excludedDocumentIds,
-    ): array
-    {
+    ): array {
         $documents = PaymentDocument::query()
             ->where('organization_id', $filters->organizationId)
             ->whereIn('status', $this->activeDocumentStatuses())
@@ -468,8 +467,7 @@ final class PaymentCalendarSourceService
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
         array $excludedDocumentIds,
-    ): array
-    {
+    ): array {
         $reservations = BudgetLimitReservation::query()
             ->with('paymentDocument')
             ->where('organization_id', $filters->organizationId)
@@ -559,16 +557,16 @@ final class PaymentCalendarSourceService
             : PaymentCalendarItem::BUCKET_APPROVED;
     }
 
-    private function documentProbability(string $direction, string $status): float
+    private function documentProbability(string $direction, string $status): string
     {
         if ($direction === PaymentCalendarItem::DIRECTION_OUTFLOW) {
-            return 1.0;
+            return '1';
         }
 
         return in_array($status, [
             PaymentDocumentStatus::SUBMITTED->value,
             PaymentDocumentStatus::PENDING_APPROVAL->value,
-        ], true) ? 0.7 : 0.9;
+        ], true) ? '0.7' : '0.9';
     }
 
     private function calendarPriority(PaymentCalendarItem $item): int
@@ -648,13 +646,16 @@ final class PaymentCalendarSourceService
         return null;
     }
 
-    private function documentRemainingAmount(PaymentDocument $document): float
+    private function documentRemainingAmount(PaymentDocument $document): string
     {
         if ($document->remaining_amount !== null) {
-            return $this->positive((float) $document->remaining_amount);
+            return $this->positive((string) $document->remaining_amount);
         }
 
-        return $this->positive((float) $document->amount - (float) $document->paid_amount);
+        return $this->positive(PortfolioDecimal::subtract(
+            (string) $document->amount,
+            (string) $document->paid_amount,
+        ));
     }
 
     private function paymentDocumentCounterpartyId(PaymentDocument $document, string $direction): ?int
@@ -678,8 +679,7 @@ final class PaymentCalendarSourceService
         PaymentTransaction $transaction,
         ?PaymentDocument $document,
         string $direction,
-    ): ?int
-    {
+    ): ?int {
         if ($direction === PaymentCalendarItem::DIRECTION_INFLOW) {
             return $this->nullableInt(
                 $transaction->payer_contractor_id
@@ -792,7 +792,7 @@ final class PaymentCalendarSourceService
 
     private function currency(mixed $currency): string
     {
-        if (!is_string($currency) || trim($currency) === '') {
+        if (! is_string($currency) || trim($currency) === '') {
             return 'RUB';
         }
 
@@ -808,9 +808,16 @@ final class PaymentCalendarSourceService
         return (int) $value;
     }
 
-    private function positive(float $amount): float
+    private function positive(string|int $amount): string
     {
-        return round(max(0.0, $amount), 2);
+        $normalized = PortfolioDecimal::money($amount);
+
+        return PortfolioDecimal::compare($normalized, '0.00') > 0 ? $normalized : '0.00';
+    }
+
+    private function notPositive(string $amount): bool
+    {
+        return PortfolioDecimal::compare($amount, '0.00') <= 0;
     }
 
     private function modelId(object $model): int|string|null
@@ -828,22 +835,22 @@ final class PaymentCalendarSourceService
 
     private function paymentDocumentCashFlowKey(PaymentDocument $document): string
     {
-        return 'payment-document:' . (string) ($this->modelId($document) ?? $document->source_id ?? 'unknown');
+        return 'payment-document:'.(string) ($this->modelId($document) ?? $document->source_id ?? 'unknown');
     }
 
     private function paymentScheduleCashFlowKey(PaymentSchedule $schedule): string
     {
         $documentPart = $schedule->payment_document_id !== null
-            ? 'payment-document:' . (string) $schedule->payment_document_id
+            ? 'payment-document:'.(string) $schedule->payment_document_id
             : 'payment-document:unknown';
         $schedulePart = $this->modelId($schedule) ?? $schedule->installment_number ?? 'unknown';
 
-        return $documentPart . ':payment-schedule:' . (string) $schedulePart;
+        return $documentPart.':payment-schedule:'.(string) $schedulePart;
     }
 
     private function paymentTransactionCashFlowKey(PaymentTransaction $transaction): string
     {
-        return 'payment-transaction:' . (string) (
+        return 'payment-transaction:'.(string) (
             $this->modelId($transaction)
             ?? $transaction->bank_transaction_id
             ?? $transaction->reference_number
@@ -854,10 +861,10 @@ final class PaymentCalendarSourceService
     private function budgetLimitReservationCashFlowKey(BudgetLimitReservation $reservation): string
     {
         if ($reservation->payment_document_id !== null) {
-            return 'payment-document:' . (string) $reservation->payment_document_id;
+            return 'payment-document:'.(string) $reservation->payment_document_id;
         }
 
-        return 'budget-limit-reservation:' . (string) ($this->modelId($reservation) ?? 'unknown');
+        return 'budget-limit-reservation:'.(string) ($this->modelId($reservation) ?? 'unknown');
     }
 
     private function budgetAmountCashFlowKey(BudgetAmount $amount, BudgetLine $line, string $currency): string

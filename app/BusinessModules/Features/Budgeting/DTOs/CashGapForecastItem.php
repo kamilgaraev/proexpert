@@ -4,27 +4,38 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\DTOs;
 
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
+
 final readonly class CashGapForecastItem
 {
     public const DIRECTION_INFLOW = 'inflow';
+
     public const DIRECTION_OUTFLOW = 'outflow';
 
     public const BUCKET_ACTUAL_INFLOW = 'actual_inflow';
+
     public const BUCKET_PLANNED_INFLOW = 'planned_inflow';
+
     public const BUCKET_OVERDUE_INFLOW = 'overdue_inflow';
+
     public const BUCKET_ACTUAL_OUTFLOW = 'actual_outflow';
+
     public const BUCKET_APPROVED_OUTFLOW = 'approved_outflow';
+
     public const BUCKET_SCHEDULED_OUTFLOW = 'scheduled_outflow';
+
     public const BUCKET_RESERVED_OUTFLOW = 'reserved_outflow';
+
     public const BUCKET_OVERDUE_OUTFLOW = 'overdue_outflow';
+
     public const BUCKET_MANUAL_ADJUSTMENT = 'manual_adjustment';
 
     public function __construct(
         public string $date,
         public string $direction,
         public string $bucket,
-        public float $amount,
-        public float $probability = 1.0,
+        string|int|float $amount,
+        string|int $probability = '1',
         public ?int $organizationId = null,
         public ?int $projectId = null,
         public ?int $counterpartyId = null,
@@ -38,7 +49,16 @@ final readonly class CashGapForecastItem
         public ?string $cashFlowKey = null,
         public array $drillDown = [],
     ) {
+        if (is_float($amount)) {
+            $amount = rtrim(rtrim(sprintf('%.14F', $amount), '0'), '.');
+        }
+        $this->amount = PortfolioDecimal::money($amount);
+        $this->probability = self::probability($probability);
     }
+
+    public string $amount;
+
+    public string $probability;
 
     public function isInflow(): bool
     {
@@ -80,5 +100,10 @@ final readonly class CashGapForecastItem
         }
 
         return $this->cashFlowKey;
+    }
+
+    private static function probability(string|int $probability): string
+    {
+        return PortfolioDecimal::ratio($probability);
     }
 }

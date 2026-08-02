@@ -8,19 +8,18 @@ final readonly class CashGapForecastDay
 {
     public function __construct(
         public string $date,
-        public float $openingBalance,
-        public float $inflows,
-        public float $outflows,
-        public float $reservedOutflows,
-        public float $overdueInflows,
-        public float $overdueOutflows,
-        public float $closingBalance,
-        public float $cashGap,
+        public string $openingBalance,
+        public string $inflows,
+        public string $outflows,
+        public string $reservedOutflows,
+        public string $overdueInflows,
+        public string $overdueOutflows,
+        public string $closingBalance,
+        public string $cashGap,
         public string $riskLevel,
         public array $explanation,
         public array $drivers,
-    ) {
-    }
+    ) {}
 
     public function toArray(): array
     {

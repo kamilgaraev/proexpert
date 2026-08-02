@@ -7,16 +7,15 @@ namespace App\BusinessModules\Features\Budgeting\DTOs;
 final readonly class CashGapOpeningBalanceSnapshot
 {
     public function __construct(
-        public int $id,
+        public int|string $id,
         public int $organizationId,
         public string $balanceDate,
         public string $currency,
-        public float $amount,
+        public string $amount,
         public string $status,
         public ?int $approvedByUserId = null,
         public ?string $approvedAt = null,
-    ) {
-    }
+    ) {}
 
     public function toArray(): array
     {

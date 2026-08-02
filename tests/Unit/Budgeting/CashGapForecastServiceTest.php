@@ -20,12 +20,39 @@ use PHPUnit\Framework\TestCase;
 
 final class CashGapForecastServiceTest extends TestCase
 {
+    #[Test]
+    public function decimal_money_never_passes_through_binary_float_arithmetic(): void
+    {
+        $result = $this->service->forecast(
+            $this->context('2026-01-01', '2026-01-01', 0.0),
+            [
+                new CashGapForecastItem(
+                    date: '2026-01-01',
+                    direction: CashGapForecastItem::DIRECTION_INFLOW,
+                    bucket: CashGapForecastItem::BUCKET_ACTUAL_INFLOW,
+                    amount: '0.10',
+                    organizationId: 42,
+                ),
+                new CashGapForecastItem(
+                    date: '2026-01-01',
+                    direction: CashGapForecastItem::DIRECTION_INFLOW,
+                    bucket: CashGapForecastItem::BUCKET_ACTUAL_INFLOW,
+                    amount: '0.20',
+                    organizationId: 42,
+                ),
+            ],
+        )->toArray();
+
+        self::assertSame('0.30', $result['inflows']);
+        self::assertSame('0.30', $result['closing_balance']);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
 
         $container->instance('translator', $translator);
@@ -35,7 +62,8 @@ final class CashGapForecastServiceTest extends TestCase
                 'fallback_locale' => 'ru',
             ],
         ]));
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -69,7 +97,7 @@ final class CashGapForecastServiceTest extends TestCase
 
         $this->assertSame(['from' => '2026-01-01', 'to' => '2026-01-03'], $result['period']);
         $this->assertCount(3, $result['daily']);
-        $this->assertSame(1_000.0, $result['closing_balance']);
+        $this->assertSame('1000.00', $result['closing_balance']);
         $this->assertFalse($result['cash_gap']['has_gap']);
         $this->assertSame(CashGapForecastService::RISK_LOW, $result['risk_level']);
         $this->assertSame(0, $result['meta']['included_items']);
@@ -94,11 +122,11 @@ final class CashGapForecastServiceTest extends TestCase
             ]
         )->toArray();
 
-        $this->assertSame(800.0, $result['daily'][1]['closing_balance']);
-        $this->assertSame(600.0, $result['closing_balance']);
-        $this->assertSame(1_000.0, $result['inflows']);
-        $this->assertSame(600.0, $result['outflows']);
-        $this->assertSame(300.0, $result['reserved_outflows']);
+        $this->assertSame('800.00', $result['daily'][1]['closing_balance']);
+        $this->assertSame('600.00', $result['closing_balance']);
+        $this->assertSame('1000.00', $result['inflows']);
+        $this->assertSame('600.00', $result['outflows']);
+        $this->assertSame('300.00', $result['reserved_outflows']);
         $this->assertSame('2026-01-01', $result['daily'][2]['drivers'][0]['original_date']);
     }
 
@@ -112,11 +140,11 @@ final class CashGapForecastServiceTest extends TestCase
             ]
         )->toArray();
 
-        $this->assertSame(0.0, $result['daily'][0]['inflows']);
-        $this->assertSame(1_000.0, $result['daily'][0]['overdue_inflows']);
-        $this->assertSame(700.0, $result['daily'][0]['overdue_outflows']);
-        $this->assertSame(-200.0, $result['daily'][0]['closing_balance']);
-        $this->assertSame(200.0, $result['cash_gap']['max_gap_amount']);
+        $this->assertSame('0.00', $result['daily'][0]['inflows']);
+        $this->assertSame('1000.00', $result['daily'][0]['overdue_inflows']);
+        $this->assertSame('700.00', $result['daily'][0]['overdue_outflows']);
+        $this->assertSame('-200.00', $result['daily'][0]['closing_balance']);
+        $this->assertSame('200.00', $result['cash_gap']['max_gap_amount']);
         $this->assertSame(CashGapForecastService::RISK_CRITICAL, $result['risk_level']);
     }
 
@@ -139,8 +167,8 @@ final class CashGapForecastServiceTest extends TestCase
         $this->assertFalse($base['cash_gap']['has_gap']);
         $this->assertTrue($stress['cash_gap']['has_gap']);
         $this->assertSame('2026-01-02', $stress['cash_gap']['first_gap_date']);
-        $this->assertSame(750.0, $stress['inflows']);
-        $this->assertSame(-50.0, $stress['closing_balance']);
+        $this->assertSame('750.00', $stress['inflows']);
+        $this->assertSame('-50.00', $stress['closing_balance']);
     }
 
     public function test_organization_filter_excludes_foreign_items(): void
@@ -159,7 +187,7 @@ final class CashGapForecastServiceTest extends TestCase
             ]
         )->toArray();
 
-        $this->assertSame(70.0, $result['closing_balance']);
+        $this->assertSame('70.00', $result['closing_balance']);
         $this->assertSame(1, $result['meta']['included_items']);
         $this->assertSame(1, $result['meta']['excluded_items']);
     }
@@ -201,9 +229,9 @@ final class CashGapForecastServiceTest extends TestCase
             ]
         )->toArray();
 
-        $this->assertSame(600.0, $result['closing_balance']);
-        $this->assertSame(400.0, $result['outflows']);
-        $this->assertSame(0.0, $result['reserved_outflows']);
+        $this->assertSame('600.00', $result['closing_balance']);
+        $this->assertSame('400.00', $result['outflows']);
+        $this->assertSame('0.00', $result['reserved_outflows']);
         $this->assertSame(1, $result['meta']['included_items']);
         $this->assertSame(1, $result['meta']['excluded_items']);
         $this->assertSame('payment-document:100', $result['daily'][0]['drivers'][0]['cash_flow_key']);
@@ -222,7 +250,7 @@ final class CashGapForecastServiceTest extends TestCase
                     CashGapForecastItem::DIRECTION_INFLOW,
                     CashGapForecastItem::BUCKET_PLANNED_INFLOW,
                     1_000.0,
-                    probability: 0.8,
+                    probability: '0.8',
                 ),
             ]
         )->toArray();
@@ -231,9 +259,9 @@ final class CashGapForecastServiceTest extends TestCase
 
         $this->assertSame('2026-01-08', $driver['date']);
         $this->assertSame('2026-01-01', $driver['original_date']);
-        $this->assertSame(0.6, $driver['probability']);
-        $this->assertSame(0.8, $driver['original_probability']);
-        $this->assertSame(600.0, $driver['amount']);
+        $this->assertSame('0.60000000', $driver['probability']);
+        $this->assertSame('0.80000000', $driver['original_probability']);
+        $this->assertSame('600.00', $driver['amount']);
     }
 
     public function test_custom_scenario_adjustments_do_not_change_base_items_and_are_compared_with_base(): void
@@ -252,7 +280,7 @@ final class CashGapForecastServiceTest extends TestCase
                 CashGapForecastItem::DIRECTION_INFLOW,
                 CashGapForecastItem::BUCKET_PLANNED_INFLOW,
                 500.0,
-                probability: 0.4,
+                probability: '0.4',
                 sourceId: 202,
                 cashFlowKey: 'payment-document:202',
             ),
@@ -292,7 +320,7 @@ final class CashGapForecastServiceTest extends TestCase
                     new CashGapScenarioAdjustment(
                         action: CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY,
                         cashFlowKey: 'payment-document:202',
-                        probability: 1.0,
+                        probability: '1',
                     ),
                     new CashGapScenarioAdjustment(
                         action: CashGapScenarioAdjustment::ACTION_EXCLUDE_PAYMENT,
@@ -315,7 +343,7 @@ final class CashGapForecastServiceTest extends TestCase
         $this->assertSame('2026-01-02', $base['cash_gap']['first_gap_date']);
         $this->assertNull($scenario['cash_gap']['first_gap_date']);
         $this->assertSame('2026-01-02', $items[0]->date);
-        $this->assertSame(1.0, $scenario['daily'][2]['drivers'][0]['probability']);
+        $this->assertSame('1.00000000', $scenario['daily'][2]['drivers'][0]['probability']);
         $this->assertSame('2026-01-02', $scenario['daily'][4]['drivers'][0]['original_date']);
         $this->assertSame('cash_gap_scenario_adjustment', $scenario['daily'][1]['drivers'][0]['source']['type']);
     }
@@ -347,8 +375,8 @@ final class CashGapForecastServiceTest extends TestCase
         )->toArray();
 
         $this->assertSame('2026-01-01', $result['signals']['first_gap']['date']);
-        $this->assertSame(300.0, $result['signals']['deficit']['amount']);
-        $this->assertSame(-300.0, $result['signals']['minimum_balance']['amount']);
+        $this->assertSame('300.00', $result['signals']['deficit']['amount']);
+        $this->assertSame('-300.00', $result['signals']['minimum_balance']['amount']);
         $this->assertCount(2, $result['signals']['payment_drivers']);
         $this->assertCount(1, $result['signals']['overdue_inflows']);
         $this->assertSame(
@@ -379,7 +407,7 @@ final class CashGapForecastServiceTest extends TestCase
             ],
         )->toArray();
 
-        $this->assertSame(400.0, $result['closing_balance']);
+        $this->assertSame('400.00', $result['closing_balance']);
         $this->assertSame(1, $result['meta']['included_items']);
         $this->assertSame(1, $result['meta']['excluded_items']);
         $this->assertFalse($result['cash_gap']['has_gap']);
@@ -395,14 +423,14 @@ final class CashGapForecastServiceTest extends TestCase
             ]
         )->toArray();
 
-        $this->assertSame(300.0, $result['drivers'][0]['amount']);
+        $this->assertSame('300.00', $result['drivers'][0]['amount']);
         $this->assertSame(CashGapForecastItem::BUCKET_APPROVED_OUTFLOW, $result['drivers'][0]['type']);
         $this->assertCount(1, $result['drivers']);
     }
 
     private function service(): CashGapForecastService
     {
-        return new CashGapForecastService();
+        return new CashGapForecastService;
     }
 
     private function context(
@@ -430,7 +458,7 @@ final class CashGapForecastServiceTest extends TestCase
         string $direction,
         string $bucket,
         float $amount,
-        float $probability = 1.0,
+        string $probability = '1',
         ?int $organizationId = 42,
         ?int $projectId = null,
         ?int $counterpartyId = null,

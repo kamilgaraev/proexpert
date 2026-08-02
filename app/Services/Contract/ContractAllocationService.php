@@ -2,6 +2,8 @@
 
 namespace App\Services\Contract;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\Events\HoldingAllocationFactsProjected;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
 use App\Models\Contract;
 use App\Models\ContractProjectAllocation;
 use App\Models\Project;
@@ -13,6 +15,11 @@ use App\Models\ContractAllocationHistory;
 
 class ContractAllocationService
 {
+    public function __construct(
+        private readonly HoldingAllocationFactProjector $holdingAllocationFacts,
+    ) {
+    }
+
     /**
      * Создать или обновить распределение контракта по проектам
      * 
@@ -28,6 +35,7 @@ class ContractAllocationService
     {
         return DB::transaction(function () use ($contract, $allocationsData) {
             $allocations = collect();
+            $factIds = [];
 
             // Получаем ID проектов из новых данных
             $newProjectIds = collect($allocationsData)->pluck('project_id')->toArray();
@@ -42,10 +50,21 @@ class ContractAllocationService
             foreach ($allocationsData as $allocationData) {
                 $allocation = $this->createOrUpdateAllocation($contract, $allocationData);
                 $allocations->push($allocation);
+                $fact = $this->holdingAllocationFacts->recordContractAllocation($contract, $allocation);
+                if ($fact !== null) {
+                    $factIds[] = (int) $fact->getKey();
+                }
             }
 
             // Валидируем все распределения
             $this->validateTotalAllocations($contract, $allocations);
+            DB::afterCommit(static function () use ($contract, $factIds): void {
+                HoldingAllocationFactsProjected::dispatch(
+                    (int) $contract->organization_id,
+                    (int) $contract->getKey(),
+                    $factIds,
+                );
+            });
 
             return $allocations;
         });
@@ -304,4 +323,3 @@ class ContractAllocationService
         });
     }
 }
-

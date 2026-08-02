@@ -13,7 +13,7 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
 {
     public function test_builds_portfolio_kpis_from_margin_wip_budget_deviations_and_cash_flow_signals(): void
     {
-        $result = (new CfoProjectPortfolioAggregator())->build(
+        $result = (new CfoProjectPortfolioAggregator)->build(
             filters: $this->filters(),
             projects: [
                 7 => [
@@ -88,7 +88,7 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
                     bucket: PaymentCalendarItem::BUCKET_BUDGET_PLAN,
                     status: 'planned',
                     projectId: 7,
-                    probability: 1.0,
+                    probability: '1',
                 ),
                 new PaymentCalendarItem(
                     sourceType: 'payment_document',
@@ -104,7 +104,7 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
                     bucket: PaymentCalendarItem::BUCKET_BUDGET_PLAN,
                     status: 'planned',
                     projectId: 7,
-                    probability: 1.0,
+                    probability: '1',
                 ),
             ],
             generatedAt: '2026-06-09T10:00:00+03:00',
@@ -118,12 +118,12 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
         $this->assertSame(1, $result['summary']['budget_deviation_projects_count']);
         $this->assertSame(1, $result['summary']['top_problem_projects_count']);
         $this->assertSame('attention', $result['summary']['freshness_status']);
-        $this->assertSame(150000.0, $result['summary']['by_currency']['RUB']['revenue']);
-        $this->assertSame(110000.0, $result['summary']['by_currency']['RUB']['cost']);
-        $this->assertSame(40000.0, $result['summary']['by_currency']['RUB']['gross_margin']);
-        $this->assertSame(12000.0, $result['summary']['by_currency']['RUB']['wip_total']);
-        $this->assertSame(30000.0, $result['summary']['by_currency']['RUB']['ftc']);
-        $this->assertSame(-20000.0, $result['summary']['by_currency']['RUB']['cash_gap_signal']);
+        $this->assertSame('150000.00', $result['summary']['by_currency']['RUB']['revenue']);
+        $this->assertSame('110000.00', $result['summary']['by_currency']['RUB']['cost']);
+        $this->assertSame('40000.00', $result['summary']['by_currency']['RUB']['gross_margin']);
+        $this->assertSame('12000.00', $result['summary']['by_currency']['RUB']['wip_total']);
+        $this->assertSame('30000.00', $result['summary']['by_currency']['RUB']['ftc']);
+        $this->assertSame('-20000.00', $result['summary']['by_currency']['RUB']['cash_gap_signal']);
         $this->assertContains('budget_deviation', $result['summary']['problem_flags']);
         $this->assertContains('cash_gap_risk', $result['summary']['risk_flags']);
         $this->assertCount(1, $result['items']);
@@ -134,7 +134,7 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
 
     public function test_empty_project_scope_stays_available_without_problem_items(): void
     {
-        $result = (new CfoProjectPortfolioAggregator())->build(
+        $result = (new CfoProjectPortfolioAggregator)->build(
             filters: $this->filters(),
             projects: [],
             marginReport: ['rows' => []],
@@ -153,7 +153,7 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
 
     public function test_wip_forecast_revenue_at_completion_feeds_forecast_revenue_metric(): void
     {
-        $result = (new CfoProjectPortfolioAggregator())->build(
+        $result = (new CfoProjectPortfolioAggregator)->build(
             filters: $this->filters(),
             projects: [
                 7 => [
@@ -180,8 +180,8 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
             itemLimit: 5,
         );
 
-        $this->assertSame(155000.0, $result['summary']['by_currency']['RUB']['forecast_revenue']);
-        $this->assertSame(155000.0, $result['items'][0]['metrics']['forecast_revenue']);
+        $this->assertSame('155000.00', $result['summary']['by_currency']['RUB']['forecast_revenue']);
+        $this->assertSame('155000.00', $result['items'][0]['metrics']['forecast_revenue']);
     }
 
     private function filters(): CfoCommandCenterFilters

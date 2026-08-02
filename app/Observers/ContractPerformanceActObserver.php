@@ -2,6 +2,8 @@
 
 namespace App\Observers;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -14,16 +16,55 @@ class ContractPerformanceActObserver
     public function __construct(
         private readonly ContractAuditedMutationService $contractMutations,
         private readonly ContractAuditReconciliationService $reconciliation,
+        private readonly AcceptedWorkHoldingFactProducer $acceptedWorkFacts,
     ) {}
 
     public function created(ContractPerformanceAct $act): void
     {
+        $active = $act->is_approved
+            && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true);
+        $occurredAt = $active
+            ? ($act->approval_date ?? $act->created_at ?? now())
+            : ($act->created_at ?? now());
+        $event = HoldingAcceptedWorkEventVersion::record($act, $active, $occurredAt, historyComplete: true);
+        if ($active) {
+            $this->acceptedWorkFacts->project($act, $occurredAt, true, (int) $event->getKey());
+        }
+
         $this->recalculateContractTotal($act, 'created');
         $this->invalidateEVMCache($act);
     }
 
     public function updated(ContractPerformanceAct $act): void
     {
+        if ($act->wasChanged(['status', 'is_approved', 'amount', 'project_id', 'contract_id', 'approval_date'])) {
+            $active = $act->is_approved
+                && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true);
+            $wasActive = (bool) $act->getOriginal('is_approved')
+                && in_array(
+                    $act->getOriginal('status'),
+                    [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED],
+                    true,
+                );
+            if ($active || $wasActive) {
+                $occurredAt = $active
+                    ? ($act->approval_date ?? $act->updated_at ?? now())
+                    : ($act->updated_at ?? now());
+                $event = HoldingAcceptedWorkEventVersion::record(
+                    $act,
+                    $active,
+                    $occurredAt,
+                    historyComplete: $this->historyComplete($act),
+                );
+                $this->acceptedWorkFacts->project(
+                    $act,
+                    $occurredAt,
+                    $active,
+                    (int) $event->getKey(),
+                );
+            }
+        }
+
         if ($act->wasChanged(['amount', 'is_approved'])) {
             $this->recalculateContractTotal($act, 'updated');
         }
@@ -35,6 +76,22 @@ class ContractPerformanceActObserver
 
     public function deleted(ContractPerformanceAct $act): void
     {
+        if ((bool) $act->getOriginal('is_approved')
+            && in_array(
+                $act->getOriginal('status'),
+                [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED],
+                true,
+            )) {
+            $occurredAt = now();
+            $event = HoldingAcceptedWorkEventVersion::record(
+                $act,
+                false,
+                $occurredAt,
+                historyComplete: $this->historyComplete($act),
+            );
+            $this->acceptedWorkFacts->project($act, $occurredAt, false, (int) $event->getKey());
+        }
+
         $this->recalculateContractTotal($act, 'deleted');
         $this->invalidateEVMCache($act);
     }
@@ -129,6 +186,14 @@ class ContractPerformanceActObserver
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function historyComplete(ContractPerformanceAct $act): bool
+    {
+        return HoldingAcceptedWorkEventVersion::query()
+            ->where('performance_act_id', $act->getKey())
+            ->where('history_complete', true)
+            ->exists();
     }
 
     private function changeFingerprint(ContractPerformanceAct $act, string $reason): string

@@ -25,7 +25,7 @@ final class CashGapOpeningBalanceService
     }
 
     /**
-     * @param list<string>|null $currencies
+     * @param  list<string>|null  $currencies
      * @return array<string, CashGapOpeningBalanceSnapshot>
      */
     public function latestApprovedByCurrency(int $organizationId, string $periodStart, ?array $currencies = null): array
@@ -55,7 +55,7 @@ final class CashGapOpeningBalanceService
             organizationId: (int) $balance->organization_id,
             balanceDate: $balance->balance_date?->format('Y-m-d') ?? '',
             currency: mb_strtoupper((string) $balance->currency),
-            amount: round((float) $balance->amount, 2),
+            amount: (string) $balance->amount,
             status: (string) $balance->status,
             approvedByUserId: $balance->approved_by_user_id !== null ? (int) $balance->approved_by_user_id : null,
             approvedAt: $balance->approved_at?->toIso8601String(),
@@ -63,7 +63,7 @@ final class CashGapOpeningBalanceService
     }
 
     /**
-     * @param Collection<int, CashGapOpeningBalance> $balances
+     * @param  Collection<int, CashGapOpeningBalance>  $balances
      * @return array<string, CashGapOpeningBalanceSnapshot>
      */
     private function firstByCurrency(Collection $balances): array

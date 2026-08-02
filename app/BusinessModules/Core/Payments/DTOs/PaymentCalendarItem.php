@@ -5,18 +5,26 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Payments\DTOs;
 
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastItem;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
 
 final readonly class PaymentCalendarItem
 {
     public const DIRECTION_INFLOW = 'inflow';
+
     public const DIRECTION_OUTFLOW = 'outflow';
 
     public const BUCKET_FACT = 'fact';
+
     public const BUCKET_SCHEDULED = 'scheduled';
+
     public const BUCKET_APPROVED = 'approved';
+
     public const BUCKET_RESERVED = 'reserved';
+
     public const BUCKET_OVERDUE = 'overdue';
+
     public const BUCKET_BUDGET_PLAN = 'budget_plan';
+
     public const BUCKET_MANUAL = 'manual';
 
     public function __construct(
@@ -25,10 +33,10 @@ final readonly class PaymentCalendarItem
         public ?string $originalDate,
         public string $direction,
         public string $bucket,
-        public float $amount,
-        public float $remainingAmount,
+        string|int|float $amount,
+        string|int|float $remainingAmount,
         public string $currency,
-        public float $probability,
+        string|int $probability,
         public string $status,
         public string $sourceType,
         public int|string|null $sourceId,
@@ -40,7 +48,16 @@ final readonly class PaymentCalendarItem
         public bool $editable = false,
         public array $drillDown = [],
     ) {
+        $this->amount = self::money($amount);
+        $this->remainingAmount = self::money($remainingAmount);
+        $this->probability = self::probability($probability);
     }
+
+    public string $amount;
+
+    public string $remainingAmount;
+
+    public string $probability;
 
     public function toCashGapForecastItem(): CashGapForecastItem
     {
@@ -134,5 +151,19 @@ final readonly class PaymentCalendarItem
         }
 
         return (string) $identifier;
+    }
+
+    private static function money(string|int|float $amount): string
+    {
+        if (is_float($amount)) {
+            $amount = rtrim(rtrim(sprintf('%.14F', $amount), '0'), '.');
+        }
+
+        return PortfolioDecimal::money($amount);
+    }
+
+    private static function probability(string|int $probability): string
+    {
+        return PortfolioDecimal::ratio($probability);
     }
 }
