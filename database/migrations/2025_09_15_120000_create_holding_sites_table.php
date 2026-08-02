@@ -13,7 +13,7 @@ return new class extends Migration
         Schema::create('holding_sites', function (Blueprint $table) {
             $table->id();
             $table->foreignId('organization_group_id')->constrained('organization_groups')->onDelete('cascade');
-            $table->string('domain')->unique(); // neostroi.prohelper.pro
+            $table->string('domain')->unique(); // neostroi.1мост.рф
             $table->string('title')->default(''); // Заголовок сайта
             $table->text('description')->nullable(); // Описание для SEO
             $table->string('logo_url')->nullable(); // URL логотипа

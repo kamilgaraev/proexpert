@@ -3,22 +3,22 @@
 ## 🏗️ **АРХИТЕКТУРА СИСТЕМЫ**
 
 ### 🖥️ **Сервер 1: API + Холдинги** (89.111.153.146)
-- `api.prohelper.pro` - Laravel REST API
-- `company1.prohelper.pro` - интерфейс холдинга 1
-- `company2.prohelper.pro` - интерфейс холдинга 2
-- `*.prohelper.pro` - все остальные холдинги
+- `api.1мост.рф` - Laravel REST API
+- `company1.1мост.рф` - интерфейс холдинга 1
+- `company2.1мост.рф` - интерфейс холдинга 2
+- `*.1мост.рф` - все остальные холдинги
 
 ### 🖥️ **Сервер 2: Личный кабинет** (89.111.152.112) 
-- `lk.prohelper.pro` - личный кабинет организаций
+- `lk.1мост.рф` - личный кабинет организаций
 
 ### 🖥️ **Сервер 3: Админка** (89.104.68.13)
-- `admin.prohelper.pro` - админка управления
+- `admin.1мост.рф` - админка управления
 
 ## 🌐 **НАСТРОЙКА DNS В REG.RU**
 
 ### Зайдите в панель reg.ru:
 - Откройте https://www.reg.ru/user/account
-- Найдите домен `prohelper.pro`
+- Найдите домен `1мост.рф`
 - Перейдите в "DNS-серверы и управление зоной" → "Редактировать зону"
 
 ### Добавьте DNS записи:
@@ -83,26 +83,26 @@ sudo ./ssl-setup-api.sh
 
 #### В .env добавьте:
 ```env
-APP_DOMAIN=prohelper.pro
-APP_URL=https://api.prohelper.pro
+APP_DOMAIN=1мост.рф
+APP_URL=https://api.1мост.рф
 ```
 
 ### 🖥️ **Сервер 2: ЛК (89.111.152.112)**
 ```bash
 # SSL для личного кабинета
 sudo certbot certonly --manual --preferred-challenges=dns \
-  --email admin@prohelper.pro \
+  --email admin@1мост.рф \
   --agree-tos \
-  -d lk.prohelper.pro
+  -d lk.1мост.рф
 ```
 
 ### 🖥️ **Сервер 3: Админка (89.104.68.13)**
 ```bash
 # SSL для админки  
 sudo certbot certonly --manual --preferred-challenges=dns \
-  --email admin@prohelper.pro \
+  --email admin@1мост.рф \
   --agree-tos \
-  -d admin.prohelper.pro
+  -d admin.1мост.рф
 ```
 
 ## 🔗 **ИНТЕГРАЦИЯ МЕЖДУ СЕРВЕРАМИ**
@@ -110,7 +110,7 @@ sudo certbot certonly --manual --preferred-challenges=dns \
 ### Из ЛК (89.111.152.112) в API (89.111.153.146):
 ```javascript
 // Создание холдинга из ЛК
-const response = await fetch('https://api.prohelper.pro/api/v1/landing/multi-organization/create-holding', {
+const response = await fetch('https://api.1мост.рф/api/v1/landing/multi-organization/create-holding', {
     method: 'POST',
     headers: {
         'Authorization': `Bearer ${userToken}`,
@@ -127,34 +127,34 @@ if (response.ok) {
     const holdingSlug = data.data.slug;
     
     // Переход в холдинг
-    window.location.href = `https://${holdingSlug}.prohelper.pro/dashboard`;
+    window.location.href = `https://${holdingSlug}.1мост.рф/dashboard`;
 }
 ```
 
 ### Из ЛК в админку:
 ```javascript
 // Переход в админку (с токеном если нужно)
-window.location.href = 'https://admin.prohelper.pro';
+window.location.href = 'https://admin.1мост.рф';
 ```
 
 ### Из холдинга обратно в ЛК:
 ```javascript
 // Кнопка "Вернуться в ЛК"
-window.location.href = 'https://lk.prohelper.pro';
+window.location.href = 'https://lk.1мост.рф';
 ```
 
 ## 🎯 **РЕЗУЛЬТАТ ПОСЛЕ НАСТРОЙКИ**
 
 ### ✅ **API Сервер** (89.111.153.146):
-- `https://api.prohelper.pro` - REST API для всех сервисов
-- `https://company1.prohelper.pro` - холдинг 1
-- `https://company2.prohelper.pro` - холдинг 2
+- `https://api.1мост.рф` - REST API для всех сервисов
+- `https://company1.1мост.рф` - холдинг 1
+- `https://company2.1мост.рф` - холдинг 2
 
 ### ✅ **ЛК Сервер** (89.111.152.112):
-- `https://lk.prohelper.pro` - личный кабинет
+- `https://lk.1мост.рф` - личный кабинет
 
 ### ✅ **Админка Сервер** (89.104.68.13):
-- `https://admin.prohelper.pro` - админка
+- `https://admin.1мост.рф` - админка
 
 ## 🔒 **SSL СЕРТИФИКАТЫ**
 
@@ -189,16 +189,16 @@ window.location.href = 'https://lk.prohelper.pro';
 
 ### Проверьте DNS:
 ```bash
-nslookup api.prohelper.pro      # -> 89.111.153.146
-nslookup lk.prohelper.pro       # -> 89.111.152.112
-nslookup admin.prohelper.pro    # -> 89.104.68.13
-nslookup test.prohelper.pro     # -> 89.111.153.146
+nslookup api.1мост.рф      # -> 89.111.153.146
+nslookup lk.1мост.рф       # -> 89.111.152.112
+nslookup admin.1мост.рф    # -> 89.104.68.13
+nslookup test.1мост.рф     # -> 89.111.153.146
 ```
 
 ### Проверьте доступность:
-- `https://api.prohelper.pro` ✅
-- `https://lk.prohelper.pro` ✅  
-- `https://admin.prohelper.pro` ✅
+- `https://api.1мост.рф` ✅
+- `https://lk.1мост.рф` ✅  
+- `https://admin.1мост.рф` ✅
 
 ## 🚀 **ПРЕИМУЩЕСТВА ТАКОЙ АРХИТЕКТУРЫ**
 

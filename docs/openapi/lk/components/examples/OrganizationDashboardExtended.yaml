@@ -36,7 +36,7 @@ value:
     - id: 1
       name: "Иван Петров"
       email: "ivan@example.com"
-      avatar_url: "https://cdn.prohelper.pro/avatars/1.png"
+      avatar_url: "https://cdn.1мост.рф/avatars/1.png"
       roles: [organization_owner]
     - id: 2
       name: "Анна Иванова"

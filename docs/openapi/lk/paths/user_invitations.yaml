@@ -60,7 +60,7 @@
                       status_text: "Ожидает принятия"
                       status_color: "#f39c12"
                       token: "abcd1234efgh5678"
-                      invitation_url: "https://mobile.prohelper.pro/invitation/abcd1234efgh5678"
+                      invitation_url: "https://mobile.1мост.рф/invitation/abcd1234efgh5678"
                       expires_at: "2024-10-19T14:30:00Z"
                       accepted_at: null
                       is_expired: false
@@ -100,8 +100,8 @@
       
       **Типы ссылок в зависимости от ролей:**
       - `foreman` → мобильное приложение (APK)
-      - `organization_admin`, `accountant`, `web_admin` → admin.prohelper.pro
-      - `organization_owner` или без ролей → prohelper.pro
+      - `organization_admin`, `accountant`, `web_admin` → admin.1мост.рф
+      - `organization_owner` или без ролей → 1мост.рф
       
       Требует права `users.invite` в организации.
     security:
@@ -157,7 +157,7 @@
                     status: "pending"
                     status_text: "Ожидает принятия"
                     token: "xyz789abc123def456"
-                    invitation_url: "https://mobile.prohelper.pro/invitation/xyz789abc123def456"
+                    invitation_url: "https://mobile.1мост.рф/invitation/xyz789abc123def456"
                     expires_at: "2024-10-19T14:30:00Z"
                     invited_by:
                       id: 5

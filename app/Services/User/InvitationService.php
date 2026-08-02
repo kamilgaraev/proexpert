@@ -48,13 +48,13 @@ class InvitationService
         ]);
 
         // Определяем ссылку для входа в зависимости от ролей
-        $loginUrl = 'https://prohelper.pro/login';
+        $loginUrl = 'https://1мост.рф/login';
         if (in_array('foreman', $roleSlugs, true)) {
             $loginUrl = 'https://disk.yandex.ru/d/EUIo_ZBxzhLyjw';
         } elseif (array_intersect($roleSlugs, [
             'organization_admin', 'admin', 'accountant', 'web_admin'
         ])) {
-            $loginUrl = 'https://admin.prohelper.pro/login';
+            $loginUrl = 'https://admin.1мост.рф/login';
         }
 
         // send mail
@@ -74,13 +74,13 @@ class InvitationService
     {
         $roleSlugs = $invitation->role_slugs ?? [];
 
-        $loginUrl = 'https://prohelper.pro/login';
+        $loginUrl = 'https://1мост.рф/login';
         if (in_array('foreman', $roleSlugs, true)) {
             $loginUrl = 'https://disk.yandex.ru/d/EUIo_ZBxzhLyjw';
         } elseif (array_intersect($roleSlugs, [
             'organization_admin', 'admin', 'accountant', 'web_admin'
         ])) {
-            $loginUrl = 'https://admin.prohelper.pro/login';
+            $loginUrl = 'https://admin.1мост.рф/login';
         }
 
         try {

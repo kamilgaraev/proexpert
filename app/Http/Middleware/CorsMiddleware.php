@@ -92,9 +92,9 @@ class CorsMiddleware
                     $allowCredentials = 'true';
                     $originMatched = true;
                 } else {
-                    // В продакшене для prohelper.pro доменов разрешаем
-                    if ($origin && (strpos($origin, '.prohelper.pro') !== false || $origin === 'https://prohelper.pro')) {
-                        // SECURITY: Разрешение prohelper.pro домена не из списка
+                    // В продакшене для 1мост.рф доменов разрешаем
+                    if ($origin && (strpos($origin, '.1мост.рф') !== false || $origin === 'https://1мост.рф')) {
+                        // SECURITY: Разрешение 1мост.рф домена не из списка
                         $this->logging->security('cors.origin.allowed.prohelper', [
                             'origin' => $origin,
                             'uri' => $request->getRequestUri(),

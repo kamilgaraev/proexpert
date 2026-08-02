@@ -17,7 +17,7 @@
 ```powershell
 cd C:\Users\kamilgaraev\Desktop\prohelper_full\prohelper
 
-$env:BASE_URL = "https://api.prohelper.pro"
+$env:BASE_URL = "https://api.1мост.рф"
 $env:PROFILE = "smoke"
 $env:K6_SUMMARY_JSON = "load-tests/k6/results/prod-smoke.json"
 

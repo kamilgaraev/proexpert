@@ -4,8 +4,8 @@ use App\Http\Responses\LandingResponse;
 use Illuminate\Support\Facades\Route;
 
 // Роуты для холдинговых поддоменов (исключая служебные)
-// Например: stroitelnyj-holding-alfa.prohelper.pro
-Route::domain('{holding}.' . config('app.domain', 'prohelper.pro'))
+// Например: stroitelnyj-holding-alfa.1мост.рф
+Route::domain('{holding}.' . config('app.domain', '1мост.рф'))
     ->middleware(['holding.subdomain'])
     ->where(['holding' => '^(?!www|lk|api|admin|mail|ftp).*$'])
     ->group(base_path('routes/subdomain/holding.php'));

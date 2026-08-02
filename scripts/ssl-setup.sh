@@ -28,11 +28,11 @@ echo "⚠️ ВНИМАНИЕ: Вам нужно будет добавить TXT
 echo "📋 Скопируйте TXT запись которую покажет Certbot и добавьте в панели reg.ru"
 
 certbot certonly --manual --preferred-challenges=dns \
-    --email admin@prohelper.pro \
+    --email admin@1мост.рф \
     --agree-tos \
     --no-eff-email \
-    -d prohelper.pro \
-    -d *.prohelper.pro
+    -d 1мост.рф \
+    -d *.1мост.рф
 
 # Настройка автообновления
 echo "🔄 Настройка автообновления сертификатов..."
@@ -60,6 +60,6 @@ fi
 
 echo ""
 echo "🎉 Готово! Теперь можно создавать поддомены:"
-echo "   test.prohelper.pro"
-echo "   company.prohelper.pro" 
+echo "   test.1мост.рф"
+echo "   company.1мост.рф" 
 echo "   и т.д." 

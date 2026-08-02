@@ -4,7 +4,7 @@
 
 ### 1. Зайдите в панель управления reg.ru
 - Откройте https://www.reg.ru/user/account
-- Найдите домен `prohelper.pro`
+- Найдите домен `1мост.рф`
 - Нажмите "Управление"
 
 ### 2. Перейдите в управление DNS
@@ -47,10 +47,10 @@ TTL: 300
 
 ```bash
 # Основной домен
-nslookup prohelper.pro
+nslookup 1мост.рф
 
 # Поддомен (любой)  
-nslookup test.prohelper.pro
+nslookup test.1мост.рф
 
 # Должны возвращать 89.111.153.146
 ```
@@ -77,4 +77,4 @@ nslookup test.prohelper.pro
 1. Запустите на сервере: `sudo ./ssl-setup.sh`
 2. Добавьте TXT запись когда Certbot попросит
 3. Дождитесь выпуска сертификата
-4. Проверьте работу: `https://test.prohelper.pro` 
+4. Проверьте работу: `https://test.1мост.рф` 

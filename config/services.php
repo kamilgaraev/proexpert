@@ -70,7 +70,7 @@ return [
     'public_contact' => [
         'recipients' => array_values(array_filter(array_map(
             static fn (string $recipient): string => trim($recipient),
-            explode(',', (string) env('PUBLIC_CONTACT_NOTIFICATION_EMAILS', 'request@prohelper.pro'))
+            explode(',', (string) env('PUBLIC_CONTACT_NOTIFICATION_EMAILS', 'request@1мост.рф'))
         ))),
     ],
 

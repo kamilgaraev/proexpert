@@ -14,7 +14,7 @@ class DetectHoldingSubdomain
     public function handle(Request $request, Closure $next): Response
     {
         $host = $request->getHost();
-        $domain = config('app.domain', 'prohelper.pro');
+        $domain = config('app.domain', '1мост.рф');
         
         if (!str_ends_with($host, $domain)) {
             return $next($request);

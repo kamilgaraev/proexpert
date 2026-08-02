@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\V1\Landing\SiteLeadsController;
 
 // ============================================================================
 // ПУБЛИЧНЫЕ РОУТЫ НА ПОДДОМЕНЕ ХОЛДИНГА
-// Например: stroitelnyj-holding-alfa.prohelper.pro/
+// Например: stroitelnyj-holding-alfa.1мост.рф/
 // Middleware DetectHoldingSubdomain автоматически определяет холдинг по slug
 // ============================================================================
 

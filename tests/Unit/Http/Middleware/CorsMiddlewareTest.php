@@ -23,7 +23,7 @@ class CorsMiddlewareTest extends TestCase
         $request = Request::create(
             '/api/v1/admin/design-management/model-versions/1/derivatives',
             'POST',
-            server: ['HTTP_ORIGIN' => 'https://prohelper.pro']
+            server: ['HTTP_ORIGIN' => 'https://1мост.рф']
         );
 
         $this->expectException(PostTooLargeException::class);
@@ -35,7 +35,7 @@ class CorsMiddlewareTest extends TestCase
         } finally {
             $headers = $request->attributes->get('cors_headers', []);
 
-            self::assertSame('https://prohelper.pro', $headers['Access-Control-Allow-Origin'] ?? null);
+            self::assertSame('https://1мост.рф', $headers['Access-Control-Allow-Origin'] ?? null);
             self::assertSame('true', $headers['Access-Control-Allow-Credentials'] ?? null);
         }
     }
