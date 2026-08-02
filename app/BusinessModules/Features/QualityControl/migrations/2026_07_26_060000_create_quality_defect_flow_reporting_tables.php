@@ -30,7 +30,7 @@ return new class extends Migration
             $table->timestampTz('created_at');
             $table->timestampTz('updated_at');
 
-            $table->unique(['organization_id', 'project_id', 'version'], 'quality_defect_flow_policy_version_unique');
+            $table->unique(['organization_id', 'project_id', 'version'], 'quality_defect_reporting_policy_version_unique');
             $table->index(['organization_id', 'project_id', 'effective_from', 'effective_until'], 'quality_defect_flow_policy_effective_idx');
         });
 
