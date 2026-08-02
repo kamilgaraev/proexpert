@@ -103,6 +103,38 @@ final class ReportReadHandlersTest extends TestCase
         self::assertSame(50, $fixture['rowQuery']->pageCalls()[0][4]);
     }
 
+    public function test_rows_sign_and_accept_the_typed_keyset_for_the_next_page(): void
+    {
+        $fixture = $this->fixture(
+            rows: [['row_key' => 'row-1', 'name' => 'Первая строка']],
+            hasMore: true,
+            limit: 1,
+        );
+        $operations = [];
+        $handler = $this->rowsHandler($fixture, $this->authorizer($operations));
+
+        $first = $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow(null, 1, $this->sort),
+        );
+        self::assertTrue($first->hasMore);
+        self::assertNotNull($first->nextCursor);
+
+        $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow($first->nextCursor, 1, $this->sort),
+        );
+
+        self::assertCount(2, $fixture['rowQuery']->pageCalls());
+        $decoded = $fixture['rowQuery']->pageCalls()[1][3];
+        self::assertNotNull($decoded);
+        self::assertSame('Первая строка', $decoded->keyset->lastSortValue);
+        self::assertSame('row-1', $decoded->keyset->lastStableRowKey);
+        self::assertSame($this->sort, $decoded->sort);
+    }
+
     public function test_column_values_and_empty_permission_lists_do_not_drive_classification(): void
     {
         $fixture = $this->fixture(
@@ -349,6 +381,8 @@ final class ReportReadHandlersTest extends TestCase
         ?ReportPermissionPolicy $permissions = null,
         ?ReportDrillDownResult $drillResult = null,
         array $rows = [['row_key' => 'row-1', 'name' => 'Строка']],
+        bool $hasMore = false,
+        int $limit = 50,
     ): array {
         $definition = (new ReportDefinitionBuilder)
             ->columns($columns)
@@ -385,8 +419,8 @@ final class ReportReadHandlersTest extends TestCase
                 [],
             ),
             null,
-            50,
-            false,
+            $limit,
+            $hasMore,
             $this->sort,
         );
         $rowQuery = new FakeReportRowQuery($page, []);
