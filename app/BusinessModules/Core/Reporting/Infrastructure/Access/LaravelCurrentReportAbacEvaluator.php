@@ -11,6 +11,7 @@ use App\Domain\Authorization\Enums\ConditionType;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\RoleCondition;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\ValueObjects\PermissionSet;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -100,18 +101,7 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
             if (! is_array($decoded)) {
                 continue;
             }
-            $permissions = $decoded['system_permissions'] ?? [];
-            foreach (($decoded['module_permissions'] ?? []) as $module => $modulePermissions) {
-                if (! is_string($module) || ! is_array($modulePermissions)) {
-                    continue;
-                }
-                foreach ($modulePermissions as $modulePermission) {
-                    if (is_string($modulePermission)) {
-                        $permissions[] = $module.'.'.$modulePermission;
-                    }
-                }
-            }
-            if (in_array($permission, $permissions, true)) {
+            if (PermissionSet::fromJsonRole($decoded)->hasPermission($permission)) {
                 return true;
             }
         }
