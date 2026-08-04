@@ -49,11 +49,13 @@ Cleanup выполняется отдельным логическим блок�
 2. Отделить общие catalog/authorization/audit/outbox компоненты от изолированной release-инфраструктуры.
 3. Удалить отдельные reporting publication/admission workflows и их OIDC/secrets.
 4. Удалить signing, trusted request и artifact-transfer application code.
-5. Заменить publication обычной атомарной server-side активацией registry с authorization и audit.
-6. Подготовить безопасные миграции удаления ненужных functions/roles/tables; локально миграции не запускать.
+5. Новые отчёты регистрировать обычными встроенными определениями приложения. Для уже активированных database-defined отчётов временно сохранить только read-only registry без API, CLI и DB-точек записи.
+6. Подготовить безопасные миграции удаления ненужных write functions/roles; совместимые read-side таблицы удалять только после переноса всех реально используемых определений и проверки production-данных. Локально миграции не запускать.
 7. Удалить dead configuration, CLI, schemas, fixtures и тесты, обслуживающие только отменённый протокол.
 8. Сохранить полезные source, formula, replay, RBAC, outbox и concurrency tests.
 9. Проверить «План-факт бюджета» и каталог через стандартный runtime.
+
+Не вводить новый универсальный activation-протокол вместо удаляемого publication-протокола без отдельного подтверждённого продуктового сценария и прямого согласования пользователя.
 
 Удаление не должно затронуть CI/CD вне явно подтверждённых reporting-файлов и не должно менять общий deployment pipeline МОСТ.
 

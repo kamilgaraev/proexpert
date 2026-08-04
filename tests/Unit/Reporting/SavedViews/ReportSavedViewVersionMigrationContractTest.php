@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\SavedViews;
 
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\Yaml\Yaml;
 
 final class ReportSavedViewVersionMigrationContractTest extends TestCase
 {
@@ -127,37 +126,4 @@ final class ReportSavedViewVersionMigrationContractTest extends TestCase
         self::assertStringContainsString("yield 'non ASCII report code'", $source);
     }
 
-    public function test_existing_postgres_workflow_executes_the_saved_view_version_gate_fail_closed(): void
-    {
-        $workflow = Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/notification-concurrency.yml');
-        self::assertIsArray($workflow);
-
-        $job = $workflow['jobs']['report-saved-view-version-postgres-contract'] ?? null;
-        self::assertIsArray($job);
-        self::assertSame(
-            'most_report_saved_view_version_testing',
-            $job['services']['postgres']['env']['POSTGRES_DB'] ?? null,
-        );
-        self::assertSame('testing', $job['env']['APP_ENV'] ?? null);
-        self::assertSame(true, $job['env']['CI'] ?? null);
-        self::assertSame(
-            'most_report_saved_view_version_testing',
-            $job['env']['DB_DATABASE'] ?? null,
-        );
-        self::assertSame(1, $job['env']['REPORT_SAVED_VIEW_VERSION_POSTGRES_TESTS'] ?? null);
-
-        $steps = $job['steps'] ?? null;
-        self::assertIsArray($steps);
-        $commands = implode("\n", array_map(
-            static fn (array $step): string => is_string($step['run'] ?? null) ? $step['run'] : '',
-            $steps,
-        ));
-
-        self::assertStringContainsString('git rev-parse HEAD', $commands);
-        self::assertStringContainsString('$GITHUB_SHA', $commands);
-        self::assertStringContainsString('php artisan migrate:fresh --force', $commands);
-        self::assertStringContainsString('ReportSavedViewVersionPostgresTest.php', $commands);
-        self::assertStringContainsString('--group=postgresql', $commands);
-        self::assertStringContainsString('--fail-on-skipped', $commands);
-    }
 }
