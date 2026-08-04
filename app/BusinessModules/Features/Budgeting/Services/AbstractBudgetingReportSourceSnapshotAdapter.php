@@ -105,7 +105,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
 
         return new ReportResult(
             new ReportResultMetadata($snapshot, $header->rowCount, $header->generatedAt, $header->staleAt),
-            ['row_count' => $header->rowCount],
+            $this->reportTotals($header),
             ReportFreshnessStatus::FRESH,
             $quality,
             new ReportProvenance(
@@ -144,7 +144,7 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
 
         return new ReportPage(
             array_map(fn ($row): array => $this->row($row->rowKey, $row->payload), $sourcePage->rows),
-            ['row_count' => $header->rowCount],
+            $this->reportTotals($header),
             ReportFreshnessStatus::FRESH,
             $this->quality($header),
             $sourcePage->nextCursor === null ? null : $this->cursorToken($sourcePage->nextCursor),
@@ -222,6 +222,12 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
 
     /** @return list<array{id: string}> */
     abstract protected function rowSchema(): array;
+
+    /** @return array<string, mixed> */
+    protected function reportTotals(ReportSourceSnapshotHeader $header): array
+    {
+        return ['row_count' => $header->rowCount];
+    }
 
     private function assertQueryContext(ReportExecutionContext $context, ReportQuery $query): void
     {

@@ -316,6 +316,8 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         self::assertSame($adapter, $binding->drillDownProvider);
         self::assertSame($snapshot->id, $store->headerValue?->id);
         self::assertNotEmpty($page->rows);
+        self::assertSame('20', $page->totals['by_currency'][0]['plan_amount']);
+        self::assertSame('RUB', $page->totals['by_currency'][0]['currency']);
         self::assertNotEmpty($drill->rows);
         self::assertSame([$snapshot->id], array_values(array_unique($store->readSnapshotIds)));
 
@@ -653,9 +655,23 @@ final class PlanFactSnapshotSource implements PlanFactSourceSnapshotReport
     {
         $this->calls++;
 
-        return ['filters' => $input, 'period' => ['from' => '2026-01-01', 'to' => '2026-01-31'], 'sources_coverage' => [], 'rows' => [
-            $this->row('first', 'a'), $this->row('second', 'b'),
-        ]];
+        return [
+            'filters' => $input,
+            'period' => ['from' => '2026-01-01', 'to' => '2026-01-31'],
+            'sources_coverage' => [],
+            'totals_by_currency' => [[
+                'currency' => 'RUB',
+                'plan_amount' => 20.0 * $this->revision,
+                'forecast_amount' => 18.0 * $this->revision,
+                'actual_amount' => 16.0 * $this->revision,
+                'committed_amount' => 2.0 * $this->revision,
+                'variance_amount' => 4.0 * $this->revision,
+                'variance_percent' => 20.0,
+                'risk_level' => 'low',
+                'rows_count' => 2,
+            ]],
+            'rows' => [$this->row('first', 'a'), $this->row('second', 'b')],
+        ];
     }
 
     public function drillDownForProjectScope(array $input, array $projectIds): array

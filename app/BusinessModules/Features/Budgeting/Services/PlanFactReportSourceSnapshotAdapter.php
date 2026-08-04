@@ -73,6 +73,16 @@ final class PlanFactReportSourceSnapshotAdapter extends AbstractBudgetingReportS
         ]);
     }
 
+    protected function reportTotals(ReportSourceSnapshotHeader $header): array
+    {
+        $byCurrency = $header->watermarks['result_totals_by_currency'] ?? [];
+
+        return [
+            'row_count' => $header->rowCount,
+            'by_currency' => is_array($byCurrency) && array_is_list($byCurrency) ? $byCurrency : [],
+        ];
+    }
+
     private function closeId(ReportQuery $query): string
     {
         $value = $query->filters->values['close_id'] ?? null;
