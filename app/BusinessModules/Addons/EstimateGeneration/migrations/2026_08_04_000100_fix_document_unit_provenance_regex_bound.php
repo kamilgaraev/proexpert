@@ -15,6 +15,9 @@ return new class extends Migration
 
         DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_processing_units
+    DROP CONSTRAINT IF EXISTS eg_units_locator_provenance_ck;
+
+ALTER TABLE estimate_generation_processing_units
     ADD CONSTRAINT eg_units_locator_provenance_ck
     CHECK (
         locator ?& ARRAY['source_kind', 'source_version', 'coordinate_space', 'artifact_path', 'artifact_sha256', 'artifact_version_id']
@@ -41,8 +44,5 @@ SQL);
 
     public function down(): void
     {
-        if (DB::getDriverName() === 'pgsql') {
-            DB::statement('ALTER TABLE estimate_generation_processing_units DROP CONSTRAINT IF EXISTS eg_units_locator_provenance_ck');
-        }
     }
 };
