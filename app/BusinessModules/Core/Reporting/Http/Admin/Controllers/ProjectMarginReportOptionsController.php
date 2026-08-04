@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Controllers;
 
-use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Services\BudgetingReportOptionsService;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-final readonly class BudgetPlanFactReportOptionsController
+final readonly class ProjectMarginReportOptionsController
 {
     public function __construct(private BudgetingReportOptionsService $options) {}
 
@@ -21,8 +21,8 @@ final readonly class BudgetPlanFactReportOptionsController
         return AdminResponse::success([
             'closures' => $this->options->availableClosures(
                 (int) $organization->id,
-                BudgetPlanFactCandidateContract::CODE,
-                BudgetPlanFactCandidateContract::FORMULA_VERSION,
+                ProjectMarginCandidateContract::CODE,
+                ProjectMarginCandidateContract::FORMULA_VERSION,
             ),
         ]);
     }

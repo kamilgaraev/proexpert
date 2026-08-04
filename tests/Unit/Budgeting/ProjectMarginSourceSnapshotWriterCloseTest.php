@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Budgeting;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
@@ -13,8 +12,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
-use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
@@ -125,6 +124,7 @@ final class ProjectMarginSourceSnapshotWriterCloseTest extends TestCase
     ): BudgetingReportSourceClose {
         return new BudgetingReportSourceClose(
             closeId: '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            reportCode: 'project_margin',
             identity: $identity ?? $this->identity(),
             sourceWatermarks: [new BudgetingReportSourceWatermark('actuals', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'actuals:1', 'actuals-v1')],
             formulaVersion: 'margin-v1',

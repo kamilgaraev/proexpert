@@ -128,7 +128,7 @@ UI различает initial, options loading, ready to run, validation error, 
 
 1. Reconciliation G10 «План-факт бюджета»: сверить фактический `main` с полным Definition of Done и исправить устаревшие source/handoff документы.
 2. Cleanup отменённой publication/CI-инфраструктуры отдельным блоком.
-3. G09 «Маржинальность проекта» после доказательства approved close/replay.
+3. G09 «Маржинальность проекта»: approved close/replay доказаны; выполняется последовательная поставка canonical backend, затем admin UI.
 4. Остальные отчёты — по одному, в порядке реальной готовности источников.
 
 Для каждого блока создаются отдельные backend/admin feature-ветки от актуальных `main`; выполняются минимальные релевантные проверки и одно независимое review.

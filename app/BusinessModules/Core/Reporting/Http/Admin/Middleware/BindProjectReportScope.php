@@ -11,27 +11,31 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class BindProjectReportScope
 {
+    private const FORBIDDEN_CONTEXT_FIELDS = [
+        'organization_id',
+        'project_id',
+        'user_id',
+        'owner_id',
+        'role',
+        'permission',
+        'scope',
+    ];
+
     public function handle(Request $request, Closure $next): Response
     {
-        $filters = $request->input('filters');
-        if (! is_array($filters)) {
-            return $next($request);
+        if ($this->hasClientContextOverride($request)) {
+            return $this->invalidRequest();
         }
 
-        if (array_key_exists('organization_id', $filters) || array_key_exists('project_id', $filters)) {
-            return AdminResponse::error(
-                trans_message('reports.errors.report_request_invalid'),
-                Response::HTTP_UNPROCESSABLE_ENTITY,
-            );
+        $filters = $request->input('filters');
+        if ($request->isMethod('GET') || ! is_array($filters)) {
+            return $next($request);
         }
 
         $project = $request->attributes->get('project');
         $organization = $request->attributes->get('current_organization');
         if ($project === null || $organization === null) {
-            return AdminResponse::error(
-                trans_message('reports.errors.report_request_invalid'),
-                Response::HTTP_UNPROCESSABLE_ENTITY,
-            );
+            return $this->invalidRequest();
         }
 
         $request->merge([
@@ -43,5 +47,29 @@ final class BindProjectReportScope
         ]);
 
         return $next($request);
+    }
+
+    private function hasClientContextOverride(Request $request): bool
+    {
+        foreach (self::FORBIDDEN_CONTEXT_FIELDS as $field) {
+            if ($request->exists($field)) {
+                return true;
+            }
+        }
+
+        $filters = $request->input('filters');
+        if (! is_array($filters)) {
+            return false;
+        }
+
+        return array_intersect(self::FORBIDDEN_CONTEXT_FIELDS, array_keys($filters)) !== [];
+    }
+
+    private function invalidRequest(): Response
+    {
+        return AdminResponse::error(
+            trans_message('reports.errors.report_request_invalid'),
+            Response::HTTP_UNPROCESSABLE_ENTITY,
+        );
     }
 }

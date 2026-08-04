@@ -265,7 +265,10 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
     {
         $store = new InMemoryReportSourceSnapshotStore;
         $source = new PlanFactSnapshotSource;
-        $closeService = self::closeService(BudgetPlanFactCandidateContract::FORMULA_VERSION);
+        $closeService = self::closeService(
+            BudgetPlanFactCandidateContract::CODE,
+            BudgetPlanFactCandidateContract::FORMULA_VERSION,
+        );
         $adapter = new PlanFactReportSourceSnapshotAdapter(
             new PlanFactSourceSnapshotWriter($source, new PlanFactSourceSnapshotMaterializer, $store, $closeService),
             $closeService,
@@ -345,7 +348,7 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
             'G09 project margin' => (static function (): array {
                 $store = new InMemoryReportSourceSnapshotStore;
                 $source = new ProjectMarginSnapshotSource;
-                $closeService = self::closeService();
+                $closeService = self::closeService('project_margin');
                 $adapter = new ProjectMarginReportSourceSnapshotAdapter(
                     new ProjectMarginSourceSnapshotWriter(
                         $source,
@@ -362,7 +365,7 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
             'G10 plan fact' => (static function (): array {
                 $store = new InMemoryReportSourceSnapshotStore;
                 $source = new PlanFactSnapshotSource;
-                $closeService = self::closeService();
+                $closeService = self::closeService('budget_plan_fact');
                 $adapter = new PlanFactReportSourceSnapshotAdapter(
                     new PlanFactSourceSnapshotWriter(
                         $source,
@@ -422,10 +425,11 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         );
     }
 
-    private static function closeService(string $formulaVersion = 'margin-v1'): BudgetingReportSourceCloseService
+    private static function closeService(string $reportCode, string $formulaVersion = 'margin-v1'): BudgetingReportSourceCloseService
     {
         $close = new BudgetingReportSourceClose(
             '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            $reportCode,
             new BudgetingReportSourceCloseIdentity(1, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1'),
             [new BudgetingReportSourceWatermark('actuals', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'actuals:1', 'actuals-v1')],
             $formulaVersion,

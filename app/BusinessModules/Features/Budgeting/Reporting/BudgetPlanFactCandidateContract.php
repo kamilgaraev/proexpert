@@ -169,7 +169,7 @@ final readonly class BudgetPlanFactCandidateContract
             }
         }
 
-        if ($close->formulaVersion !== $this->formulaVersion) {
+        if ($close->reportCode !== self::CODE || $close->formulaVersion !== $this->formulaVersion) {
             throw new InvalidArgumentException('budget_plan_fact_candidate_formula_version_invalid');
         }
 

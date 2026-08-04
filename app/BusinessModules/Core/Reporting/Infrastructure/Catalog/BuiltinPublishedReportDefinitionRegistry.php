@@ -11,32 +11,44 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 
 final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportDefinitionRegistry
 {
-    private PublishedReportDefinition $budgetPlanFact;
+    /** @var array<string, PublishedReportDefinition> */
+    private array $definitions;
 
-    public function __construct(BudgetPlanFactBuiltinPublishedReport $budgetPlanFact)
-    {
-        $this->budgetPlanFact = $budgetPlanFact->definition();
+    public function __construct(
+        ProjectMarginBuiltinPublishedReport $projectMargin,
+        BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
+    ) {
+        $byCode = [];
+        foreach ([$projectMargin->definition(), $budgetPlanFact->definition()] as $definition) {
+            $byCode[$definition->code] = $definition;
+        }
+        ksort($byCode, SORT_STRING);
+        $this->definitions = $byCode;
     }
 
     public function published(string $code): PublishedReportDefinition
     {
-        return $code === $this->budgetPlanFact->code
-            ? $this->budgetPlanFact
-            : throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        return $this->definitions[$code]
+            ?? throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
     }
 
     public function publishedCodes(): array
     {
-        return [$this->budgetPlanFact->code];
+        return array_keys($this->definitions);
     }
 
     public function manifestSha256(): Sha256Hash
     {
-        return new Sha256Hash(hash('sha256', CanonicalJson::encode([
-            ['code' => $this->budgetPlanFact->code, 'definition_sha256' => $this->budgetPlanFact->definitionHash->value],
-        ])));
+        return new Sha256Hash(hash('sha256', CanonicalJson::encode(array_map(
+            static fn (PublishedReportDefinition $definition): array => [
+                'code' => $definition->code,
+                'definition_sha256' => $definition->definitionHash->value,
+            ],
+            array_values($this->definitions),
+        ))));
     }
 }

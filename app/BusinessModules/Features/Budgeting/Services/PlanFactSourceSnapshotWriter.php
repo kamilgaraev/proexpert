@@ -22,7 +22,12 @@ final class PlanFactSourceSnapshotWriter
 
     public function persist(PlanFactSourceSnapshotRequest $request): ReportSourceSnapshotHeader
     {
-        $close = $this->closeService->validatedCloseForReporting($request->closeId, $request->closeIdentity, $request->asOf);
+        $close = $this->closeService->validatedCloseForReporting(
+            $request->closeId,
+            PlanFactSourceSnapshotMaterializer::REPORT_CODE,
+            $request->closeIdentity,
+            $request->asOf,
+        );
         $filters = $this->normalizeFilters($request);
         $identity = $this->materializer->identity($request->scope, $filters, $close->closeId, $request->reportQueryIdentity);
         $ready = $this->store->findReady($identity);

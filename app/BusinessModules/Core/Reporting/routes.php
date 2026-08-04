@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
-use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRowsController;
@@ -85,8 +86,16 @@ Route::prefix('api/v1/admin/reports')
             ->name('project-budget-plan-fact.runs.store');
         Route::get('/projects/{project}/budget-plan-fact/options', BudgetPlanFactReportOptionsController::class)
             ->defaults('reportCode', 'budget_plan_fact')
-            ->middleware(['project.context', $resourceAccess])
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-budget-plan-fact.options');
+        Route::post('/projects/{project}/project-margin/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'project_margin')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('project-margin.runs.store');
+        Route::get('/projects/{project}/project-margin/options', ProjectMarginReportOptionsController::class)
+            ->defaults('reportCode', 'project_margin')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('project-margin.options');
         Route::get('/runs/{runId}', [ReportRunController::class, 'show'])
             ->middleware($resourceAccess)
             ->name('runs.show');

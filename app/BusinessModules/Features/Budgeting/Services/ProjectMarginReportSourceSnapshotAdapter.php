@@ -40,6 +40,7 @@ final class ProjectMarginReportSourceSnapshotAdapter extends AbstractBudgetingRe
     {
         return $this->closeService->validatedCloseForReporting(
             $this->closeId($query),
+            ProjectMarginSourceSnapshotMaterializer::REPORT_CODE,
             $this->closeIdentity($query),
             $query->asOf,
         )->formulaVersion;

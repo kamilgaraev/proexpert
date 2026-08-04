@@ -7,13 +7,15 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 use App\BusinessModules\Features\Budgeting\Enums\BudgetingReportSourceCloseStatus;
 use App\BusinessModules\Features\Budgeting\Models\BudgetingReportSourceCloseRecord;
 
-final class BudgetPlanFactReportOptionsService
+final class BudgetingReportOptionsService
 {
     /** @return list<array{value:string,label:string,period_start:string,period_end:string,scenario_uuid:string,budget_version_uuid:string}> */
-    public function availableClosures(int $organizationId): array
+    public function availableClosures(int $organizationId, string $reportCode, string $formulaVersion): array
     {
         return BudgetingReportSourceCloseRecord::query()
             ->where('organization_id', $organizationId)
+            ->where('report_code', $reportCode)
+            ->where('formula_version', $formulaVersion)
             ->where('status', BudgetingReportSourceCloseStatus::APPROVED->value)
             ->where('retained_until', '>', now())
             ->orderByDesc('period_end')

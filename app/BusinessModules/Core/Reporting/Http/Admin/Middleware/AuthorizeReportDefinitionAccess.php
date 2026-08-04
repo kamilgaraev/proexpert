@@ -10,6 +10,8 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
+use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
@@ -69,7 +71,11 @@ final readonly class AuthorizeReportDefinitionAccess
     private function target(Request $request, string $routeName): CurrentReportAuthorizationTarget
     {
         return match ($routeName) {
-            'admin.reports.runs.store', 'admin.reports.project-budget-plan-fact.runs.store', 'admin.reports.project-budget-plan-fact.options' => $this->targets->createRun(
+            'admin.reports.runs.store' => $this->genericCreateRun($request),
+            'admin.reports.project-budget-plan-fact.runs.store',
+            'admin.reports.project-budget-plan-fact.options',
+            'admin.reports.project-margin.runs.store',
+            'admin.reports.project-margin.options' => $this->targets->createRun(
                 $this->routeId($request, 'reportCode'),
             ),
             'admin.reports.runs.show', 'admin.reports.runs.rows' => $this->targets->run(
@@ -102,6 +108,19 @@ final readonly class AuthorizeReportDefinitionAccess
             ),
             default => $this->deny(),
         };
+    }
+
+    private function genericCreateRun(Request $request): CurrentReportAuthorizationTarget
+    {
+        $reportCode = $this->routeId($request, 'reportCode');
+        if (in_array($reportCode, [
+            BudgetPlanFactCandidateContract::CODE,
+            ProjectMarginCandidateContract::CODE,
+        ], true)) {
+            $this->deny();
+        }
+
+        return $this->targets->createRun($reportCode);
     }
 
     private function catalogHashes(int $organizationId): array
