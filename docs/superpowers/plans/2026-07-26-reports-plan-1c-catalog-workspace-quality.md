@@ -1,5 +1,7 @@
 # План 1c: catalog, workspace и quality gates платформы отчётности МОСТ
 
+> **Актуальная редакция:** этот план исполняется только вместе с `2026-08-04-reports-architecture-simplification.md`. Каталог, workspace, options, saved views, schedules, subscriptions, permissions и продуктовые quality-gates сохраняются. Signing, OIDC, protected environment, межрепозиторный artifact transfer, commit-SHA release protocol, отдельные publication/admission workflows и специальные DB-роли старого release-контура отменены. Соответствующие поздние задачи ниже сохранены только как историческое описание уже появившегося кода и как вход для cleanup, а не как инструкция к реализации.
+
 > **Для agentic workers:** REQUIRED SUB-SKILL: используйте `superpowers:subagent-driven-development` или `superpowers:executing-plans`. Выполняйте Tasks 1–12 строго по порядку; checkbox-шаги являются обязательными review checkpoints, каждая задача завершается отдельным commit.
 
 **Goal:** Реализовать typed manifest и publication boundary МОСТ, номинально разделённые candidate/published registries, единственный immutable runtime binding map, generated catalog contracts, server workspace, saved views, полный lifecycle subscriptions и fail-closed platform/release evidence поверх неизменяемых Plan 1a и Plan 1b.

@@ -1,5 +1,7 @@
 # Reports Plan 2 Wave 1 Foundation And First Candidates Implementation Plan
 
+> **Актуальная редакция:** критерии источников, формул, snapshots, replay, conformance и isolation сохраняются, но CI/CD не является admission-механизмом продукта. Каждый отчёт проходит обычные целевые тесты и полный backend+UI Definition of Done из `2026-08-04-reports-architecture-simplification.md`. Отдельные workflow, signing, transfer bundle и commit-SHA протокол создавать запрещено.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build an isolated Wave 1 candidate boundary that truthfully blocks every candidate until its source contract and immutable snapshot/replay readiness are admitted, without activating or publishing any report.
