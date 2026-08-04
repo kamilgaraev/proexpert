@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
@@ -36,7 +37,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 
-abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDataProvider, ReportDrillDownProvider, ReportRowQuery
+abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDataProvider, ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
     private const REPORT_QUERY_HASH = 'report_query_hash';
 
@@ -206,6 +207,11 @@ abstract class AbstractBudgetingReportSourceSnapshotAdapter implements ReportDat
             $sourcePage->nextCursor === null ? null : $this->cursorToken($sourcePage->nextCursor),
             [],
         );
+    }
+
+    final public function drillDownTokenColumns(): array
+    {
+        return ['drill' => $this->drillColumnId()];
     }
 
     abstract protected function persistSourceSnapshot(ReportQuery $query): ReportSourceSnapshotHeader;

@@ -26,7 +26,7 @@ final readonly class ProjectMarginCandidateContract
 
     public const FORMULA_HASH = '9daf19a225a89d3990becd0654b5965eebfb79306f0acf31c0aba1fcd849ccb4';
 
-    public const SOURCE_HASH = 'a887a07672f66a2d382091b1468f6efc339bbec4d62cda88fabfe9a1007fbc45';
+    public const SOURCE_HASH = '260d5232a220dca37f413648b1a4c33acf62ec186a5d7bcc01291b5f94664075';
 
     public function __construct(
         public string $formulaVersion = self::FORMULA_VERSION,

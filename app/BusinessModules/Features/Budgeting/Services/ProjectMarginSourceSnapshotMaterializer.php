@@ -311,10 +311,53 @@ final class ProjectMarginSourceSnapshotMaterializer
             'scenario_uuid' => $filters['scenario_uuid'] ?? null,
             'source_rows_count' => $sourceRowsCount,
             'source_types' => array_keys($sourceTypes),
+            'result_totals_by_currency' => $this->resultTotals($report['totals_by_currency'] ?? []),
         ];
         sort($watermarks['source_types'], SORT_STRING);
 
         return [...$watermarks, ...$close->snapshotWatermarks()];
+    }
+
+    private function resultTotals(mixed $totals): array
+    {
+        if (! is_array($totals) || ! array_is_list($totals)) {
+            throw new InvalidArgumentException('project_margin_source_snapshot_totals_invalid');
+        }
+
+        $result = array_map(function (mixed $total): array {
+            if (! is_array($total)) {
+                throw new InvalidArgumentException('project_margin_source_snapshot_totals_invalid');
+            }
+
+            return [
+                'actual' => $this->canonicalMoneyBlock($total['actual'] ?? null),
+                'currency' => $this->string($total['currency'] ?? null),
+                'forecast' => $this->canonicalMoneyBlock($total['forecast'] ?? null),
+                'plan' => $this->canonicalMoneyBlock($total['plan'] ?? null),
+                'problem_flags' => $this->stringList($total['problem_flags'] ?? []),
+                'quality_status' => $this->string($total['quality_status'] ?? null),
+                'risk_flags' => $this->stringList($total['risk_flags'] ?? []),
+                'rows_count' => $this->integer($total['rows_count'] ?? null),
+                'variance' => $this->canonicalMoneyBlock($total['variance'] ?? null),
+            ];
+        }, $totals);
+
+        usort($result, static fn (array $left, array $right): int => $left['currency'] <=> $right['currency']);
+
+        return $result;
+    }
+
+    private function canonicalMoneyBlock(mixed $value): array
+    {
+        $block = $this->moneyBlock($value);
+        foreach ($block as $key => $amount) {
+            if (is_float($amount)) {
+                $normalized = rtrim(rtrim(sprintf('%.8F', $amount), '0'), '.');
+                $block[$key] = $normalized === '-0' ? '0' : $normalized;
+            }
+        }
+
+        return $block;
     }
 
     private function moneyBlock(mixed $value): array

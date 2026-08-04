@@ -135,6 +135,34 @@ final class ReportReadHandlersTest extends TestCase
         self::assertSame($this->sort, $decoded->sort);
     }
 
+    public function test_rows_include_signed_drill_down_tokens_declared_by_the_provider(): void
+    {
+        $fixture = $this->fixture(
+            columns: [['id' => 'name'], ['id' => 'drill']],
+            drillTokenColumns: ['drill' => 'attributions'],
+        );
+        $operations = [];
+
+        $result = $this->rowsHandler($fixture, $this->authorizer($operations))->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow(null, 50, $this->sort),
+        );
+
+        $token = $result->rows[0]['drill'] ?? null;
+        self::assertIsString($token);
+        $cell = $this->codec()->decodeDrillDownCell(
+            $token,
+            $fixture['query']->scope->organizationId,
+            $fixture['run']->reportCode,
+            $fixture['run']->id,
+            $fixture['run']->resultMetadata->snapshot,
+            $fixture['run']->queryHash,
+        );
+        self::assertSame('row-1', $cell->rowKey);
+        self::assertSame('attributions', $cell->columnId);
+    }
+
     public function test_column_values_and_empty_permission_lists_do_not_drive_classification(): void
     {
         $fixture = $this->fixture(
@@ -383,6 +411,7 @@ final class ReportReadHandlersTest extends TestCase
         array $rows = [['row_key' => 'row-1', 'name' => 'Строка']],
         bool $hasMore = false,
         int $limit = 50,
+        array $drillTokenColumns = [],
     ): array {
         $definition = (new ReportDefinitionBuilder)
             ->columns($columns)
@@ -425,7 +454,7 @@ final class ReportReadHandlersTest extends TestCase
         );
         $rowQuery = new FakeReportRowQuery($page, []);
         $drillResult ??= new ReportDrillDownResult($rows, null, []);
-        $drillDown = new FakeReportDrillDownProvider($drillResult);
+        $drillDown = new FakeReportDrillDownProvider($drillResult, $drillTokenColumns);
         $binding = new ReportDefinitionBinding(
             $definition->code,
             $definition->definitionHash,
