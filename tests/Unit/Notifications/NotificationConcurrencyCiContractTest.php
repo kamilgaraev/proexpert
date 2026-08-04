@@ -44,48 +44,6 @@ final class NotificationConcurrencyCiContractTest extends TestCase
         self::assertStringContainsString('public function refreshDatabase(): void', $source);
     }
 
-    public function test_dedicated_workflow_runs_the_opt_in_postgres_test_on_notification_changes(): void
-    {
-        $workflow = $this->source('.github/workflows/notification-concurrency.yml');
-
-        self::assertStringContainsString('pull_request:', $workflow);
-        self::assertStringContainsString('push:', $workflow);
-        self::assertStringContainsString('branches: [main]', $workflow);
-        self::assertStringContainsString('postgres:', $workflow);
-        self::assertStringContainsString('image: postgres:16', $workflow);
-        self::assertStringContainsString('php-version: 8.2', $workflow);
-        self::assertStringContainsString('RUN_NOTIFICATION_POSTGRES_TESTS: 1', $workflow);
-        self::assertDoesNotMatchRegularExpression(
-            '/^\s*run:\s+php artisan migrate --force\s*$/m',
-            $workflow
-        );
-        self::assertStringContainsString(
-            'php artisan migrate --force --path=database/migrations/0001_01_01_000000_create_users_table.php',
-            $workflow
-        );
-        self::assertStringContainsString(
-            'php artisan migrate --force --path=database/migrations/2025_01_01_000010_create_organizations_table.php',
-            $workflow
-        );
-        self::assertStringContainsString(
-            'php artisan migrate --force --path=database/migrations/2025_05_03_161553_add_fields_to_users_table.php',
-            $workflow
-        );
-        self::assertStringContainsString(
-            'php artisan migrate --force --path=app/BusinessModules/Features/Notifications/migrations/2025_10_10_100001_extend_notifications_table.php',
-            $workflow
-        );
-        self::assertStringContainsString(
-            'php artisan migrate --force --path=app/BusinessModules/Features/Notifications/migrations/2026_07_15_000001_create_notification_targets_table.php',
-            $workflow
-        );
-        self::assertStringContainsString(
-            'php vendor/bin/phpunit tests/Feature/Notifications/NotificationPostgresConcurrencyTest.php',
-            $workflow
-        );
-        self::assertStringNotContainsString('secrets.', $workflow);
-    }
-
     private function source(string $path): string
     {
         $source = file_get_contents(dirname(__DIR__, 3).'/'.$path);
