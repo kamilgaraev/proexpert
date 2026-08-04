@@ -128,7 +128,8 @@ UI различает initial, options loading, ready to run, validation error, 
 
 1. Reconciliation G10 «План-факт бюджета»: сверить фактический `main` с полным Definition of Done и исправить устаревшие source/handoff документы.
 2. Cleanup отменённой publication/CI-инфраструктуры отдельным блоком.
-3. G09 «Маржинальность проекта»: approved close/replay доказаны; выполняется последовательная поставка canonical backend, затем admin UI.
-4. Остальные отчёты — по одному, в порядке реальной готовности источников.
+3. G09 «Маржинальность проекта»: canonical backend и admin UI опубликованы; server-owned context, закрытый snapshot, totals, drill-down и export доставлены через отдельные PR и успешные deploy.
+4. G21 `project_labor_cost` «Стоимость труда по проектам»: canonical backend опубликован на реальном `DatabaseProjectLaborCostAdapter` — exact definition/binding, server-owned project scope, поисковые options с пагинацией, totals, sensitive-cost permission, signed drill-down и export. Следующий обязательный блок — admin UI с полным Definition of Done.
+5. Остальные отчёты — по одному, в порядке реальной готовности источников.
 
 Для каждого блока создаются отдельные backend/admin feature-ветки от актуальных `main`; выполняются минимальные релевантные проверки и одно независимое review.

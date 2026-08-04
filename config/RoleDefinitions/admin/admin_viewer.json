@@ -114,6 +114,9 @@
     "production-labor": [
       "production-labor.view"
     ],
+    "time-tracking": [
+      "time_tracking.view"
+    ],
     "site-requests": [
       "site_requests.view",
       "site_requests.templates.view",

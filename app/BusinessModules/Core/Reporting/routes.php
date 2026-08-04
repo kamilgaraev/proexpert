@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownController;
@@ -96,6 +97,14 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'project_margin')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-margin.options');
+        Route::post('/projects/{project}/project-labor-cost/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'project_labor_cost')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('project-labor-cost.runs.store');
+        Route::get('/projects/{project}/project-labor-cost/options', ProjectLaborCostReportOptionsController::class)
+            ->defaults('reportCode', 'project_labor_cost')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('project-labor-cost.options');
         Route::get('/runs/{runId}', [ReportRunController::class, 'show'])
             ->middleware($resourceAccess)
             ->name('runs.show');

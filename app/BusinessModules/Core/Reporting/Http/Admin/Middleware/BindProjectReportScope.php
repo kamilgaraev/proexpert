@@ -13,7 +13,9 @@ final class BindProjectReportScope
 {
     private const FORBIDDEN_CONTEXT_FIELDS = [
         'organization_id',
+        'organization_ids',
         'project_id',
+        'project_ids',
         'user_id',
         'owner_id',
         'role',

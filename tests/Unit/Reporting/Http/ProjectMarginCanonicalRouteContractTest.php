@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
@@ -29,7 +30,9 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString("->defaults('reportCode', 'project_margin')", $routes);
         self::assertStringContainsString("->middleware(['project.context', 'report.project-scope', \$resourceAccess])", $routes);
         self::assertStringContainsString("Route::get('/projects/{project}/project-margin/options'", $routes);
-        self::assertSame(4, substr_count($routes, "'report.project-scope'"));
+        self::assertStringContainsString("Route::post('/projects/{project}/project-labor-cost/runs'", $routes);
+        self::assertStringContainsString("Route::get('/projects/{project}/project-labor-cost/options'", $routes);
+        self::assertSame(6, substr_count($routes, "'report.project-scope'"));
 
         $middlewareFile = (new ReflectionClass(AuthorizeReportDefinitionAccess::class))->getFileName();
         self::assertIsString($middlewareFile);
@@ -72,6 +75,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         return [
             'G09' => [ProjectMarginCandidateContract::CODE],
             'G10' => [BudgetPlanFactCandidateContract::CODE],
+            'G21' => [ProjectLaborCostCandidateContract::CODE],
         ];
     }
 }

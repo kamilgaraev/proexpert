@@ -49,11 +49,11 @@ use InvalidArgumentException;
 
 final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCostDatabasePort
 {
-    private const FORMULA_VERSION = 'labor-cost.v1';
+    public const FORMULA_VERSION = 'labor-cost.v1';
 
-    private const SCHEMA_VERSION = 'project-labor-cost-source.v1';
+    public const SCHEMA_VERSION = 'project-labor-cost-source.v1';
 
-    private const SORTS = [
+    public const SORTS = [
         'work_date', 'employee_name', 'project_name', 'contractor_name', 'task_name',
         'hours', 'planned_hours', 'rate', 'cost', 'variance', 'cost_per_accepted_unit',
     ];
@@ -369,7 +369,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         $schema = $this->json($record->row_schema);
         $totals = $this->json($record->totals);
         if (! $context->visibility->canViewSensitive) {
-            $sensitive = ['rate', 'cost', 'currency', 'variance', 'cost_per_accepted_unit'];
+            $sensitive = ['rate', 'cost', 'currency', 'cost_per_accepted_unit'];
             $schema = array_values(array_filter(
                 $schema,
                 static fn (array $column): bool => ! in_array($column['id'] ?? null, $sensitive, true),
@@ -415,7 +415,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         if ($limit < 1 || $limit > 100 || ! in_array($sort->field, self::SORTS, true)) {
             throw new InvalidArgumentException('project_labor_cost_page_invalid');
         }
-        if (in_array($sort->field, ['rate', 'cost', 'variance', 'cost_per_accepted_unit'], true)
+        if (in_array($sort->field, ['rate', 'cost', 'cost_per_accepted_unit'], true)
             && ! $context->visibility->canViewSensitive) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
@@ -472,7 +472,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             throw new InvalidArgumentException('project_labor_cost_chunk_invalid');
         }
 
-        if (in_array($sort->field, ['rate', 'cost', 'variance', 'cost_per_accepted_unit'], true)
+        if (in_array($sort->field, ['rate', 'cost', 'cost_per_accepted_unit'], true)
             && ! $context->visibility->canViewSensitive) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
@@ -574,10 +574,10 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         $schema = array_map(
             static fn (string $id): array => ['id' => $id],
             [
-                'work_date', 'employee_name', 'project_name', 'contractor_name', 'task_name',
+                'row_key', 'work_date', 'employee_name', 'project_name', 'contractor_name', 'task_name', 'work_type_name',
                 'planned_hours', 'hours', 'billable_hours', 'billable_percent',
                 'accepted_work_id', 'accepted_units', 'accepted_unit', 'rate', 'cost', 'currency',
-                'variance', 'cost_per_accepted_unit',
+                'variance', 'cost_per_accepted_unit', 'quality_warnings', 'drill',
             ],
         );
         $this->connection->transaction(function () use (
@@ -817,7 +817,6 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
                 $row['rate'],
                 $row['cost'],
                 $row['currency'],
-                $row['variance'],
                 $row['hours_variance'],
                 $row['cost_per_accepted_unit'],
             );
@@ -1005,7 +1004,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         if ($statuses !== [] && $statuses !== ['approved']) {
             return false;
         }
-        $requestedProjects = $query->filters->values['project_ids'] ?? [];
+        $requestedProject = (int) ($query->filters->values['project_id'] ?? 0);
         $scopeProjects = $scope->projectIds;
         $resourceProjects = array_values(array_unique(array_map(
             static fn (object $resource): int => $resource->id,
@@ -1020,9 +1019,8 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
                 : array_values(array_intersect($scopeProjects, $resourceProjects));
         }
         sort($scopeProjects, SORT_NUMERIC);
-        sort($requestedProjects, SORT_NUMERIC);
 
-        return $requestedProjects === [] || $requestedProjects === $scopeProjects;
+        return $scopeProjects === [] || $scopeProjects === [$requestedProject];
     }
 
     private function assertScopedResource(
@@ -1081,7 +1079,11 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
 
     private function projectIds(ReportScope $scope, ReportQuery $query): array
     {
-        $requested = $this->ids($query, 'project_ids');
+        $projectId = $query->filters->values['project_id'] ?? null;
+        if (! is_int($projectId) && ! (is_string($projectId) && ctype_digit($projectId))) {
+            throw new InvalidArgumentException('project_labor_cost_filter_invalid');
+        }
+        $requested = [(int) $projectId];
         $resourceIds = array_values(array_unique(array_map(
             static fn (object $resource): int => $resource->id,
             array_filter(

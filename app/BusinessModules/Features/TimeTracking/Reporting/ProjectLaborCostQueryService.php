@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\TimeTracking\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
@@ -16,11 +17,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\ProjectLaborCostDatabasePort;
 
-final readonly class ProjectLaborCostQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class ProjectLaborCostQueryService implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
-    public function __construct(private ProjectLaborCostDatabasePort $database)
-    {
-    }
+    public function __construct(private ProjectLaborCostDatabasePort $database) {}
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
     {
@@ -52,5 +51,10 @@ final readonly class ProjectLaborCostQueryService implements ReportRowQuery, Rep
         ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         return $this->database->drillDown($context, $snapshot, $input);
+    }
+
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'source_refs'];
     }
 }
