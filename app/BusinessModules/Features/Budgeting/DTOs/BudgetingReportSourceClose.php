@@ -12,6 +12,7 @@ final readonly class BudgetingReportSourceClose
     /** @param list<BudgetingReportSourceWatermark> $sourceWatermarks */
     public function __construct(
         public string $closeId,
+        public string $reportCode,
         public BudgetingReportSourceCloseIdentity $identity,
         public array $sourceWatermarks,
         public string $formulaVersion,
@@ -22,8 +23,7 @@ final readonly class BudgetingReportSourceClose
         public DateTimeImmutable $retainedUntil,
         public BudgetingReportSourceCloseStatus $status,
         public ?string $restatesCloseId,
-    ) {
-    }
+    ) {}
 
     public function isAvailableAt(DateTimeImmutable $at): bool
     {
@@ -39,6 +39,7 @@ final readonly class BudgetingReportSourceClose
 
         return [
             'close_id' => $this->closeId,
+            'report_code' => $this->reportCode,
             'approved_at' => $this->approvedAt->format(DATE_ATOM),
             'retained_until' => $this->retainedUntil->format(DATE_ATOM),
             'identity' => $this->identity->toArray(),

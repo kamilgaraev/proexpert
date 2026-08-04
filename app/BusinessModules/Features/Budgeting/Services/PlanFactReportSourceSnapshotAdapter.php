@@ -40,6 +40,7 @@ final class PlanFactReportSourceSnapshotAdapter extends AbstractBudgetingReportS
     {
         return $this->closeService->validatedCloseForReporting(
             $this->closeId($query),
+            PlanFactSourceSnapshotMaterializer::REPORT_CODE,
             $this->closeIdentity($query),
             $query->asOf,
         )->formulaVersion;

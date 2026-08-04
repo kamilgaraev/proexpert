@@ -9,15 +9,21 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 
 final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatalogMetadataRegistry
 {
-    public function __construct(private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact) {}
+    public function __construct(
+        private ProjectMarginBuiltinPublishedReport $projectMargin,
+        private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
+    ) {}
 
     public function published(string $code): ReportCatalogMetadata
     {
-        return $code === $this->budgetPlanFact->metadata()->code
-            ? $this->budgetPlanFact->metadata()
-            : throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        return match ($code) {
+            $this->projectMargin->metadata()->code => $this->projectMargin->metadata(),
+            $this->budgetPlanFact->metadata()->code => $this->budgetPlanFact->metadata(),
+            default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
+        };
     }
 }

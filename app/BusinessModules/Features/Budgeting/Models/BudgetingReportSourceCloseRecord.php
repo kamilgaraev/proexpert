@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Models;
 
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 final class BudgetingReportSourceCloseRecord extends Model
 {
@@ -13,6 +13,7 @@ final class BudgetingReportSourceCloseRecord extends Model
 
     protected $fillable = [
         'close_id',
+        'report_code',
         'organization_id',
         'period_start',
         'period_end',

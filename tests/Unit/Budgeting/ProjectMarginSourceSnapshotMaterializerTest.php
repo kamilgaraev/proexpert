@@ -57,7 +57,7 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
     public function test_source_hash_changes_when_the_validated_close_identity_changes(): void
     {
         $first = $this->materialize($this->report());
-        $second = (new ProjectMarginSourceSnapshotMaterializer())->materialize(
+        $second = (new ProjectMarginSourceSnapshotMaterializer)->materialize(
             '01ARZ3NDEKTSV4RRFFQ69G5FAV',
             new ReportScope(1, [1], [10, 20], [], new DateTimeZone('UTC')),
             [
@@ -88,7 +88,7 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
 
     private function materialize(array $report): \App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite
     {
-        return (new ProjectMarginSourceSnapshotMaterializer())->materialize(
+        return (new ProjectMarginSourceSnapshotMaterializer)->materialize(
             '01ARZ3NDEKTSV4RRFFQ69G5FAV',
             new ReportScope(1, [1], [10, 20], [], new DateTimeZone('UTC')),
             [
@@ -114,6 +114,7 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
     {
         return new BudgetingReportSourceClose(
             closeId: $closeId,
+            reportCode: 'project_margin',
             identity: new BudgetingReportSourceCloseIdentity(1, '2026-01-01', '2026-01-31', 'scenario-1', 'budget-1'),
             sourceWatermarks: [
                 new BudgetingReportSourceWatermark('actuals', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'actuals:1', 'actuals-v1'),

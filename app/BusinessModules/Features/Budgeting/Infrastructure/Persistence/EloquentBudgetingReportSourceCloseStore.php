@@ -21,14 +21,14 @@ final class EloquentBudgetingReportSourceCloseStore implements BudgetingReportSo
     public function createApproved(CreateBudgetingReportSourceClose $request): BudgetingReportSourceClose
     {
         return DB::transaction(function () use ($request): BudgetingReportSourceClose {
-            $active = $this->activeCloseFor($request->identity);
+            $active = $this->activeCloseFor($request->reportCode, $request->identity);
 
             if ($request->restatesCloseId === null && $active instanceof BudgetingReportSourceCloseRecord) {
                 throw new DomainException('budgeting_report_source_close_active_exists');
             }
 
             if ($request->restatesCloseId !== null) {
-                if (!$active instanceof BudgetingReportSourceCloseRecord || $active->close_id !== $request->restatesCloseId) {
+                if (! $active instanceof BudgetingReportSourceCloseRecord || $active->close_id !== $request->restatesCloseId) {
                     throw new DomainException('budgeting_report_source_close_restatement_target_invalid');
                 }
 
@@ -42,6 +42,7 @@ final class EloquentBudgetingReportSourceCloseStore implements BudgetingReportSo
 
             $record = BudgetingReportSourceCloseRecord::query()->create([
                 'close_id' => $request->closeId,
+                'report_code' => $request->reportCode,
                 ...$request->identity->toArray(),
                 'formula_version' => $request->formulaVersion,
                 'source_manifest' => $request->sourceManifest,
@@ -74,9 +75,12 @@ final class EloquentBudgetingReportSourceCloseStore implements BudgetingReportSo
         return $record instanceof BudgetingReportSourceCloseRecord ? $this->toDto($record) : null;
     }
 
-    private function activeCloseFor(BudgetingReportSourceCloseIdentity $identity): ?BudgetingReportSourceCloseRecord
-    {
+    private function activeCloseFor(
+        string $reportCode,
+        BudgetingReportSourceCloseIdentity $identity,
+    ): ?BudgetingReportSourceCloseRecord {
         return BudgetingReportSourceCloseRecord::query()
+            ->where('report_code', $reportCode)
             ->where($identity->toArray())
             ->where('status', BudgetingReportSourceCloseStatus::APPROVED->value)
             ->lockForUpdate()
@@ -98,6 +102,7 @@ final class EloquentBudgetingReportSourceCloseStore implements BudgetingReportSo
 
         return new BudgetingReportSourceClose(
             closeId: (string) $record->close_id,
+            reportCode: (string) $record->report_code,
             identity: new BudgetingReportSourceCloseIdentity(
                 organizationId: (int) $record->organization_id,
                 periodStart: $record->period_start->format('Y-m-d'),

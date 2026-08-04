@@ -13,9 +13,7 @@ use DomainException;
 
 final class BudgetingReportSourceCloseService
 {
-    public function __construct(private readonly BudgetingReportSourceCloseStore $store)
-    {
-    }
+    public function __construct(private readonly BudgetingReportSourceCloseStore $store) {}
 
     public function createApproved(CreateBudgetingReportSourceClose $request): BudgetingReportSourceClose
     {
@@ -24,16 +22,19 @@ final class BudgetingReportSourceCloseService
 
     public function validatedCloseForReporting(
         string $closeId,
+        string $reportCode,
         BudgetingReportSourceCloseIdentity $identity,
         DateTimeImmutable $at,
     ): BudgetingReportSourceClose {
         $close = $this->store->find($closeId);
 
-        if (!$close instanceof BudgetingReportSourceClose || $close->identity->toArray() !== $identity->toArray()) {
+        if (! $close instanceof BudgetingReportSourceClose
+            || $close->reportCode !== $reportCode
+            || $close->identity->toArray() !== $identity->toArray()) {
             throw new DomainException('budgeting_report_source_close_not_found');
         }
 
-        if (!$close->isAvailableAt($at)) {
+        if (! $close->isAvailableAt($at)) {
             throw new DomainException('budgeting_report_source_close_not_available');
         }
 

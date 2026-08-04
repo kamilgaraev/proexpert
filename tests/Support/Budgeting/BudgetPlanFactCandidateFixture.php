@@ -81,9 +81,11 @@ final class BudgetPlanFactCandidateFixture
     public static function close(
         ?BudgetingReportSourceCloseIdentity $identity = null,
         ?string $formulaVersion = null,
+        string $reportCode = BudgetPlanFactCandidateContract::CODE,
     ): BudgetingReportSourceClose {
         return new BudgetingReportSourceClose(
             self::closeId(),
+            $reportCode,
             $identity ?? self::closeIdentity(),
             [new BudgetingReportSourceWatermark('budget', new DateTimeImmutable('2026-01-31T00:00:00+00:00'), 'budget:1', 'budget-v1')],
             $formulaVersion ?? BudgetPlanFactCandidateContract::FORMULA_VERSION,

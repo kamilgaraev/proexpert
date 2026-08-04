@@ -6,10 +6,10 @@ namespace Tests\Unit\Reporting\Http;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\CreateReportRunRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportCatalogRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ReportFormRequest;
-use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope;
 use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
@@ -17,6 +17,7 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -103,6 +104,19 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
         self::assertSame(422, $response->getStatusCode());
     }
 
+    #[DataProvider('projectOptionsContextOverrideProvider')]
+    public function test_project_options_reject_client_context_overrides(array $query): void
+    {
+        $request = Request::create('/api/v1/admin/reports/projects/17/project-margin/options', 'GET', $query);
+
+        $response = (new BindProjectReportScope)->handle(
+            $request,
+            static fn (): Response => new Response(status: 204),
+        );
+
+        self::assertSame(422, $response->getStatusCode());
+    }
+
     public function test_project_report_scope_binds_ids_only_from_verified_request_context(): void
     {
         $request = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], self::validRunBody());
@@ -124,6 +138,21 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
         );
 
         self::assertSame(204, $response->getStatusCode());
+    }
+
+    #[DataProvider('spoofedReportContextProvider')]
+    public function test_client_cannot_supply_actor_or_report_scope_fields(array $spoofed): void
+    {
+        $request = $this->reportRequest(
+            CreateReportRunRequest::class,
+            'POST',
+            [],
+            [...self::validRunBody(), ...$spoofed],
+        );
+
+        $exception = $this->middlewareValidationException($request);
+
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
     }
 
     public function test_client_query_interface_is_rejected_after_middleware_overwrites_legacy_input(): void
@@ -314,6 +343,27 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
         return [
             'catalog query' => [GetReportCatalogRequest::class, 'GET', [], []],
             'run JSON body' => [CreateReportRunRequest::class, 'POST', [], self::validRunBody()],
+        ];
+    }
+
+    public static function spoofedReportContextProvider(): array
+    {
+        return [
+            'actor' => [['user_id' => 99]],
+            'scope' => [['scope' => ['organization_id' => 99, 'project_ids' => [77]]]],
+            'organization' => [['organization_id' => 99]],
+            'project' => [['project_id' => 77]],
+        ];
+    }
+
+    public static function projectOptionsContextOverrideProvider(): array
+    {
+        return [
+            'organization' => [['organization_id' => 99]],
+            'project' => [['project_id' => 77]],
+            'actor' => [['user_id' => 88]],
+            'scope' => [['scope' => ['project_ids' => [77]]]],
+            'nested actor' => [['filters' => ['owner_id' => 88]]],
         ];
     }
 

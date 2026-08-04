@@ -14,7 +14,8 @@ use PHPUnit\Framework\TestCase;
 
 final class BudgetingReportSourceClosePostgresTest extends TestCase
 {
-    private ?Migration $migration = null;
+    /** @var list<Migration> */
+    private array $migrations = [];
 
     protected function setUp(): void
     {
@@ -24,7 +25,7 @@ final class BudgetingReportSourceClosePostgresTest extends TestCase
             $this->markTestSkipped('RUN_PGSQL_CLOSE_CONTRACT_TESTS=1 is required.');
         }
 
-        $app = require dirname(__DIR__, 3) . '/bootstrap/app.php';
+        $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
 
         $connection = DB::connection();
@@ -33,14 +34,14 @@ final class BudgetingReportSourceClosePostgresTest extends TestCase
         }
 
         $database = (string) $connection->getDatabaseName();
-        if (!str_ends_with($database, '_test')) {
+        if (! str_ends_with($database, '_test')) {
             throw new LogicException('pgsql_close_contract_test_database_required');
         }
 
         Schema::dropIfExists('budgeting_report_source_watermarks');
         Schema::dropIfExists('budgeting_report_source_closes');
 
-        if (!Schema::hasTable('users')) {
+        if (! Schema::hasTable('users')) {
             Schema::create('users', function ($table): void {
                 $table->id();
                 $table->string('name');
@@ -55,18 +56,25 @@ final class BudgetingReportSourceClosePostgresTest extends TestCase
             ['name' => 'Close contract test', 'email' => 'close-contract-test@example.test', 'password' => 'not-used']
         );
 
-        $migration = require dirname(__DIR__, 3) . '/app/BusinessModules/Features/Budgeting/migrations/2026_07_31_120000_create_budgeting_report_source_close_tables.php';
-        if (!$migration instanceof Migration) {
-            throw new LogicException('pgsql_close_contract_migration_invalid');
-        }
+        foreach ([
+            '2026_07_31_120000_create_budgeting_report_source_close_tables.php',
+            '2026_08_05_120000_scope_budgeting_report_source_closes_by_report.php',
+        ] as $migrationFile) {
+            $migration = require dirname(__DIR__, 3).'/app/BusinessModules/Features/Budgeting/migrations/'.$migrationFile;
+            if (! $migration instanceof Migration) {
+                throw new LogicException('pgsql_close_contract_migration_invalid');
+            }
 
-        $this->migration = $migration;
-        $this->migration->up();
+            $migration->up();
+            $this->migrations[] = $migration;
+        }
     }
 
     protected function tearDown(): void
     {
-        $this->migration?->down();
+        foreach (array_reverse($this->migrations) as $migration) {
+            $migration->down();
+        }
 
         parent::tearDown();
     }
@@ -77,6 +85,21 @@ final class BudgetingReportSourceClosePostgresTest extends TestCase
 
         $this->expectException(QueryException::class);
         DB::table('budgeting_report_source_closes')->insert($this->close('01K00000000000000000000000'));
+    }
+
+    public function test_different_reports_can_close_the_same_period_identity_independently(): void
+    {
+        DB::table('budgeting_report_source_closes')->insert($this->close('01JZZZZZZZZZZZZZZZZZZZZZZZ'));
+        DB::table('budgeting_report_source_closes')->insert($this->close(
+            '01K00000000000000000000000',
+            reportCode: 'budget_plan_fact',
+        ));
+
+        self::assertSame(2, DB::table('budgeting_report_source_closes')->count());
+
+        DB::table('budgeting_report_source_closes')
+            ->where('report_code', 'budget_plan_fact')
+            ->update(['status' => 'expired']);
     }
 
     public function test_header_and_watermark_are_immutable(): void
@@ -162,10 +185,37 @@ final class BudgetingReportSourceClosePostgresTest extends TestCase
         });
     }
 
-    private function close(string $closeId, ?string $restatesCloseId = null, string $planIdentity = 'budget-v2'): array
+    public function test_restatement_with_replacement_from_another_report_is_rejected_at_commit(): void
     {
+        $priorCloseId = '01JZZZZZZZZZZZZZZZZZZZZZZZ';
+        $replacementCloseId = '01K00000000000000000000000';
+        DB::table('budgeting_report_source_closes')->insert($this->close($priorCloseId));
+
+        $this->expectException(QueryException::class);
+        DB::transaction(function () use ($priorCloseId, $replacementCloseId): void {
+            DB::table('budgeting_report_source_closes')->where('close_id', $priorCloseId)->update([
+                'status' => 'restated',
+                'restated_by' => 900000001,
+                'restated_at' => '2026-02-01 00:00:00+00',
+                'restated_by_close_id' => $replacementCloseId,
+            ]);
+            DB::table('budgeting_report_source_closes')->insert($this->close(
+                $replacementCloseId,
+                $priorCloseId,
+                reportCode: 'budget_plan_fact',
+            ));
+        });
+    }
+
+    private function close(
+        string $closeId,
+        ?string $restatesCloseId = null,
+        string $planIdentity = 'budget-v2',
+        string $reportCode = 'project_margin',
+    ): array {
         return [
             'close_id' => $closeId,
+            'report_code' => $reportCode,
             'organization_id' => 700001,
             'period_start' => '2026-01-01',
             'period_end' => '2026-01-31',

@@ -4,19 +4,18 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Budgeting;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStreamingStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillPage;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotReadRequest;
-use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
-use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
-use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIntegrity;
+use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
@@ -321,6 +320,7 @@ final class PlanFactSourceSnapshotTest extends TestCase
         $first = $this->materialize($this->report());
         $other = new BudgetingReportSourceClose(
             closeId: '01K00000000000000000000000',
+            reportCode: 'budget_plan_fact',
             identity: $this->identity(),
             sourceWatermarks: $this->close()->sourceWatermarks,
             formulaVersion: 'margin-v1',
@@ -513,6 +513,7 @@ final class PlanFactSourceSnapshotTest extends TestCase
     {
         return new BudgetingReportSourceClose(
             closeId: '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            reportCode: 'budget_plan_fact',
             identity: $this->identity(),
             sourceWatermarks: [
                 new BudgetingReportSourceWatermark('actuals', new DateTimeImmutable('2026-01-31T17:00:00+00:00'), 'actuals:1', 'actuals-v1'),

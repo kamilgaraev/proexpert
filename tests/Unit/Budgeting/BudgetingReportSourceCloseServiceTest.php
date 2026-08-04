@@ -17,16 +17,18 @@ use PHPUnit\Framework\TestCase;
 
 final class BudgetingReportSourceCloseServiceTest extends TestCase
 {
+    private const REPORT_CODE = 'project_margin';
+
     public function test_content_hash_is_canonical_across_manifest_and_watermark_order(): void
     {
         $identity = $this->identity();
         $first = $this->watermarks();
         $second = array_reverse($first);
 
-        $firstHash = CreateBudgetingReportSourceClose::contentHashFor($identity, $first, 'margin-v1', [
+        $firstHash = CreateBudgetingReportSourceClose::contentHashFor(self::REPORT_CODE, $identity, $first, 'margin-v1', [
             'sources' => ['budget' => ['version' => 'v2'], 'actual' => ['cutoff' => '2026-01-31']],
         ]);
-        $secondHash = CreateBudgetingReportSourceClose::contentHashFor($identity, $second, 'margin-v1', [
+        $secondHash = CreateBudgetingReportSourceClose::contentHashFor(self::REPORT_CODE, $identity, $second, 'margin-v1', [
             'sources' => ['actual' => ['cutoff' => '2026-01-31'], 'budget' => ['version' => 'v2']],
         ]);
 
@@ -39,6 +41,7 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
 
         new CreateBudgetingReportSourceClose(
             closeId: '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            reportCode: self::REPORT_CODE,
             identity: $this->identity(),
             sourceWatermarks: $this->watermarks(),
             formulaVersion: 'margin-v1',
@@ -52,7 +55,7 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
 
     public function test_only_one_active_close_is_created_for_an_identity_without_restatement(): void
     {
-        $store = new InMemoryBudgetingReportSourceCloseStore();
+        $store = new InMemoryBudgetingReportSourceCloseStore;
         $service = new BudgetingReportSourceCloseService($store);
         $first = $this->request('01JZZZZZZZZZZZZZZZZZZZZZZZ');
 
@@ -65,7 +68,7 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
 
     public function test_restatement_replaces_the_active_identity_only_when_it_names_the_prior_close(): void
     {
-        $store = new InMemoryBudgetingReportSourceCloseStore();
+        $store = new InMemoryBudgetingReportSourceCloseStore;
         $service = new BudgetingReportSourceCloseService($store);
         $original = $service->createApproved($this->request('01JZZZZZZZZZZZZZZZZZZZZZZZ'));
 
@@ -78,14 +81,29 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
         self::assertFalse(BudgetingReportSourceCloseStatus::RESTATED->canTransitionTo(BudgetingReportSourceCloseStatus::APPROVED));
     }
 
+    public function test_different_reports_have_independent_active_closes_for_the_same_period_identity(): void
+    {
+        $service = new BudgetingReportSourceCloseService(new InMemoryBudgetingReportSourceCloseStore);
+
+        $margin = $service->createApproved($this->request('01JZZZZZZZZZZZZZZZZZZZZZZZ'));
+        $planFact = $service->createApproved($this->request(
+            '01K00000000000000000000000',
+            reportCode: 'budget_plan_fact',
+        ));
+
+        self::assertSame(self::REPORT_CODE, $margin->reportCode);
+        self::assertSame('budget_plan_fact', $planFact->reportCode);
+    }
+
     public function test_validated_close_requires_matching_identity_and_retention(): void
     {
-        $store = new InMemoryBudgetingReportSourceCloseStore();
+        $store = new InMemoryBudgetingReportSourceCloseStore;
         $service = new BudgetingReportSourceCloseService($store);
         $close = $service->createApproved($this->request('01JZZZZZZZZZZZZZZZZZZZZZZZ'));
 
         self::assertSame($close, $service->validatedCloseForReporting(
             $close->closeId,
+            self::REPORT_CODE,
             $this->identity(),
             new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
         ));
@@ -93,6 +111,7 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
         $this->expectException(DomainException::class);
         $service->validatedCloseForReporting(
             $close->closeId,
+            self::REPORT_CODE,
             new BudgetingReportSourceCloseIdentity(7, '2026-01-01', '2026-01-31', 'base', 'budget-v3'),
             new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
         );
@@ -100,7 +119,7 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
 
     public function test_validated_close_rejects_an_expired_retention_deadline(): void
     {
-        $store = new InMemoryBudgetingReportSourceCloseStore();
+        $store = new InMemoryBudgetingReportSourceCloseStore;
         $service = new BudgetingReportSourceCloseService($store);
         $close = $service->createApproved($this->request(
             '01JZZZZZZZZZZZZZZZZZZZZZZZ',
@@ -111,6 +130,22 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
         $this->expectExceptionMessage('budgeting_report_source_close_not_available');
         $service->validatedCloseForReporting(
             $close->closeId,
+            self::REPORT_CODE,
+            $this->identity(),
+            new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
+        );
+    }
+
+    public function test_validated_close_rejects_a_close_from_another_report(): void
+    {
+        $service = new BudgetingReportSourceCloseService(new InMemoryBudgetingReportSourceCloseStore);
+        $close = $service->createApproved($this->request('01JZZZZZZZZZZZZZZZZZZZZZZZ'));
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('budgeting_report_source_close_not_found');
+        $service->validatedCloseForReporting(
+            $close->closeId,
+            'budget_plan_fact',
             $this->identity(),
             new DateTimeImmutable('2026-02-01T00:00:00+00:00'),
         );
@@ -134,19 +169,20 @@ final class BudgetingReportSourceCloseServiceTest extends TestCase
         string $closeId,
         ?string $restatesCloseId = null,
         ?DateTimeImmutable $retainedUntil = null,
-    ): CreateBudgetingReportSourceClose
-    {
+        string $reportCode = self::REPORT_CODE,
+    ): CreateBudgetingReportSourceClose {
         $identity = $this->identity();
         $watermarks = $this->watermarks();
         $manifest = ['budget_version' => 'budget-v2', 'actuals_snapshot' => 'completed_work:771'];
 
         return new CreateBudgetingReportSourceClose(
             closeId: $closeId,
+            reportCode: $reportCode,
             identity: $identity,
             sourceWatermarks: $watermarks,
             formulaVersion: 'margin-v1',
             sourceManifest: $manifest,
-            contentHash: CreateBudgetingReportSourceClose::contentHashFor($identity, $watermarks, 'margin-v1', $manifest),
+            contentHash: CreateBudgetingReportSourceClose::contentHashFor($reportCode, $identity, $watermarks, 'margin-v1', $manifest),
             approvedBy: 11,
             approvedAt: new DateTimeImmutable('2026-01-31T18:00:00+00:00'),
             retainedUntil: $retainedUntil ?? new DateTimeImmutable('2033-01-31T00:00:00+00:00'),
@@ -165,7 +201,7 @@ final class InMemoryBudgetingReportSourceCloseStore implements BudgetingReportSo
 
     public function createApproved(CreateBudgetingReportSourceClose $request): BudgetingReportSourceClose
     {
-        $identity = json_encode($request->identity->toArray(), JSON_THROW_ON_ERROR);
+        $identity = $request->reportCode.':'.json_encode($request->identity->toArray(), JSON_THROW_ON_ERROR);
         $activeCloseId = $this->activeByIdentity[$identity] ?? null;
 
         if ($request->restatesCloseId === null && $activeCloseId !== null) {
@@ -180,6 +216,7 @@ final class InMemoryBudgetingReportSourceCloseStore implements BudgetingReportSo
             $prior = $this->byId[$request->restatesCloseId];
             $this->byId[$prior->closeId] = new BudgetingReportSourceClose(
                 closeId: $prior->closeId,
+                reportCode: $prior->reportCode,
                 identity: $prior->identity,
                 sourceWatermarks: $prior->sourceWatermarks,
                 formulaVersion: $prior->formulaVersion,
@@ -195,6 +232,7 @@ final class InMemoryBudgetingReportSourceCloseStore implements BudgetingReportSo
 
         $close = new BudgetingReportSourceClose(
             closeId: $request->closeId,
+            reportCode: $request->reportCode,
             identity: $request->identity,
             sourceWatermarks: $request->sourceWatermarks,
             formulaVersion: $request->formulaVersion,

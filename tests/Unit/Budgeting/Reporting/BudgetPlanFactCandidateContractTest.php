@@ -107,6 +107,16 @@ final class BudgetPlanFactCandidateContractTest extends TestCase
         );
     }
 
+    public function test_rejects_close_from_another_report(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        BudgetPlanFactCandidateFixture::contract()->assertSnapshotRequest(
+            BudgetPlanFactCandidateFixture::scope(),
+            BudgetPlanFactCandidateFixture::filters(),
+            BudgetPlanFactCandidateFixture::close(reportCode: 'project_margin'),
+        );
+    }
+
     public function test_rejects_grouping_drift(): void
     {
         $filters = BudgetPlanFactCandidateFixture::filters();
