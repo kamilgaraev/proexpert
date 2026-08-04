@@ -354,7 +354,9 @@
       "time_tracking.approve",
       "time_tracking.reject",
       "time_tracking.statistics",
-      "time_tracking.reports"
+      "time_tracking.reports",
+      "time_tracking.reports.export",
+      "time_tracking.cost.view"
     ],
     "material-analytics": [
       "materials.analytics.summary",

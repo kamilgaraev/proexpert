@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\EffectiveLaborRateSource;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\ProjectLaborCostDatabasePort;
 use App\BusinessModules\Features\TimeTracking\Reporting\Infrastructure\DatabaseProjectLaborCostAdapter;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostOptionsService;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostProvider;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostQueryService;
 use App\BusinessModules\Features\TimeTracking\TimeTrackingServiceProvider;
@@ -62,6 +63,7 @@ final class LaborPayrollProviderTest extends TestCase
         self::assertInstanceOf(ReportDataProvider::class, $this->app->make(ProjectLaborCostProvider::class));
         self::assertInstanceOf(ReportRowQuery::class, $this->app->make(ProjectLaborCostQueryService::class));
         self::assertInstanceOf(ReportDrillDownProvider::class, $this->app->make(ProjectLaborCostQueryService::class));
+        self::assertInstanceOf(ProjectLaborCostOptionsService::class, $this->app->make(ProjectLaborCostOptionsService::class));
     }
 
     #[Test]

@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
@@ -75,7 +76,9 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.project-budget-plan-fact.runs.store',
             'admin.reports.project-budget-plan-fact.options',
             'admin.reports.project-margin.runs.store',
-            'admin.reports.project-margin.options' => $this->targets->createRun(
+            'admin.reports.project-margin.options',
+            'admin.reports.project-labor-cost.runs.store',
+            'admin.reports.project-labor-cost.options' => $this->targets->createRun(
                 $this->routeId($request, 'reportCode'),
             ),
             'admin.reports.runs.show', 'admin.reports.runs.rows' => $this->targets->run(
@@ -116,6 +119,7 @@ final readonly class AuthorizeReportDefinitionAccess
         if (in_array($reportCode, [
             BudgetPlanFactCandidateContract::CODE,
             ProjectMarginCandidateContract::CODE,
+            ProjectLaborCostCandidateContract::CODE,
         ], true)) {
             $this->deny();
         }

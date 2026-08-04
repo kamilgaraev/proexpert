@@ -6,6 +6,7 @@ namespace Tests\Unit\Reporting\WaveOne;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
@@ -52,6 +53,7 @@ final class LaborPayrollSourceTest extends TestCase
         self::assertContains(ReportDataProvider::class, class_implements(ProjectLaborCostProvider::class));
         self::assertContains(ReportRowQuery::class, class_implements(ProjectLaborCostQueryService::class));
         self::assertContains(ReportDrillDownProvider::class, class_implements(ProjectLaborCostQueryService::class));
+        self::assertContains(ReportDrillDownTokenColumns::class, class_implements(ProjectLaborCostQueryService::class));
     }
 
     #[Test]

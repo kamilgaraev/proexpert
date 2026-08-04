@@ -59,6 +59,8 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 
@@ -88,11 +90,15 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
         $this->app->singleton(ProjectMarginBuiltinPublishedReport::class, fn (Application $app): ProjectMarginBuiltinPublishedReport => new ProjectMarginBuiltinPublishedReport(
             $app->make(\App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract::class),
         ));
+        $this->app->singleton(ProjectLaborCostBuiltinPublishedReport::class, fn (Application $app): ProjectLaborCostBuiltinPublishedReport => new ProjectLaborCostBuiltinPublishedReport(
+            $app->make(ProjectLaborCostCandidateContract::class),
+        ));
         $this->app->singleton(
             BuiltinPublishedReportDefinitionRegistry::class,
             fn (Application $app): BuiltinPublishedReportDefinitionRegistry => new BuiltinPublishedReportDefinitionRegistry(
                 $app->make(ProjectMarginBuiltinPublishedReport::class),
                 $app->make(BudgetPlanFactBuiltinPublishedReport::class),
+                $app->make(ProjectLaborCostBuiltinPublishedReport::class),
             ),
         );
         $this->app->singleton(
@@ -102,9 +108,9 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
                 $app->make(DatabasePublishedReportDefinitionRegistry::class),
             ),
         );
-        $this->app->singleton(BuiltinReportCatalogMetadataRegistry::class, fn (Application $app): BuiltinReportCatalogMetadataRegistry => new BuiltinReportCatalogMetadataRegistry($app->make(ProjectMarginBuiltinPublishedReport::class), $app->make(BudgetPlanFactBuiltinPublishedReport::class)));
+        $this->app->singleton(BuiltinReportCatalogMetadataRegistry::class, fn (Application $app): BuiltinReportCatalogMetadataRegistry => new BuiltinReportCatalogMetadataRegistry($app->make(ProjectMarginBuiltinPublishedReport::class), $app->make(BudgetPlanFactBuiltinPublishedReport::class), $app->make(ProjectLaborCostBuiltinPublishedReport::class)));
         $this->app->singleton(ReportCatalogMetadataRegistry::class, fn (Application $app): CompositeReportCatalogMetadataRegistry => new CompositeReportCatalogMetadataRegistry($app->make(BuiltinReportCatalogMetadataRegistry::class), $app->make(DatabaseReportCatalogMetadataRegistry::class)));
-        $this->app->singleton(BuiltinReportSchedulingCapabilityRegistry::class, fn (Application $app): BuiltinReportSchedulingCapabilityRegistry => new BuiltinReportSchedulingCapabilityRegistry($app->make(ProjectMarginBuiltinPublishedReport::class), $app->make(BudgetPlanFactBuiltinPublishedReport::class)));
+        $this->app->singleton(BuiltinReportSchedulingCapabilityRegistry::class, fn (Application $app): BuiltinReportSchedulingCapabilityRegistry => new BuiltinReportSchedulingCapabilityRegistry($app->make(ProjectMarginBuiltinPublishedReport::class), $app->make(BudgetPlanFactBuiltinPublishedReport::class), $app->make(ProjectLaborCostBuiltinPublishedReport::class)));
         $this->app->singleton(ReportSchedulingCapabilityRegistry::class, fn (Application $app): CompositeReportSchedulingCapabilityRegistry => new CompositeReportSchedulingCapabilityRegistry($app->make(BuiltinReportSchedulingCapabilityRegistry::class), $app->make(DatabaseReportSchedulingCapabilityRegistry::class)));
         $this->app->singleton(GetReportCatalogAction::class, GetReportCatalogHandler::class);
         $this->app->singleton(

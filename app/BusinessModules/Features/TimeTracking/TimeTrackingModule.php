@@ -90,7 +90,9 @@ class TimeTrackingModule implements ModuleInterface, ConfigurableInterface
             'time_tracking.submit',
             'time_tracking.statistics',
             'time_tracking.calendar',
-            'time_tracking.reports'
+            'time_tracking.reports',
+            'time_tracking.reports.export',
+            'time_tracking.cost.view',
         ];
     }
 

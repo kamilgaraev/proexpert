@@ -216,6 +216,11 @@
       "budgeting.audit.view",
       "budgeting.sync.view"
     ],
+    "time-tracking": [
+      "time_tracking.view",
+      "time_tracking.reports.export",
+      "time_tracking.cost.view"
+    ],
     "access_recertification": [
       "access_recertification.campaigns.view",
       "access_recertification.reviews.view",

@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 
 final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportDefinitionRegistry
 {
@@ -21,9 +22,10 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
     public function __construct(
         ProjectMarginBuiltinPublishedReport $projectMargin,
         BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
+        ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
     ) {
         $byCode = [];
-        foreach ([$projectMargin->definition(), $budgetPlanFact->definition()] as $definition) {
+        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $projectLaborCost->definition()] as $definition) {
             $byCode[$definition->code] = $definition;
         }
         ksort($byCode, SORT_STRING);

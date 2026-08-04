@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\CreateReportRunRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportCatalogRequest;
+use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ProjectLaborCostReportOptionsRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ReportFormRequest;
 use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -88,6 +89,21 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
 
         self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
         self::assertSame([], $exception->safeFields);
+    }
+
+    public function test_project_labor_cost_option_search_requires_an_option_type(): void
+    {
+        $request = $this->reportRequest(
+            ProjectLaborCostReportOptionsRequest::class,
+            'GET',
+            ['search' => 'Иванов'],
+            [],
+        );
+
+        $exception = $this->middlewareValidationException($request);
+
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+        self::assertSame(['fields' => ['search']], $exception->safeFields);
     }
 
     public function test_project_report_scope_rejects_client_supplied_organization_or_project(): void
@@ -343,6 +359,12 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
         return [
             'catalog query' => [GetReportCatalogRequest::class, 'GET', [], []],
             'run JSON body' => [CreateReportRunRequest::class, 'POST', [], self::validRunBody()],
+            'project labor cost options' => [
+                ProjectLaborCostReportOptionsRequest::class,
+                'GET',
+                ['type' => 'employees', 'search' => 'Иванов', 'page' => 2],
+                [],
+            ],
         ];
     }
 
@@ -353,6 +375,8 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
             'scope' => [['scope' => ['organization_id' => 99, 'project_ids' => [77]]]],
             'organization' => [['organization_id' => 99]],
             'project' => [['project_id' => 77]],
+            'projects' => [['project_ids' => [77]]],
+            'organizations' => [['organization_ids' => [99]]],
         ];
     }
 
