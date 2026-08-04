@@ -154,6 +154,10 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
         self::assertSame($snapshot->id, $cursorRows[0]['snapshot_id']);
         self::assertSame($snapshot->sourceHash->value, $cursorRows[0]['source_hash']);
         self::assertCount(1, $drill->rows);
+        if ($code === 'project_margin') {
+            self::assertSame('RUB', $result->totals['by_currency'][0]['currency']);
+            self::assertSame('20', $result->totals['by_currency'][0]['actual']['revenue']);
+        }
         self::assertSame($liveCalls, $source->calls);
         self::assertStringNotContainsString('Sensitive', json_encode([$first, $drill, $cursorRows], JSON_THROW_ON_ERROR));
     }
@@ -612,9 +616,23 @@ final class ProjectMarginSnapshotSource implements ProjectMarginSourceSnapshotRe
     {
         $this->calls++;
 
-        return ['filters' => $input, 'period' => ['from' => '2026-01-01', 'to' => '2026-01-31'], 'rows' => [
-            $this->row('first', 'a'), $this->row('second', 'b'),
-        ]];
+        $money = [
+            'cost' => 4.0 * $this->revision,
+            'gross_margin' => 16.0 * $this->revision,
+            'margin_percent' => 80.0,
+            'revenue' => 20.0 * $this->revision,
+        ];
+
+        return [
+            'filters' => $input,
+            'period' => ['from' => '2026-01-01', 'to' => '2026-01-31'],
+            'totals_by_currency' => [[
+                'actual' => $money, 'currency' => 'RUB', 'forecast' => $money, 'plan' => $money,
+                'problem_flags' => [], 'quality_status' => 'complete', 'risk_flags' => [],
+                'rows_count' => 2, 'variance' => $money,
+            ]],
+            'rows' => [$this->row('first', 'a'), $this->row('second', 'b')],
+        ];
     }
 
     public function drillDownForProjectScope(array $input, array $projectIds): array

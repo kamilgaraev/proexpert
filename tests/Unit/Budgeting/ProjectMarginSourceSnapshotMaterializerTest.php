@@ -34,6 +34,8 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
         self::assertSame('01JZZZZZZZZZZZZZZZZZZZZZZZ', $write->header->watermarks['close_id']);
         self::assertSame('margin-v1', $write->header->watermarks['formula_version']);
         self::assertSame('actuals:1', $write->header->watermarks['source_watermarks'][0]['watermark']);
+        self::assertSame('RUB', $write->header->watermarks['result_totals_by_currency'][0]['currency']);
+        self::assertSame('300', $write->header->watermarks['result_totals_by_currency'][0]['actual']['revenue']);
         self::assertArrayNotHasKey('source_document_number', $write->drillRows[0]->payload);
         self::assertArrayNotHasKey('source_id', $write->drillRows[0]->payload);
         self::assertArrayNotHasKey('drill_down', $write->drillRows[0]->payload);
@@ -136,6 +138,17 @@ final class ProjectMarginSourceSnapshotMaterializerTest extends TestCase
         return [
             'filters' => ['budget_version_uuid' => 'budget-1', 'scenario_uuid' => 'scenario-1'],
             'period' => ['from' => '2026-01-01', 'to' => '2026-01-31'],
+            'totals_by_currency' => [[
+                'currency' => 'RUB',
+                'plan' => ['revenue' => 300.0, 'cost' => 40.0, 'gross_margin' => 260.0, 'margin_percent' => 86.67],
+                'forecast' => ['revenue' => 300.0, 'cost' => 40.0, 'gross_margin' => 260.0, 'margin_percent' => 86.67],
+                'actual' => ['revenue' => 300.0, 'cost' => 40.0, 'gross_margin' => 260.0, 'margin_percent' => 86.67],
+                'variance' => ['revenue' => 0.0, 'cost' => 0.0, 'gross_margin' => 0.0, 'margin_percent' => 0.0],
+                'problem_flags' => [],
+                'risk_flags' => [],
+                'quality_status' => 'actual',
+                'rows_count' => 2,
+            ]],
             'rows' => [
                 $this->row('second-key', 20, 'Sensitive project B', 200.0),
                 $this->row('first-key', 10, 'Sensitive project A', 100.0),

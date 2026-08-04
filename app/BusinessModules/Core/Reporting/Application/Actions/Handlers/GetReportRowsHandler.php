@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -71,6 +72,8 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
             || $page->sort->direction !== $window->sort->direction) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
         }
+
+        $page = $this->withDrillDownTokens($page, $binding, $run, $query, $snapshot);
 
         return $this->withSignedNextCursor($page, $run, $query, $snapshot);
     }
@@ -197,6 +200,60 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
             $token,
             $page->limit,
             true,
+            $page->sort,
+        );
+    }
+
+    private function withDrillDownTokens(
+        ReportPage $page,
+        ReportDefinitionBinding $binding,
+        ReportRun $run,
+        ReportQuery $query,
+        ReportSnapshotRef $snapshot,
+    ): ReportPage {
+        if (! $binding->drillDownProvider instanceof ReportDrillDownTokenColumns) {
+            return $page;
+        }
+
+        $columns = $binding->drillDownProvider->drillDownTokenColumns();
+        if ($columns === []) {
+            return $page;
+        }
+        $definitionColumns = array_fill_keys(array_column($query->definition->columns, 'id'), true);
+        foreach ($columns as $outputColumn => $providerColumn) {
+            if (! is_string($outputColumn)
+                || ! is_string($providerColumn)
+                || ! isset($definitionColumns[$outputColumn])
+                || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $providerColumn) !== 1) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+            }
+        }
+
+        $rows = array_map(function (array $row) use ($columns, $run, $query, $snapshot): array {
+            foreach ($columns as $outputColumn => $providerColumn) {
+                $row[$outputColumn] = $this->cursors->encodeDrillDownCell(
+                    $query->scope->organizationId,
+                    $run->reportCode,
+                    $run->id,
+                    $snapshot,
+                    $run->queryHash,
+                    $row['row_key'],
+                    $providerColumn,
+                    $run->expiresAt,
+                );
+            }
+
+            return $row;
+        }, $page->rows);
+
+        return new ReportPage(
+            $rows,
+            $page->totals,
+            $page->freshness,
+            $page->quality,
+            $page->nextCursor,
+            $page->limit,
+            $page->hasMore,
             $page->sort,
         );
     }
