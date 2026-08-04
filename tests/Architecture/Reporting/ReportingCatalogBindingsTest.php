@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Architecture\Reporting;
 
-use App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionCandidateValidator;
@@ -46,22 +45,10 @@ final class ReportingCatalogBindingsTest extends TestCase
             ReportDefinitionCandidateValidator::class,
             ReportDefinitionBindingMap::class,
             ReportSavedViewReferenceResolver::class,
-            ReportPublicationAdmissionProfileCatalog::class,
         ] as $contract) {
             self::assertTrue($app->bound($contract), $contract);
             self::assertTrue($app->isShared($contract), $contract);
         }
-    }
-
-    public function test_admission_profile_catalog_is_a_resolvable_singleton(): void
-    {
-        $app = new Application(dirname(__DIR__, 3));
-        (new ReportingCatalogServiceProvider($app))->register();
-
-        self::assertSame(
-            $app->make(ReportPublicationAdmissionProfileCatalog::class),
-            $app->make(ReportPublicationAdmissionProfileCatalog::class),
-        );
     }
 
     public function test_saved_view_reference_resolver_is_container_resolvable_without_database_access(): void

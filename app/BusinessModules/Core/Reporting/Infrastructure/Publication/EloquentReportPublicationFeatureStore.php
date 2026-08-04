@@ -6,12 +6,9 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Publication;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationFeatureConfiguration;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationIdentity;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Illuminate\Database\ConnectionInterface;
-use Illuminate\Database\QueryException;
 use InvalidArgumentException;
 use LogicException;
 
@@ -27,51 +24,6 @@ final class EloquentReportPublicationFeatureStore implements ReportPublicationFe
         $row = $this->connection->table('public.report_publication_features')->where('code', $code)->first();
 
         return $row === null ? null : $this->hydrate((array) $row);
-    }
-
-    public function configure(
-        ReportPublicationIdentity $publication,
-        ReportPublicationFeatureMode $mode,
-        array $organizationAllowlist,
-        array $userAllowlist,
-    ): ReportPublicationFeatureConfiguration {
-        if ($mode === ReportPublicationFeatureMode::DISABLED) {
-            throw new InvalidArgumentException('report_publication_disable_requires_rollback');
-        }
-        $configuration = new ReportPublicationFeatureConfiguration(
-            $publication->code,
-            $publication->publicationId,
-            $publication->proofHash,
-            $mode,
-            $organizationAllowlist,
-            $userAllowlist,
-        );
-
-        try {
-            $result = $this->connection->selectOne(<<<'SQL'
-                SELECT public.report_publication_configure_feature(
-                    ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb)
-                ) AS configured_at
-                SQL, [
-                $publication->code,
-                $publication->publicationId,
-                $publication->proofHash->value,
-                $configuration->mode->value,
-                CanonicalJson::encode($configuration->organizationAllowlist),
-                CanonicalJson::encode($configuration->userAllowlist),
-            ]);
-            if ($result === null) {
-                throw new LogicException('report_publication_feature_stale_identity');
-            }
-        } catch (QueryException $exception) {
-            if ($this->hasSqlState($exception, 'P0002')) {
-                throw new LogicException('report_publication_feature_stale_identity', 0, $exception);
-            }
-
-            throw $exception;
-        }
-
-        return $configuration;
     }
 
     private function hydrate(array $row): ReportPublicationFeatureConfiguration
@@ -96,9 +48,4 @@ final class EloquentReportPublicationFeatureStore implements ReportPublicationFe
         return $decoded;
     }
 
-    private function hasSqlState(QueryException $exception, string $sqlState): bool
-    {
-        return ($exception->errorInfo[0] ?? null) === $sqlState
-            || (string) $exception->getCode() === $sqlState;
-    }
 }

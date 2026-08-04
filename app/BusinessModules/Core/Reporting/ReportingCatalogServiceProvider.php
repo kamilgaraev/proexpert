@@ -10,7 +10,6 @@ use App\BusinessModules\Core\Reporting\Application\Catalog\ImmutableReportDefini
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
-use App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestRegistryFactory;
 use App\BusinessModules\Core\Reporting\Application\SavedViews\ReportSavedViewVersionHasher;
 use App\BusinessModules\Core\Reporting\Application\SavedViews\StoredReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionCoordinator;
@@ -66,33 +65,6 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->app->singleton(ProjectReportPublicationReleaseRequestRegistryFactory::class);
-        $this->app->singleton(
-            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots::class,
-            fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots(
-                (string) config('reporting.publication_release.bundle_root'),
-                (string) config('reporting.publication_release.candidate_root'),
-            ),
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolverFactory::class,
-            fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestResolverFactory => new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseRequestResolverFactory(
-                $app,
-                $app->make(ProjectReportPublicationReleaseRequestRegistryFactory::class),
-            ),
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog::class,
-            fn (): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog => \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionRequirements::profileCatalog(),
-        );
-        $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class, fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService => new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService(
-            new \App\BusinessModules\Core\Reporting\Application\Catalog\ReportPermissionCatalog,
-            new \App\BusinessModules\Core\Reporting\Application\Publication\ReportDefinitionVersionPolicy,
-            new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationBindingHasher,
-            $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationAdmissionProfileCatalog::class),
-            (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
-        ));
-        $this->app->singleton(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier::class, fn (): \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier => (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create());
         $this->app->singleton(
             LoadedReportManifest::class,
             fn (Application $app): LoadedReportManifest => $app
@@ -104,29 +76,11 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
         );
         $this->app->singleton(ReportPublicationRegistry::class, fn (Application $app): EloquentReportPublicationRegistry => new EloquentReportPublicationRegistry(
             $app['db']->connection(),
-            $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationEligibilityService::class),
             $app->make(\App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory::class),
-            (new \App\BusinessModules\Core\Reporting\Application\Publication\ProjectReportPublicationReleaseArtifactVerifierFactory)->create(),
         ));
         $this->app->singleton(ReportPublicationFeatureStore::class, fn (Application $app): EloquentReportPublicationFeatureStore => new EloquentReportPublicationFeatureStore(
             $app['db']->connection(),
         ));
-        $this->app->singleton(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestionService::class);
-        $this->app->singleton(
-            \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestor::class,
-            fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestionService => $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestionService::class),
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion::class,
-            fn (Application $app): \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion => new \App\BusinessModules\Core\Reporting\Application\Publication\ProductionReportPublicationReleaseIngestion(
-                $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseTrustedRoots::class),
-                new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestFileLoader,
-                $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseRequestResolverFactory::class),
-                $app->make(\App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseIngestor::class),
-                new \App\BusinessModules\Core\Reporting\Application\Publication\ReportPublicationReleaseBundleFileLoader,
-                $app->make(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationReleaseArtifactVerifier::class),
-            ),
-        );
         $this->app->singleton(BudgetPlanFactBuiltinPublishedReport::class, fn (Application $app): BudgetPlanFactBuiltinPublishedReport => new BudgetPlanFactBuiltinPublishedReport(
             $app->make(\App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract::class),
         ));

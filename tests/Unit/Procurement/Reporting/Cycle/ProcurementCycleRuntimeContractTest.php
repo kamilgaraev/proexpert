@@ -27,7 +27,6 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycl
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleMetric;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleSnapshotRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCycleSourceRead;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\CiEvidence\R15CiFixtureSnapshotStore;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementCycleStage;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReadinessProbe;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleReportAdapter;
@@ -85,43 +84,6 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             $materializer->identity($request, $source)->queryHash->value,
             $write->header->queryHash->value,
         );
-    }
-
-    public function test_ci_fixture_store_seals_ready_header_and_rejects_tampered_fixture(): void
-    {
-        $scope = (new ReportExecutionContextBuilder)->build()->scope;
-        $request = new ProcurementCycleSnapshotRequest(
-            $scope,
-            [],
-            new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
-            null,
-        );
-        $write = (new ProcurementCycleSourceSnapshotMaterializer)->materialize(
-            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
-            $request,
-            new ProcurementCycleSourceRead([], 0, 0, 0, 0, null, 0, null),
-            [],
-            [],
-        );
-        $store = new R15CiFixtureSnapshotStore($write);
-
-        $reflection = new \ReflectionClass($store);
-        $readyHeader = $reflection->getProperty('readyHeader')->getValue($store);
-        self::assertSame('ready', $readyHeader->status->value);
-        self::assertNotNull($readyHeader->readyAt);
-
-        $tamperedHeader = new ReportSourceSnapshotHeader(
-            $write->header->id, $write->header->sourceKind, $write->header->reportCode,
-            $write->header->schemaVersion, $write->header->scope, $write->header->queryHash,
-            $write->header->asOf, $write->header->sourceHash, $write->header->watermarks,
-            $write->header->generatedAt, $write->header->staleAt, $write->header->status,
-            $write->header->rowCount, $write->header->drillRowCount,
-            new Sha256Hash(str_repeat('0', 64)), $write->header->readyAt, $write->header->expiredAt,
-            $write->header->reportQueryIdentity, $write->header->reportQueryHash,
-        );
-        $tampered = new ReportSourceSnapshotWrite($tamperedHeader, $write->rows, $write->drillRows);
-        $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
-        new R15CiFixtureSnapshotStore($tampered);
     }
 
     public function test_source_snapshot_identity_changes_with_the_immutable_report_query_identity(): void
