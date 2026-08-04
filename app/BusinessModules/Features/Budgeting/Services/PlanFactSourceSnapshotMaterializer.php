@@ -329,10 +329,43 @@ final class PlanFactSourceSnapshotMaterializer
             'budget_version_uuid' => $filters['budget_version_uuid'] ?? null,
             'period_end' => $period['to'] ?? null,
             'period_start' => $period['from'] ?? null,
+            'result_totals_by_currency' => $this->resultTotals($report['totals_by_currency'] ?? []),
             'row_count' => count($rows),
             'scenario_uuid' => $filters['scenario_uuid'] ?? null,
             'source_aggregate_rows' => $sources,
         ], ...$close->snapshotWatermarks()];
+    }
+
+    /** @return list<array<string, bool|float|int|string|null>> */
+    private function resultTotals(mixed $totals): array
+    {
+        if (! is_array($totals) || ! array_is_list($totals)) {
+            throw new InvalidArgumentException('plan_fact_source_snapshot_totals_invalid');
+        }
+
+        $result = [];
+        foreach ($totals as $total) {
+            if (! is_array($total) || ! is_string($total['currency'] ?? null) || $total['currency'] === '') {
+                throw new InvalidArgumentException('plan_fact_source_snapshot_totals_invalid');
+            }
+            $normalized = $this->scalarMap($total);
+            foreach ($normalized as $key => $value) {
+                if (is_float($value)) {
+                    $normalized[$key] = $this->canonicalDecimal($value);
+                }
+            }
+            $result[] = $normalized;
+        }
+        usort($result, static fn (array $left, array $right): int => $left['currency'] <=> $right['currency']);
+
+        return $result;
+    }
+
+    private function canonicalDecimal(float $value): string
+    {
+        $normalized = rtrim(rtrim(sprintf('%.8F', $value), '0'), '.');
+
+        return $normalized === '-0' ? '0' : $normalized;
     }
 
     private function scalarMap(array $value): array

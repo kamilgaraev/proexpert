@@ -52,6 +52,8 @@ final class PlanFactSourceSnapshotTest extends TestCase
         self::assertSame($this->close()->closeId, $forward->header->watermarks['close_id']);
         self::assertSame('margin-v1', $forward->header->watermarks['formula_version']);
         self::assertSame('actuals-v1', $forward->header->watermarks['source_watermarks'][0]['source_schema_version']);
+        self::assertSame('RUB', $forward->header->watermarks['result_totals_by_currency'][0]['currency']);
+        self::assertSame('300', $forward->header->watermarks['result_totals_by_currency'][0]['plan_amount']);
         self::assertSame('sources', $forward->rows[0]->payload['drill']['column_id']);
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $forward->rows[0]->payload['drill']['key']);
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $forward->drillRows[0]->payload['source_ref']);
@@ -554,6 +556,17 @@ final class PlanFactSourceSnapshotTest extends TestCase
                 ['source_type' => 'budget_amounts', 'included_aggregate_rows' => 2],
                 ['source_type' => 'payment_transactions', 'included_aggregate_rows' => 1],
             ],
+            'totals_by_currency' => [[
+                'currency' => 'RUB',
+                'plan_amount' => 300.0,
+                'forecast_amount' => 320.0,
+                'actual_amount' => 280.0,
+                'committed_amount' => 10.0,
+                'variance_amount' => 20.0,
+                'variance_percent' => 6.67,
+                'risk_level' => 'medium',
+                'rows_count' => 2,
+            ]],
             'rows' => [
                 $this->row('second-key', 20, 'Sensitive project B', 200.0),
                 $this->row('first-key', 10, 'Sensitive project A', 100.0),

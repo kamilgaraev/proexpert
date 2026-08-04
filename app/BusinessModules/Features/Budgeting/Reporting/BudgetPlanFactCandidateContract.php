@@ -25,7 +25,7 @@ final readonly class BudgetPlanFactCandidateContract
 
     public const FORMULA_HASH = 'be8618c2f770e98c295dca6236e421d762d914add6e119a738d9b73630450c90';
 
-    public const SOURCE_HASH = '8ad5cca1c8bdd464a3863953887f18133e05ab8f77414095a54f37b077489975';
+    public const SOURCE_HASH = '4fbed53a23a895fb78bc0710e6771a28ca8898f4d42bc648d8f274832c8445a7';
 
     public function __construct(
         public string $formulaVersion = self::FORMULA_VERSION,

@@ -2,11 +2,13 @@
 
 ## Status
 
-G01, G04, G09 and G10 have identified business sources, but are blocked by source readiness. For G09/G10 the owner-approved close contract, storage and pre-admission writer wiring now exist. Their binding status is still `blocked_by_source_readiness`, their provider is `null`, and they are not executable reports.
+G10 `budget_plan_fact` admitted and published after the owner-approved close, immutable source snapshot, replay, scoped runtime binding, rows, drill-down and export contracts were implemented. Its current runtime uses `PlanFactReportSourceSnapshotAdapter`; organization and project scope are derived server-side. The reconciliation status and verification boundary are recorded in `budget-plan-fact-reconciliation.md`.
+
+G01, G04 and G09 remain blocked by source readiness. G09 has an owner-approved close contract and pre-admission writer, but still has no published runtime binding.
 
 G06, G11, G12, G13 and G21-G24 remain blocked by an explicit source contract. Their binding status is `blocked_by_source_contract`, their provider is `null`, and they are not executable reports.
 
-No Wave 1 candidate is implemented or registered in runtime.
+Other candidates retain their status below; this document must not use the historical pre-admission state to describe published G10.
 
 ## Source-readiness contracts
 
@@ -15,7 +17,7 @@ No Wave 1 candidate is implemented or registered in runtime.
 | G01 project_portfolio_health | Portfolio aggregation | Immutable as-of snapshot, replay cursor, and source-version retention | A persisted source snapshot can be replayed by `(organization_id, as_of, source_version)` with identical scoped and redacted rows. |
 | G04 portfolio_liquidity | Liquidity forecast aggregation | Immutable forecast snapshot, scenario version, and replay cursor | A persisted snapshot can be replayed by `(organization_id, as_of, scenario_id, source_version)` without reading mutable current state. |
 | G09 project_margin | Project-margin calculation | Approved close identity, immutable inputs, per-source watermark, formula/source version and replay cursor | An approved close snapshot reproduces rows from `(organization_id, reporting_period, close_version)` after later source changes. |
-| G10 budget_plan_fact | Budget plan/fact calculation | Approved plan/fact close identity, immutable inputs, per-source watermark, scenario/source version and replay cursor | A persisted `(organization_id, reporting_period, scenario_id, source_version)` snapshot reproduces plan, fact and variance values. |
+| G10 budget_plan_fact | Budget plan/fact calculation | Admitted: approved close, immutable source snapshot, watermarks, formula/source version, scoped cursor and replay are implemented | A persisted `(organization_id, reporting_period, scenario_id, source_version)` snapshot reproduces plan, fact, variance, drill rows and totals without client-controlled tenant scope. |
 
 ### G09 `project_margin` source snapshot contract (schema `1.0.0`)
 
@@ -37,7 +39,7 @@ G09 therefore remains `blocked_by_source_readiness` with a `null` provider. Clos
 
 ### G10 `budget_plan_fact` source snapshot contract (schema `1.0.0`)
 
-`PlanFactSourceSnapshotWriter` is a pre-admission infrastructure writer. It uses `PlanFactReportService` through its internal scoped snapshot contract and persists only through `ReportSourceSnapshotStore`; it is not a `ReportDataProvider`, `ReportRowQuery`, `ReportDrillDownProvider`, runtime binding, route or catalog registration.
+`PlanFactSourceSnapshotWriter` uses `PlanFactReportService` through its scoped snapshot contract and persists only through `ReportSourceSnapshotStore`. `PlanFactReportSourceSnapshotAdapter` supplies the published `ReportDataProvider`, `ReportRowQuery` and `ReportDrillDownProvider` binding.
 
 | Contract element | G10 rule |
 | --- | --- |
@@ -52,7 +54,7 @@ G09 therefore remains `blocked_by_source_readiness` with a `null` provider. Clos
 | Redaction | Rows exclude article, responsibility-center, project, counterparty and scenario display payloads. Drill entries exclude raw IDs, numbers, titles, route hints and source URLs; `sha256(source_type|source_id)` is the only retained source reference. |
 | Freshness and close limitation | `PlanFactReportService` currently reads mutable budget, payment transaction, reservation, payment document and schedule tables. `BudgetPeriodClosure` locks budget edits but does not capture the active version identifiers, plan rows, factual inputs, per-source update watermarks or a content hash; the period may be reopened. A `BudgetVersion` approval/activation records lifecycle timestamps but is not a retained immutable plan snapshot and does not version facts, reservations or documents. `EpmDataMartSnapshot` is recalculated from live services, superseded on the next run and has no owner approval or retention policy. A writer may set `as_of`/`stale_at`, but this is only a captured live result and does not establish a close policy or admission. |
 
-G10 therefore remains `blocked_by_source_readiness` with a `null` provider. Close validation is wired into the pre-admission writer, but admission still requires PostgreSQL CI constraint evidence, a replay acceptance test showing a closed-period snapshot remains identical after upstream mutation, and runtime-provider conformance. No runtime provider is created by this wiring.
+G10 is published through the canonical runtime. The project route injects organization/project filters from verified request context and rejects client-supplied scope. Options expose only retained approved closes of the current organization. Rows, server-provided totals, drill-down and CSV/XLSX share one sealed snapshot. PostgreSQL migration/constraint execution remains a deployment responsibility and is not emulated by local DB commands.
 
 ### G09/G10 close and source-version decision (verified 2026-07-31)
 
@@ -66,13 +68,13 @@ No existing Budgeting model is an authoritative approved-close source for either
 
 The approved-close contract now stores an explicit record outside the Reporting runtime with immutable `close_id`; organization and inclusive reporting period; selected plan/scenario version identities; a source watermark and cutoff for every factual source used by the candidate; formula/source-schema version; canonical content hash; approver and approval time; lifecycle/restatement relation; and a retention deadline. The G09/G10 pre-admission writers require that record before reading their live scoped services, and carry its identity into the snapshot source hash and watermarks. Until the remaining gates pass, capture metadata, `as_of`, `stale_at`, `source_hash`, `BudgetVersion`, `BudgetPeriodClosure` and `EpmDataMartSnapshot` remain non-admission evidence.
 
-### G09/G10 approved close contract and storage (implemented, not admitted)
+### G09/G10 approved close contract and storage
 
 `budgeting_report_source_closes` and `budgeting_report_source_watermarks` provide the separate owner-owned close boundary outside Reporting runtime. A close has an ULID `close_id`, organization, inclusive period, scenario and plan identities, formula version, canonical source manifest/content hash, owner/approval time, mandatory retention deadline and restatement lifecycle. Every source has its own cutoff, watermark and source-schema version.
 
 PostgreSQL admits only one active `approved` close for an organization/period/scenario/plan identity. A second close must name that exact prior close as a restatement; deferred foreign keys and a deferred reverse-link check require the prior close to be `restated`, the replacement to remain `approved`, and both identities to match. Header content and watermarks cannot be changed or deleted after creation; only the one-way approved-to-restated/expired lifecycle transition is permitted. `BudgetingReportSourceCloseService` can create explicit approved input and validate a retained approved close for a future G09/G10 writer, but it does not call live reporting services or recompute source data.
 
-This partially removes the contract/storage and writer-wiring portion of the G09/G10 blocker only. No candidate is admitted or implemented: PostgreSQL CI migration/constraint evidence, a source-derived replay-after-mutation test and runtime-provider conformance remain required before any runtime decision.
+This contract remains pre-admission infrastructure for G09. For G10 it is consumed by the published runtime binding and is part of the immutable source identity.
 
 ## Source contracts
 
@@ -94,7 +96,7 @@ This partially removes the contract/storage and writer-wiring portion of the G09
 
 ## Admission rule
 
-A source-contract-blocked candidate can receive a provider only after its owner supplies the stated fields at the stated grain and scope, the freshness and close rules are enforced, and the corresponding acceptance test passes. A source-readiness-blocked candidate additionally requires an immutable source snapshot and replay contract with the stated admission evidence. Until admission is complete, every Wave 1 candidate keeps a `null` provider and remains outside runtime publication and registration.
+A source-contract-blocked candidate can receive a provider only after its owner supplies the stated fields at the stated grain and scope, the freshness and close rules are enforced, and the corresponding acceptance test passes. A source-readiness-blocked candidate additionally requires an immutable source snapshot and replay contract with the stated admission evidence. Until admission is complete, each still-blocked Wave 1 candidate keeps a `null` provider and remains outside runtime publication and registration. G10 is the admitted exception documented above.
 
 ## Immutable source snapshot foundation
 
@@ -104,4 +106,4 @@ Only a `ready` snapshot may be read. Reads must match organization, complete can
 
 Persistence seals the header after row insertion. PostgreSQL constraints and triggers prevent a ready or expired header, its rows or its drill rows from being changed or appended. Replay ordering is the persisted ordinal with row-key uniqueness; drill ordering is persisted per `(snapshot_id, row_key, column_id, ordinal)`.
 
-This foundation alone is not candidate admission evidence. G01, G04, G09 and G10 remain `blocked_by_source_readiness` with `provider: null` until each owner supplies a source-specific writer, retention policy, redaction rules and a replay acceptance test against the real upstream source. No route, UI, catalog registration or production report provider is created by this contract.
+This foundation alone is not candidate admission evidence. G01, G04 and G09 remain `blocked_by_source_readiness` with `provider: null` until each owner supplies the remaining source-specific evidence. G10 additionally supplies its source writer, close validation, runtime adapter, route, catalog registration, UI and focused replay/context tests.
