@@ -1,5 +1,7 @@
 # Reports Plan 1b: Execution, Exports, Storage and Audit Implementation Plan
 
+> **Актуальная редакция:** этот план исполняется только вместе с `2026-08-04-reports-architecture-simplification.md`. Runtime, state machine, PostgreSQL, outbox, очереди, S3, snapshot, drill-down и bounded export сохраняются. Требования, превращающие CI-артефакты, commit SHA, signing или release-инфраструктуру в обязательную бизнес-зависимость runtime, отменены и не исполняются.
+
 > **For Codex:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Implement the canonical report run, immutable snapshot, row access, drill-down, export, storage, retention, audit, and evidence pipeline while consuming Plan 1a contracts without redefining them.
