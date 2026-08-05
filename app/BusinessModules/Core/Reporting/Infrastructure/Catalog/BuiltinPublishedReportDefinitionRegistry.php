@@ -19,6 +19,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityB
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
 
 final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportDefinitionRegistry
 {
@@ -35,9 +36,10 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         SupplierAwardBuiltinPublishedReport $supplierAward,
         SupplyReliabilityBuiltinPublishedReport $supplyReliability,
         InventoryRiskBuiltinPublishedReport $inventoryRisk,
+        AttendanceExecutionBuiltinPublishedReport $attendanceExecution,
     ) {
         $byCode = [];
-        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition()] as $definition) {
+        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition()] as $definition) {
             $byCode[$definition->code] = $definition;
         }
         ksort($byCode, SORT_STRING);

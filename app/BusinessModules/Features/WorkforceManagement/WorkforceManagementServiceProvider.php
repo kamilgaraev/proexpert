@@ -7,6 +7,9 @@ namespace App\BusinessModules\Features\WorkforceManagement;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\WorkforceReportDatabasePort;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionReportBindingFactory;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
@@ -42,6 +45,9 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
         $this->app->singleton(WorkforceCapacityCandidateContract::class);
         $this->app->scoped(WorkforceCapacityReportBindingFactory::class);
         $this->app->scoped(WorkforceCapacityPublishedRuntimeBindingRegistrar::class);
+        $this->app->singleton(AttendanceExecutionCandidateContract::class);
+        $this->app->scoped(AttendanceExecutionReportBindingFactory::class);
+        $this->app->scoped(AttendanceExecutionPublishedRuntimeBindingRegistrar::class);
         $this->app->scoped(WorkforceCapacityOptionsService::class, static fn ($app): WorkforceCapacityOptionsService => new WorkforceCapacityOptionsService($app['db']->connection()));
         $this->app->singleton(
             Reporting\PayrollReadiness\Contracts\PayrollReadinessEvidenceSource::class,
@@ -123,6 +129,7 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
         $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
             $this->app->make(PayrollReadinessPublishedRuntimeBindingRegistrar::class)->register($assembler);
             $this->app->make(WorkforceCapacityPublishedRuntimeBindingRegistrar::class)->register($assembler);
+            $this->app->make(AttendanceExecutionPublishedRuntimeBindingRegistrar::class)->register($assembler);
         });
         $this->loadMigrationsFrom(__DIR__.'/migrations');
         $this->loadRoutesFrom(__DIR__.'/routes.php');
