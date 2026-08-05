@@ -32,6 +32,7 @@ final readonly class BaselineScheduleVarianceQueryService implements ReportRowQu
             BaselineScheduleSnapshot::class,
             [
                 'variance_days' => 'variance_days',
+                'end_variance_days' => 'variance_days',
                 'total_float_days' => 'total_float_days',
                 'planned_start' => 'planned_start',
                 'planned_end' => 'planned_end',

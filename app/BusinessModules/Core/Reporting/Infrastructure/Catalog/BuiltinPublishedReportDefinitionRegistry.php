@@ -21,6 +21,9 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessB
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowBuiltinPublishedReport;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionBuiltinPublishedReport;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsBuiltinPublishedReport;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
 
 final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportDefinitionRegistry
 {
@@ -30,6 +33,7 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
     public function __construct(
         ProjectMarginBuiltinPublishedReport $projectMargin,
         BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
+        BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
         ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         PayrollReadinessBuiltinPublishedReport $payrollReadiness,
         WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
@@ -39,9 +43,11 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         InventoryRiskBuiltinPublishedReport $inventoryRisk,
         AttendanceExecutionBuiltinPublishedReport $attendanceExecution,
         QualityDefectFlowBuiltinPublishedReport $qualityDefectFlow,
+        SafetyIncidentActionsBuiltinPublishedReport $safetyIncidentActions,
+        WorkforceAdmissionBuiltinPublishedReport $workforceAdmission,
     ) {
         $byCode = [];
-        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition()] as $definition) {
+        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $baselineScheduleVariance->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition()] as $definition) {
             $byCode[$definition->code] = $definition;
         }
         ksort($byCode, SORT_STRING);

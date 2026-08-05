@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -14,6 +16,7 @@ use App\BusinessModules\Features\ScheduleManagement\Models\ScheduleBaselineVersi
 use App\BusinessModules\Features\ScheduleManagement\Reporting\DTO\BaselineScheduleTaskSource;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\DTO\BaselineScheduleVarianceRow;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\BaselineScheduleSnapshot;
+use App\Enums\Schedule\TaskStatusEnum;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Support\Reporting\DeterministicObjectSpool;
@@ -194,6 +197,7 @@ final readonly class BaselineScheduleSnapshotService
         ) {
             throw new InvalidArgumentException('baseline_schedule_materialization_identity_invalid');
         }
+        $this->assertPublicFilterValues($query);
         $asOfFilter = $query->filters->values['as_of'] ?? null;
         if ($asOfFilter !== null
             && (! is_string($asOfFilter)
@@ -391,7 +395,10 @@ final readonly class BaselineScheduleSnapshotService
         }
 
         $metricSpool = new DeterministicObjectSpool;
+        $baselineMissingTasks = 0;
+        $criticalTasks = 0;
         $criticalDelayedTasks = 0;
+        $delayedTasks = 0;
         $overdueTasks = 0;
         $unknown = false;
         foreach ($sourceSpool->items() as $sourcePayload) {
@@ -403,6 +410,9 @@ final readonly class BaselineScheduleSnapshotService
                 $sourceRow['source'],
                 $query->asOf,
             );
+            $baselineMissingTasks += (int) ($metric->warningCodes !== []);
+            $criticalTasks += (int) $metric->critical;
+            $delayedTasks += (int) (($metric->endVarianceDays ?? 0) > 0);
             $criticalDelayedTasks += (int) (
                 $metric->critical && ($metric->endVarianceDays ?? 0) > 0
             );
@@ -421,6 +431,10 @@ final readonly class BaselineScheduleSnapshotService
             );
         }
         $totals = [
+            'task_count' => $metricSpool->count(),
+            'baseline_missing_tasks' => $baselineMissingTasks,
+            'critical_tasks' => $criticalTasks,
+            'delayed_tasks' => $delayedTasks,
             'critical_delayed_tasks' => $criticalDelayedTasks,
             'overdue_tasks' => $overdueTasks,
             'unknown_metrics' => $unknown ? ['baseline_variance'] : [],
@@ -564,6 +578,7 @@ final readonly class BaselineScheduleSnapshotService
         return array_map(
             static fn (string $id): array => ['id' => $id],
             [
+                'row_key',
                 'wbs_code',
                 'task_name',
                 'planned_start',
@@ -572,8 +587,12 @@ final readonly class BaselineScheduleSnapshotService
                 'end_variance_days',
                 'duration_variance_days',
                 'total_float_days',
+                'free_float_days',
                 'critical',
+                'overdue',
+                'overdue_days',
                 'status',
+                'warning_codes',
             ],
         );
     }
@@ -588,6 +607,26 @@ final readonly class BaselineScheduleSnapshotService
             && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
             && $this->matches($values['statuses'] ?? [], $state->status)
             && (! array_key_exists('critical', $values) || (bool) $values['critical'] === $state->critical);
+    }
+
+    private function assertPublicFilterValues(ReportQuery $query): void
+    {
+        $statuses = $query->filters->values['statuses'] ?? [];
+        $allowedStatuses = array_map(
+            static fn (TaskStatusEnum $status): string => $status->value,
+            TaskStatusEnum::cases(),
+        );
+        if (! is_array($statuses)
+            || ! array_is_list($statuses)
+            || array_filter(
+                $statuses,
+                static fn (mixed $status): bool => ! is_string($status)
+                    || ! in_array($status, $allowedStatuses, true),
+            ) !== []
+            || (array_key_exists('critical', $query->filters->values)
+                && ! is_bool($query->filters->values['critical']))) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
+        }
     }
 
     private function sourceIdentity(array $sourceRow): array

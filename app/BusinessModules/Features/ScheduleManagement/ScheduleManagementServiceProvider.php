@@ -1,7 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\ScheduleManagement;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleSnapshotService;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceCandidateContract;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceProvider;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVariancePublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceQueryService;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceReportBindingFactory;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Readiness\BaselineScheduleVarianceReadinessProbe;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Contracts\LookaheadReadinessAuthorizer;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Contracts\LookaheadReadinessSourceStore;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\EloquentLookaheadReadinessSourceStore;
@@ -28,10 +39,25 @@ class ScheduleManagementServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningService::class);
         $this->app->bind(LookaheadReadinessSourceStore::class, EloquentLookaheadReadinessSourceStore::class);
         $this->app->bind(LookaheadReadinessAuthorizer::class, LaravelLookaheadReadinessAuthorizer::class);
+        $this->app->singleton(HistoricalScheduleTaskStateQuery::class);
+        $this->app->scoped(BaselineScheduleSnapshotService::class);
+        $this->app->scoped(BaselineScheduleVarianceProvider::class);
+        $this->app->scoped(BaselineScheduleVarianceQueryService::class);
+        $this->app->scoped(BaselineScheduleVarianceReadinessProbe::class);
+        $this->app->singleton(BaselineScheduleVarianceCandidateContract::class);
+        $this->app->scoped(BaselineScheduleVarianceReportBindingFactory::class);
+        $this->app->scoped(BaselineScheduleVariancePublishedRuntimeBindingRegistrar::class);
     }
 
     public function boot(): void
     {
+        $this->app->afterResolving(
+            ReportDefinitionBindingAssembler::class,
+            function (ReportDefinitionBindingAssembler $assembler): void {
+                $this->app->make(BaselineScheduleVariancePublishedRuntimeBindingRegistrar::class)->register($assembler);
+            },
+        );
+
         // Загружаем миграции
         $this->loadMigrations();
 

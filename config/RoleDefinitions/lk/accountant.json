@@ -142,7 +142,8 @@
     ],
     "schedule-management": [
       "schedule.view",
-      "schedule.export"
+      "schedule.export",
+      "schedule.reports.export"
     ],
     "notifications": [
       "notifications.view",

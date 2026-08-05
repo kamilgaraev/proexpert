@@ -87,6 +87,7 @@ class ScheduleManagementModule implements ModuleInterface, ConfigurableInterface
             'schedule.assign',
             'schedule.approve',
             'schedule.export',
+            'schedule.reports.export',
             'schedule.notifications'
         ];
     }

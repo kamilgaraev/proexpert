@@ -405,6 +405,7 @@
       "schedule.assign",
       "schedule.approve",
       "schedule.export",
+      "schedule.reports.export",
       "schedule.notifications"
     ],
     "notifications": [
