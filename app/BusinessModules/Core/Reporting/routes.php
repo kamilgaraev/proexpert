@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\HoldingPerformanceReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContractFlowReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
@@ -108,6 +109,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'holding_performance')
             ->middleware($resourceAccess)
             ->name('holding-performance.runs.store');
+        Route::get('/holding-performance/options', HoldingPerformanceReportOptionsController::class)
+            ->defaults('reportCode', 'holding_performance')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('holding-performance.options');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');

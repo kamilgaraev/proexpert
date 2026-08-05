@@ -23,6 +23,7 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAccepte
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPaymentEventFactProducer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceImmutableEventSource;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceImmutableProjectionSynchronizer;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceOptionsService;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceProjectionCoverageInspector;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceSnapshotMaterializer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowOptionsService;
@@ -54,6 +55,7 @@ class MultiOrganizationServiceProvider extends ServiceProvider
         $this->app->scoped(HoldingPaymentEventFactProducer::class);
         $this->app->scoped(HoldingPerformanceImmutableEventSource::class);
         $this->app->scoped(HoldingPerformanceImmutableProjectionSynchronizer::class);
+        $this->app->scoped(HoldingPerformanceOptionsService::class);
         $this->app->scoped(HoldingPerformanceProjectionCoverageInspector::class);
         $this->app->scoped(HoldingPerformanceSnapshotMaterializer::class);
         $this->app->scoped(HoldingPerformanceReportProvider::class);
