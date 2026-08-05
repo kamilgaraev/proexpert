@@ -37,7 +37,7 @@ final readonly class QualityDefectFlowCandidateContract
         return array_map(static fn (string $id): array => ['id' => $id], [
             'row_key', 'cohort_date', 'project_id', 'contractor_id', 'schedule_task_id',
             'quality_defect_id', 'event_version', 'severity', 'status', 'created',
-            'reopened', 'closed', 'closing', 'cycle_days', 'due_date', 'evidence_refs',
+            'reopened', 'closed', 'closing', 'cycle_days', 'due_date', 'evidence_refs', 'drill',
         ]);
     }
 

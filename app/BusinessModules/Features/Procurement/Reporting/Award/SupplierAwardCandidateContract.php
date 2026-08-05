@@ -33,7 +33,7 @@ final readonly class SupplierAwardCandidateContract
             'row_key', 'selected_at', 'decision_id', 'decision_version', 'proposal_version_id',
             'supplier_party_id', 'material_ids', 'currency', 'selected_amount_minor',
             'cheapest_amount_minor', 'premium_minor', 'premium_ratio', 'participation_ratio',
-            'quality_warnings',
+            'quality_warnings', 'drill',
         ]);
     }
 

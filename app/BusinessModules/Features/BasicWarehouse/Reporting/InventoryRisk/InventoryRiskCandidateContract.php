@@ -36,7 +36,7 @@ final readonly class InventoryRiskCandidateContract
             'row_key', 'balance_date', 'warehouse_id', 'project_id', 'material_id', 'risk_status',
             'closing_on_hand', 'reserved_quantity', 'available_quantity', 'consumption_quantity',
             'turnover', 'cost_turnover', 'days_on_hand', 'stockout_at', 'consumption_value_minor',
-            'on_hand_value_minor', 'currency', 'recommended_order_quantity', 'quality_warnings',
+            'on_hand_value_minor', 'currency', 'recommended_order_quantity', 'quality_warnings', 'drill',
         ]);
     }
 

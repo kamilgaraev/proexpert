@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DrillDown;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -20,8 +21,13 @@ use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
-final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownProvider
+final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownProvider, ReportDrillDownTokenColumns
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'evidence_refs'];
+    }
+
     public function __construct(
         private EloquentOwnerDrillDown $drillDown,
         private OwnerReportTokenPayload $tokens,

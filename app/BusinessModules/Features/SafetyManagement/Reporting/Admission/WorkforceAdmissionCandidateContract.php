@@ -37,7 +37,7 @@ final readonly class WorkforceAdmissionCandidateContract
         return array_map(static fn (string $id): array => ['id' => $id], [
             'row_key', 'snapshot_date', 'project_id', 'safety_site_id', 'workforce_assignment_id',
             'employee_id', 'requirement_code', 'requirement_type', 'status', 'mandatory',
-            'blocked', 'verified', 'valid_until', 'evidence_id', 'medical_details',
+            'blocked', 'verified', 'valid_until', 'evidence_id', 'medical_details', 'drill',
         ]);
     }
 

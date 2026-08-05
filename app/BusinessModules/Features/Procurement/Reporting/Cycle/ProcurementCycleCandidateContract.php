@@ -18,7 +18,7 @@ final readonly class ProcurementCycleCandidateContract
 
     public const FORMULA_HASH = '7fa0c79e701d081930247ed67ebe233b5318b16127341898b586600a43463d71';
 
-    public const SOURCE_HASH = '38036ba2c63d19ae8b570ba94244e282f59488577a8b96d33a8487e12f940156';
+    public const SOURCE_HASH = '4e123c67b13aac917751deab7c6e8be050d07043a70ba810f9219ebbe5993308';
 
     public function filters(): array
     {

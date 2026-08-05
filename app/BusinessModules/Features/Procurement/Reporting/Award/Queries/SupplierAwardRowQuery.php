@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Award\Queries;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
@@ -19,8 +20,13 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwar
 use App\Support\Reporting\EloquentOwnerDrillDown;
 use App\Support\Reporting\EloquentOwnerReportRows;
 
-final readonly class SupplierAwardRowQuery implements ReportDrillDownProvider, ReportRowQuery
+final readonly class SupplierAwardRowQuery implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'decision_evidence'];
+    }
+
     private const SORT_FIELDS = [
         'selected_at',
         'decision_id',

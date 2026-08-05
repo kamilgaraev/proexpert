@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\SafetyManagement\Reporting\IncidentAction
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -16,8 +17,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Support\ScopedReportSourceGuard;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentRow;
 
-final readonly class SafetyIncidentDrillDownProvider implements ReportDrillDownProvider
+final readonly class SafetyIncidentDrillDownProvider implements ReportDrillDownProvider, ReportDrillDownTokenColumns
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'evidence_refs'];
+    }
+
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,

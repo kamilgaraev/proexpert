@@ -39,7 +39,7 @@ final readonly class SafetyIncidentActionsCandidateContract
             'row_key', 'event_date', 'project_id', 'safety_site_id', 'contractor_id',
             'subject_type', 'subject_id', 'event_version', 'category', 'severity',
             'status', 'owner_user_id', 'due_date', 'created', 'reopened', 'closed',
-            'closure_verified', 'closure_days', 'evidence_id',
+            'closure_verified', 'closure_days', 'evidence_id', 'drill',
         ]);
     }
 

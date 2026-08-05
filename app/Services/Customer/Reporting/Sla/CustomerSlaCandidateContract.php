@@ -37,7 +37,7 @@ final readonly class CustomerSlaCandidateContract
             'row_key', 'project_id', 'customer_organization_id', 'workflow_type',
             'workflow_id', 'priority', 'status', 'opened_at', 'first_response_seconds',
             'resolution_seconds', 'open_aging_seconds', 'first_response_breached',
-            'resolution_breached', 'actor_side_complete',
+            'resolution_breached', 'actor_side_complete', 'drill',
         ]);
     }
 
