@@ -4,6 +4,7 @@ namespace App\Domain\Authorization\Services;
 
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -642,80 +643,7 @@ class PermissionResolver
      */
     protected function expandModuleVariants(string $module): array
     {
-        $normalizedHyphen = str_replace('_', '-', $module);
-        $normalizedUnderscore = str_replace('-', '_', $module);
-
-        $moduleMapping = [
-            'projects' => 'project-management',
-            'schedule' => 'schedule-management',
-            'schedule_management' => 'schedule-management',
-            'construction-journal' => 'budget-estimates',
-            'construction_journal' => 'budget-estimates',
-            'estimates' => 'budget-estimates',
-            'act_reports' => 'act-reporting',
-            'act-reports' => 'act-reporting',
-            'ai_estimates' => 'ai-estimates',
-            'estimate_generation' => 'ai-estimates',
-            'time_tracking' => 'time-tracking',
-            'report_templates' => 'report-templates',
-            'warehouse' => 'basic-warehouse',
-            'contracts' => 'contract-management',
-            'mdm' => 'catalog-management',
-            'materials' => 'catalog-management',
-            'suppliers' => 'catalog-management',
-            'contractors' => 'catalog-management',
-            'work_types' => 'catalog-management',
-            'work-types' => 'catalog-management',
-            'measurement_units' => 'catalog-management',
-            'measurement-units' => 'catalog-management',
-            'cost_categories' => 'catalog-management',
-            'cost-categories' => 'catalog-management',
-            'completed_works' => 'workflow-management',
-            'completed-works' => 'workflow-management',
-            'workforce' => 'workforce-management',
-            'one_c_exchange' => 'one-c-basic-exchange',
-            'one-c-exchange' => 'one-c-basic-exchange',
-            'organizations' => 'contractor-portal',
-            'contractor_invitations' => 'contractor-portal',
-            'contractor-invitations' => 'contractor-portal',
-            'contractor_marketplace' => 'contractor-portal',
-            'contractor-marketplace' => 'contractor-portal',
-        ];
-
-        $reverseMapping = [
-            'project-management' => 'projects',
-            'budget-estimates' => 'estimates',
-            'schedule-management' => 'schedule',
-            'act-reporting' => 'act_reports',
-            'time-tracking' => 'time_tracking',
-            'report-templates' => 'report_templates',
-            'basic-warehouse' => 'warehouse',
-            'contract-management' => 'contracts',
-            'catalog-management' => 'mdm',
-            'workflow-management' => 'completed_works',
-            'workforce-management' => 'workforce',
-            'one-c-basic-exchange' => 'one_c_exchange',
-            'contractor-portal' => 'contractor_marketplace',
-            'ai-estimates' => 'estimate_generation',
-        ];
-
-        $variants = [
-            $module,
-            $normalizedHyphen,
-            $normalizedUnderscore,
-        ];
-
-        foreach ([$module, $normalizedHyphen, $normalizedUnderscore] as $candidate) {
-            if (isset($moduleMapping[$candidate])) {
-                $variants[] = $moduleMapping[$candidate];
-            }
-
-            if (isset($reverseMapping[$candidate])) {
-                $variants[] = $reverseMapping[$candidate];
-            }
-        }
-
-        return array_values(array_unique($variants));
+        return ModulePermissionAliases::variants($module);
     }
 
     protected function buildPermissionVariants(string $requestedModule, string $resolvedModule, string $action): array

@@ -85,6 +85,53 @@ final class LaravelCurrentReportAbacEvaluatorTest extends TestCase
         ));
     }
 
+    #[DataProvider('organizationOwnerPublishedReportPermissions')]
+    public function test_organization_owner_grants_published_report_permission(string $permission): void
+    {
+        $assignment = new UserRoleAssignment([
+            'role_slug' => 'organization_owner',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+        ]);
+        $method = new ReflectionMethod(LaravelCurrentReportAbacEvaluator::class, 'roleGrants');
+
+        self::assertTrue($method->invoke(
+            new LaravelCurrentReportAbacEvaluator,
+            $assignment,
+            $permission,
+            1,
+        ));
+    }
+
+    public function test_explicit_fully_qualified_aliased_module_permission_is_preserved(): void
+    {
+        $assignment = new UserRoleAssignment([
+            'role_slug' => 'web_admin',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+        ]);
+        $method = new ReflectionMethod(LaravelCurrentReportAbacEvaluator::class, 'roleGrants');
+
+        self::assertTrue($method->invoke(
+            new LaravelCurrentReportAbacEvaluator,
+            $assignment,
+            'time_tracking.view',
+            1,
+        ));
+    }
+
+    public function test_unrelated_module_namespace_does_not_grant_permission(): void
+    {
+        $method = new ReflectionMethod(LaravelCurrentReportAbacEvaluator::class, 'systemRoleGrants');
+
+        self::assertFalse($method->invoke(
+            new LaravelCurrentReportAbacEvaluator,
+            [
+                'system_permissions' => [],
+                'module_permissions' => ['finance' => ['users.delete']],
+            ],
+            'users.delete',
+        ));
+    }
+
     public static function malformedTimeConditions(): array
     {
         return [
@@ -97,6 +144,19 @@ final class LaravelCurrentReportAbacEvaluatorTest extends TestCase
             'invalid working day value' => [['working_days' => [7]]],
             'invalid working hour' => [['working_hours' => '29:00-30:00']],
             'reversed working hours' => [['working_hours' => '18:00-09:00']],
+        ];
+    }
+
+    public static function organizationOwnerPublishedReportPermissions(): array
+    {
+        return [
+            'schedule report' => ['schedule.view'],
+            'time tracking report' => ['time_tracking.view'],
+            'warehouse report' => ['warehouse.advanced.view'],
+            'workforce reports' => ['workforce.view'],
+            'contractor report' => ['contractor_marketplace.profile.view'],
+            'project control report' => ['reports.project_control.view'],
+            'project control export' => ['reports.project_control.export'],
         ];
     }
 }

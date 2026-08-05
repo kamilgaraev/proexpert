@@ -78,7 +78,9 @@
       "reports.download",
       "reports.manage",
       "reports.sensitive",
-      "reports.audit"
+      "reports.audit",
+      "reports.project_control.view",
+      "reports.project_control.export"
     ],
     "finance": [
       "*"
