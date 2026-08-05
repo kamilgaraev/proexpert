@@ -17,6 +17,8 @@ final readonly class HoldingReportingSourceCoverage
 
     public const ALLOCATION_DIMENSIONS = 'allocation_dimensions';
 
+    public const ALLOCATION_AMOUNTS = 'allocation_amount_dimensions';
+
     public function assertCovers(string $sourceCode, DateTimeInterface $asOf): array
     {
         $coverage = DB::table('holding_reporting_context_coverage')

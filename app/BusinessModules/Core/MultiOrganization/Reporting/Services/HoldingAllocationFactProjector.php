@@ -160,33 +160,39 @@ final readonly class HoldingAllocationFactProjector
                 $history->created_at,
                 allocationId: (int) $allocation->getKey(),
                 requireActive: $active,
+                requirePercentage: $type !== ContractAllocationTypeEnum::FIXED,
             );
             if ($allocationContext->allocationId !== (int) $allocation->getKey()
                 || $allocationContext->allocationType !== $type->value) {
                 throw new InvalidArgumentException('holding_allocation_context_unavailable');
             }
-            $expectedPercentage = ! $active
-                ? BigDecimal::of(0)
-                : match ($type) {
-                    ContractAllocationTypeEnum::FIXED => BigDecimal::of(
-                        (string) ($state['allocated_amount'] ?? throw new InvalidArgumentException(
-                            'holding_allocation_context_unavailable',
-                        )),
-                    )
-                        ->multipliedBy(100)
-                        ->dividedBy(BigDecimal::of($dimensionTotal), 8, RoundingMode::HalfUp),
-                    ContractAllocationTypeEnum::PERCENTAGE => BigDecimal::of(
-                        (string) ($state['allocated_percentage'] ?? throw new InvalidArgumentException(
-                            'holding_allocation_context_unavailable',
-                        )),
-                    ),
-                    ContractAllocationTypeEnum::AUTO,
-                    ContractAllocationTypeEnum::CUSTOM => BigDecimal::of(
-                        $allocationContext->allocatedPercentage,
-                    ),
-                };
-            if (! BigDecimal::of($allocationContext->allocatedPercentage)->isEqualTo($expectedPercentage)) {
-                throw new InvalidArgumentException('holding_allocation_context_unavailable');
+            if ($type === ContractAllocationTypeEnum::FIXED) {
+                $expectedAmount = BigDecimal::of(
+                    $active ? (string) ($state['allocated_amount'] ?? '') : '0',
+                );
+                if ($allocationContext->allocatedAmount === null
+                    || ! BigDecimal::of($allocationContext->allocatedAmount)->isEqualTo($expectedAmount)) {
+                    throw new InvalidArgumentException('holding_allocation_context_unavailable');
+                }
+            } else {
+                $expectedPercentage = ! $active
+                    ? BigDecimal::of(0)
+                    : match ($type) {
+                        ContractAllocationTypeEnum::PERCENTAGE => BigDecimal::of(
+                            (string) ($state['allocated_percentage'] ?? throw new InvalidArgumentException(
+                                'holding_allocation_context_unavailable',
+                            )),
+                        ),
+                        ContractAllocationTypeEnum::AUTO,
+                        ContractAllocationTypeEnum::CUSTOM => BigDecimal::of(
+                            $allocationContext->allocatedPercentage
+                                ?? throw new InvalidArgumentException('holding_allocation_context_unavailable'),
+                        ),
+                    };
+                if ($allocationContext->allocatedPercentage === null
+                    || ! BigDecimal::of($allocationContext->allocatedPercentage)->isEqualTo($expectedPercentage)) {
+                    throw new InvalidArgumentException('holding_allocation_context_unavailable');
+                }
             }
         } catch (InvalidArgumentException|MathException $exception) {
             $this->recordGap([
@@ -207,7 +213,7 @@ final readonly class HoldingAllocationFactProjector
         $counterpartyOrganizationId = $dimension->counterpartyOrganizationId;
 
         $fixedMinor = $type === ContractAllocationTypeEnum::FIXED
-            ? $this->moneyToMinor($active ? (string) ($state['allocated_amount'] ?? '0') : '0')
+            ? $this->moneyToMinor($allocationContext->allocatedAmount ?? '0')
             : null;
         $percentage = $type !== ContractAllocationTypeEnum::FIXED
             ? ($active ? $allocationContext->allocatedPercentage : '0')

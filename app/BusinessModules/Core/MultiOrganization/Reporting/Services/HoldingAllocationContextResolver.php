@@ -22,6 +22,7 @@ final readonly class HoldingAllocationContextResolver
         DateTimeInterface $asOf,
         ?int $allocationId = null,
         bool $requireActive = true,
+        bool $requirePercentage = false,
     ): HoldingAllocationContextSnapshot {
         if (min($organizationId, $contractId, $projectId) < 1
             || ($allocationId !== null && $allocationId < 1)) {
@@ -54,10 +55,14 @@ final readonly class HoldingAllocationContextResolver
         $event = $latest
             ->orderByDesc('allocation_id')
             ->first();
-        if (! is_object($event)
-            || (int) $event->organization_id !== $organizationId
-            || ! (bool) $event->is_resolvable
-            || $event->allocated_percentage === null
+        if (! is_object($event) || (int) $event->organization_id !== $organizationId) {
+            throw new InvalidArgumentException('holding_allocation_context_unavailable');
+        }
+        $effectiveCoverage = (string) $event->allocation_type === 'fixed'
+            ? $this->coverage->assertCovers(HoldingReportingSourceCoverage::ALLOCATION_AMOUNTS, $asOf)
+            : $coverage;
+        if (! (bool) $event->is_resolvable
+            || ($requirePercentage && $event->allocated_percentage === null)
             || ($requireActive && ((bool) $event->is_deleted || ! (bool) $event->is_active))) {
             throw new InvalidArgumentException('holding_allocation_context_unavailable');
         }
@@ -69,9 +74,10 @@ final readonly class HoldingAllocationContextResolver
             (int) $event->organization_id,
             (int) $event->project_id,
             (string) $event->allocation_type,
-            (string) $event->allocated_percentage,
+            $event->allocated_amount === null ? null : (string) $event->allocated_amount,
+            $event->allocated_percentage === null ? null : (string) $event->allocated_percentage,
             (string) $event->evidence_hash,
-            (string) $coverage['coverage_started_at'],
+            (string) $effectiveCoverage['coverage_started_at'],
         );
     }
 }

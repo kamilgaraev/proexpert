@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
 final class HoldingReportingContextContractTest extends TestCase
 {
     #[Test]
-    public function allocation_context_accepts_only_resolved_percentage_in_closed_range(): void
+    public function fixed_allocation_context_uses_exact_amount_without_requiring_contract_percentage(): void
     {
         $snapshot = new HoldingAllocationContextSnapshot(
             1,
@@ -22,12 +22,14 @@ final class HoldingReportingContextContractTest extends TestCase
             4,
             5,
             'fixed',
-            '25.00000000',
+            '250.00',
+            null,
             hash('sha256', 'allocation-context'),
             '2026-08-05T10:00:00+00:00',
         );
 
-        self::assertSame('25.00000000', $snapshot->allocatedPercentage);
+        self::assertSame('250.00', $snapshot->allocatedAmount);
+        self::assertNull($snapshot->allocatedPercentage);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('holding_allocation_context_snapshot_invalid');
@@ -38,9 +40,36 @@ final class HoldingReportingContextContractTest extends TestCase
             4,
             5,
             'fixed',
+            '250.00',
             '100.00000001',
             hash('sha256', 'allocation-context'),
             '2026-08-05T10:00:00+00:00',
+        );
+    }
+
+    #[Test]
+    public function corrective_checkpoint_appends_fixed_amount_evidence_without_rewriting_history(): void
+    {
+        $source = $this->source(
+            'database/migrations/2026_08_05_020000_capture_holding_fixed_allocation_amount_evidence.php',
+        );
+
+        foreach ([
+            "decimal('allocated_amount', 20, 2)",
+            "'allocated_amount', resolved_amount",
+            "'allocation_amount_dimensions'",
+            'most_capture_holding_fixed_allocation_checkpoint_v1',
+            "WHEN 'fixed' THEN resolved_amount IS NOT NULL AND resolved_amount >= 0",
+        ] as $contract) {
+            self::assertStringContainsString($contract, $source);
+        }
+        self::assertStringNotContainsString('UPDATE holding_allocation_context_events', $source);
+        self::assertStringContainsString(
+            'HoldingReportingSourceCoverage::ALLOCATION_AMOUNTS',
+            $this->source(
+                'app/BusinessModules/Core/MultiOrganization/Reporting/Services/'
+                .'HoldingAllocationContextResolver.php',
+            ),
         );
     }
 

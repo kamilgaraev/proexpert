@@ -87,6 +87,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
                 $contractId,
                 $projectId,
                 $recognizedAt,
+                requirePercentage: true,
             );
         } catch (InvalidArgumentException $exception) {
             $allocation = null;
