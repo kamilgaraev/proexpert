@@ -19,7 +19,7 @@ final readonly class CustomerSlaCandidateContract
     public const CODE = 'customer_sla';
     public const FORMULA_VERSION = 'customer-sla.v1';
     public const SOURCE_SCHEMA_VERSION = 'customer-sla.v1';
-    public const FORMULA_HASH = '63e1999fa8411abbdb0ea38b5012a61e587a11ca7150bde8c3245f3ebed9319';
+    public const FORMULA_HASH = '63e1999fa8411abbdbe0ea38b5012a61e587a11ca7150bde8c3245f3ebed9319';
     public const SOURCE_HASH = '2647891111121878bf6fdffec2df91c1b0c6595167d421a6edeb042fe3a0aa42';
 
     public function filters(): array
