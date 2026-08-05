@@ -150,7 +150,7 @@ APP_ENV=testing vendor/bin/phpstan analyse config/filesystems.php app/Services/S
 
 Expected: PASS без предупреждений новой логики.
 
-- [ ] **Step 8: Commit, PR, merge и deploy**
+- [x] **Step 8: Commit, PR, merge и deploy**
 
 ```bash
 git add -A
@@ -171,16 +171,18 @@ gh pr merge feat/timeweb-s3-foundation -R kamilgaraev/proexpert --merge --delete
 
 **Files:**
 - Modify: `app/Services/Storage/OrganizationStoragePath.php`
-- Modify: `app/Services/Storage/DTO/StoredFile.php`
+- Create: `app/Services/Storage/DTO/CurrentStoredFile.php`
 - Modify: `app/Services/Storage/FileService.php`
 - Modify: `tests/Unit/Storage/OrganizationStoragePathTest.php`
 - Create: `tests/Unit/Storage/FileServiceCurrentObjectTest.php`
 
 **Interfaces:**
 - Consumes: единый Timeweb-диск из Task 1.
-- Produces: `OrganizationStoragePath::forDomain(int $organizationId, string $domain, string $scope, string $objectId, string $extension): string`; `OrganizationStoragePath::personal(int $organizationId, int $userId, string $objectId, string $extension): string`; `FileService::putPrivate(string $key, mixed $contents, string $mime, string $sha256): StoredFile`; `temporaryDownloadUrl(string $key, int $ttlSeconds): string`; `deleteCurrent(string $key): void`.
+- Produces: `OrganizationStoragePath::forDomain(int $organizationId, string $domain, string $scope, string $objectId, string $extension): string`; `OrganizationStoragePath::personal(int $organizationId, int $userId, string $objectId, string $extension): string`; `FileService::putPrivate(string $key, mixed $contents, string $mime, string $sha256): CurrentStoredFile`; `temporaryDownloadUrl(string $key, int $ttlSeconds): string`; `deleteCurrent(string $key): void`.
 
-- [ ] **Step 1: Расширить failing-тест путей**
+`CurrentStoredFile` намеренно не содержит S3 `VersionId`. Существующий versioned `StoredFile` остаётся изолированным только в старом контуре отчётов до его полного удаления в Task 6.
+
+- [x] **Step 1: Расширить failing-тест путей**
 
 Добавить проверки точных результатов:
 
@@ -197,17 +199,17 @@ self::assertSame(
 
 Также отклонить organization/user `0`, `..`, слеш в object id, неизвестный domain и расширение с точкой.
 
-- [ ] **Step 2: Проверить RED и реализовать value object**
+- [x] **Step 2: Проверить RED и реализовать value object**
 
 Run: `php artisan test tests/Unit/Storage/OrganizationStoragePathTest.php --stop-on-failure`
 
 Expected сначала FAIL, после минимальной реализации PASS.
 
-- [ ] **Step 3: Написать failing-тест актуального объекта**
+- [x] **Step 3: Написать failing-тест актуального объекта**
 
 Тест записывает объект в fake/recording storage, проверяет SHA-256, MIME, размер, приватность, ссылку без `VersionId` и удаление по ключу. Отдельно проверяет отклонение ключа вне `org-{id}/` и несовпадающий SHA-256.
 
-- [ ] **Step 4: Проверить RED, реализовать и проверить GREEN**
+- [x] **Step 4: Проверить RED, реализовать и проверить GREEN**
 
 Run:
 

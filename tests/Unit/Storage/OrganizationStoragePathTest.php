@@ -5,11 +5,70 @@ declare(strict_types=1);
 namespace Tests\Unit\Storage;
 
 use App\Services\Storage\OrganizationStoragePath;
+use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-class OrganizationStoragePathTest extends TestCase
+final class OrganizationStoragePathTest extends TestCase
 {
-    public function testAddsOrganizationPrefixToRelativePath(): void
+    public function test_builds_strict_domain_and_personal_paths(): void
+    {
+        self::assertSame(
+            'org-42/reports/exports/01J4EXPORT/01J4OBJECT.xlsx',
+            OrganizationStoragePath::forDomain(
+                42,
+                'reports',
+                'exports/01J4EXPORT',
+                '01J4OBJECT',
+                'xlsx',
+            ),
+        );
+        self::assertSame(
+            'org-42/personal-files/user-7/018f4a8a-0000-7000-8000-000000000001.pdf',
+            OrganizationStoragePath::personal(
+                42,
+                7,
+                '018f4a8a-0000-7000-8000-000000000001',
+                'pdf',
+            ),
+        );
+    }
+
+    #[DataProvider('invalidStrictPathProvider')]
+    public function test_rejects_invalid_strict_path(callable $build): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('organization_storage_path_invalid');
+
+        $build();
+    }
+
+    public static function invalidStrictPathProvider(): iterable
+    {
+        yield 'organization zero' => [
+            static fn (): string => OrganizationStoragePath::forDomain(0, 'reports', 'exports/01J4', '01J5', 'xlsx'),
+        ];
+        yield 'user zero' => [
+            static fn (): string => OrganizationStoragePath::personal(42, 0, '01J5', 'pdf'),
+        ];
+        yield 'unknown domain' => [
+            static fn (): string => OrganizationStoragePath::forDomain(42, 'cms', 'pages', '01J5', 'json'),
+        ];
+        yield 'personal domain bypass' => [
+            static fn (): string => OrganizationStoragePath::forDomain(42, 'personal-files', 'other-user', '01J5', 'pdf'),
+        ];
+        yield 'parent traversal' => [
+            static fn (): string => OrganizationStoragePath::forDomain(42, 'reports', '../exports', '01J5', 'xlsx'),
+        ];
+        yield 'slash in object id' => [
+            static fn (): string => OrganizationStoragePath::forDomain(42, 'reports', 'exports', '01J5/file', 'xlsx'),
+        ];
+        yield 'extension with dot' => [
+            static fn (): string => OrganizationStoragePath::forDomain(42, 'reports', 'exports', '01J5', '.xlsx'),
+        ];
+    }
+
+    public function test_adds_organization_prefix_to_relative_path(): void
     {
         $this->assertSame(
             'org-39/reports/project_profitability_report.pdf',
@@ -17,7 +76,7 @@ class OrganizationStoragePathTest extends TestCase
         );
     }
 
-    public function testDoesNotDuplicateExistingOrganizationPrefix(): void
+    public function test_does_not_duplicate_existing_organization_prefix(): void
     {
         $this->assertSame(
             'org-39/reports/project_profitability_report.pdf',
@@ -25,7 +84,7 @@ class OrganizationStoragePathTest extends TestCase
         );
     }
 
-    public function testNormalizesLegacyReportPath(): void
+    public function test_normalizes_legacy_report_path(): void
     {
         $this->assertSame(
             'org-39/reports/project_profitability_report.pdf',
@@ -33,7 +92,7 @@ class OrganizationStoragePathTest extends TestCase
         );
     }
 
-    public function testNormalizesLegacyImportPath(): void
+    public function test_normalizes_legacy_import_path(): void
     {
         $this->assertSame(
             'org-39/estimate-imports/source.xlsx',

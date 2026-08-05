@@ -5,6 +5,7 @@ namespace App\Services\Storage;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
 use App\Services\Storage\DTO\StoredFile;
@@ -42,6 +43,8 @@ class FileService
 
     private const S3_REQUEST_TIMEOUT_SECONDS = 60.0;
 
+    private const MAX_TEMPORARY_URL_TTL_SECONDS = 3600;
+
     protected LoggingService $logging;
 
     public function __construct(LoggingService $logging)
@@ -56,6 +59,72 @@ class FileService
     {
         // Используем единый общий S3 бакет для всех организаций
         return Storage::disk('s3');
+    }
+
+    public function putPrivate(
+        string $key,
+        mixed $contents,
+        string $mime,
+        string $sha256,
+    ): CurrentStoredFile {
+        $this->assertOrganizationPath($key);
+        $this->assertSafeStorageString($mime, 255, 'storage_object_invalid');
+        if (preg_match('/^[a-f0-9]{64}$/', $sha256) !== 1) {
+            throw new \InvalidArgumentException('storage_object_checksum_invalid');
+        }
+        [$sizeBytes, $calculatedChecksum] = $this->describeCurrentContents($contents);
+        if (! hash_equals($sha256, $calculatedChecksum)) {
+            throw new \InvalidArgumentException('storage_object_checksum_mismatch');
+        }
+
+        $result = $this->s3Client()->putObject([
+            'Bucket' => $this->reportBucket(),
+            'Key' => $key,
+            'Body' => $contents,
+            'ACL' => 'private',
+            'ContentType' => $mime,
+            'Metadata' => ['sha256' => $sha256],
+            'IfNoneMatch' => '*',
+            '@http' => $this->s3HttpOptions(),
+        ]);
+        $etag = is_string($result['ETag'] ?? null)
+            ? trim($result['ETag'], " \t\n\r\0\x0B\"")
+            : '';
+        if ($etag === '') {
+            throw new \RuntimeException('s3_object_identity_invalid');
+        }
+
+        return new CurrentStoredFile($key, $etag, $sizeBytes, $sha256, $mime);
+    }
+
+    public function temporaryDownloadUrl(string $key, int $ttlSeconds): string
+    {
+        $this->assertOrganizationPath($key);
+        if ($ttlSeconds < 1 || $ttlSeconds > self::MAX_TEMPORARY_URL_TTL_SECONDS) {
+            throw new \InvalidArgumentException('storage_temporary_url_ttl_invalid');
+        }
+
+        $url = $this->disk()->temporaryUrl(
+            $key,
+            new DateTimeImmutable("+{$ttlSeconds} seconds"),
+        );
+        if (
+            ! is_string($url)
+            || filter_var($url, FILTER_VALIDATE_URL) === false
+            || parse_url($url, PHP_URL_SCHEME) !== 'https'
+        ) {
+            throw new \RuntimeException('storage_temporary_url_invalid');
+        }
+
+        return $url;
+    }
+
+    public function deleteCurrent(string $key): void
+    {
+        $this->assertOrganizationPath($key);
+        if ($this->disk()->delete($key) !== true) {
+            throw new \RuntimeException('storage_object_delete_failed');
+        }
     }
 
     public function startMultipart(
@@ -607,6 +676,44 @@ class FileService
         }
 
         return (int) $matches[1];
+    }
+
+    /** @return array{0: int, 1: string} */
+    private function describeCurrentContents(mixed $contents): array
+    {
+        if (is_string($contents)) {
+            if ($contents === '') {
+                throw new \InvalidArgumentException('storage_object_empty');
+            }
+
+            return [strlen($contents), hash('sha256', $contents)];
+        }
+
+        if (! is_resource($contents) || get_resource_type($contents) !== 'stream') {
+            throw new \InvalidArgumentException('storage_object_contents_invalid');
+        }
+
+        $metadata = stream_get_meta_data($contents);
+        $position = ftell($contents);
+        if (($metadata['seekable'] ?? false) !== true || $position === false) {
+            throw new \InvalidArgumentException('storage_object_contents_invalid');
+        }
+
+        $hash = hash_init('sha256');
+        $sizeBytes = 0;
+        while (! feof($contents)) {
+            $chunk = fread($contents, 1024 * 1024);
+            if ($chunk === false) {
+                throw new \InvalidArgumentException('storage_object_contents_invalid');
+            }
+            $sizeBytes += strlen($chunk);
+            hash_update($hash, $chunk);
+        }
+        if (fseek($contents, $position) !== 0 || $sizeBytes < 1) {
+            throw new \InvalidArgumentException('storage_object_contents_invalid');
+        }
+
+        return [$sizeBytes, hash_final($hash)];
     }
 
     private function assertSafeStorageString(string $value, int $maxLength, string $error): void
