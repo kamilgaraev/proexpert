@@ -208,8 +208,9 @@ final readonly class HoldingPerformanceImmutableEventSource
             return false;
         }
 
+        $startedAt = $checkpoint->started_at->format('Y-m-d H:i:s.uP');
         $evidence = HoldingPaymentTransactionEventVersion::query()
-            ->where('recorded_at', $checkpoint->started_at)
+            ->where('recorded_at', $startedAt)
             ->selectRaw('COUNT(*) AS source_count')
             ->selectRaw('COUNT(*) FILTER (WHERE history_complete) AS captured_count')
             ->selectRaw('COUNT(*) FILTER (WHERE NOT history_complete) AS gap_count')
