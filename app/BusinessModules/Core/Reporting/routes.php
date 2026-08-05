@@ -113,6 +113,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'holding_performance')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('holding-performance.options');
+        Route::post('/contract-settlement-exposure/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'contract_settlement_exposure')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('contract-settlement-exposure.runs.store');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');

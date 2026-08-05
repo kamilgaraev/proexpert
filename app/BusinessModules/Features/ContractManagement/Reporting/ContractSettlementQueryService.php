@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\ContractManagement\Reporting;
 
 use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
@@ -36,7 +37,7 @@ use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 
-final readonly class ContractSettlementQueryService implements ReportDrillDownProvider, ReportRowQuery
+final readonly class ContractSettlementQueryService implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
     public function __construct(
         private FinanceSourceAccessPolicy $sourceAccess,
@@ -64,6 +65,11 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
         'payment_document',
         'payment_transaction',
     ];
+
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'drill'];
+    }
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
     {

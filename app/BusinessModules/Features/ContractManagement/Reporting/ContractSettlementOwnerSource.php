@@ -15,6 +15,7 @@ use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSet
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerVersion;
 use App\Enums\Contract\ContractAllocationTypeEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
+use App\Enums\CurrencyCode;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\ContractProjectAllocation;
@@ -32,6 +33,7 @@ final readonly class ContractSettlementOwnerSource
     public function read(ReportScope $scope, ReportQuery $query): array
     {
         $this->assertSupportedFilters($query->filters->values);
+        $this->assertOrganizationFilter($scope, $query->filters->values);
         $owners = $this->historicalOwners($scope, $query);
         $allocations = $owners['contract_allocation'];
         $contracts = $owners['contract']
@@ -81,7 +83,7 @@ final readonly class ContractSettlementOwnerSource
     ): array {
         $totalMinor = self::minor((string) ($contract->total_amount ?? '0'));
         $currency = strtoupper((string) ($contract->currency ?? ''));
-        if (preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
+        if (CurrencyCode::tryFrom($currency) === null) {
             throw new DomainException('contract_settlement_currency_invalid');
         }
 
@@ -453,6 +455,7 @@ final readonly class ContractSettlementOwnerSource
     private function assertSupportedFilters(array $filters): void
     {
         $supported = array_fill_keys([
+            'organization_id',
             'entity', 'entities', 'entity_ids', 'contract', 'contract_ids',
             'project', 'project_ids', 'allocation', 'allocation_ids',
             'party', 'party_ids', 'direction', 'directions',
@@ -464,6 +467,19 @@ final readonly class ContractSettlementOwnerSource
             if (! isset($supported[$filter])) {
                 throw new DomainException('report_filter_not_sealed');
             }
+        }
+    }
+
+    private function assertOrganizationFilter(ReportScope $scope, array $filters): void
+    {
+        if (! array_key_exists('organization_id', $filters)) {
+            return;
+        }
+        $organizationId = $filters['organization_id'];
+        if ((! is_int($organizationId) && ! is_string($organizationId))
+            || ! ctype_digit((string) $organizationId)
+            || (int) $organizationId !== $scope->organizationId) {
+            throw new DomainException('report_projection_scope_invalid');
         }
     }
 

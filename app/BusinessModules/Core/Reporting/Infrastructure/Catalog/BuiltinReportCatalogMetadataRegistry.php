@@ -15,6 +15,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidit
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
@@ -39,6 +40,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private PortfolioLiquidityBuiltinPublishedReport $portfolioLiquidity,
         private ProjectEvmControlBuiltinPublishedReport $projectEvmControl,
         private WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
+        private ContractSettlementExposureBuiltinPublishedReport $contractSettlementExposure,
         private BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
@@ -66,6 +68,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->portfolioLiquidity->metadata()->code => $this->portfolioLiquidity->metadata(),
             $this->projectEvmControl->metadata()->code => $this->projectEvmControl->metadata(),
             $this->wipCompletionForecast->metadata()->code => $this->wipCompletionForecast->metadata(),
+            $this->contractSettlementExposure->metadata()->code => $this->contractSettlementExposure->metadata(),
             $this->baselineScheduleVariance->metadata()->code => $this->baselineScheduleVariance->metadata(),
             $this->projectLaborCost->metadata()->code => $this->projectLaborCost->metadata(),
             $this->payrollReadiness->metadata()->code => $this->payrollReadiness->metadata(),

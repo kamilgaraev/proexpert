@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ContractManagement\Reporting;
 
+use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Core\Payments\Services\Reports\SettlementAgingPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -14,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementInput;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureSnapshot;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementSourceFact;
+use App\Enums\CurrencyCode;
 use DateInterval;
 use DateTimeImmutable;
 use DomainException;
@@ -22,10 +24,19 @@ use Illuminate\Support\Str;
 
 final readonly class ContractSettlementProjectionService
 {
+    private const SOURCE_RESOURCE_TYPES = [
+        'contract',
+        'contract_allocation',
+        'contract_performance_act',
+        'payment_document',
+        'payment_transaction',
+    ];
+
     public function __construct(
         private ContractSettlementCalculator $calculator,
         private SettlementAgingPolicy $agingPolicy,
         private ContractSettlementOwnerSource $ownerSource,
+        private FinanceSourceAccessPolicy $sourceAccess,
     ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
@@ -39,6 +50,14 @@ final readonly class ContractSettlementProjectionService
         if ($inputs === []) {
             $inputs = $this->ownerSource->read($scope, $query);
         }
+        $inputs = array_values(array_filter(
+            $inputs,
+            fn (ContractSettlementInput $input): bool => $this->sourceAccess->allowsAggregate(
+                $scope,
+                $input->sourceRefs,
+                self::SOURCE_RESOURCE_TYPES,
+            ),
+        ));
         if ($inputs === []) {
             throw new DomainException('report_mandatory_source_unavailable');
         }
@@ -282,19 +301,26 @@ final readonly class ContractSettlementProjectionService
             ->orderBy('allocation_id')
             ->get();
 
-        return $facts->map(static fn (ContractSettlementSourceFact $fact): ContractSettlementInput => new ContractSettlementInput(
-            contractId: (int) $fact->contract_id,
-            allocationId: (int) $fact->allocation_id,
-            projectId: $fact->project_id === null ? null : (int) $fact->project_id,
-            partyId: $fact->party_id === null ? null : (int) $fact->party_id,
-            direction: (string) $fact->direction,
-            currency: (string) $fact->currency,
-            effectiveMinor: (int) $fact->effective_minor,
-            acceptedMinor: (int) $fact->accepted_minor,
-            cashMinor: (int) $fact->completed_cash_minor,
-            dueAt: $fact->due_at?->toDateTimeImmutable(),
-            asOf: new DateTimeImmutable((string) $fact->as_of),
-            sourceRefs: (array) $fact->source_refs,
-        ))->all();
+        return $facts->map(static function (ContractSettlementSourceFact $fact): ContractSettlementInput {
+            $currency = (string) $fact->currency;
+            if (CurrencyCode::tryFrom($currency) === null) {
+                throw new DomainException('contract_settlement_currency_invalid');
+            }
+
+            return new ContractSettlementInput(
+                contractId: (int) $fact->contract_id,
+                allocationId: (int) $fact->allocation_id,
+                projectId: $fact->project_id === null ? null : (int) $fact->project_id,
+                partyId: $fact->party_id === null ? null : (int) $fact->party_id,
+                direction: (string) $fact->direction,
+                currency: $currency,
+                effectiveMinor: (int) $fact->effective_minor,
+                acceptedMinor: (int) $fact->accepted_minor,
+                cashMinor: (int) $fact->completed_cash_minor,
+                dueAt: $fact->due_at?->toDateTimeImmutable(),
+                asOf: new DateTimeImmutable((string) $fact->as_of),
+                sourceRefs: (array) $fact->source_refs,
+            );
+        })->all();
     }
 }

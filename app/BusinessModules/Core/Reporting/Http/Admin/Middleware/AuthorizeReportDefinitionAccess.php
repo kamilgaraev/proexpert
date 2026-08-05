@@ -94,6 +94,7 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.workforce-capacity.runs.store',
             'admin.reports.workforce-capacity.options',
             'admin.reports.portfolio-liquidity.options',
+            'admin.reports.contract-settlement-exposure.runs.store',
             'admin.reports.holding-performance.runs.store',
             'admin.reports.holding-performance.options',
             'admin.reports.intercompany-contract-flows.runs.store',
