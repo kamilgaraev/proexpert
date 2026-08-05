@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Operations;
 
+use App\Enums\CurrencyCode;
 use DomainException;
 
 final readonly class BenchmarkExecutionSnapshot
@@ -38,7 +39,8 @@ final readonly class BenchmarkExecutionSnapshot
             || ! self::hash($values['dataset_content_hash'], true) || ! self::hash($values['manifest_sha256'])
             || ! self::identifier($values['adapter_id']) || ! self::version($values['prompt_version'])
             || ! self::version($values['pipeline_version']) || ! self::version($values['normative_version'])
-            || ! self::version($values['price_version']) || ! in_array($values['currency'], ['RUB', 'USD', 'EUR'], true)
+            || ! self::version($values['price_version'])
+            || ! is_string($values['currency']) || CurrencyCode::tryFrom($values['currency']) === null
             || ! self::models($values['model_versions']) || ! self::basePrefix($values['manifest_base_prefix'], (int) $values['organization_id'], (string) $values['dataset_type'])
             || ! self::locator($values['manifest_locator'], (int) $values['organization_id'], (string) $values['dataset_type'])) {
             throw new DomainException('benchmark_execution_snapshot_invalid');

@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\Procurement;
 
 use App\Enums\BillingModel;
+use App\Enums\CurrencyCode;
 use App\Enums\ModuleType;
 use App\Modules\Contracts\BillableInterface;
 use App\Modules\Contracts\ConfigurableInterface;
@@ -234,7 +235,7 @@ class ProcurementModule implements BillableInterface, ConfigurableInterface, Mod
      */
     public function getCurrency(): string
     {
-        return 'RUB';
+        return CurrencyCode::RUB->value;
     }
 
     /**
@@ -252,7 +253,7 @@ class ProcurementModule implements BillableInterface, ConfigurableInterface, Mod
     {
         return [
             'base_price' => 3990,
-            'currency' => 'RUB',
+            'currency' => CurrencyCode::RUB->value,
             'included_in_plans' => ['business', 'profi', 'enterprise'],
             'duration_days' => 30,
             'trial_days' => 7,
@@ -295,7 +296,7 @@ class ProcurementModule implements BillableInterface, ConfigurableInterface, Mod
             // Workflow
             'require_approval' => true,
             'require_supplier_selection' => true,
-            'default_currency' => 'RUB',
+            'default_currency' => CurrencyCode::RUB->value,
 
             // Уведомления
             'notify_on_request_created' => true,
@@ -320,8 +321,8 @@ class ProcurementModule implements BillableInterface, ConfigurableInterface, Mod
     {
         // Валидация валюты
         if (isset($settings['default_currency'])) {
-            $validCurrencies = ['RUB', 'USD', 'EUR'];
-            if (! in_array($settings['default_currency'], $validCurrencies)) {
+            if (! is_string($settings['default_currency'])
+                || CurrencyCode::tryFrom($settings['default_currency']) === null) {
                 return false;
             }
         }

@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeR
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsScopeState;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
+use App\Enums\CurrencyCode;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
@@ -131,7 +132,7 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
         $components[] = Section::make(trans_message('estimate_generation.settings_budgets_section'))->schema([
             TextInput::make('budgets.daily')->label(trans_message('estimate_generation.settings_daily_budget'))->regex('/^(?:0|[1-9]\d{0,17})\.\d{2}$/')->required(),
             TextInput::make('budgets.monthly')->label(trans_message('estimate_generation.settings_monthly_budget'))->regex('/^(?:0|[1-9]\d{0,17})\.\d{2}$/')->required(),
-            Select::make('budgets.currency')->label(trans_message('estimate_generation.settings_currency'))->options(['RUB' => 'RUB', 'USD' => 'USD', 'EUR' => 'EUR'])->required(),
+            Select::make('budgets.currency')->label(trans_message('estimate_generation.settings_currency'))->options(CurrencyCode::options())->required(),
         ])->columns(3);
 
         return $schema->components($components)->statePath('data');
@@ -226,7 +227,7 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
             'confidence' => ['classification' => '0.8000', 'geometry' => '0.7500', 'normative_matching' => '0.8500'],
             'enabled_formats' => ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'dxf', 'dwg', 'xlsx'],
             'manual_review' => ['low_confidence' => true],
-            'budgets' => ['daily' => '0.00', 'monthly' => '0.00', 'currency' => 'RUB'],
+            'budgets' => ['daily' => '0.00', 'monthly' => '0.00', 'currency' => CurrencyCode::RUB->value],
         ];
     }
 }

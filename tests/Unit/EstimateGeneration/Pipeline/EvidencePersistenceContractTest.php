@@ -6,10 +6,10 @@ namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceAttribute;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceConfidenceBand;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceCurrency;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceMeasurementMethod;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceUnit;
+use App\Enums\CurrencyCode;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -48,7 +48,7 @@ final class EvidencePersistenceContractTest extends TestCase
         self::assertStringContainsString('ON COMMIT DROP', $repository);
         self::assertStringNotContainsString('->cursor(', $repository);
         self::assertStringNotContainsString("table('estimate_generation_evidence')->delete", $repository);
-        foreach ([EvidenceAttribute::cases(), EvidenceProducer::cases(), EvidenceUnit::cases(), EvidenceMeasurementMethod::cases(), EvidenceConfidenceBand::cases(), EvidenceCurrency::cases()] as $cases) {
+        foreach ([EvidenceAttribute::cases(), EvidenceProducer::cases(), EvidenceUnit::cases(), EvidenceMeasurementMethod::cases(), EvidenceConfidenceBand::cases(), CurrencyCode::cases()] as $cases) {
             foreach ($cases as $case) {
                 self::assertStringContainsString("'{$case->value}'", $migration);
             }

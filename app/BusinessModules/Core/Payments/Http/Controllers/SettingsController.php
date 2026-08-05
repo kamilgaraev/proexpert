@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
+use App\Enums\CurrencyCode;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\OrganizationModuleActivation;
@@ -11,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -59,7 +61,7 @@ class SettingsController extends Controller
                 'allow_partial_payments' => ['nullable', 'boolean'],
                 'require_payment_approval' => ['nullable', 'boolean'],
                 'default_vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
-                'default_currency' => ['nullable', 'string', 'in:RUB,USD,EUR'],
+                'default_currency' => ['nullable', 'string', Rule::enum(CurrencyCode::class)],
             ]);
             $organizationId = (int) $request->attributes->get('current_organization_id');
             
@@ -153,7 +155,7 @@ class SettingsController extends Controller
             'allow_partial_payments' => true,
             'require_payment_approval' => false,
             'default_vat_rate' => 20,
-            'default_currency' => 'RUB',
+            'default_currency' => CurrencyCode::RUB->value,
             'invoice_number_format' => 'INV-{YEAR}-{NUMBER:6}',
         ];
     }

@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Requests;
 
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\CurrencyCode;
 use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateProcurementSettingsRequest extends FormRequest
 {
@@ -36,7 +38,7 @@ class UpdateProcurementSettingsRequest extends FormRequest
             'auto_receive_to_warehouse' => ['sometimes', 'boolean'],
             'require_approval' => ['sometimes', 'boolean'],
             'require_supplier_selection' => ['sometimes', 'boolean'],
-            'default_currency' => ['sometimes', 'string', 'in:RUB,USD,EUR'],
+            'default_currency' => ['sometimes', 'string', Rule::enum(CurrencyCode::class)],
             'notify_on_request_created' => ['sometimes', 'boolean'],
             'notify_on_order_sent' => ['sometimes', 'boolean'],
             'notify_on_proposal_received' => ['sometimes', 'boolean'],

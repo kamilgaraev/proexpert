@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Settings;
 
+use App\Enums\CurrencyCode;
 use DomainException;
 
 final readonly class EstimateGenerationSettingsData
@@ -20,8 +21,6 @@ final readonly class EstimateGenerationSettingsData
     private const REVIEW_KEYS = ['low_confidence'];
 
     private const FORMATS = ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'dxf', 'dwg', 'xlsx'];
-
-    private const CURRENCIES = ['RUB', 'USD', 'EUR'];
 
     /**
      * @param  array<string, string>  $models
@@ -243,7 +242,7 @@ final readonly class EstimateGenerationSettingsData
         if (self::decimalCompare($value['daily'], $value['monthly']) > 0) {
             throw new DomainException('estimate_generation_settings_budget_invalid');
         }
-        self::closedString($value['currency'] ?? null, self::CURRENCIES);
+        self::closedString($value['currency'] ?? null, CurrencyCode::values());
 
         return $value;
     }
