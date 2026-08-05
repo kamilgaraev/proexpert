@@ -36,7 +36,6 @@ use App\Observers\ScheduleTaskIntervalObserver;
 use App\Observers\ScheduleTaskObserver;
 use App\Observers\TaskDependencyObserver;
 use App\Observers\TaskResourceObserver;
-use App\Services\Export\ExcelExporterService;
 use App\Services\FileService;
 use App\Services\Landing\ChildOrganizationUserService;
 use App\Services\RateCoefficient\RateCoefficientService;
@@ -176,11 +175,6 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(FileService::class, function ($app) {
             return new FileService($app->make(\Illuminate\Contracts\Filesystem\Factory::class));
         });
-        // Регистрируем ExcelExporterService как singleton
-        $this->app->singleton(ExcelExporterService::class, function ($app) {
-            return new ExcelExporterService($app->make(\App\Services\Logging\LoggingService::class));
-        });
-
         // Регистрируем MaterialReportService как singleton
         $this->app->singleton(MaterialReportService::class, function ($app) {
             return new MaterialReportService($app->make(RateCoefficientService::class));
