@@ -47,48 +47,24 @@ return [
             'report' => false,
         ],
 
-        // Основной диск – для всех файлов организаций (Yandex Object Storage)
         's3' => [
             'driver' => 's3',
-            'key'    => env('AWS_ACCESS_KEY_ID'),
-            'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION', 'ru-central1'),
-            'bucket' => 'prohelper-storage', // основной бакет для всех организаций
-            // bucket устанавливается динамически в OrgBucketService
-            'endpoint' => env('AWS_ENDPOINT', 'https://storage.yandexcloud.net'),
-            'use_path_style_endpoint' => false, // для Yandex Object Storage нужен virtual-host style
-            'throw'   => true,
-            'report'  => false,
-        ],
-
-        // Диск для отчётов (общий бакет, private ACL, YC endpoint)
-        'reports' => [
-            'driver' => 's3',
-            'key'    => env('AWS_ACCESS_KEY_ID'),
-            'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION', 'ru-central1'),
-            'bucket' => env('REPORTS_BUCKET', 'official-reports'),
-            'endpoint' => env('AWS_ENDPOINT', 'https://storage.yandexcloud.net'),
-            'use_path_style_endpoint' => true,
-            'throw'   => false,
-            'report'  => false,
-        ],
-
-        // Диск для персональных файлов пользователей
-        'personals' => [
-            'driver' => 's3',
-            'key' => env('AWS_ACCESS_KEY_ID'),
-            'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION', 'ru-msk'),
-            'bucket' => env('AWS_PERSONALS_BUCKET', 'personals'),
-            // Хост бакета поддерживает virtual-hosted стиль (https://personals.website.regru.cloud)
-            // оставляем стандартный endpoint для API-вызовов
-            'endpoint' => env('AWS_ENDPOINT', 'https://s3.regru.cloud'),
-            'use_path_style_endpoint' => true, // единообразно с другими Regru-дисками
-            'throw' => false,
+            'key' => env('MOST_S3_ACCESS_KEY_ID'),
+            'secret' => env('MOST_S3_SECRET_ACCESS_KEY'),
+            'region' => env('MOST_S3_REGION', 'ru-1'),
+            'bucket' => env('MOST_S3_BUCKET', 'prohelper-storage'),
+            'endpoint' => env('MOST_S3_ENDPOINT', 'https://s3.twcstorage.ru'),
+            'use_path_style_endpoint' => env('MOST_S3_USE_PATH_STYLE_ENDPOINT', true),
+            'visibility' => 'private',
+            'throw' => true,
             'report' => false,
         ],
 
+    ],
+
+    's3' => [
+        'download_ttl_seconds' => (int) env('MOST_S3_DOWNLOAD_TTL_SECONDS', 300),
+        'upload_ttl_seconds' => (int) env('MOST_S3_UPLOAD_TTL_SECONDS', 900),
     ],
 
     /*

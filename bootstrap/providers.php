@@ -1,6 +1,7 @@
 <?php
 
 return [
+    App\Providers\StorageServiceProvider::class,
     App\Providers\EstimateGenerationIntegrationServiceProvider::class,
     App\Providers\CustomerReportingServiceProvider::class,
     App\BusinessModules\Addons\EstimateGeneration\EstimateGenerationServiceProvider::class,
