@@ -46,6 +46,7 @@ final readonly class WorkforceCapacityBuiltinPublishedReport
             'code' => self::code(),
             'title_key' => 'reports.catalog.workforce_capacity',
             'catalog_group' => 'team', 'category' => 'workforce', 'grain' => 'month_staff_unit_project_rate', 'wave' => 1,
+            'source_module' => 'workforce-management', 'core_access_mode' => 'source_module_report',
             'filters' => $this->contract->filters(), 'columns' => $this->contract->columns(),
             'sorts' => $this->contract->sorts(), 'formats' => $this->contract->formats(),
             'versions' => ['contract' => self::CONTRACT_VERSION, 'formula' => DatabaseWorkforceReportAdapter::CAPACITY_FORMULA, 'source_schema' => DatabaseWorkforceReportAdapter::SCHEMA_VERSION, 'renderer' => self::RENDERER_VERSION],

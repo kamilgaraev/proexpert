@@ -46,6 +46,7 @@ final readonly class PayrollReadinessBuiltinPublishedReport
             'code' => PayrollReadinessCandidateContract::CODE,
             'title_key' => 'reports.catalog.payroll_readiness',
             'catalog_group' => 'team', 'category' => 'workforce', 'grain' => 'period_employee_issue', 'wave' => 1,
+            'source_module' => 'workforce-management', 'core_access_mode' => 'source_module_report',
             'filters' => $this->contract->filters(), 'columns' => $this->contract->columns(),
             'sorts' => $this->contract->sorts(), 'formats' => $this->contract->formats(),
             'versions' => ['contract' => self::CONTRACT_VERSION, 'formula' => DatabasePayrollReadinessAdapter::FORMULA_VERSION, 'source_schema' => DatabasePayrollReadinessAdapter::SCHEMA_VERSION, 'renderer' => self::RENDERER_VERSION],

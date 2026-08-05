@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataReg
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinPublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\CompositePublishedReportDefinitionRegistry;
@@ -97,6 +98,32 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             hash('sha256', CanonicalJson::encode((new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->document())),
             $definition->definitionHash->value,
         );
+    }
+
+    public function test_builtin_reports_use_owner_module_entitlements(): void
+    {
+        $registry = new BuiltinPublishedReportDefinitionRegistry(
+            $this->projectMargin(),
+            new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract),
+            $this->projectLaborCost(),
+            $this->payrollReadiness(),
+            $this->workforceCapacity(),
+        );
+
+        $expectedModules = [
+            'budget_plan_fact' => 'budgeting',
+            'project_margin' => 'budgeting',
+            'project_labor_cost' => 'time-tracking',
+            'payroll_readiness' => 'workforce-management',
+            'workforce_capacity' => 'workforce-management',
+        ];
+
+        foreach ($expectedModules as $code => $module) {
+            $definition = $registry->published($code)->payload();
+
+            self::assertSame($module, $definition->sourceModule);
+            self::assertSame(ReportCoreAccessMode::SOURCE_MODULE_REPORT, $definition->coreAccessMode);
+        }
     }
 
     public function test_database_published_report_remains_available(): void

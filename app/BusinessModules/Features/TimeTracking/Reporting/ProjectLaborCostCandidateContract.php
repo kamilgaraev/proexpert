@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\TimeTracking\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -80,6 +81,8 @@ final readonly class ProjectLaborCostCandidateContract
     public function assertDefinition(ReportDefinition $definition): void
     {
         if ($definition->code !== self::CODE
+            || $definition->sourceModule !== 'time-tracking'
+            || $definition->coreAccessMode !== ReportCoreAccessMode::SOURCE_MODULE_REPORT
             || $definition->formulaVersion !== DatabaseProjectLaborCostAdapter::FORMULA_VERSION
             || $definition->sourceSchemaVersion !== DatabaseProjectLaborCostAdapter::SCHEMA_VERSION
             || $definition->filters !== self::canonicalItems($this->filters())
