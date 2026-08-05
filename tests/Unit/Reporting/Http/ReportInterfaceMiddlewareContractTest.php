@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindOrganizationRep
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\CreateReportRunRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportCatalogRequest;
+use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ProjectEvmControlReportOptionsRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ProjectLaborCostReportOptionsRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ReportFormRequest;
 use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
@@ -105,6 +106,21 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
 
         self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
         self::assertSame(['fields' => ['search']], $exception->safeFields);
+    }
+
+    public function test_project_evm_options_reject_inexact_as_of(): void
+    {
+        $request = $this->reportRequest(
+            ProjectEvmControlReportOptionsRequest::class,
+            'GET',
+            ['as_of' => '2026-08-05'],
+            [],
+        );
+
+        $exception = $this->middlewareValidationException($request);
+
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+        self::assertSame(['fields' => ['as_of']], $exception->safeFields);
     }
 
     public function test_project_report_scope_rejects_client_supplied_organization_or_project(): void
@@ -406,6 +422,12 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
                 ProjectLaborCostReportOptionsRequest::class,
                 'GET',
                 ['type' => 'employees', 'search' => 'Иванов', 'page' => 2],
+                [],
+            ],
+            'project evm options' => [
+                ProjectEvmControlReportOptionsRequest::class,
+                'GET',
+                ['as_of' => '2026-08-05T23:59:59+03:00'],
                 [],
             ],
         ];

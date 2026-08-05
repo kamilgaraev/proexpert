@@ -7,6 +7,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectEvmControlReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\WipCompletionForecastReportOptionsController;
@@ -117,6 +118,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'project_evm_control')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-evm-control.runs.store');
+        Route::get('/projects/{project}/project-evm-control/options', ProjectEvmControlReportOptionsController::class)
+            ->defaults('reportCode', 'project_evm_control')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('project-evm-control.options');
         Route::post('/projects/{project}/wip-completion-forecast/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'wip_completion_forecast')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])

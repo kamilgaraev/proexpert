@@ -29,6 +29,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmCo
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Providers\ProjectEvmControlReportProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Queries\ProjectEvmControlRowQuery;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Readiness\ProjectControlReadinessProbe;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectEvmControlOptionsService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
@@ -103,6 +104,7 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->scoped(ProjectEvmControlRowQuery::class);
         $this->app->scoped(ProjectEvmControlDrillDownProvider::class);
         $this->app->scoped(ProjectControlReadinessProbe::class);
+        $this->app->scoped(ProjectEvmControlOptionsService::class);
         $this->app->scoped(ProjectEvmControlReportBindingFactory::class);
         $this->app->scoped(ProjectEvmControlPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(WipCompletionForecastCandidateContract::class);
