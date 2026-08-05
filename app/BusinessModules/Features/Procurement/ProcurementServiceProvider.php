@@ -33,6 +33,7 @@ class ProcurementServiceProvider extends ServiceProvider
         $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
             $this->app->make(Reporting\Cycle\ProcurementCyclePublishedRuntimeBindingRegistrar::class)->register($assembler);
             $this->app->make(Reporting\Award\SupplierAwardPublishedRuntimeBindingRegistrar::class)->register($assembler);
+            $this->app->make(Reporting\Supply\SupplyReliabilityPublishedRuntimeBindingRegistrar::class)->register($assembler);
         });
 
         // Загружаем миграции
@@ -82,6 +83,15 @@ class ProcurementServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\Award\Readiness\SupplierAwardReadinessProbe::class);
         $this->app->singleton(Reporting\Award\Services\SupplierAwardReportBindingFactory::class);
         $this->app->singleton(Reporting\Award\SupplierAwardPublishedRuntimeBindingRegistrar::class);
+        $this->app->singleton(Reporting\Supply\Services\SupplyReliabilityPeriod::class);
+        $this->app->singleton(Reporting\Supply\Services\SupplyReliabilityFormula::class);
+        $this->app->singleton(Reporting\Supply\Services\SupplyReliabilitySnapshotMaterializer::class);
+        $this->app->singleton(Reporting\Supply\Providers\SupplyReliabilityReportProvider::class);
+        $this->app->singleton(Reporting\Supply\Queries\SupplyReliabilityRowQuery::class);
+        $this->app->singleton(Reporting\Supply\DrillDown\SupplyReliabilityDrillDownProvider::class);
+        $this->app->singleton(Reporting\Supply\Readiness\SupplyReliabilityReadinessProbe::class);
+        $this->app->singleton(Reporting\Supply\Services\SupplyReliabilityReportBindingFactory::class);
+        $this->app->singleton(Reporting\Supply\SupplyReliabilityPublishedRuntimeBindingRegistrar::class);
 
         $this->app->singleton(
             Reporting\Cycle\Contracts\ProcurementProcessEventStore::class,

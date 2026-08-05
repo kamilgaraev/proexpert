@@ -27,6 +27,8 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBui
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleCandidateContract;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardCandidateContract;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityBuiltinPublishedReport;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
@@ -68,6 +70,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('workforce_capacity', $registry->published('workforce_capacity')->code);
         self::assertSame('procurement_cycle', $registry->published('procurement_cycle')->code);
         self::assertSame('supplier_award_competitiveness', $registry->published('supplier_award_competitiveness')->code);
+        self::assertSame('supply_reliability', $registry->published('supply_reliability')->code);
         self::assertSame('project_margin', $app->make(ReportCatalogMetadataRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportCatalogMetadataRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('project_labor_cost', $app->make(ReportCatalogMetadataRegistry::class)->published('project_labor_cost')->code);
@@ -75,6 +78,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('workforce_capacity', $app->make(ReportCatalogMetadataRegistry::class)->published('workforce_capacity')->code);
         self::assertSame('procurement_cycle', $app->make(ReportCatalogMetadataRegistry::class)->published('procurement_cycle')->code);
         self::assertSame('supplier_award_competitiveness', $app->make(ReportCatalogMetadataRegistry::class)->published('supplier_award_competitiveness')->code);
+        self::assertSame('supply_reliability', $app->make(ReportCatalogMetadataRegistry::class)->published('supply_reliability')->code);
         self::assertSame('project_margin', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportSchedulingCapabilityRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('project_labor_cost', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_labor_cost')->code);
@@ -82,6 +86,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('workforce_capacity', $app->make(ReportSchedulingCapabilityRegistry::class)->published('workforce_capacity')->code);
         self::assertSame('procurement_cycle', $app->make(ReportSchedulingCapabilityRegistry::class)->published('procurement_cycle')->code);
         self::assertSame('supplier_award_competitiveness', $app->make(ReportSchedulingCapabilityRegistry::class)->published('supplier_award_competitiveness')->code);
+        self::assertSame('supply_reliability', $app->make(ReportSchedulingCapabilityRegistry::class)->published('supply_reliability')->code);
     }
 
     public function test_budget_plan_fact_is_available_without_database_publication(): void
@@ -94,10 +99,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->workforceCapacity(),
             $this->procurementCycle(),
             $this->supplierAward(),
+            $this->supplyReliability(),
         );
         $registry = new CompositePublishedReportDefinitionRegistry($builtins, $this->registry([]));
 
-        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'supplier_award_competitiveness', 'workforce_capacity'], $registry->publishedCodes());
+        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'supplier_award_competitiveness', 'supply_reliability', 'workforce_capacity'], $registry->publishedCodes());
         self::assertSame('project_margin', $registry->published('project_margin')->code);
         $definition = $registry->published('budget_plan_fact');
         $payload = $definition->payload();
@@ -122,6 +128,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->workforceCapacity(),
             $this->procurementCycle(),
             $this->supplierAward(),
+            $this->supplyReliability(),
         );
 
         $expectedModules = [
@@ -132,6 +139,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             'workforce_capacity' => 'workforce-management',
             'procurement_cycle' => 'procurement',
             'supplier_award_competitiveness' => 'procurement',
+            'supply_reliability' => 'procurement',
         ];
 
         foreach ($expectedModules as $code => $module) {
@@ -146,11 +154,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability()),
             $this->registry(['ordinary_report' => $builtin]),
         );
 
-        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'supplier_award_competitiveness', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
+        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'supplier_award_competitiveness', 'supply_reliability', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
         self::assertSame($builtin, $registry->published('ordinary_report'));
     }
 
@@ -158,7 +166,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability()),
             $this->registry(['budget_plan_fact' => $builtin]),
         );
 
@@ -225,5 +233,10 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     private function supplierAward(): SupplierAwardBuiltinPublishedReport
     {
         return new SupplierAwardBuiltinPublishedReport(new SupplierAwardCandidateContract);
+    }
+
+    private function supplyReliability(): SupplyReliabilityBuiltinPublishedReport
+    {
+        return new SupplyReliabilityBuiltinPublishedReport(new SupplyReliabilityCandidateContract);
     }
 }
