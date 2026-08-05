@@ -21,7 +21,9 @@ use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Queries\
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services\ChangeClaimSnapshotMaterializer;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureProvider;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerSource;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerTimestamp;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementQueryService;
+use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -275,6 +277,63 @@ final class FinanceOwnerReportingContractTest extends TestCase
         self::assertStringContainsString("DB::table('organizations')", $backfill);
         self::assertStringContainsString('->lockForUpdate()', $backfill);
         self::assertStringContainsString('ContractSettlementOwnerHistoryCheckpoint::query()->create', $backfill);
+    }
+
+    #[Test]
+    public function settlement_owner_foundation_pins_one_exact_boundary_and_covers_future_organizations(): void
+    {
+        $root = $this->root();
+        $migration = (string) file_get_contents(
+            $root.'/database/migrations/2026_08_05_040000_seed_contract_settlement_owner_history_foundation.php',
+        );
+        $backfill = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementOwnerHistoryBackfillService.php',
+        );
+        $recorder = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementOwnerVersionRecorder.php',
+        );
+        $source = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementOwnerSource.php',
+        );
+        $timestamp = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementOwnerTimestamp.php',
+        );
+        $versionModel = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/Models/ContractSettlementOwnerVersion.php',
+        );
+        $checkpointModel = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/Models/ContractSettlementOwnerHistoryCheckpoint.php',
+        );
+
+        self::assertStringContainsString(
+            'LOCK TABLE contracts, contract_project_allocations, contract_performance_acts, '
+            .'payment_documents, payment_transactions IN SHARE ROW EXCLUSIVE MODE',
+            $migration,
+        );
+        self::assertStringContainsString('timestamptz(6)', $migration);
+        self::assertStringContainsString('most_seed_contract_settlement_owner_checkpoint_v1', $migration);
+        self::assertStringContainsString('AFTER INSERT ON organizations', $migration);
+        self::assertStringContainsString('ContractSettlementOwnerHistoryBackfillService::class', $migration);
+        self::assertStringContainsString(
+            "\$this->recorder->record(\$owner, 'upsert', \$completedAt)",
+            $backfill,
+        );
+        self::assertStringContainsString("'version' => (int) \$version->version", $backfill);
+        self::assertStringContainsString("'hash' => (string) \$version->owner_hash", $backfill);
+        self::assertStringContainsString('?DateTimeInterface $occurredAt = null', $recorder);
+        self::assertStringContainsString(': ContractSettlementOwnerVersion', $recorder);
+        self::assertStringContainsString("'Y-m-d\\TH:i:s.uP'", $timestamp);
+        self::assertStringContainsString("'Y-m-d H:i:s.uP'", $timestamp);
+        self::assertStringContainsString('ContractSettlementOwnerTimestamp::canonical($occurredAt)', $recorder);
+        self::assertStringContainsString('ContractSettlementOwnerTimestamp::canonical($completedAt)', $backfill);
+        self::assertStringContainsString('ContractSettlementOwnerTimestamp::database($query->asOf)', $source);
+        self::assertStringContainsString('ContractSettlementOwnerTimestamp::MODEL_FORMAT', $versionModel);
+        self::assertStringContainsString('ContractSettlementOwnerTimestamp::MODEL_FORMAT', $checkpointModel);
+        self::assertStringNotContainsString('DATE_ATOM', $recorder);
+        self::assertStringNotContainsString('DATE_ATOM', $backfill);
+        $nonUtc = new DateTimeImmutable('2026-08-05T12:34:56.123456+03:00');
+        self::assertSame('2026-08-05T09:34:56.123456+00:00', ContractSettlementOwnerTimestamp::canonical($nonUtc));
+        self::assertSame('2026-08-05 09:34:56.123456+00:00', ContractSettlementOwnerTimestamp::database($nonUtc));
     }
 
     #[Test]

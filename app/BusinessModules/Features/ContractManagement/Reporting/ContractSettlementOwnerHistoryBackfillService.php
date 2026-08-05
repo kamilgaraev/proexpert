@@ -8,7 +8,6 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerHistoryCheckpoint;
-use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerVersion;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\ContractProjectAllocation;
@@ -28,6 +27,12 @@ final readonly class ContractSettlementOwnerHistoryBackfillService
         }
 
         return DB::transaction(function () use ($organizationId): ContractSettlementOwnerHistoryCheckpoint {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::statement(
+                    'LOCK TABLE contracts, contract_project_allocations, contract_performance_acts, '
+                    .'payment_documents, payment_transactions IN SHARE ROW EXCLUSIVE MODE',
+                );
+            }
             $organization = DB::table('organizations')
                 ->where('id', $organizationId)
                 ->lockForUpdate()
@@ -42,6 +47,7 @@ final readonly class ContractSettlementOwnerHistoryBackfillService
                 return $existing;
             }
 
+            $completedAt = now();
             $queries = [
                 'contract' => Contract::query()->where('organization_id', $organizationId),
                 'contract_allocation' => ContractProjectAllocation::query()
@@ -60,8 +66,8 @@ final readonly class ContractSettlementOwnerHistoryBackfillService
             foreach ($queries as $type => $query) {
                 $counts[$type] = 0;
                 $query->orderBy('id')->chunkById(500, function ($owners) use (
-                    $organizationId,
                     $type,
+                    $completedAt,
                     &$counts,
                     &$identities,
                 ): void {
@@ -69,32 +75,25 @@ final readonly class ContractSettlementOwnerHistoryBackfillService
                         if (! $owner instanceof Model) {
                             throw new DomainException('contract_settlement_owner_history_invalid');
                         }
-                        $exists = ContractSettlementOwnerVersion::query()
-                            ->where('organization_id', $organizationId)
-                            ->where('owner_type', $type)
-                            ->where('owner_id', $owner->getKey())
-                            ->exists();
-                        if (! $exists) {
-                            $this->recorder->record($owner, 'upsert');
-                        }
+                        $version = $this->recorder->record($owner, 'upsert', $completedAt);
                         $counts[$type]++;
                         $identities[] = [
                             'type' => $type,
                             'id' => (string) $owner->getKey(),
-                            'updated_at' => $owner->updated_at?->format(DATE_ATOM),
+                            'version' => (int) $version->version,
+                            'hash' => (string) $version->owner_hash,
                         ];
                     }
                 });
             }
-            $completedAt = now();
 
             return ContractSettlementOwnerHistoryCheckpoint::query()->create([
                 'organization_id' => $organizationId,
-                'completed_at' => $completedAt,
+                'completed_at' => ContractSettlementOwnerTimestamp::database($completedAt),
                 'owner_counts' => $counts,
                 'source_hash' => hash('sha256', CanonicalJson::encode([
                     'organization_id' => $organizationId,
-                    'completed_at' => $completedAt->format(DATE_ATOM),
+                    'completed_at' => ContractSettlementOwnerTimestamp::canonical($completedAt),
                     'owners' => $identities,
                 ])),
             ]);
