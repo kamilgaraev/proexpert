@@ -210,6 +210,7 @@ final readonly class InventoryRiskSnapshotMaterializer
             $rows = [];
             $gapCount = 0;
             $valueByCurrency = [];
+            $riskStatusCounts = ['healthy' => 0, 'reorder' => 0, 'excess' => 0];
             foreach ($balanceRows as $balance) {
                 $warnings = is_array($balance->quality_warnings) ? $balance->quality_warnings : [];
                 $demand = $this->demandFor($balance, $demands);
@@ -246,6 +247,7 @@ final readonly class InventoryRiskSnapshotMaterializer
                 if ($warnings !== []) {
                     $gapCount++;
                 }
+                $riskStatusCounts[$riskStatus]++;
                 if ($metric->onHandValueMinor !== null && $metric->currency !== null) {
                     $valueByCurrency[$metric->currency] = ($valueByCurrency[$metric->currency] ?? 0)
                         + $metric->onHandValueMinor;
@@ -316,6 +318,7 @@ final readonly class InventoryRiskSnapshotMaterializer
                 'reconciliation_status' => $gapCount === 0 ? 'matched' : 'mismatch',
                 'totals' => [
                     'row_count' => count($rows),
+                    'risk_status_counts' => $riskStatusCounts,
                     'value_by_currency' => $valueByCurrency,
                 ],
             ]);
