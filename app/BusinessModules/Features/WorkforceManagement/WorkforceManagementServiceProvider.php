@@ -4,6 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessOptionsService;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessReportBindingFactory;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 
@@ -12,6 +21,13 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(WorkforceManagementModule::class);
+        $this->app->scoped(PayrollReadinessDatabasePort::class, static fn ($app): DatabasePayrollReadinessAdapter => new DatabasePayrollReadinessAdapter(
+            $app['db']->connection(), $app->make(PayrollReadinessFormula::class), $app->make(PayrollSourceRateFormula::class),
+        ));
+        $this->app->singleton(PayrollReadinessCandidateContract::class);
+        $this->app->scoped(PayrollReadinessReportBindingFactory::class);
+        $this->app->scoped(PayrollReadinessPublishedRuntimeBindingRegistrar::class);
+        $this->app->scoped(PayrollReadinessOptionsService::class, static fn ($app): PayrollReadinessOptionsService => new PayrollReadinessOptionsService($app['db']->connection()));
         $this->app->singleton(
             Reporting\PayrollReadiness\Contracts\PayrollReadinessEvidenceSource::class,
             Reporting\PayrollReadiness\Services\EloquentPayrollReadinessEvidenceSource::class,
@@ -89,6 +105,9 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
+            $this->app->make(PayrollReadinessPublishedRuntimeBindingRegistrar::class)->register($assembler);
+        });
         $this->loadMigrationsFrom(__DIR__.'/migrations');
         $this->loadRoutesFrom(__DIR__.'/routes.php');
         $this->callAfterResolving(Schedule::class, static function (Schedule $schedule): void {

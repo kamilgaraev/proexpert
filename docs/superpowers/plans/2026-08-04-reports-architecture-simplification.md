@@ -129,7 +129,8 @@ UI различает initial, options loading, ready to run, validation error, 
 1. Reconciliation G10 «План-факт бюджета»: сверить фактический `main` с полным Definition of Done и исправить устаревшие source/handoff документы.
 2. Cleanup отменённой publication/CI-инфраструктуры отдельным блоком.
 3. G09 «Маржинальность проекта»: canonical backend и admin UI опубликованы; server-owned context, закрытый snapshot, totals, drill-down и export доставлены через отдельные PR и успешные deploy.
-4. G21 `project_labor_cost` «Стоимость труда по проектам»: canonical backend опубликован на реальном `DatabaseProjectLaborCostAdapter` — exact definition/binding, server-owned project scope, поисковые options с пагинацией, totals, sensitive-cost permission, signed drill-down и export. Следующий обязательный блок — admin UI с полным Definition of Done.
-5. Остальные отчёты — по одному, в порядке реальной готовности источников.
+4. G21 `project_labor_cost` «Стоимость труда по проектам»: canonical backend и admin UI опубликованы; используются реальный `DatabaseProjectLaborCostAdapter`, server-owned project scope, поисковые options, totals, sensitive-cost permission, signed drill-down и export.
+5. R22 `payroll_readiness` «Готовность к расчёту зарплаты»: следующий вертикальный блок на существующих версионированных payroll calculation sources и `DatabasePayrollReadinessAdapter`; публикация включает project-scoped options, blockers/readiness totals, audit drill-down и export.
+6. Остальные отчёты — по одному, в порядке реальной готовности источников.
 
 Для каждого блока создаются отдельные backend/admin feature-ветки от актуальных `main`; выполняются минимальные релевантные проверки и одно независимое review.

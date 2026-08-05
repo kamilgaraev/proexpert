@@ -49,11 +49,11 @@ use InvalidArgumentException;
 
 final readonly class DatabasePayrollReadinessAdapter implements PayrollReadinessDatabasePort
 {
-    private const FORMULA_VERSION = 'payroll-readiness.v1';
+    public const FORMULA_VERSION = 'payroll-readiness.v1';
 
-    private const SCHEMA_VERSION = 'workforce-payroll-calculation.v1';
+    public const SCHEMA_VERSION = 'workforce-payroll-calculation.v1';
 
-    private const SORTS = [
+    public const SORTS = [
         'period_start',
         'employee_name',
         'project_name',
@@ -1421,7 +1421,11 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
 
     private function projectIds(ReportScope $scope, ReportQuery $query): array
     {
-        $requested = $this->ids($query, 'project_ids');
+        $projectId = $query->filters->values['project_id'] ?? null;
+        $requested = $projectId === null ? $this->ids($query, 'project_ids') : [(int) $projectId];
+        if ($projectId !== null && (! is_int($projectId) && ! (is_string($projectId) && ctype_digit($projectId)))) {
+            throw new InvalidArgumentException('payroll_readiness_filter_invalid');
+        }
         $resourceIds = array_values(array_unique(array_map(
             static fn (object $resource): int => $resource->id,
             array_filter(

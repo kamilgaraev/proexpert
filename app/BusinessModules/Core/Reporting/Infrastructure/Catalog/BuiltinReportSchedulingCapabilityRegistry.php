@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
 
 final readonly class BuiltinReportSchedulingCapabilityRegistry implements ReportSchedulingCapabilityRegistry
 {
@@ -18,6 +19,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private ProjectMarginBuiltinPublishedReport $projectMargin,
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
+        private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -26,6 +28,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->projectMargin->scheduling()->code => $this->projectMargin->scheduling(),
             $this->budgetPlanFact->scheduling()->code => $this->budgetPlanFact->scheduling(),
             $this->projectLaborCost->scheduling()->code => $this->projectLaborCost->scheduling(),
+            $this->payrollReadiness->scheduling()->code => $this->payrollReadiness->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }
