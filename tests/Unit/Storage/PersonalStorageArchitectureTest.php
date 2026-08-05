@@ -90,4 +90,13 @@ final class PersonalStorageArchitectureTest extends TestCase
             __DIR__.'/../../../app/Console/Commands/CleanupPersonalFilesCommand.php',
         );
     }
+
+    public function test_excel_exporter_is_resolved_with_its_current_dependencies(): void
+    {
+        $provider = file_get_contents(__DIR__.'/../../../app/Providers/AppServiceProvider.php');
+
+        self::assertIsString($provider);
+        self::assertStringNotContainsString('singleton(ExcelExporterService::class', $provider);
+        self::assertStringNotContainsString('new ExcelExporterService(', $provider);
+    }
 }
