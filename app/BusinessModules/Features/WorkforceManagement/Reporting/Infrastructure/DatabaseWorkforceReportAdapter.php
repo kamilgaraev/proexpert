@@ -51,7 +51,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
 {
     public const CAPACITY_FORMULA = 'workforce-capacity.v1';
 
-    private const ATTENDANCE_FORMULA = 'attendance.v1';
+    public const ATTENDANCE_FORMULA = 'attendance.v1';
 
     public const SCHEMA_VERSION = 'workforce-report-source.v1';
 
@@ -506,6 +506,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $siteIds = $this->authorizedIds($scope, 'site', $this->ids($query, 'site_ids'));
         $shiftIds = $this->authorizedIds($scope, 'shift', $this->ids($query, 'shift_ids'));
         $statuses = $this->strings($query, 'statuses');
+        if (array_diff($statuses, ['covered', 'unexplained_absence']) !== []) {
+            throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
+        }
         $this->assertOrganizationIds('workforce_employees', $scope, $employeeFilterIds);
         $this->assertOrganizationIds('workforce_absence_types', $scope, $absenceTypeIds);
         $this->assertOrganizationIds('projects', $scope, $siteIds);

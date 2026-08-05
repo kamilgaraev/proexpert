@@ -17,6 +17,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityB
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
 
 final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatalogMetadataRegistry
 {
@@ -30,6 +31,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private SupplierAwardBuiltinPublishedReport $supplierAward,
         private SupplyReliabilityBuiltinPublishedReport $supplyReliability,
         private InventoryRiskBuiltinPublishedReport $inventoryRisk,
+        private AttendanceExecutionBuiltinPublishedReport $attendanceExecution,
     ) {}
 
     public function published(string $code): ReportCatalogMetadata
@@ -44,6 +46,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->supplierAward->metadata()->code => $this->supplierAward->metadata(),
             $this->supplyReliability->metadata()->code => $this->supplyReliability->metadata(),
             $this->inventoryRisk->metadata()->code => $this->inventoryRisk->metadata(),
+            $this->attendanceExecution->metadata()->code => $this->attendanceExecution->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }
