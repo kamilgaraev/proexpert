@@ -93,6 +93,7 @@ final readonly class GenerateRagPdfReportTool implements AIToolInterface
                 'reports.operational-summary-pdf',
                 ['report' => $this->pdfReport($report, $organization, $user)],
                 $organization,
+                $user,
                 $this->filenamePrefix((string) $input['report_type'])
             );
         } catch (Throwable) {

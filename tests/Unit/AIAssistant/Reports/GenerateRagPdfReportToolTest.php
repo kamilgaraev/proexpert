@@ -66,8 +66,10 @@ final class GenerateRagPdfReportToolTest extends TestCase
         $this->assertSame('Проект находится в работе, есть риск задержки поставки.', $writer->data['report']['key_findings'][0]);
         $this->assertSame('Факты', $writer->data['report']['summary_cards'][1]['label']);
         $this->assertSame('Действия', $writer->data['report']['summary_cards'][3]['label']);
+        $this->assertSame(7, $writer->userId);
         $this->assertSame('s3', $result['storage_disk']);
-        $this->assertStringStartsWith('org-72/reports/', $result['storage_path']);
+        $this->assertStringStartsWith('org-72/personal-files/user-7/', $result['storage_path']);
+        $this->assertNull($result['expires_at']);
     }
 
     public function test_does_not_create_pdf_when_rag_sources_are_missing(): void
@@ -141,23 +143,31 @@ final class FakeAssistantReportPdfWriter implements AssistantReportPdfWriterInte
 
     public ?string $view = null;
 
+    public ?int $userId = null;
+
     /**
      * @var array<string, mixed>
      */
     public array $data = [];
 
-    public function store(string $view, array $data, Organization $organization, string $filenamePrefix): array
-    {
+    public function store(
+        string $view,
+        array $data,
+        Organization $organization,
+        User $user,
+        string $filenamePrefix,
+    ): array {
         $this->stored = true;
         $this->view = $view;
         $this->data = $data;
+        $this->userId = (int) $user->id;
 
         return [
-            'pdf_url' => 'https://storage.example.test/org-72/reports/'.$filenamePrefix.'.pdf',
+            'pdf_url' => 'https://storage.example.test/org-72/personal-files/user-7/'.$filenamePrefix.'.pdf',
             'filename' => $filenamePrefix.'.pdf',
             'storage_disk' => 's3',
-            'storage_path' => 'org-72/reports/'.$filenamePrefix.'.pdf',
-            'expires_at' => '2026-07-02T12:00:00+03:00',
+            'storage_path' => 'org-72/personal-files/user-7/'.$filenamePrefix.'.pdf',
+            'expires_at' => null,
             'size' => 1234,
         ];
     }

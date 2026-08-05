@@ -10,7 +10,6 @@ use App\Models\Organization;
 use App\Models\ReportFile;
 use App\Models\User;
 use App\Services\Storage\FileService;
-use Carbon\CarbonInterface;
 use Illuminate\Support\Str;
 
 final readonly class AssistantReportFileService
@@ -28,7 +27,7 @@ final readonly class AssistantReportFileService
     ) {}
 
     /**
-     * @param array<string, mixed> $arguments
+     * @param  array<string, mixed>  $arguments
      * @return array<int, array<string, mixed>>
      */
     public function artifactsFromToolResult(
@@ -48,8 +47,8 @@ final readonly class AssistantReportFileService
     }
 
     /**
-     * @param array<string, mixed> $data
-     * @param array<string, mixed> $arguments
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $arguments
      */
     private function artifactFromArray(
         string $toolName,
@@ -58,10 +57,18 @@ final readonly class AssistantReportFileService
         ?User $user,
         array $arguments
     ): ?AssistantReportArtifact {
+        if (! $user instanceof User) {
+            return null;
+        }
+
         $storageDisk = $this->optionalString($data['storage_disk'] ?? null);
         $storagePath = $this->optionalString($data['storage_path'] ?? null);
 
-        if ($storageDisk !== 's3' || $storagePath === null || ! $this->belongsToOrganizationReports($storagePath, $organization)) {
+        if (
+            $storageDisk !== 's3'
+            || $storagePath === null
+            || ! $this->belongsToOrganizationReports($storagePath, $organization, $user)
+        ) {
             return null;
         }
 
@@ -71,15 +78,13 @@ final readonly class AssistantReportFileService
         }
 
         $filename = $this->filename($data, $storagePath);
-        $expiresAt = $this->expiresAt($data);
+        $expiresAt = null;
         $definition = $this->definitionForArtifact($toolName, $data, $arguments);
         $type = self::URL_KEYS[$urlKey] ?? $definition?->artifactType ?? 'file';
-        $downloadUrl = $this->fileService->temporaryUrl($storagePath, 24 * 60, $organization)
-            ?? $this->optionalString($data[$urlKey] ?? null);
-
-        if ($downloadUrl === null || $downloadUrl === '') {
-            return null;
-        }
+        $downloadUrl = $this->fileService->temporaryDownloadUrl(
+            $storagePath,
+            (int) config('filesystems.s3.download_ttl_seconds'),
+        );
 
         $reportFile = ReportFile::query()->updateOrCreate(
             [
@@ -91,8 +96,8 @@ final readonly class AssistantReportFileService
                 'filename' => $filename,
                 'name' => $filename,
                 'size' => $this->optionalInt($data['size'] ?? null) ?? 0,
-                'expires_at' => $expiresAt,
-                'user_id' => $user?->id,
+                'expires_at' => null,
+                'user_id' => $user->id,
             ]
         );
 
@@ -111,8 +116,8 @@ final readonly class AssistantReportFileService
     }
 
     /**
-     * @param array<string, mixed> $data
-     * @param array<string, mixed> $arguments
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $arguments
      */
     private function definitionForArtifact(string $toolName, array $data, array $arguments): ?AssistantReportDefinition
     {
@@ -131,7 +136,7 @@ final readonly class AssistantReportFileService
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     private function firstUrlKey(array $data): ?string
     {
@@ -144,13 +149,16 @@ final readonly class AssistantReportFileService
         return null;
     }
 
-    private function belongsToOrganizationReports(string $path, Organization $organization): bool
+    private function belongsToOrganizationReports(string $path, Organization $organization, User $user): bool
     {
-        return str_starts_with($path, 'org-'.((int) $organization->id).'/reports/');
+        return str_starts_with(
+            $path,
+            'org-'.((int) $organization->id).'/personal-files/user-'.((int) $user->id).'/',
+        );
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     private function filename(array $data, string $storagePath): string
     {
@@ -165,21 +173,7 @@ final readonly class AssistantReportFileService
     }
 
     /**
-     * @param array<string, mixed> $data
-     */
-    private function expiresAt(array $data): ?string
-    {
-        $value = $data['expires_at'] ?? null;
-
-        if ($value instanceof CarbonInterface) {
-            return $value->toIso8601String();
-        }
-
-        return $this->optionalString($value);
-    }
-
-    /**
-     * @param array<string, mixed> $arguments
+     * @param  array<string, mixed>  $arguments
      * @return array<string, mixed>
      */
     private function filters(array $arguments): array

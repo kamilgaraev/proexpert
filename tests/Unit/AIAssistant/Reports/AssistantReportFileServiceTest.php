@@ -21,12 +21,13 @@ final class AssistantReportFileServiceTest extends TestCase
     {
         $organization = Organization::factory()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
-        $path = 'org-'.$organization->id.'/reports/timeline.pdf';
+        $path = 'org-'.$organization->id.'/personal-files/user-'.$user->id.'/01989f5c-27f3-7ab8-9e34-5d436c15a004.pdf';
+        config()->set('filesystems.s3.download_ttl_seconds', 900);
         $fileService = Mockery::mock(FileService::class);
         $fileService
-            ->shouldReceive('temporaryUrl')
+            ->shouldReceive('temporaryDownloadUrl')
             ->once()
-            ->with($path, 1440, Mockery::on(static fn (Organization $value): bool => (int) $value->id === (int) $organization->id))
+            ->with($path, 900)
             ->andReturn('https://files.example.test/timeline.pdf');
 
         $service = new AssistantReportFileService($fileService);
@@ -39,7 +40,6 @@ final class AssistantReportFileServiceTest extends TestCase
                 'filename' => 'timeline.pdf',
                 'storage_disk' => 's3',
                 'storage_path' => $path,
-                'expires_at' => '2026-05-21T12:00:00+03:00',
             ],
             $organization,
             $user,
@@ -54,6 +54,7 @@ final class AssistantReportFileServiceTest extends TestCase
         $this->assertSame('pdf', $artifacts[0]['type']);
         $this->assertSame('https://files.example.test/timeline.pdf', $artifacts[0]['download_url']);
         $this->assertSame($path, $artifacts[0]['storage_path']);
+        $this->assertNull($artifacts[0]['expires_at']);
         $this->assertSame('project_timelines', $artifacts[0]['report_type']);
         $this->assertSame(12, $artifacts[0]['filters']['project_id']);
         $this->assertDatabaseHas('report_files', [
@@ -62,14 +63,16 @@ final class AssistantReportFileServiceTest extends TestCase
             'filename' => 'timeline.pdf',
             'type' => 'reports',
             'user_id' => $user->id,
+            'expires_at' => null,
         ]);
     }
 
     public function test_rejects_artifact_without_organization_report_storage_evidence(): void
     {
         $organization = Organization::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
         $fileService = Mockery::mock(FileService::class);
-        $fileService->shouldNotReceive('temporaryUrl');
+        $fileService->shouldNotReceive('temporaryDownloadUrl');
 
         $service = new AssistantReportFileService($fileService);
 
@@ -80,10 +83,10 @@ final class AssistantReportFileServiceTest extends TestCase
                 'pdf_url' => 'https://storage.example.test/timeline.pdf',
                 'filename' => 'timeline.pdf',
                 'storage_disk' => 's3',
-                'storage_path' => 'org-999/reports/timeline.pdf',
+                'storage_path' => 'org-999/personal-files/user-'.$user->id.'/timeline.pdf',
             ],
             $organization,
-            null,
+            $user,
             []
         );
 
