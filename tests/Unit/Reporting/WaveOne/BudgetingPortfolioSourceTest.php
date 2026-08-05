@@ -200,6 +200,23 @@ final class BudgetingPortfolioSourceTest extends TestCase
     }
 
     #[Test]
+    public function budgeting_owner_registers_all_non_payment_liquidity_sources_for_versioning(): void
+    {
+        $provider = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/Budgeting/BudgetingServiceProvider.php',
+        );
+
+        foreach ([
+            'BudgetAmount::observe(PortfolioLiquiditySourceVersionObserver::class)',
+            'BudgetLimitReservation::observe(PortfolioLiquiditySourceVersionObserver::class)',
+            'CashGapOpeningBalance::observe(PortfolioLiquiditySourceVersionObserver::class)',
+            'BudgetVersion::observe(PortfolioLiquidityBudgetVersionObserver::class)',
+        ] as $registration) {
+            self::assertStringContainsString($registration, $provider);
+        }
+    }
+
+    #[Test]
     public function production_materializer_requires_all_canonical_owner_sources_and_has_no_prepared_fallback(): void
     {
         $reflection = new ReflectionClass(BudgetingPortfolioProjectionService::class);

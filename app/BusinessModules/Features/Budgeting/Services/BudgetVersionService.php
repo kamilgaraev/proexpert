@@ -131,14 +131,19 @@ final class BudgetVersionService
             $toStatus = $this->workflowService->transition($fromStatus, $action, $version->lines()->exists());
 
             if ($action === 'activate') {
-                BudgetVersion::query()
+                $replacedVersions = BudgetVersion::query()
                     ->where('organization_id', $version->organization_id)
                     ->where('budget_period_id', $version->budget_period_id)
                     ->where('scenario_id', $version->scenario_id)
                     ->where('budget_kind', $version->budget_kind)
                     ->where('status', BudgetWorkflowService::STATUS_ACTIVE)
                     ->where('id', '!=', $version->id)
-                    ->update(['status' => BudgetWorkflowService::STATUS_REPLACED]);
+                    ->lockForUpdate()
+                    ->get();
+                foreach ($replacedVersions as $replacedVersion) {
+                    $replacedVersion->status = BudgetWorkflowService::STATUS_REPLACED;
+                    $replacedVersion->save();
+                }
             }
 
             $history = $version->workflow_history ?? [];

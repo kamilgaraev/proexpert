@@ -258,15 +258,19 @@ final class PaymentBudgetLimitService
 
     public function release(PaymentDocument $document, string $reason): void
     {
-        BudgetLimitReservation::query()
+        $reservations = BudgetLimitReservation::query()
             ->where('payment_document_id', $document->id)
             ->where('status', BudgetLimitReservation::STATUS_RESERVED)
-            ->update([
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($reservations as $reservation) {
+            $reservation->update([
                 'status' => BudgetLimitReservation::STATUS_RELEASED,
                 'released_at' => now(),
                 'release_reason' => mb_substr($reason, 0, 255),
-                'updated_at' => now(),
             ]);
+        }
     }
 
     public function convertAfterPayment(PaymentDocument $document, ?PaymentTransaction $transaction = null): void

@@ -455,10 +455,8 @@ class PaymentDocumentService
                 'value_date' => $paymentData['value_date'] ?? now(),
                 'status' => 'completed',
                 'notes' => $paymentData['notes'] ?? null,
-                'metadata' => json_encode($paymentData['metadata'] ?? []),
+                'metadata' => $paymentData['metadata'] ?? [],
                 'created_by_user_id' => $paymentData['created_by_user_id'] ?? null,
-                'created_at' => now(),
-                'updated_at' => now(),
             ];
 
             Log::info('payment_document.register_payment.checking_invoice_column', [
@@ -478,9 +476,9 @@ class PaymentDocumentService
                 'transaction_data_keys' => array_keys($transactionData),
             ]);
 
-            // Создаем транзакцию платежа
-            $transaction = DB::table('payment_transactions')->insertGetId($transactionData);
-            
+            $transactionModel = PaymentTransaction::query()->create($transactionData);
+            $transaction = (int) $transactionModel->getKey();
+
             Log::info('payment_document.register_payment.transaction_inserted', [
                 'document_id' => $document->id,
                 'transaction_id' => $transaction,
@@ -499,12 +497,9 @@ class PaymentDocumentService
                 'remaining_amount' => $newRemainingAmount,
             ]);
 
-            // Загружаем транзакцию как модель для уведомлений
-            $transactionModel = PaymentTransaction::find($transaction);
-            
             Log::info('payment_document.register_payment.transaction_loaded', [
                 'document_id' => $document->id,
-                'transaction_model_exists' => $transactionModel !== null,
+                'transaction_model_exists' => true,
             ]);
 
             // Отправляем уведомление получателю (если зарегистрирован)
