@@ -84,7 +84,8 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.project-labor-cost.options',
             'admin.reports.payroll-readiness.options',
             'admin.reports.workforce-capacity.runs.store',
-            'admin.reports.workforce-capacity.options' => $this->targets->createRun(
+            'admin.reports.workforce-capacity.options',
+            'admin.reports.portfolio-liquidity.options' => $this->targets->createRun(
                 $this->routeId($request, 'reportCode'),
             ),
             'admin.reports.runs.show', 'admin.reports.runs.rows' => $this->targets->run(

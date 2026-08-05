@@ -6,6 +6,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMat
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
@@ -88,6 +89,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'workforce_capacity')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('workforce-capacity.options');
+        Route::get('/portfolio-liquidity/options', PortfolioLiquidityReportOptionsController::class)
+            ->defaults('reportCode', 'portfolio_liquidity')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('portfolio-liquidity.options');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');
