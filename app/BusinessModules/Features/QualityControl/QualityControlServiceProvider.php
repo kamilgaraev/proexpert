@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use Illuminate\Support\ServiceProvider;
 
 final class QualityControlServiceProvider extends ServiceProvider
@@ -34,10 +35,16 @@ final class QualityControlServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\DefectFlow\DrillDown\QualityDefectFlowDrillDownProvider::class);
         $this->app->singleton(Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill::class);
         $this->app->singleton(Reporting\DefectFlow\Readiness\QualityDefectFlowReadinessProbe::class);
+        $this->app->singleton(Reporting\DefectFlow\QualityDefectFlowCandidateContract::class);
+        $this->app->scoped(Reporting\DefectFlow\QualityDefectFlowReportBindingFactory::class);
+        $this->app->scoped(Reporting\DefectFlow\QualityDefectFlowPublishedRuntimeBindingRegistrar::class);
     }
 
     public function boot(): void
     {
+        $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
+            $this->app->make(Reporting\DefectFlow\QualityDefectFlowPublishedRuntimeBindingRegistrar::class)->register($assembler);
+        });
         $migrationsPath = __DIR__.'/migrations';
         if (is_dir($migrationsPath)) {
             $this->loadMigrationsFrom($migrationsPath);

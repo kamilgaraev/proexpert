@@ -18,6 +18,7 @@ use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinP
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowBuiltinPublishedReport;
 
 final readonly class BuiltinReportSchedulingCapabilityRegistry implements ReportSchedulingCapabilityRegistry
 {
@@ -32,6 +33,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private SupplyReliabilityBuiltinPublishedReport $supplyReliability,
         private InventoryRiskBuiltinPublishedReport $inventoryRisk,
         private AttendanceExecutionBuiltinPublishedReport $attendanceExecution,
+        private QualityDefectFlowBuiltinPublishedReport $qualityDefectFlow,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -47,6 +49,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->supplyReliability->scheduling()->code => $this->supplyReliability->scheduling(),
             $this->inventoryRisk->scheduling()->code => $this->inventoryRisk->scheduling(),
             $this->attendanceExecution->scheduling()->code => $this->attendanceExecution->scheduling(),
+            $this->qualityDefectFlow->scheduling()->code => $this->qualityDefectFlow->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }
