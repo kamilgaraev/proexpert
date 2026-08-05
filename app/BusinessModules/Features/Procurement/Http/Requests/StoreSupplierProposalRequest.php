@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Requests;
 
-use App\BusinessModules\Features\Procurement\Enums\SupplierProposalCurrencyEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalIntakeSourceEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\CurrencyCode;
 use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -49,7 +49,7 @@ class StoreSupplierProposalRequest extends FormRequest
             'delivery_amount' => 'required|numeric|min:0',
             'vat_amount' => 'sometimes|nullable|numeric|min:0',
             'total_amount' => 'required|numeric|min:0',
-            'currency' => ['required', 'string', Rule::enum(SupplierProposalCurrencyEnum::class)],
+            'currency' => ['required', 'string', Rule::enum(CurrencyCode::class)],
             'vat_mode' => ['required', 'string', Rule::enum(SupplierProposalVatModeEnum::class)],
             'vat_rate' => 'required|numeric|min:0|max:100',
             'valid_until' => 'required|date|after:today',
