@@ -12,8 +12,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\Backfill\SupplyBac
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityBackfillWatermark;
-use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyReliabilityPolicyVersion;
-use App\Support\Reporting\OwnerReportFilterApplier;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyReliabilityPeriod;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
@@ -24,8 +23,8 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
 {
     public function __construct(
         private ReportSourceAccessPolicy $sourceAccess,
-        private OwnerReportFilterApplier $filters,
         private SupplyBackfillEvidenceHasher $evidence,
+        private SupplyReliabilityPeriod $period,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -46,18 +45,6 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             $context->scope->resources,
             'purchase_order_item',
         );
-        $policy = SupplyReliabilityPolicyVersion::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('effective_from', '<=', $query->asOf)
-            ->where(static fn ($builder) => $builder
-                ->whereNull('effective_to')
-                ->orWhere('effective_to', '>', $query->asOf))
-            ->orderByDesc('effective_from')
-            ->orderByDesc('policy_version')
-            ->first();
-        $tolerance = $policy instanceof SupplyReliabilityPolicyVersion
-            ? (string) $policy->quantity_tolerance
-            : '0';
         $authoritativeItems = DB::table('purchase_order_items as authoritative_item')
             ->join(
                 'purchase_orders as authoritative_order',
@@ -119,37 +106,16 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
                     $projects,
                 ),
             );
-        $cohortFilters = $this->filters->only($query->filters, [
-            'supplier', 'supplier_id', 'project', 'project_id', 'warehouse', 'warehouse_id',
-            'material', 'material_id', 'buyer', 'priority', 'status', 'period', 'promised_month',
-            'delay',
-        ]);
-        $this->filters->apply($promises, $cohortFilters, [
-            'supplier' => 'sent_purchase_order_line_owners.supplier_id',
-            'supplier_id' => 'sent_purchase_order_line_owners.supplier_id',
-            'project' => 'sent_purchase_order_line_owners.project_id',
-            'project_id' => 'sent_purchase_order_line_owners.project_id',
-            'warehouse' => 'sent_purchase_order_line_owners.warehouse_id',
-            'warehouse_id' => 'sent_purchase_order_line_owners.warehouse_id',
-            'material' => 'sent_purchase_order_line_owners.material_id',
-            'material_id' => 'sent_purchase_order_line_owners.material_id',
-            'buyer' => 'sent_purchase_order_line_owners.buyer_id',
-            'priority' => 'sent_purchase_order_line_owners.priority',
-            'status' => $this->statusExpression($query, $tolerance),
-            'period' => 'owner_promise.promised_at',
-            'promised_month' => DB::raw("to_char(owner_promise.promised_at, 'YYYY-MM')"),
-            'delay' => $this->delayExpression($query, $tolerance),
-        ]);
+        [$periodStart, $periodEnd] = $this->period->resolve($query);
+        $promises->whereBetween('owner_promise.promised_at', [$periodStart, $periodEnd]);
         $reconciliationOwners = clone $promises;
         $authoritativeCohort = clone $authoritativeItems;
-        if ($cohortFilters->values !== []) {
-            $authoritativeCohort->whereIn(
-                'authoritative_item.id',
-                (clone $reconciliationOwners)->select(
-                    'sent_purchase_order_line_owners.purchase_order_item_id',
-                ),
-            );
-        }
+        $authoritativeCohort->whereIn(
+            'authoritative_item.id',
+            (clone $reconciliationOwners)->select(
+                'sent_purchase_order_line_owners.purchase_order_item_id',
+            ),
+        );
         $authoritativeItemIds = (clone $authoritativeCohort)->select('authoritative_item.id');
         $eligible = (clone $authoritativeCohort)->distinct()->count('authoritative_item.id');
         $eligibleMaxItemId = (int) ((clone $authoritativeCohort)->max('authoritative_item.id') ?? 0);
@@ -350,79 +316,4 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         );
     }
 
-    private function statusExpression(
-        ReportQuery $query,
-        string $tolerance,
-    ): \Illuminate\Contracts\Database\Query\Expression {
-        $cutoff = $query->asOf->format(DATE_ATOM);
-
-        return DB::raw(
-            '(CASE '
-            .'WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_cancel '
-            .'WHERE status_cancel.promise_version_id = owner_promise.id '
-            ."AND status_cancel.event_type = 'cancelled' AND status_cancel.occurred_at <= '{$cutoff}') "
-            ."THEN 'cancelled' "
-            .'WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty '
-            .'WHERE status_qty.promise_version_id = owner_promise.id '
-            ."AND status_qty.occurred_at <= '{$cutoff}'), 0) >= "
-            ."(owner_promise.ordered_quantity - {$tolerance}) "
-            ."THEN 'delivered' "
-            .'WHEN COALESCE((SELECT SUM(status_qty.signed_quantity) FROM supply_lifecycle_events status_qty '
-            .'WHERE status_qty.promise_version_id = owner_promise.id '
-            ."AND status_qty.occurred_at <= '{$cutoff}'), 0) > 0 THEN 'partially_delivered' "
-            .'WHEN EXISTS (SELECT 1 FROM supply_lifecycle_events status_confirm '
-            .'WHERE status_confirm.promise_version_id = owner_promise.id '
-            ."AND status_confirm.event_type = 'confirmed' AND status_confirm.occurred_at <= '{$cutoff}') "
-            ."THEN 'confirmed' ELSE 'sent' END)",
-        );
-    }
-
-    private function delayExpression(
-        ReportQuery $query,
-        string $tolerance,
-    ): \Illuminate\Contracts\Database\Query\Expression {
-        $cutoff = $query->asOf->format(DATE_ATOM);
-        $relevantTypes = "('received', 'receipt_reversed', 'returned')";
-        $receipt = '(SELECT delay_event.occurred_at FROM supply_lifecycle_events delay_event '
-            .'WHERE delay_event.promise_version_id = owner_promise.id '
-            ."AND delay_event.occurred_at <= '{$cutoff}' "
-            ."AND delay_event.event_type = 'received' "
-            .'AND delay_event.signed_quantity > 0 '
-            .'AND (SELECT COALESCE(SUM(delay_running.signed_quantity), 0) '
-            .'FROM supply_lifecycle_events delay_running '
-            .'WHERE delay_running.promise_version_id = owner_promise.id '
-            ."AND delay_running.event_type IN {$relevantTypes} "
-            .'AND (delay_running.occurred_at < delay_event.occurred_at '
-            .'OR (delay_running.occurred_at = delay_event.occurred_at AND delay_running.id <= delay_event.id))) '
-            .">= (owner_promise.ordered_quantity - {$tolerance}) "
-            .'AND (SELECT COALESCE(SUM(delay_before.signed_quantity), 0) '
-            .'FROM supply_lifecycle_events delay_before '
-            .'WHERE delay_before.promise_version_id = owner_promise.id '
-            ."AND delay_before.event_type IN {$relevantTypes} "
-            .'AND (delay_before.occurred_at < delay_event.occurred_at '
-            .'OR (delay_before.occurred_at = delay_event.occurred_at AND delay_before.id < delay_event.id))) '
-            ."< (owner_promise.ordered_quantity - {$tolerance}) "
-            .'AND NOT EXISTS (SELECT 1 FROM supply_lifecycle_events delay_later '
-            .'WHERE delay_later.promise_version_id = owner_promise.id '
-            ."AND delay_later.event_type IN {$relevantTypes} "
-            ."AND delay_later.occurred_at <= '{$cutoff}' "
-            .'AND (delay_later.occurred_at > delay_event.occurred_at '
-            .'OR (delay_later.occurred_at = delay_event.occurred_at AND delay_later.id > delay_event.id)) '
-            .'AND (SELECT COALESCE(SUM(delay_after.signed_quantity), 0) '
-            .'FROM supply_lifecycle_events delay_after '
-            .'WHERE delay_after.promise_version_id = owner_promise.id '
-            ."AND delay_after.event_type IN {$relevantTypes} "
-            .'AND (delay_after.occurred_at < delay_later.occurred_at '
-            .'OR (delay_after.occurred_at = delay_later.occurred_at AND delay_after.id <= delay_later.id))) '
-            ."< (owner_promise.ordered_quantity - {$tolerance})) "
-            .'ORDER BY delay_event.occurred_at DESC, delay_event.id DESC LIMIT 1)';
-
-        return DB::raw(
-            "(CASE WHEN {$receipt} IS NULL THEN 'unreceived' "
-            ."WHEN {$receipt} <= owner_promise.promised_at THEN 'on_time' "
-            ."WHEN {$receipt} <= owner_promise.promised_at + INTERVAL '3 days' THEN 'delay_1_3' "
-            ."WHEN {$receipt} <= owner_promise.promised_at + INTERVAL '7 days' THEN 'delay_4_7' "
-            ."ELSE 'delay_over_7' END)",
-        );
-    }
 }

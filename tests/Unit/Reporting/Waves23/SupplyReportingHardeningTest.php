@@ -291,21 +291,21 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('$watermark->target_sent_at', $readiness);
     }
 
-    public function test_readiness_delay_reducer_resets_after_negative_lifecycle_events(): void
+    public function test_supply_report_uses_strict_period_without_client_owned_scope_filters(): void
     {
         $readiness = $this->source(
             'app/BusinessModules/Features/Procurement/Reporting/Supply/Readiness/'
             .'SupplyReliabilityReadinessProbe.php',
         );
-
-        self::assertStringContainsString(
-            "('received', 'receipt_reversed', 'returned')",
-            $readiness,
+        $period = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Services/'
+            .'SupplyReliabilityPeriod.php',
         );
-        self::assertStringContainsString("delay_event.event_type = 'received'", $readiness);
-        self::assertStringContainsString('delay_event.signed_quantity > 0', $readiness);
-        self::assertStringContainsString('AND NOT EXISTS (SELECT 1', $readiness);
-        self::assertStringContainsString('ORDER BY delay_event.occurred_at DESC', $readiness);
+
+        self::assertStringContainsString('$this->period->resolve($query)', $readiness);
+        self::assertStringContainsString("['period_start']", $period);
+        self::assertStringContainsString("['period_end']", $period);
+        self::assertStringNotContainsString('OwnerReportFilterApplier', $readiness);
     }
 
     public function test_owner_materializers_filter_sources_before_hashing_and_serialize_first_writer(): void
@@ -321,6 +321,13 @@ final class SupplyReportingHardeningTest extends TestCase
             if (str_contains($suffix, 'ProcurementCycleSnapshotMaterializer')
                 || str_contains($suffix, 'SupplierAwardSnapshotMaterializer')) {
                 self::assertStringContainsString('$this->universe->query(', $source, $suffix);
+            } elseif (str_contains($suffix, 'SupplyReliabilitySnapshotMaterializer')) {
+                self::assertStringContainsString('$this->period->resolve($query)', $source, $suffix);
+                self::assertLessThan(
+                    strpos($source, '$sourceHash ='),
+                    strpos($source, "whereBetween('owner_promise.promised_at'"),
+                    $suffix,
+                );
             } else {
                 self::assertStringContainsString('OwnerReportFilterApplier', $source, $suffix);
                 self::assertLessThan(
