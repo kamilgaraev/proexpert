@@ -4,13 +4,21 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reporting;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerHistoryBackfillService;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerTimestamp;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerVersionRecorder;
+use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerHistoryCheckpoint;
+use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerVersion;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ContingencyMovement;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services\ContingencyLedgerService;
 use App\BusinessModules\Features\ChangeManagement\Services\ChangeManagementService;
+use App\Models\Contract;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
@@ -55,6 +63,260 @@ final class FinanceOwnerPostgresContractTest extends TestCase
                 ->first();
             self::assertNotNull($row, $table);
             self::assertStringContainsString('BEFORE UPDATE OR DELETE', (string) $row->definition);
+        }
+    }
+
+    #[Test]
+    public function contract_settlement_checkpoints_match_exact_owner_versions(): void
+    {
+        $mismatchCount = DB::scalar(<<<'SQL'
+SELECT COUNT(*)
+FROM (
+    SELECT
+        checkpoint.organization_id,
+        (
+            (checkpoint.owner_counts->>'contract')::bigint
+            + (checkpoint.owner_counts->>'contract_allocation')::bigint
+            + (checkpoint.owner_counts->>'contract_performance_act')::bigint
+            + (checkpoint.owner_counts->>'payment_document')::bigint
+            + (checkpoint.owner_counts->>'payment_transaction')::bigint
+        ) AS expected_count,
+        COUNT(version.id) AS captured_count
+    FROM contract_settlement_owner_history_checkpoints AS checkpoint
+    LEFT JOIN contract_settlement_owner_versions AS version
+        ON version.organization_id = checkpoint.organization_id
+       AND version.occurred_at = checkpoint.completed_at
+    GROUP BY checkpoint.id
+) AS coverage
+WHERE coverage.expected_count <> coverage.captured_count
+SQL);
+
+        self::assertSame(0, (int) $mismatchCount);
+        self::assertSame(6, (int) DB::scalar(<<<'SQL'
+SELECT datetime_precision
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = 'contract_settlement_owner_versions'
+  AND column_name = 'occurred_at'
+SQL));
+        self::assertSame(6, (int) DB::scalar(<<<'SQL'
+SELECT datetime_precision
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = 'contract_settlement_owner_history_checkpoints'
+  AND column_name = 'completed_at'
+SQL));
+    }
+
+    #[Test]
+    public function future_organization_checkpoint_and_owner_version_keep_exact_microseconds(): void
+    {
+        $organization = Organization::factory()->create();
+        $checkpoint = ContractSettlementOwnerHistoryCheckpoint::query()
+            ->where('organization_id', $organization->id)
+            ->sole();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $now = now();
+        $contractorId = DB::table('contractors')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'PG checkpoint contractor',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $contractId = DB::table('contracts')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractorId,
+            'number' => 'PG-CHECKPOINT-'.bin2hex(random_bytes(4)),
+            'date' => $now->toDateString(),
+            'total_amount' => '1000.00',
+            'currency' => 'RUB',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $contract = Contract::query()->findOrFail($contractId);
+        $exactAt = new DateTimeImmutable(
+            $checkpoint->completed_at->addSecond()->format('Y-m-d\TH:i:s').'.123456+00:00',
+        );
+        $version = app(ContractSettlementOwnerVersionRecorder::class)->record(
+            $contract,
+            'upsert',
+            $exactAt,
+        );
+
+        self::assertSame(
+            $exactAt->format('Y-m-d H:i:s.u'),
+            DB::scalar(
+                "SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') "
+                .'FROM contract_settlement_owner_versions WHERE id = ?',
+                [$version->id],
+            ),
+        );
+        $before = new DateTimeImmutable(
+            $exactAt->format('Y-m-d\TH:i:s').'.123455+00:00',
+        );
+        self::assertSame(0, DB::table('contract_settlement_owner_versions')
+            ->where('organization_id', $organization->id)
+            ->where('owner_type', 'contract')
+            ->where('owner_id', (string) $contractId)
+            ->where('occurred_at', '<=', ContractSettlementOwnerTimestamp::database($before))
+            ->count());
+        self::assertSame(1, DB::table('contract_settlement_owner_versions')
+            ->where('organization_id', $organization->id)
+            ->where('owner_type', 'contract')
+            ->where('owner_id', (string) $contractId)
+            ->where('occurred_at', '<=', ContractSettlementOwnerTimestamp::database($exactAt))
+            ->count());
+
+        $versionCount = DB::table('contract_settlement_owner_versions')
+            ->where('organization_id', $organization->id)
+            ->count();
+        $replayed = app(ContractSettlementOwnerHistoryBackfillService::class)->backfill((int) $organization->id);
+        self::assertSame($checkpoint->id, $replayed->id);
+        self::assertSame($versionCount, DB::table('contract_settlement_owner_versions')
+            ->where('organization_id', $organization->id)
+            ->count());
+    }
+
+    #[Test]
+    public function owner_history_foundation_migration_backfills_non_empty_sources_exactly_once(): void
+    {
+        $schema = 'report_r12_'.bin2hex(random_bytes(6));
+        DB::statement('CREATE SCHEMA '.$schema);
+
+        try {
+            DB::statement('SET search_path TO '.$schema);
+            $this->createContractSettlementFoundationSchema();
+            $ownerTimestamp = '2026-08-05 12:00:00.000000+00:00';
+            DB::table('organizations')->insert([
+                'id' => 1,
+                'created_at' => $ownerTimestamp,
+                'updated_at' => $ownerTimestamp,
+            ]);
+            DB::table('contracts')->insert([
+                'id' => 11,
+                'organization_id' => 1,
+                'is_onboarding_demo' => false,
+                'created_at' => $ownerTimestamp,
+                'updated_at' => $ownerTimestamp,
+            ]);
+            DB::table('contract_project_allocations')->insert([
+                'id' => 21,
+                'contract_id' => 11,
+                'created_at' => $ownerTimestamp,
+                'updated_at' => $ownerTimestamp,
+            ]);
+            DB::table('contract_performance_acts')->insert([
+                'id' => 31,
+                'contract_id' => 11,
+                'created_at' => $ownerTimestamp,
+                'updated_at' => $ownerTimestamp,
+            ]);
+            DB::table('payment_documents')->insert([
+                'id' => 41,
+                'organization_id' => 1,
+                'invoiceable_type' => null,
+                'invoiceable_id' => null,
+                'created_at' => $ownerTimestamp,
+                'updated_at' => $ownerTimestamp,
+            ]);
+            DB::table('payment_transactions')->insert([
+                'id' => 51,
+                'payment_document_id' => 41,
+                'organization_id' => 1,
+                'created_at' => $ownerTimestamp,
+                'updated_at' => $ownerTimestamp,
+            ]);
+
+            $migration = require base_path(
+                'database/migrations/2026_08_05_040000_seed_contract_settlement_owner_history_foundation.php',
+            );
+            $migration->up();
+
+            $checkpoint = ContractSettlementOwnerHistoryCheckpoint::query()->sole();
+            $types = [
+                'contract',
+                'contract_allocation',
+                'contract_performance_act',
+                'payment_document',
+                'payment_transaction',
+            ];
+            foreach ($types as $type) {
+                self::assertSame(1, $checkpoint->owner_counts[$type] ?? null, $type);
+            }
+            $checkpointTimestamp = ContractSettlementOwnerTimestamp::canonical($checkpoint->completed_at);
+            $identities = [];
+            foreach ($types as $type) {
+                $versions = ContractSettlementOwnerVersion::query()
+                    ->where('organization_id', 1)
+                    ->where('owner_type', $type)
+                    ->orderBy('owner_id')
+                    ->get();
+                self::assertCount(1, $versions, $type);
+                foreach ($versions as $version) {
+                    self::assertSame($checkpointTimestamp, ContractSettlementOwnerTimestamp::canonical(
+                        $version->occurred_at,
+                    ));
+                    $identity = [
+                        'organization_id' => 1,
+                        'owner_type' => $type,
+                        'owner_id' => (string) $version->owner_id,
+                        'version' => (int) $version->version,
+                        'operation' => 'upsert',
+                        'occurred_at' => $checkpointTimestamp,
+                        'payload' => $version->payload,
+                    ];
+                    self::assertSame(
+                        hash('sha256', CanonicalJson::encode($identity)),
+                        $version->owner_hash,
+                        $type,
+                    );
+                    $identities[] = [
+                        'type' => $type,
+                        'id' => (string) $version->owner_id,
+                        'version' => (int) $version->version,
+                        'hash' => (string) $version->owner_hash,
+                    ];
+                }
+            }
+            self::assertSame(5, ContractSettlementOwnerVersion::query()->count());
+            self::assertSame(hash('sha256', CanonicalJson::encode([
+                'organization_id' => 1,
+                'completed_at' => $checkpointTimestamp,
+                'owners' => $identities,
+            ])), $checkpoint->source_hash);
+            self::assertSame(0, ContractSettlementOwnerVersion::query()
+                ->where('occurred_at', '<=', ContractSettlementOwnerTimestamp::database(
+                    $checkpoint->completed_at->subMicrosecond(),
+                ))
+                ->count());
+            self::assertSame(5, ContractSettlementOwnerVersion::query()
+                ->where('occurred_at', '<=', ContractSettlementOwnerTimestamp::database(
+                    $checkpoint->completed_at,
+                ))
+                ->count());
+
+            try {
+                $migration->up();
+                self::fail('The foundation migration accepted a second checkpoint.');
+            } catch (\RuntimeException $exception) {
+                self::assertStringContainsString('checkpoint already exists', $exception->getMessage());
+            }
+            self::assertSame(1, ContractSettlementOwnerHistoryCheckpoint::query()->count());
+            self::assertSame(5, ContractSettlementOwnerVersion::query()->count());
+            self::assertSame(1, (int) DB::scalar(<<<'SQL'
+SELECT COUNT(*)
+FROM pg_trigger AS trigger
+INNER JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+INNER JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE relation.relname = 'organizations'
+  AND namespace.nspname = current_schema()
+  AND trigger.tgname = 'most_seed_contract_settlement_owner_checkpoint_v1'
+  AND NOT trigger.tgisinternal
+SQL));
+        } finally {
+            DB::statement('RESET search_path');
+            DB::statement('DROP SCHEMA IF EXISTS '.$schema.' CASCADE');
         }
     }
 
@@ -356,5 +618,78 @@ final class FinanceOwnerPostgresContractTest extends TestCase
                 DB::rollBack();
             }
         }
+    }
+
+    private function createContractSettlementFoundationSchema(): void
+    {
+        DB::unprepared(<<<'SQL'
+CREATE TABLE organizations (
+    id bigint PRIMARY KEY,
+    created_at timestamptz(0),
+    updated_at timestamptz(0)
+);
+CREATE TABLE contracts (
+    id bigint PRIMARY KEY,
+    organization_id bigint NOT NULL,
+    is_onboarding_demo boolean NOT NULL DEFAULT false,
+    deleted_at timestamptz(0),
+    created_at timestamptz(0),
+    updated_at timestamptz(0)
+);
+CREATE TABLE contract_project_allocations (
+    id bigint PRIMARY KEY,
+    contract_id bigint NOT NULL,
+    deleted_at timestamptz(0),
+    created_at timestamptz(0),
+    updated_at timestamptz(0)
+);
+CREATE TABLE contract_performance_acts (
+    id bigint PRIMARY KEY,
+    contract_id bigint NOT NULL,
+    created_at timestamptz(0),
+    updated_at timestamptz(0)
+);
+CREATE TABLE payment_documents (
+    id bigint PRIMARY KEY,
+    organization_id bigint NOT NULL,
+    invoiceable_type text,
+    invoiceable_id bigint,
+    deleted_at timestamptz(0),
+    created_at timestamptz(0),
+    updated_at timestamptz(0)
+);
+CREATE TABLE payment_transactions (
+    id bigint PRIMARY KEY,
+    payment_document_id bigint NOT NULL,
+    organization_id bigint NOT NULL,
+    created_at timestamptz(0),
+    updated_at timestamptz(0)
+);
+CREATE TABLE contract_settlement_owner_versions (
+    id bigserial PRIMARY KEY,
+    organization_id bigint NOT NULL,
+    owner_type varchar(48) NOT NULL,
+    owner_id varchar(96) NOT NULL,
+    version integer NOT NULL,
+    operation varchar(16) NOT NULL,
+    occurred_at timestamptz(0) NOT NULL,
+    payload jsonb NOT NULL,
+    owner_hash char(64) NOT NULL,
+    created_at timestamptz(0),
+    updated_at timestamptz(0),
+    CONSTRAINT contract_settlement_owner_version_unique
+        UNIQUE (organization_id, owner_type, owner_id, version)
+);
+CREATE TABLE contract_settlement_owner_history_checkpoints (
+    id bigserial PRIMARY KEY,
+    organization_id bigint NOT NULL,
+    completed_at timestamptz(0) NOT NULL,
+    owner_counts jsonb NOT NULL,
+    source_hash char(64) NOT NULL,
+    created_at timestamptz(0),
+    updated_at timestamptz(0),
+    CONSTRAINT contract_settlement_owner_checkpoint_unique UNIQUE (organization_id)
+);
+SQL);
     }
 }

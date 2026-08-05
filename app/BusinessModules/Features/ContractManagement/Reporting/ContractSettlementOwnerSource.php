@@ -520,16 +520,17 @@ final readonly class ContractSettlementOwnerSource
      */
     private function historicalOwners(ReportScope $scope, ReportQuery $query): array
     {
+        $asOf = ContractSettlementOwnerTimestamp::database($query->asOf);
         $checkpoint = ContractSettlementOwnerHistoryCheckpoint::query()
             ->where('organization_id', $scope->organizationId)
-            ->where('completed_at', '<=', $query->asOf)
+            ->where('completed_at', '<=', $asOf)
             ->first();
         if (! $checkpoint instanceof ContractSettlementOwnerHistoryCheckpoint) {
             throw new DomainException('contract_settlement_owner_history_checkpoint_missing');
         }
         $versions = ContractSettlementOwnerVersion::query()
             ->where('organization_id', $scope->organizationId)
-            ->where('occurred_at', '<=', $query->asOf)
+            ->where('occurred_at', '<=', $asOf)
             ->orderBy('owner_type')
             ->orderBy('owner_id')
             ->orderByDesc('version')
