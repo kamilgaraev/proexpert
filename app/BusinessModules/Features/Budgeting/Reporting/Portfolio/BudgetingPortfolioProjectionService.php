@@ -765,6 +765,8 @@ final readonly class BudgetingPortfolioProjectionService
         if ($periodEnd < $periodStart) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
         }
+        $responsibilityCenterIds = $this->positiveIds($values['responsibility_center_ids'] ?? []);
+        $counterpartyIds = $this->positiveIds($values['counterparty_ids'] ?? []);
 
         return new CfoCommandCenterFilters(
             organizationId: $context->scope->organizationId,
@@ -773,8 +775,12 @@ final readonly class BudgetingPortfolioProjectionService
             projectId: count($projectIds) === 1 ? $projectIds[0] : null,
             projectManagerUserId: $this->firstPositiveInt($values['manager_ids'] ?? null),
             projectStatus: $this->firstString($values['project_statuses'] ?? null),
-            responsibilityCenterId: $this->firstPositiveInt($values['responsibility_center_ids'] ?? null),
-            counterpartyId: $this->firstPositiveInt($values['counterparty_ids'] ?? null),
+            responsibilityCenterId: count($responsibilityCenterIds) === 1
+                ? $responsibilityCenterIds[0]
+                : null,
+            counterpartyId: count($counterpartyIds) === 1
+                ? $counterpartyIds[0]
+                : null,
             currency: $this->singleCurrency($values['currencies'] ?? null),
             itemLimit: 50,
         );
@@ -808,16 +814,45 @@ final readonly class BudgetingPortfolioProjectionService
         ReportQuery $query,
     ): array {
         $projectIds = $this->effectiveProjectIds($context, $query);
-        if ($projectIds === []) {
-            return $calendar;
-        }
-        $allowed = array_fill_keys($projectIds, true);
+        $responsibilityCenterIds = $this->positiveIds(
+            $query->filters->values['responsibility_center_ids'] ?? [],
+        );
+        $counterpartyIds = $this->positiveIds($query->filters->values['counterparty_ids'] ?? []);
+        $documentIds = $this->positiveIds($query->filters->values['document_ids'] ?? []);
+        $allowedProjects = array_fill_keys($projectIds, true);
+        $allowedResponsibilityCenters = array_fill_keys($responsibilityCenterIds, true);
+        $allowedCounterparties = array_fill_keys($counterpartyIds, true);
+        $allowedDocuments = array_fill_keys($documentIds, true);
 
         return array_values(array_filter(
             $calendar,
-            static fn (mixed $item): bool => $item instanceof PaymentCalendarItem
-                && $item->projectId !== null
-                && isset($allowed[$item->projectId]),
+            static function (mixed $item) use (
+                $allowedProjects,
+                $allowedResponsibilityCenters,
+                $allowedCounterparties,
+                $allowedDocuments,
+            ): bool {
+                if (! $item instanceof PaymentCalendarItem
+                    || ($allowedProjects !== []
+                        && ($item->projectId === null || ! isset($allowedProjects[$item->projectId])))
+                    || ($allowedResponsibilityCenters !== []
+                        && ($item->responsibilityCenterId === null
+                            || ! isset($allowedResponsibilityCenters[(int) $item->responsibilityCenterId])))
+                    || ($allowedCounterparties !== []
+                        && ($item->counterpartyId === null
+                            || ! isset($allowedCounterparties[$item->counterpartyId])))) {
+                    return false;
+                }
+                if ($allowedDocuments === []) {
+                    return true;
+                }
+
+                $documentId = $item->sourceType === 'payment_document'
+                    ? $item->sourceId
+                    : ($item->drillDown['payment_document_id'] ?? null);
+
+                return $documentId !== null && isset($allowedDocuments[(int) $documentId]);
+            },
         ));
     }
 

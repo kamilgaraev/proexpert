@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
@@ -31,6 +32,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
     public function __construct(
         private ProjectMarginBuiltinPublishedReport $projectMargin,
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
+        private PortfolioLiquidityBuiltinPublishedReport $portfolioLiquidity,
         private BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
@@ -53,6 +55,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         return match ($code) {
             $this->projectMargin->metadata()->code => $this->projectMargin->metadata(),
             $this->budgetPlanFact->metadata()->code => $this->budgetPlanFact->metadata(),
+            $this->portfolioLiquidity->metadata()->code => $this->portfolioLiquidity->metadata(),
             $this->baselineScheduleVariance->metadata()->code => $this->baselineScheduleVariance->metadata(),
             $this->projectLaborCost->metadata()->code => $this->projectLaborCost->metadata(),
             $this->payrollReadiness->metadata()->code => $this->payrollReadiness->metadata(),
