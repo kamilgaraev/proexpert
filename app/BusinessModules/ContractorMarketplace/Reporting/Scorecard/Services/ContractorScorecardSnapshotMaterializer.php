@@ -11,6 +11,7 @@ use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\Contrac
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardRow;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardSnapshot;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
@@ -49,7 +50,6 @@ final readonly class ContractorScorecardSnapshotMaterializer
         ) {
             throw new InvalidArgumentException('contractor_scorecard_context_invalid');
         }
-        $tuple = $this->sources->resolve($context, $query);
         $policy = ContractorScorecardPolicyVersion::query()
             ->where('organization_id', $query->scope->organizationId)
             ->where('effective_from', '<=', $query->asOf)
@@ -66,6 +66,24 @@ final readonly class ContractorScorecardSnapshotMaterializer
         if (! in_array($cohortPeriod, ['month', 'quarter', 'year'], true)) {
             throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
         }
+        $cohortKey = $query->filters->values['cohort'] ?? $this->cohortKey(
+            CarbonImmutable::instance($query->asOf),
+            $cohortPeriod,
+            $cohortKey,
+        );
+        if (! is_string($cohortKey)) {
+            throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
+        }
+        $query = new ReportQuery(
+            $query->definition,
+            $query->scope,
+            new ReportFilterSet([...$query->filters->values, 'cohort' => $cohortKey]),
+            $query->comparison,
+            $query->asOf,
+            $query->locale,
+        );
+        [$periodFrom, $periodTo] = $this->cohortBounds($cohortKey, $cohortPeriod);
+        $tuple = $this->sources->resolve($context, $query, $periodFrom, $periodTo);
         $components = $this->components($policy);
         $this->assertPinnedSources($tuple, $components);
         $objectiveObservations = $this->observations->load($tuple);
@@ -80,14 +98,14 @@ final readonly class ContractorScorecardSnapshotMaterializer
             ->filter(fn (object $review): bool => $this->matchesRequestedCohort(
                 CarbonImmutable::parse($review->created_at),
                 $policy,
-                $query->filters->values['cohort'] ?? null,
+                $cohortKey,
             ));
         $groups = $this->groups(
             $reviews,
             $objectiveObservations,
             $policy,
             $query->asOf,
-            $query->filters->values['cohort'] ?? null,
+            $cohortKey,
         );
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'filters' => $query->filters->values,
@@ -149,7 +167,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
                 'stale_at' => $staleAt,
                 'watermarks' => [
                     'as_of' => $query->asOf->format(DATE_ATOM),
-                    'cohort_key' => $query->filters->values['cohort'] ?? null,
+                    'cohort_key' => $cohortKey,
                     'filters_hash' => hash('sha256', CanonicalJson::encode($query->filters->values)),
                     'source_schema_version' => 'contractor-scorecard.v1',
                     'source_tuple_hash' => $tuple->hash(),
@@ -443,6 +461,27 @@ final readonly class ContractorScorecardSnapshotMaterializer
             'quarter' => $date->year.'-Q'.$date->quarter,
             'year' => $date->format('Y'),
         };
+    }
+
+    private function cohortBounds(string $cohortKey, string $period): array
+    {
+        if ($period === 'month' && preg_match('/^(\d{4})-(0[1-9]|1[0-2])$/D', $cohortKey, $parts) === 1) {
+            $start = CarbonImmutable::create((int) $parts[1], (int) $parts[2], 1, 0, 0, 0, 'UTC');
+
+            return [$start->toDateString(), $start->endOfMonth()->toDateString()];
+        }
+        if ($period === 'quarter' && preg_match('/^(\d{4})-Q([1-4])$/D', $cohortKey, $parts) === 1) {
+            $start = CarbonImmutable::create((int) $parts[1], ((int) $parts[2] - 1) * 3 + 1, 1, 0, 0, 0, 'UTC');
+
+            return [$start->toDateString(), $start->endOfQuarter()->toDateString()];
+        }
+        if ($period === 'year' && preg_match('/^(\d{4})$/D', $cohortKey, $parts) === 1) {
+            $start = CarbonImmutable::create((int) $parts[1], 1, 1, 0, 0, 0, 'UTC');
+
+            return [$start->toDateString(), $start->endOfYear()->toDateString()];
+        }
+
+        throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
     }
 
     private function watermark(array $watermarks): string

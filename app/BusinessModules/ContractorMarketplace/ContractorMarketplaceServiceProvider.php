@@ -37,10 +37,10 @@ class ContractorMarketplaceServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\Scorecard\Services\ContractorMembershipEvidenceResolver::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorReviewEventProjector::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorReviewSnapshotResolver::class);
-        $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardSourceResolver::class);
+        $this->app->scoped(Reporting\Scorecard\Services\ContractorScorecardSourceResolver::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardObservationReader::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardPolicyWriter::class);
-        $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardSnapshotMaterializer::class);
+        $this->app->scoped(Reporting\Scorecard\Services\ContractorScorecardSnapshotMaterializer::class);
         $this->app->singleton(Reporting\Scorecard\Providers\ContractorScorecardReportProvider::class);
         $this->app->singleton(Reporting\Scorecard\Queries\ContractorScorecardRowQuery::class);
         $this->app->singleton(Reporting\Scorecard\DrillDown\ContractorScorecardDrillDownProvider::class);
