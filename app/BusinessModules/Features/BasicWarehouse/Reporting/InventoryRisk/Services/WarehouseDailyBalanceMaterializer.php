@@ -33,6 +33,7 @@ final readonly class WarehouseDailyBalanceMaterializer
         private ReportSourceAccessPolicy $sourceAccess,
         private InventoryRiskGrainUniverse $grainUniverse,
         private OwnerReportFilterApplier $filters,
+        private InventoryRiskPeriod $period,
     ) {}
 
     public function materialize(
@@ -292,23 +293,7 @@ final readonly class WarehouseDailyBalanceMaterializer
 
     private function period(ReportQuery $query): array
     {
-        $period = $query->filters->values['period'] ?? null;
-        if (is_array($period)
-            && ($period['operator'] ?? null) === 'between'
-            && is_array($period['value'] ?? null)
-            && count($period['value']) === 2
-            && is_string($period['value'][0])
-            && is_string($period['value'][1])) {
-            $fromDate = $period['value'][0];
-            $toDate = $period['value'][1];
-            $this->assertDatePeriod($fromDate, $toDate);
-
-            return [$fromDate, $toDate];
-        }
-
-        $date = $query->asOf->setTimezone($query->scope->timezone)->format('Y-m-d');
-
-        return [$date, $date];
+        return $this->period->resolve($query);
     }
 
     private function balanceDates(Collection $eventsByDate, string $fromDate, string $toDate): array
@@ -329,19 +314,6 @@ final readonly class WarehouseDailyBalanceMaterializer
         ksort($dates, SORT_STRING);
 
         return array_keys($dates);
-    }
-
-    private function assertDatePeriod(string $fromDate, string $toDate): void
-    {
-        $from = DateTimeImmutable::createFromFormat('!Y-m-d', $fromDate);
-        $to = DateTimeImmutable::createFromFormat('!Y-m-d', $toDate);
-        if ($from === false
-            || $to === false
-            || $from->format('Y-m-d') !== $fromDate
-            || $to->format('Y-m-d') !== $toDate
-            || $from > $to) {
-            throw new DomainException('Inventory report period is invalid.');
-        }
     }
 
     private function grain(WarehouseInventoryEvent $event): string

@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabili
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityBuiltinPublishedReport;
@@ -28,6 +29,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private ProcurementCycleBuiltinPublishedReport $procurementCycle,
         private SupplierAwardBuiltinPublishedReport $supplierAward,
         private SupplyReliabilityBuiltinPublishedReport $supplyReliability,
+        private InventoryRiskBuiltinPublishedReport $inventoryRisk,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -41,6 +43,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->procurementCycle->scheduling()->code => $this->procurementCycle->scheduling(),
             $this->supplierAward->scheduling()->code => $this->supplierAward->scheduling(),
             $this->supplyReliability->scheduling()->code => $this->supplyReliability->scheduling(),
+            $this->inventoryRisk->scheduling()->code => $this->inventoryRisk->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }
