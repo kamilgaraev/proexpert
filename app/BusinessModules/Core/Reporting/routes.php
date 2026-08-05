@@ -16,6 +16,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunControlle
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSubscriptionController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportWorkspacePreferencesController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\WorkforceCapacityReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors;
 use App\Support\Routing\AdminRouteStack;
@@ -79,6 +80,14 @@ Route::prefix('api/v1/admin/reports')
         Route::post('/subscriptions/{subscriptionId}/run-now', [ReportSubscriptionController::class, 'runNow'])
             ->middleware([$workspaceModule, ...$manage])
             ->name('subscriptions.run-now');
+        Route::post('/workforce-capacity/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'workforce_capacity')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('workforce-capacity.runs.store');
+        Route::get('/workforce-capacity/options', WorkforceCapacityReportOptionsController::class)
+            ->defaults('reportCode', 'workforce_capacity')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('workforce-capacity.options');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');

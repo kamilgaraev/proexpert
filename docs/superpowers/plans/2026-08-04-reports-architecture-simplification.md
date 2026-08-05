@@ -131,6 +131,7 @@ UI различает initial, options loading, ready to run, validation error, 
 3. G09 «Маржинальность проекта»: canonical backend и admin UI опубликованы; server-owned context, закрытый snapshot, totals, drill-down и export доставлены через отдельные PR и успешные deploy.
 4. G21 `project_labor_cost` «Стоимость труда по проектам»: canonical backend и admin UI опубликованы; используются реальный `DatabaseProjectLaborCostAdapter`, server-owned project scope, поисковые options, totals, sensitive-cost permission, signed drill-down и export.
 5. R22 `payroll_readiness` «Готовность к расчёту зарплаты»: следующий вертикальный блок на существующих версионированных payroll calculation sources и `DatabasePayrollReadinessAdapter`; публикация включает project-scoped options, blockers/readiness totals, audit drill-down и export.
-6. Остальные отчёты — по одному, в порядке реальной готовности источников.
+6. R19 `workforce_capacity` «Обеспеченность персоналом»: canonical backend публикуется на существующих temporal owner facts и immutable workforce snapshots; организация берётся из auth-контекста, проекты — только из server-authorized options, ставки скрываются без sensitive-права.
+7. Остальные отчёты — по одному, в порядке реальной готовности источников.
 
 Для каждого блока создаются отдельные backend/admin feature-ветки от актуальных `main`; выполняются минимальные релевантные проверки и одно независимое review.

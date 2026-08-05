@@ -6,6 +6,7 @@ namespace Tests\Unit\Reporting\Http;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindOrganizationReportScope;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\CreateReportRunRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportCatalogRequest;
@@ -154,6 +155,48 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
         );
 
         self::assertSame(204, $response->getStatusCode());
+    }
+
+    public function test_organization_report_scope_binds_only_server_organization_and_preserves_project_options(): void
+    {
+        $request = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], [
+            ...self::validRunBody(),
+            'filters' => ['project_ids' => [17, 18], 'month_from' => '2026-07', 'month_to' => '2026-08'],
+        ]);
+        $organization = new Organization;
+        $organization->id = 23;
+        $request->attributes->set('current_organization', $organization);
+
+        $response = (new BindOrganizationReportScope)->handle(
+            $request,
+            static function (CreateReportRunRequest $request): Response {
+                self::assertSame('23', $request->input('filters.organization_id'));
+                self::assertSame([17, 18], $request->input('filters.project_ids'));
+
+                return new Response(status: 204);
+            },
+        );
+
+        self::assertSame(204, $response->getStatusCode());
+    }
+
+    public function test_organization_report_scope_rejects_client_organization_and_actor_overrides(): void
+    {
+        foreach ([
+            ['filters' => ['organization_id' => '99']],
+            ['filters' => ['owner_id' => 7]],
+            ['scope' => 'all'],
+        ] as $body) {
+            $request = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], [
+                ...self::validRunBody(),
+                ...$body,
+            ]);
+            $response = (new BindOrganizationReportScope)->handle(
+                $request,
+                static fn (): Response => new Response(status: 204),
+            );
+            self::assertSame(422, $response->getStatusCode());
+        }
     }
 
     #[DataProvider('spoofedReportContextProvider')]

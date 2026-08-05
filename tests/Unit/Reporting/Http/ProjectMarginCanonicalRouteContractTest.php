@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateCont
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
@@ -35,6 +36,9 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString("Route::get('/projects/{project}/project-labor-cost/options'", $routes);
         self::assertStringContainsString("Route::post('/projects/{project}/payroll-readiness/runs'", $routes);
         self::assertStringContainsString("Route::get('/projects/{project}/payroll-readiness/options'", $routes);
+        self::assertStringContainsString("Route::post('/workforce-capacity/runs'", $routes);
+        self::assertStringContainsString("Route::get('/workforce-capacity/options'", $routes);
+        self::assertStringContainsString("->middleware(['report.organization-scope', \$resourceAccess])", $routes);
         self::assertSame(8, substr_count($routes, "'report.project-scope'"));
 
         $middlewareFile = (new ReflectionClass(AuthorizeReportDefinitionAccess::class))->getFileName();
@@ -47,6 +51,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString('ProjectMarginCandidateContract::CODE', $middleware);
         self::assertStringContainsString('BudgetPlanFactCandidateContract::CODE', $middleware);
         self::assertStringContainsString('PayrollReadinessCandidateContract::CODE', $middleware);
+        self::assertStringContainsString('WorkforceCapacityCandidateContract::CODE', $middleware);
     }
 
     #[DataProvider('projectScopedReportCodes')]
@@ -81,6 +86,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
             'G10' => [BudgetPlanFactCandidateContract::CODE],
             'G21' => [ProjectLaborCostCandidateContract::CODE],
             'G22' => [PayrollReadinessCandidateContract::CODE],
+            'G19' => [WorkforceCapacityCandidateContract::CODE],
         ];
     }
 }
