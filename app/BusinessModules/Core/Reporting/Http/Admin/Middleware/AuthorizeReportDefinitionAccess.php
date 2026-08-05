@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
@@ -79,6 +80,8 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.project-budget-plan-fact.options',
             'admin.reports.project-margin.runs.store',
             'admin.reports.project-margin.options',
+            'admin.reports.wip-completion-forecast.runs.store',
+            'admin.reports.wip-completion-forecast.options',
             'admin.reports.project-labor-cost.runs.store',
             'admin.reports.payroll-readiness.runs.store',
             'admin.reports.project-labor-cost.options',
@@ -126,6 +129,7 @@ final readonly class AuthorizeReportDefinitionAccess
         if (in_array($reportCode, [
             BudgetPlanFactCandidateContract::CODE,
             ProjectMarginCandidateContract::CODE,
+            WipCompletionForecastCandidateContract::CODE,
             ProjectLaborCostCandidateContract::CODE,
             PayrollReadinessCandidateContract::CODE,
             WorkforceCapacityCandidateContract::CODE,

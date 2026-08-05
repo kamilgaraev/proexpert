@@ -26,6 +26,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContr
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastProvider;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastOptionsService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
@@ -92,6 +93,7 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->scoped(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(WipCompletionForecastCandidateContract::class);
         $this->app->scoped(WipCompletionForecastProvider::class);
+        $this->app->scoped(WipCompletionForecastOptionsService::class);
         $this->app->scoped(ProjectFinanceQueryService::class);
         $this->app->scoped(WipCompletionForecastReportBindingFactory::class);
         $this->app->scoped(WipCompletionForecastPublishedRuntimeBindingRegistrar::class);

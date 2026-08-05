@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessRe
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\WipCompletionForecastReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
@@ -112,6 +113,14 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'project_margin')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-margin.options');
+        Route::post('/projects/{project}/wip-completion-forecast/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'wip_completion_forecast')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('wip-completion-forecast.runs.store');
+        Route::get('/projects/{project}/wip-completion-forecast/options', WipCompletionForecastReportOptionsController::class)
+            ->defaults('reportCode', 'wip_completion_forecast')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('wip-completion-forecast.options');
         Route::post('/projects/{project}/project-labor-cost/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'project_labor_cost')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
