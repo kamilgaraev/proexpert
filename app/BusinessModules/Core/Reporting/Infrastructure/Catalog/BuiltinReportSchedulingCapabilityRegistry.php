@@ -19,12 +19,16 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessB
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowBuiltinPublishedReport;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionBuiltinPublishedReport;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsBuiltinPublishedReport;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
 
 final readonly class BuiltinReportSchedulingCapabilityRegistry implements ReportSchedulingCapabilityRegistry
 {
     public function __construct(
         private ProjectMarginBuiltinPublishedReport $projectMargin,
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
+        private BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
         private WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
@@ -34,6 +38,8 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private InventoryRiskBuiltinPublishedReport $inventoryRisk,
         private AttendanceExecutionBuiltinPublishedReport $attendanceExecution,
         private QualityDefectFlowBuiltinPublishedReport $qualityDefectFlow,
+        private SafetyIncidentActionsBuiltinPublishedReport $safetyIncidentActions,
+        private WorkforceAdmissionBuiltinPublishedReport $workforceAdmission,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -41,6 +47,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         return match ($code) {
             $this->projectMargin->scheduling()->code => $this->projectMargin->scheduling(),
             $this->budgetPlanFact->scheduling()->code => $this->budgetPlanFact->scheduling(),
+            $this->baselineScheduleVariance->scheduling()->code => $this->baselineScheduleVariance->scheduling(),
             $this->projectLaborCost->scheduling()->code => $this->projectLaborCost->scheduling(),
             $this->payrollReadiness->scheduling()->code => $this->payrollReadiness->scheduling(),
             $this->workforceCapacity->scheduling()->code => $this->workforceCapacity->scheduling(),
@@ -50,6 +57,8 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->inventoryRisk->scheduling()->code => $this->inventoryRisk->scheduling(),
             $this->attendanceExecution->scheduling()->code => $this->attendanceExecution->scheduling(),
             $this->qualityDefectFlow->scheduling()->code => $this->qualityDefectFlow->scheduling(),
+            $this->safetyIncidentActions->scheduling()->code => $this->safetyIncidentActions->scheduling(),
+            $this->workforceAdmission->scheduling()->code => $this->workforceAdmission->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }

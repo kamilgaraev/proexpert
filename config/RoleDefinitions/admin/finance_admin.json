@@ -120,7 +120,8 @@
     ],
     "schedule-management": [
       "schedule.view",
-      "schedule.export"
+      "schedule.export",
+      "schedule.reports.export"
     ],
     "payments": [
       "payments.dashboard.view",

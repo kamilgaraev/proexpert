@@ -33,7 +33,8 @@
     "schedule.lookahead.manage",
     "schedule.daily_plan.view",
     "schedule.daily_plan.manage",
-    "schedule.daily_plan.confirm"
+    "schedule.daily_plan.confirm",
+    "schedule.reports.export"
   ],
   
   "features": [
