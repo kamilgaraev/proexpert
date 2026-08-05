@@ -24,6 +24,9 @@ final class SafetyManagementServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\IncidentActions\Backfill\SafetyIncidentBackfill::class);
         $this->app->singleton(Reporting\IncidentActions\Backfill\SafetyExposureBackfill::class);
         $this->app->singleton(Reporting\IncidentActions\Readiness\SafetyIncidentReadinessProbe::class);
+        $this->app->singleton(Reporting\IncidentActions\SafetyIncidentActionsCandidateContract::class);
+        $this->app->scoped(Reporting\IncidentActions\SafetyIncidentActionsReportBindingFactory::class);
+        $this->app->scoped(Reporting\IncidentActions\SafetyIncidentActionsPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(Reporting\Admission\Services\SafetySiteAssignmentService::class);
         $this->app->singleton(Reporting\Admission\Services\WorkforceAdmissionFormula::class);
         $this->app->singleton(Reporting\Admission\Services\WorkforceAdmissionSnapshotMaterializer::class);
@@ -57,6 +60,8 @@ final class SafetyManagementServiceProvider extends ServiceProvider
         $this->app->resolving(
             \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler::class,
             function ($assembler): void {
+                $this->app->make(Reporting\IncidentActions\SafetyIncidentActionsPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
                 $this->app->make(Reporting\Admission\WorkforceAdmissionPublishedRuntimeBindingRegistrar::class)
                     ->register($assembler);
             },
