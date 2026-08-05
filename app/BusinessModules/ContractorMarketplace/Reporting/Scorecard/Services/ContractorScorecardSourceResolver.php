@@ -7,16 +7,18 @@ namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorScorecardSourceTuple;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
-use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use Carbon\CarbonImmutable;
-use DateTimeImmutable;
-use Illuminate\Support\Facades\DB;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Providers\SupplyReliabilityReportProvider;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers\QualityDefectFlowReportProvider;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Providers\SafetyIncidentActionsReportProvider;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceProvider;
 use Throwable;
 
 final readonly class ContractorScorecardSourceResolver
@@ -30,16 +32,29 @@ final readonly class ContractorScorecardSourceResolver
 
     public function __construct(
         private ContractorReviewSnapshotResolver $reviews,
+        private ReportDefinitionRegistry $definitions,
+        private BaselineScheduleVarianceProvider $baseline,
+        private SupplyReliabilityReportProvider $supply,
+        private QualityDefectFlowReportProvider $quality,
+        private SafetyIncidentActionsReportProvider $safety,
     ) {}
 
     public function resolve(
         ReportExecutionContext $context,
         ReportQuery $query,
+        string $periodFrom,
+        string $periodTo,
     ): ContractorScorecardSourceTuple {
         try {
             $refs = [];
             foreach (self::REPORT_CODES as $code) {
-                $refs[$code] = $this->reportSnapshot($context, $query, $code);
+                $refs[$code] = $this->materializeOwner(
+                    $context,
+                    $query,
+                    $code,
+                    $periodFrom,
+                    $periodTo,
+                );
             }
             $tuple = new ContractorScorecardSourceTuple(
                 $refs['baseline_schedule_variance'],
@@ -62,122 +77,85 @@ final readonly class ContractorScorecardSourceResolver
         }
     }
 
-    private function reportSnapshot(
+    private function materializeOwner(
         ReportExecutionContext $context,
-        ReportQuery $query,
+        ReportQuery $scorecardQuery,
         string $code,
+        string $periodFrom,
+        string $periodTo,
     ): ReportSnapshotRef {
-        $candidates = ReportRunRecord::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('report_code', $code)
-            ->where('status', 'ready')
-            ->where('as_of', $query->asOf)
-            ->whereRaw(
-                'scope_project_ids = ?::jsonb',
-                [CanonicalJson::encode($query->scope->projectIds)],
-            )
-            ->whereRaw(
-                'scope_holding_organization_ids = ?::jsonb',
-                [CanonicalJson::encode($query->scope->holdingOrganizationIds)],
-            )
-            ->whereRaw(
-                'scope_resources = ?::jsonb',
-                [CanonicalJson::encode(array_map(
-                    static fn ($resource): array => $resource->canonicalIdentity(),
-                    $query->scope->resources,
-                ))],
-            )
-            ->where('scope_timezone', $query->scope->timezone->getName())
-            ->whereRaw(
-                'filters = ?::jsonb',
-                [CanonicalJson::encode($query->filters->values)],
-            )
-            ->whereNotNull('snapshot_id')
-            ->whereNotNull('source_hash')
-            ->orderByDesc('as_of')
-            ->orderByDesc('ready_at')
-            ->first();
-        $record = $candidates;
-        if (
-            ! $record instanceof ReportRunRecord
-            || $record->snapshot_stale_at === null
-            || $record->snapshot_generated_at === null
+        $definition = $this->definitions->published($code)->payload();
+        $ownerQuery = new ReportQuery(
+            $definition,
+            $scorecardQuery->scope,
+            new ReportFilterSet($this->ownerFilters($code, $scorecardQuery, $periodFrom, $periodTo)),
+            [],
+            $scorecardQuery->asOf,
+            $scorecardQuery->locale,
+        );
+        $provider = $this->provider($code);
+        $snapshot = $provider->materialize(
+            $context,
+            $ownerQuery,
+            new ReportProgress(0),
+        );
+        $quality = $provider->result($context, $snapshot)->quality;
+        if ($quality->status !== ReportQualityStatus::COMPLETE
+            || $quality->unmatchedCount !== 0
+            || $quality->reconciliation === ReportReconciliationStatus::MISMATCH
+            || $quality->unknownMetrics !== []
         ) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
         }
-        $this->assertOwnerSnapshotReady($record, $code, $query);
+        if ($snapshot->scope->canonicalIdentity() !== $scorecardQuery->scope->canonicalIdentity()) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+        }
 
         return new ReportSnapshotRef(
-            $code,
-            (string) $record->snapshot_id,
-            $query->scope,
-            new Sha256Hash((string) $record->definition_hash),
-            (string) $record->formula_version,
-            new Sha256Hash((string) $record->source_hash),
-            DateTimeImmutable::createFromInterface($record->snapshot_generated_at),
-            DateTimeImmutable::createFromInterface($record->snapshot_stale_at),
-            array_merge($record->snapshot_watermarks ?? [], [
-                'source_schema_version' => (string) $record->source_schema_version,
-                'as_of' => $record->as_of->format(DATE_ATOM),
-                'cohort_key' => ($record->filters ?? [])['cohort'] ?? null,
-                'project_ids' => $query->scope->projectIds,
+            $snapshot->kind,
+            $snapshot->id,
+            $snapshot->scope,
+            $snapshot->definitionHash,
+            $snapshot->formulaVersion,
+            $snapshot->sourceHash,
+            $snapshot->generatedAt,
+            $snapshot->staleAt,
+            array_merge($snapshot->watermarks, [
+                'as_of' => $scorecardQuery->asOf->format(DATE_ATOM),
+                'cohort_key' => $scorecardQuery->filters->values['cohort'],
+                'project_ids' => $scorecardQuery->scope->projectIds,
             ]),
-            ReportSnapshotClassification::OPERATIONAL,
-            null,
+            $snapshot->classification,
+            $snapshot->seal,
+            $snapshot->materializedSourceHash,
         );
     }
 
-    private function assertOwnerSnapshotReady(
-        ReportRunRecord $record,
+    private function provider(string $code): \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider
+    {
+        return match ($code) {
+            'baseline_schedule_variance' => $this->baseline,
+            'supply_reliability' => $this->supply,
+            'quality_defect_flow' => $this->quality,
+            'safety_incident_actions' => $this->safety,
+            default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE),
+        };
+    }
+
+    private function ownerFilters(
         string $code,
         ReportQuery $query,
-    ): void {
-        $snapshot = match ($code) {
-            'baseline_schedule_variance' => DB::table('baseline_schedule_variance_snapshots')
-                ->where('id', $record->snapshot_id)
-                ->where('organization_id', $record->organization_id)
-                ->first(),
-            'supply_reliability' => DB::table('supply_reliability_snapshots')
-                ->where('id', $record->snapshot_id)
-                ->where('organization_id', $record->organization_id)
-                ->where('quality_status', 'complete')
-                ->where('reconciliation_status', 'matched')
-                ->where('gap_count', 0)
-                ->first(),
-            'quality_defect_flow' => DB::table('quality_defect_flow_snapshots')
-                ->where('id', $record->snapshot_id)
-                ->where('organization_id', $record->organization_id)
-                ->where('gap_count', 0)
-                ->where('unknown_count', 0)
-                ->whereColumn('eligible_count', 'projected_count')
-                ->first(),
-            'safety_incident_actions' => DB::table('safety_incident_snapshots')
-                ->where('id', $record->snapshot_id)
-                ->where('organization_id', $record->organization_id)
-                ->where('gap_count', 0)
-                ->where('unknown_count', 0)
-                ->whereColumn('eligible_count', 'projected_count')
-                ->first(),
-            default => null,
+        string $periodFrom,
+        string $periodTo,
+    ): array {
+        return match ($code) {
+            'baseline_schedule_variance' => ['as_of' => $query->asOf->format('Y-m-d')],
+            'supply_reliability' => ['period_start' => $periodFrom, 'period_end' => $periodTo],
+            'quality_defect_flow', 'safety_incident_actions' => [
+                'period_from' => $periodFrom,
+                'period_to' => $periodTo,
+            ],
+            default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE),
         };
-        if (
-            ! is_object($snapshot)
-            || ! hash_equals((string) $snapshot->source_hash, (string) $record->source_hash)
-            || ! hash_equals((string) $snapshot->formula_version, (string) $record->formula_version)
-            || CarbonImmutable::parse((string) $snapshot->generated_at)
-                ->notEqualTo(CarbonImmutable::instance($record->snapshot_generated_at))
-            || $snapshot->stale_at === null
-            || CarbonImmutable::parse((string) $snapshot->stale_at)->lessThanOrEqualTo(CarbonImmutable::now('UTC'))
-        ) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
-        }
-
-        $snapshotAsOf = CarbonImmutable::parse((string) $snapshot->as_of);
-        $sameAsOf = $code === 'baseline_schedule_variance'
-            ? $snapshotAsOf->toDateString() === CarbonImmutable::instance($query->asOf)->toDateString()
-            : $snapshotAsOf->equalTo(CarbonImmutable::instance($query->asOf));
-        if (! $sameAsOf) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
-        }
     }
 }
