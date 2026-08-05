@@ -136,9 +136,9 @@ RUN echo "${ESTIMATE_GENERATION_CAD_SCRIPT_SHA256}  ${ESTIMATE_GENERATION_CAD_SC
     && chown root:root /etc/most/cad-runtime.sha256 \
     && chmod 0444 /etc/most/cad-runtime.sha256 \
     && rm -f bootstrap/cache/*.php \
-    && composer dump-autoload --optimize --no-dev \
-    && php artisan package:discover --ansi \
-    && php artisan filament:upgrade
+    && APP_ENV=build composer dump-autoload --optimize --no-dev --no-scripts \
+    && APP_ENV=build php artisan package:discover --ansi \
+    && APP_ENV=build php artisan filament:upgrade
 
 # Создаем директории для Laravel (если их нет)
 RUN mkdir -p storage/framework/cache/data \
@@ -164,7 +164,7 @@ USER www-data
 
 # Кэшируем скомпилированные Blade-представления на этапе сборки 
 # (они не зависят от .env и безопасно компилируются внутри контейнера)
-RUN php artisan view:cache
+RUN APP_ENV=build php artisan view:cache
 
 # По умолчанию запускаем Octane
 CMD ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rr-config=/var/www/html/.rr.yaml"]

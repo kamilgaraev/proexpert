@@ -27,7 +27,7 @@ final class S3ReportArtifactIntegrationTest extends TestCase
 
         $integrationBucket = env('REPORTS_S3_INTEGRATION_BUCKET');
         $integrationEndpoint = env('REPORTS_S3_INTEGRATION_ENDPOINT');
-        $configuredBucket = config('filesystems.disks.reports.bucket');
+        $configuredBucket = config('filesystems.disks.s3.bucket');
         if (
             ! is_string($integrationBucket)
             || trim($integrationBucket) === ''
@@ -40,10 +40,10 @@ final class S3ReportArtifactIntegrationTest extends TestCase
             self::fail('Disposable S3 bucket/endpoint markers are missing or unsafe.');
         }
 
-        $originalDisk = config('filesystems.disks.reports');
-        config()->set('filesystems.disks.reports.bucket', $integrationBucket);
-        config()->set('filesystems.disks.reports.endpoint', $integrationEndpoint);
-        Storage::forgetDisk('reports');
+        $originalDisk = config('filesystems.disks.s3');
+        config()->set('filesystems.disks.s3.bucket', $integrationBucket);
+        config()->set('filesystems.disks.s3.endpoint', $integrationEndpoint);
+        Storage::forgetDisk('s3');
 
         $files = new class($this->app->make(LoggingService::class)) extends FileService
         {
@@ -152,8 +152,8 @@ final class S3ReportArtifactIntegrationTest extends TestCase
                 } catch (Throwable) {
                 }
             }
-            config()->set('filesystems.disks.reports', $originalDisk);
-            Storage::forgetDisk('reports');
+            config()->set('filesystems.disks.s3', $originalDisk);
+            Storage::forgetDisk('s3');
         }
     }
 

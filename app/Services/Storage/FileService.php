@@ -563,21 +563,12 @@ class FileService
 
     protected function reportDisk(): FilesystemAdapter|Filesystem
     {
-        return Storage::disk('reports');
+        return $this->disk();
     }
 
     protected function reportS3Client(): \Aws\S3\S3ClientInterface
     {
-        $disk = $this->reportDisk();
-        if (! method_exists($disk, 'getClient')) {
-            throw new VersionedObjectTransportException('s3_multipart_unavailable');
-        }
-        $client = $disk->getClient();
-        if (! $client instanceof \Aws\S3\S3ClientInterface) {
-            throw new VersionedObjectTransportException('s3_multipart_unavailable');
-        }
-
-        return $client;
+        return $this->s3Client();
     }
 
     protected function reportBucket(): string
