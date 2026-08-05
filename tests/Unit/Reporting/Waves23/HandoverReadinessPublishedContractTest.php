@@ -16,7 +16,9 @@ final class HandoverReadinessPublishedContractTest extends TestCase
         $contract = new HandoverReadinessCandidateContract;
         $definition = (new HandoverReadinessBuiltinPublishedReport($contract))->definition()->payload();
 
-        self::assertSame([], $definition->filters);
+        self::assertSame(['as_of'], array_column($definition->filters, 'id'));
+        self::assertNotContains('organization_id', array_column($definition->filters, 'id'));
+        self::assertNotContains('project_id', array_column($definition->filters, 'id'));
         self::assertSame(ReportCoreAccessMode::REPORTING_WORKSPACE, $definition->coreAccessMode);
         self::assertSame(['reports.project_readiness.view'], $definition->permissionPolicy->viewPermissions);
         self::assertSame(['reports.project_readiness.export'], $definition->permissionPolicy->exportPermissions);
