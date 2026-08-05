@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Waves23;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFact;
+use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationCheckpointSource;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingHierarchyResolver;
 use PHPUnit\Framework\Attributes\Test;
@@ -84,7 +85,7 @@ final class HoldingOwnerAdapterParityTest extends TestCase
         self::assertSame('internal', $projector->classify(10, 11, [10, 11, 12]));
         self::assertSame('external', $projector->classify(10, 99, [10, 11, 12]));
         self::assertSame('unclassified', $projector->classify(98, 99, [10, 11, 12]));
-        self::assertSame('external', $projector->classify(10, null, [10, 11, 12]));
+        self::assertSame('unclassified', $projector->classify(10, null, [10, 11, 12]));
     }
 
     #[Test]
@@ -101,5 +102,24 @@ final class HoldingOwnerAdapterParityTest extends TestCase
             'source_version' => 3,
             'monetary_basis' => 'contracted',
         ]);
+    }
+
+    #[Test]
+    public function checkpoint_source_accepts_canonical_keyed_evidence(): void
+    {
+        $fact = HoldingAllocationFact::contracted(5, 10, 100, 'RUB', 12_500);
+        $evidence = [
+            'source_type' => 'contract_checkpoint',
+            'source_id' => $fact->sourceId,
+            'source_version' => $fact->sourceVersion,
+        ];
+
+        $source = new HoldingAllocationCheckpointSource(
+            $fact,
+            $evidence,
+            hash('sha256', 'checkpoint-source'),
+        );
+
+        self::assertSame($evidence, $source->evidence);
     }
 }

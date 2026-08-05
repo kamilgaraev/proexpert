@@ -4,8 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\MultiOrganization;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowReportBindingFactory;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Listeners\ProjectHoldingAllocationFacts;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Providers\IntercompanyContractFlowsReportProvider;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\IntercompanyContractFlowRowQuery;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Readiness\IntercompanyContractFlowReadinessProbe;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationCheckpointSourceAssembler;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowSnapshotMaterializer;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use Illuminate\Support\ServiceProvider;
 use App\BusinessModules\Core\MultiOrganization\Services\MultiOrganizationHelperService;
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
@@ -23,6 +33,16 @@ class MultiOrganizationServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->singleton(IntercompanyContractFlowCandidateContract::class);
+        $this->app->scoped(HoldingAllocationFactProjector::class);
+        $this->app->scoped(HoldingAllocationCheckpointSourceAssembler::class);
+        $this->app->scoped(IntercompanyContractFlowSnapshotMaterializer::class);
+        $this->app->scoped(IntercompanyContractFlowsReportProvider::class);
+        $this->app->scoped(IntercompanyContractFlowRowQuery::class);
+        $this->app->scoped(IntercompanyContractFlowReadinessProbe::class);
+        $this->app->scoped(IntercompanyContractFlowReportBindingFactory::class);
+        $this->app->scoped(IntercompanyContractFlowPublishedRuntimeBindingRegistrar::class);
+
         $this->app->singleton(MultiOrganizationHelperService::class, function ($app) {
             return new MultiOrganizationHelperService($app->make(\App\Services\Landing\MultiOrganizationService::class));
         });
@@ -63,6 +83,14 @@ class MultiOrganizationServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->app->afterResolving(
+            ReportDefinitionBindingAssembler::class,
+            function (ReportDefinitionBindingAssembler $assembler): void {
+                $this->app
+                    ->make(IntercompanyContractFlowPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+            },
+        );
         Event::listen(
             \App\Events\ProjectCreated::class,
             AutoAddParentToProject::class

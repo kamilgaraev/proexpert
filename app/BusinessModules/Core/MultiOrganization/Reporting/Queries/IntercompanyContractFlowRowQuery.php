@@ -20,10 +20,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\Support\Reporting\ReportSourceObjectAccessAuthorizer;
 use Illuminate\Database\Eloquent\Builder;
 
 final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDownProvider, ReportRowQuery
 {
+    private ReportSourceObjectAccessAuthorizer $sourceAccess;
+
     private const SORTS = [
         'period_start',
         'project_id',
@@ -39,7 +42,12 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
         'linked_spread_minor',
     ];
 
-    public function __construct(private IntercompanyContractFlowSnapshotMaterializer $materializer) {}
+    public function __construct(
+        private IntercompanyContractFlowSnapshotMaterializer $materializer,
+        ?ReportSourceObjectAccessAuthorizer $sourceAccess = null,
+    ) {
+        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer;
+    }
 
     public function page(
         ReportExecutionContext $context,
@@ -108,10 +116,6 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
         }
 
-        $scoped = [];
-        foreach ($context->scope->resources as $resource) {
-            $scoped[$resource->kind.':'.$resource->id] = true;
-        }
         $details = [];
         $links = [];
         $sourceRefs = $this->sourceRefs($row->source_refs);
@@ -120,9 +124,12 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
         }
         foreach ($sourceRefs as $sourceRef) {
             $identity = $this->authorizationIdentity($sourceRef);
-            if (! isset($scoped[$identity])) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
-            }
+            $this->sourceAccess->assertAccessible(
+                $context,
+                'contract',
+                (int) $sourceRef['contract_id'],
+                (int) $row->project_id,
+            );
             $details[] = [
                 'row_key' => $identity,
                 'column_id' => $input->cell->columnId,
@@ -237,18 +244,19 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
         }
         $refs = [];
         foreach ($value as $ref) {
-            if (! is_array($ref)
-                || ! is_string($ref['type'] ?? null)
-                || (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))) {
+            if (! is_array($ref) || ! is_string($ref['type'] ?? null)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+            }
+            if ($ref['type'] !== 'contract_allocation') {
+                continue;
+            }
+            if ((! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))
+                || ! isset($ref['contract_id'])
+                || ! ctype_digit((string) $ref['contract_id'])) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
             $normalized = ['type' => $ref['type'], 'id' => (string) $ref['id']];
-            if ($ref['type'] === 'contract_allocation') {
-                if (! isset($ref['contract_id']) || ! ctype_digit((string) $ref['contract_id'])) {
-                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
-                }
-                $normalized['contract_id'] = (string) $ref['contract_id'];
-            }
+            $normalized['contract_id'] = (string) $ref['contract_id'];
             $refs[] = $normalized;
         }
 

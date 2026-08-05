@@ -540,7 +540,10 @@ final readonly class HoldingAllocationFactProjector
     {
         $members = array_fill_keys(array_map('intval', $hierarchyOrganizationIds), true);
         $contributorInside = isset($members[$contributorOrganizationId]);
-        $counterpartyInside = $counterpartyOrganizationId !== null && isset($members[$counterpartyOrganizationId]);
+        if ($counterpartyOrganizationId === null) {
+            return 'unclassified';
+        }
+        $counterpartyInside = isset($members[$counterpartyOrganizationId]);
         if ($contributorInside && $counterpartyInside) {
             return 'internal';
         }
