@@ -18,6 +18,7 @@ use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinP
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
+use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowBuiltinPublishedReport;
 
 final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatalogMetadataRegistry
 {
@@ -32,6 +33,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private SupplyReliabilityBuiltinPublishedReport $supplyReliability,
         private InventoryRiskBuiltinPublishedReport $inventoryRisk,
         private AttendanceExecutionBuiltinPublishedReport $attendanceExecution,
+        private QualityDefectFlowBuiltinPublishedReport $qualityDefectFlow,
     ) {}
 
     public function published(string $code): ReportCatalogMetadata
@@ -47,6 +49,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->supplyReliability->metadata()->code => $this->supplyReliability->metadata(),
             $this->inventoryRisk->metadata()->code => $this->inventoryRisk->metadata(),
             $this->attendanceExecution->metadata()->code => $this->attendanceExecution->metadata(),
+            $this->qualityDefectFlow->metadata()->code => $this->qualityDefectFlow->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }

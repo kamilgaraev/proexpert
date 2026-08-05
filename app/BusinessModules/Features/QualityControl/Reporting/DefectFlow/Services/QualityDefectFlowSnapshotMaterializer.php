@@ -58,6 +58,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration($organizationId, $ledgerBinding);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
+        $this->assertPublicFilterValues($query);
         $events = $this->events(
             $organizationId,
             $context->scope->projectIds,
@@ -661,5 +662,24 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             is_array($value) ? $value : [$value],
             static fn (mixed $item): bool => is_int($item) || is_string($item),
         ));
+    }
+
+    private function assertPublicFilterValues(ReportQuery $query): void
+    {
+        $severities = $this->filterValues($query->filters->values['severity'] ?? null);
+        $statuses = $this->filterValues($query->filters->values['status'] ?? null);
+        if (array_diff($severities, ['minor', 'major', 'critical']) !== []
+            || array_diff($statuses, [
+                'draft',
+                'open',
+                'assigned',
+                'in_progress',
+                'ready_for_review',
+                'resolved',
+                'rejected',
+                'cancelled',
+            ]) !== []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
+        }
     }
 }
