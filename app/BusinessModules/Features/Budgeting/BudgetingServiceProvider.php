@@ -15,7 +15,12 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioQueryService;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBudgetVersionObserver;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityProvider;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionObserver;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
@@ -75,6 +80,11 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(ProjectMarginCandidateContract::class);
         $this->app->singleton(ProjectMarginReportBindingFactory::class);
         $this->app->singleton(ProjectMarginPublishedRuntimeBindingRegistrar::class);
+        $this->app->singleton(PortfolioLiquidityCandidateContract::class);
+        $this->app->scoped(PortfolioLiquidityProvider::class);
+        $this->app->scoped(BudgetingPortfolioQueryService::class);
+        $this->app->scoped(PortfolioLiquidityReportBindingFactory::class);
+        $this->app->scoped(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(BudgetCatalogService::class);
         $this->app->singleton(BudgetVersionService::class);
         $this->app->singleton(BudgetLineService::class);
@@ -114,6 +124,9 @@ final class BudgetingServiceProvider extends ServiceProvider
                     ->register($assembler);
                 $this->app
                     ->make(ProjectMarginPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+                $this->app
+                    ->make(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class)
                     ->register($assembler);
             },
         );

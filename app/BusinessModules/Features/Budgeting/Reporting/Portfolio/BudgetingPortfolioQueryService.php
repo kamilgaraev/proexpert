@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
@@ -24,8 +25,13 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\ProjectPor
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
-final readonly class BudgetingPortfolioQueryService implements ReportDrillDownProvider, ReportRowQuery
+final readonly class BudgetingPortfolioQueryService implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'source_refs'];
+    }
+
     private const HEALTH_COLUMNS = [
         'project',
         'currency',
@@ -304,6 +310,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
                 'eac' => (string) $record->getAttribute('eac'),
                 'ctc' => (string) $record->getAttribute('ctc'),
                 'risk' => (string) $record->getAttribute('risk_level'),
+                'source_refs' => $record->getAttribute('source_refs') ?? [],
             ];
         }
 
@@ -326,6 +333,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
             'quality_gaps' => $record->getAttribute('quality_gaps') ?? [],
             'warnings' => $record->getAttribute('warnings') ?? [],
             'reconciliation_status' => (string) $record->getAttribute('reconciliation_status'),
+            'source_refs' => $record->getAttribute('source_refs') ?? [],
         ];
     }
 
