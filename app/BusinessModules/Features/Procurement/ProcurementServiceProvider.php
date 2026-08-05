@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
@@ -29,6 +30,10 @@ class ProcurementServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
+            $this->app->make(Reporting\Cycle\ProcurementCyclePublishedRuntimeBindingRegistrar::class)->register($assembler);
+        });
+
         // Загружаем миграции
         $this->loadMigrations();
 
@@ -65,6 +70,7 @@ class ProcurementServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReportAdapter::class);
         $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReadinessProbe::class);
         $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReportBindingFactory::class);
+        $this->app->singleton(Reporting\Cycle\ProcurementCyclePublishedRuntimeBindingRegistrar::class);
 
         $this->app->singleton(
             Reporting\Cycle\Contracts\ProcurementProcessEventStore::class,
