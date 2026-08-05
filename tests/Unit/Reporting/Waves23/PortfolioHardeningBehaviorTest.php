@@ -362,7 +362,7 @@ final class PortfolioHardeningBehaviorTest extends TestCase
 
         self::assertIsString($source);
         self::assertStringContainsString(
-            "preg_match('/^[A-Z]{3}$/D', mb_strtoupper(\$document->currency)) === 1",
+            'CurrencyCode::tryFrom(mb_strtoupper($eventCurrency)) !== null',
             $source,
         );
         self::assertStringContainsString("\$currencyValid ? null : 'currency'", $source);

@@ -15,7 +15,12 @@ class PaymentDocumentPaid
     public function __construct(
         public PaymentDocument $document,
         public float|int|string $amount,
-        public ?int $transactionId = null,
-        public ?DateTimeInterface $recognizedAt = null,
+        public ?int $transactionId,
+        public ?DateTimeInterface $recognizedAt,
+        public ?int $organizationId,
+        public ?int $projectId,
+        public ?string $invoiceableType,
+        public ?int $invoiceableId,
+        public ?string $currency,
     ) {}
 }

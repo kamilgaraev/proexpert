@@ -162,6 +162,12 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
             fn (PaymentDocumentPaid $event): bool => $event->document->id === $document->id
                 && abs($event->amount - 1000.0) < 0.001
                 && $event->transactionId !== null
+                && $event->recognizedAt !== null
+                && $event->organizationId === (int) $document->organization_id
+                && $event->projectId === (int) $document->project_id
+                && $event->invoiceableType === $document->invoiceable_type
+                && $event->invoiceableId === (int) $document->invoiceable_id
+                && $event->currency === $document->currency
         );
     }
 
@@ -202,7 +208,17 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
         $document->siteRequests()->attach($siteRequest->id, ['amount' => 1000]);
 
         app(CompleteSiteRequestsOnPaymentPaid::class)->handle(
-            new PaymentDocumentPaid($document->fresh('siteRequests'), 1000, 1)
+            new PaymentDocumentPaid(
+                document: $document->fresh('siteRequests'),
+                amount: 1000,
+                transactionId: 1,
+                recognizedAt: $document->paid_at,
+                organizationId: (int) $document->organization_id,
+                projectId: $document->project_id === null ? null : (int) $document->project_id,
+                invoiceableType: $document->invoiceable_type,
+                invoiceableId: $document->invoiceable_id === null ? null : (int) $document->invoiceable_id,
+                currency: $document->currency,
+            )
         );
 
         $this->assertSame(
