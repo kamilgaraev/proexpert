@@ -44,9 +44,13 @@ final readonly class ContractorScorecardSnapshotMaterializer
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): ReportSnapshotRef
     {
+        $asOf = $query->filters->values['as_of'] ?? null;
         if (
             $query->definition->code !== 'contractor_scorecard'
             || $context->scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
+            || ! is_string($asOf)
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $asOf) !== 1
+            || $asOf !== $query->asOf->format('Y-m-d')
         ) {
             throw new InvalidArgumentException('contractor_scorecard_context_invalid');
         }
@@ -69,7 +73,6 @@ final readonly class ContractorScorecardSnapshotMaterializer
         $cohortKey = $query->filters->values['cohort'] ?? $this->cohortKey(
             CarbonImmutable::instance($query->asOf),
             $cohortPeriod,
-            $cohortKey,
         );
         if (! is_string($cohortKey)) {
             throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');

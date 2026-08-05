@@ -383,7 +383,9 @@
       "organizations.search",
       "organizations.suggestions",
       "organizations.recommendations",
-      "organizations.availability.check"
+      "organizations.availability.check",
+      "contractor_marketplace.profile.view",
+      "contractor_marketplace.reports.export"
     ],
     "crm": [
       "crm.view",
