@@ -142,6 +142,41 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('contractor_scorecard', $app->make(ReportSchedulingCapabilityRegistry::class)->published('contractor_scorecard')->code);
     }
 
+    public function test_provider_composes_metadata_for_every_published_builtin_report(): void
+    {
+        $app = new Application(dirname(__DIR__, 4));
+        $app->instance(DatabasePublishedReportDefinitionRegistry::class, $this->registry([]));
+        $app->instance(DatabaseReportCatalogMetadataRegistry::class, new class implements ReportCatalogMetadataRegistry
+        {
+            public function published(string $code): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata
+            {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+            }
+        });
+        $app->instance(DatabaseReportSchedulingCapabilityRegistry::class, new class implements ReportSchedulingCapabilityRegistry
+        {
+            public function published(string $code): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability
+            {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+            }
+        });
+        (new ReportingCatalogServiceProvider($app))->register();
+
+        $definitions = $app->make(ReportDefinitionRegistry::class);
+        $metadata = $app->make(ReportCatalogMetadataRegistry::class);
+        $ordinals = [];
+
+        foreach ($definitions->publishedCodes() as $code) {
+            $entry = $metadata->published($code);
+            self::assertSame($code, $entry->code);
+            $ordinals[] = $entry->manifestOrdinal;
+        }
+
+        self::assertSame(count($ordinals), count(array_unique($ordinals)));
+        self::assertContains(CustomerSlaCandidateContract::CODE, $definitions->publishedCodes());
+        self::assertContains(28, $ordinals);
+    }
+
     public function test_budget_plan_fact_is_available_without_database_publication(): void
     {
         $builtins = new BuiltinPublishedReportDefinitionRegistry(

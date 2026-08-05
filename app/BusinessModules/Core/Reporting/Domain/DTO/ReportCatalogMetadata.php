@@ -24,7 +24,7 @@ final readonly class ReportCatalogMetadata
             || trim($grain) === ''
             || ! in_array($wave, [1, 2, 3], true)
             || $manifestOrdinal < 0
-            || $manifestOrdinal > 27) {
+            || $manifestOrdinal > 28) {
             throw new InvalidArgumentException('report_catalog_metadata_invalid');
         }
     }
