@@ -23,6 +23,11 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidit
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionObserver;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceQueryService;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastProvider;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportService;
@@ -85,6 +90,11 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->scoped(BudgetingPortfolioQueryService::class);
         $this->app->scoped(PortfolioLiquidityReportBindingFactory::class);
         $this->app->scoped(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class);
+        $this->app->singleton(WipCompletionForecastCandidateContract::class);
+        $this->app->scoped(WipCompletionForecastProvider::class);
+        $this->app->scoped(ProjectFinanceQueryService::class);
+        $this->app->scoped(WipCompletionForecastReportBindingFactory::class);
+        $this->app->scoped(WipCompletionForecastPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(BudgetCatalogService::class);
         $this->app->singleton(BudgetVersionService::class);
         $this->app->singleton(BudgetLineService::class);
@@ -127,6 +137,9 @@ final class BudgetingServiceProvider extends ServiceProvider
                     ->register($assembler);
                 $this->app
                     ->make(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+                $this->app
+                    ->make(WipCompletionForecastPublishedRuntimeBindingRegistrar::class)
                     ->register($assembler);
             },
         );
