@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\HandoverAcceptance;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use Illuminate\Support\ServiceProvider;
 
 final class HandoverAcceptanceServiceProvider extends ServiceProvider
@@ -21,10 +22,21 @@ final class HandoverAcceptanceServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\Readiness\DrillDown\HandoverReadinessDrillDownProvider::class);
         $this->app->singleton(Reporting\Readiness\Readiness\HandoverReadinessProbe::class);
         $this->app->singleton(Reporting\Readiness\Backfill\HandoverReadinessBackfill::class);
+        $this->app->singleton(Reporting\Readiness\HandoverReadinessCandidateContract::class);
+        $this->app->scoped(Reporting\Readiness\HandoverReadinessReportBindingFactory::class);
+        $this->app->scoped(Reporting\Readiness\HandoverReadinessPublishedRuntimeBindingRegistrar::class);
     }
 
     public function boot(): void
     {
+        $this->app->resolving(
+            ReportDefinitionBindingAssembler::class,
+            function (ReportDefinitionBindingAssembler $assembler): void {
+                $this->app->make(Reporting\Readiness\HandoverReadinessPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+            },
+        );
+
         $migrationsPath = __DIR__.'/migrations';
         if (is_dir($migrationsPath)) {
             $this->loadMigrationsFrom($migrationsPath);

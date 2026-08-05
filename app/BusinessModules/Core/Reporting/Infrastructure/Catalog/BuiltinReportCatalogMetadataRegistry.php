@@ -22,6 +22,7 @@ use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefe
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionBuiltinPublishedReport;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsBuiltinPublishedReport;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
+use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
 
 final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatalogMetadataRegistry
@@ -41,6 +42,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private QualityDefectFlowBuiltinPublishedReport $qualityDefectFlow,
         private SafetyIncidentActionsBuiltinPublishedReport $safetyIncidentActions,
         private WorkforceAdmissionBuiltinPublishedReport $workforceAdmission,
+        private HandoverReadinessBuiltinPublishedReport $handoverReadiness,
         private CustomerSlaBuiltinPublishedReport $customerSla,
     ) {}
 
@@ -61,6 +63,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->qualityDefectFlow->metadata()->code => $this->qualityDefectFlow->metadata(),
             $this->safetyIncidentActions->metadata()->code => $this->safetyIncidentActions->metadata(),
             $this->workforceAdmission->metadata()->code => $this->workforceAdmission->metadata(),
+            $this->handoverReadiness->metadata()->code => $this->handoverReadiness->metadata(),
             $this->customerSla->metadata()->code => $this->customerSla->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };

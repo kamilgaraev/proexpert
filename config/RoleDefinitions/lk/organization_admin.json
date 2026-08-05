@@ -22,6 +22,8 @@
     "admin.dashboard.view",
     "customer.sla_report.view",
     "customer.sla_report.export",
+    "reports.project_readiness.view",
+    "reports.project_readiness.export",
     "admin.projects.view",
     "admin.users.view",
     "admin.users.create",

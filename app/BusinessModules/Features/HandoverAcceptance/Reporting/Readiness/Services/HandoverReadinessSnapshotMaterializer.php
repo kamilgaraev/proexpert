@@ -50,10 +50,6 @@ final readonly class HandoverReadinessSnapshotMaterializer
             ->unique(static fn (HandoverGateVersion $gate): string => $gate->acceptance_scope_id.':'.$gate->gate_code)
             ->values();
 
-        if ($gates->isEmpty()) {
-            throw new InvalidArgumentException('handover_gate_policy_unavailable');
-        }
-
         $events = HandoverEvidenceEvent::query()
             ->where('organization_id', $query->scope->organizationId)
             ->whereIn('acceptance_scope_id', $gates->pluck('acceptance_scope_id')->all())

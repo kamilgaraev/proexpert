@@ -54,11 +54,16 @@ final readonly class HandoverReadinessReportProvider implements ReportDataProvid
             ->where('organization_id', $context->scope->organizationId)
             ->whereKey($snapshot->id)
             ->firstOrFail();
-        $ready = HandoverReadinessRow::query()
+        $totals = HandoverReadinessRow::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
-            ->where('ready', true)
-            ->count();
+            ->selectRaw('COUNT(*) AS gate_count')
+            ->selectRaw('SUM(CASE WHEN ready THEN 1 ELSE 0 END) AS ready_gate_count')
+            ->selectRaw('SUM(open_hard_blocker_count) AS open_hard_blocker_count')
+            ->selectRaw('SUM(attempt_count) AS attempt_count')
+            ->selectRaw('SUM(successful_result_count) AS successful_result_count')
+            ->first();
+        $ready = (int) ($totals?->ready_gate_count ?? 0);
         $rowCount = (int) $record->row_count;
         $quality = new ReportQuality(
             ReportQualityStatus::COMPLETE,
@@ -77,7 +82,14 @@ final readonly class HandoverReadinessReportProvider implements ReportDataProvid
                 DateTimeImmutable::createFromInterface($record->generated_at),
                 $record->stale_at === null ? null : DateTimeImmutable::createFromInterface($record->stale_at),
             ),
-            ['gate_count' => $rowCount, 'ready_gate_count' => $ready],
+            [
+                'gate_count' => $rowCount,
+                'ready_gate_count' => $ready,
+                'not_ready_gate_count' => max(0, $rowCount - $ready),
+                'open_hard_blocker_count' => (int) ($totals?->open_hard_blocker_count ?? 0),
+                'attempt_count' => (int) ($totals?->attempt_count ?? 0),
+                'successful_result_count' => (int) ($totals?->successful_result_count ?? 0),
+            ],
             $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable()
                 ? ReportFreshnessStatus::STALE
                 : ReportFreshnessStatus::FRESH,
@@ -97,12 +109,12 @@ final readonly class HandoverReadinessReportProvider implements ReportDataProvid
                 null,
             ),
             [
-                ['id' => 'project_id', 'type' => 'integer'],
-                ['id' => 'gate_code', 'type' => 'string'],
-                ['id' => 'mandatory_completeness', 'type' => 'decimal'],
-                ['id' => 'document_completeness', 'type' => 'decimal'],
-                ['id' => 'open_hard_blocker_count', 'type' => 'integer'],
-                ['id' => 'ready', 'type' => 'boolean'],
+                ['id' => 'project_id', 'type' => 'integer'], ['id' => 'acceptance_scope_id', 'type' => 'integer'],
+                ['id' => 'location_id', 'type' => 'integer'], ['id' => 'package_id', 'type' => 'integer'],
+                ['id' => 'gate_code', 'type' => 'string'], ['id' => 'due_on', 'type' => 'date'],
+                ['id' => 'mandatory_completeness', 'type' => 'decimal'], ['id' => 'document_completeness', 'type' => 'decimal'],
+                ['id' => 'open_hard_blocker_count', 'type' => 'integer'], ['id' => 'attempt_count', 'type' => 'integer'],
+                ['id' => 'successful_result_count', 'type' => 'integer'], ['id' => 'ready', 'type' => 'boolean'],
             ],
             ['drill_down' => true, 'export_formats' => ['csv', 'xlsx']],
         );

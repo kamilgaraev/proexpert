@@ -22,6 +22,7 @@ use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefe
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionBuiltinPublishedReport;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsBuiltinPublishedReport;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
+use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
 
 final readonly class BuiltinReportSchedulingCapabilityRegistry implements ReportSchedulingCapabilityRegistry
@@ -41,6 +42,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private QualityDefectFlowBuiltinPublishedReport $qualityDefectFlow,
         private SafetyIncidentActionsBuiltinPublishedReport $safetyIncidentActions,
         private WorkforceAdmissionBuiltinPublishedReport $workforceAdmission,
+        private HandoverReadinessBuiltinPublishedReport $handoverReadiness,
         private CustomerSlaBuiltinPublishedReport $customerSla,
     ) {}
 
@@ -61,6 +63,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->qualityDefectFlow->scheduling()->code => $this->qualityDefectFlow->scheduling(),
             $this->safetyIncidentActions->scheduling()->code => $this->safetyIncidentActions->scheduling(),
             $this->workforceAdmission->scheduling()->code => $this->workforceAdmission->scheduling(),
+            $this->handoverReadiness->scheduling()->code => $this->handoverReadiness->scheduling(),
             $this->customerSla->scheduling()->code => $this->customerSla->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };

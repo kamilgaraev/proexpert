@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Dr
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceObjectAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Rows\StableDrillDownPage;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -15,9 +16,14 @@ use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Models\H
 use InvalidArgumentException;
 use JsonException;
 
-final readonly class HandoverReadinessDrillDownProvider implements ReportDrillDownProvider
+final readonly class HandoverReadinessDrillDownProvider implements ReportDrillDownProvider, ReportDrillDownTokenColumns
 {
     public function __construct(private ReportSourceObjectAuthorizer $sources) {}
+
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'evidence_refs'];
+    }
 
     public function drillDown(
         ReportExecutionContext $context,

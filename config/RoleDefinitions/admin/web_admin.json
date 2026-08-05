@@ -24,6 +24,8 @@
     "admin.reports.export",
     "customer.sla_report.view",
     "customer.sla_report.export",
+    "reports.project_readiness.view",
+    "reports.project_readiness.export",
     "admin.catalogs.manage",
     "mdm.view",
     "mdm.manage",
