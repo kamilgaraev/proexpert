@@ -58,6 +58,8 @@ final readonly class BudgetPlanFactBuiltinPublishedReport
             'category' => 'finance',
             'grain' => 'budget_period_article_currency',
             'wave' => 1,
+            'source_module' => 'budgeting',
+            'core_access_mode' => 'source_module_report',
             'filters' => $this->contract->filters(),
             'columns' => $this->contract->columns(),
             'sorts' => $this->contract->sorts(),

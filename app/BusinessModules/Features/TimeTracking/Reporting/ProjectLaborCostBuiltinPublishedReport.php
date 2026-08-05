@@ -58,6 +58,8 @@ final readonly class ProjectLaborCostBuiltinPublishedReport
             'category' => 'workforce',
             'grain' => 'approved_entry_employee_day',
             'wave' => 1,
+            'source_module' => 'time-tracking',
+            'core_access_mode' => 'source_module_report',
             'filters' => $this->contract->filters(),
             'columns' => $this->contract->columns(),
             'sorts' => $this->contract->sorts(),

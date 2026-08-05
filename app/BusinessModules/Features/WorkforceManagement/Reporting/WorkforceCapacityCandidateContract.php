@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -70,6 +71,8 @@ final readonly class WorkforceCapacityCandidateContract
     public function assertDefinition(ReportDefinition $definition): void
     {
         if ($definition->code !== self::CODE
+            || $definition->sourceModule !== 'workforce-management'
+            || $definition->coreAccessMode !== ReportCoreAccessMode::SOURCE_MODULE_REPORT
             || $definition->formulaVersion !== DatabaseWorkforceReportAdapter::CAPACITY_FORMULA
             || $definition->sourceSchemaVersion !== DatabaseWorkforceReportAdapter::SCHEMA_VERSION
             || $definition->filters !== self::canonicalItems($this->filters())

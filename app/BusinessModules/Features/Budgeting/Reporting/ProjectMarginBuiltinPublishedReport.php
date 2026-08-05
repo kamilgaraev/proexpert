@@ -57,6 +57,8 @@ final readonly class ProjectMarginBuiltinPublishedReport
             'category' => 'finance',
             'grain' => 'project_article_currency_period',
             'wave' => 1,
+            'source_module' => 'budgeting',
+            'core_access_mode' => 'source_module_report',
             'filters' => $this->contract->filters(),
             'columns' => $this->contract->columns(),
             'sorts' => $this->contract->sorts(),

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
@@ -101,6 +102,8 @@ final readonly class BudgetPlanFactCandidateContract
     public function assertDefinition(ReportDefinition $definition): void
     {
         if ($definition->code !== self::CODE
+            || $definition->sourceModule !== 'budgeting'
+            || $definition->coreAccessMode !== ReportCoreAccessMode::SOURCE_MODULE_REPORT
             || $definition->formulaVersion !== $this->formulaVersion
             || $definition->sourceSchemaVersion !== $this->sourceSchemaVersion
             || $definition->filters !== self::canonicalItems($this->filters())
