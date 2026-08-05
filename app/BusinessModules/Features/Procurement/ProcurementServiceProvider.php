@@ -32,6 +32,7 @@ class ProcurementServiceProvider extends ServiceProvider
     {
         $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
             $this->app->make(Reporting\Cycle\ProcurementCyclePublishedRuntimeBindingRegistrar::class)->register($assembler);
+            $this->app->make(Reporting\Award\SupplierAwardPublishedRuntimeBindingRegistrar::class)->register($assembler);
         });
 
         // Загружаем миграции
@@ -71,6 +72,16 @@ class ProcurementServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReadinessProbe::class);
         $this->app->singleton(Reporting\Cycle\Services\ProcurementCycleReportBindingFactory::class);
         $this->app->singleton(Reporting\Cycle\ProcurementCyclePublishedRuntimeBindingRegistrar::class);
+        $this->app->singleton(Reporting\Award\Services\SupplierAwardFormula::class);
+        $this->app->singleton(Reporting\Award\Services\SupplierProposalComparabilityPolicy::class);
+        $this->app->singleton(Reporting\Award\Services\ComparableProposalVersionFactory::class);
+        $this->app->singleton(Reporting\Award\Queries\SupplierAwardFilteredUniverse::class);
+        $this->app->singleton(Reporting\Award\Services\SupplierAwardSnapshotMaterializer::class);
+        $this->app->singleton(Reporting\Award\Providers\SupplierAwardCompetitivenessReportProvider::class);
+        $this->app->singleton(Reporting\Award\Queries\SupplierAwardRowQuery::class);
+        $this->app->singleton(Reporting\Award\Readiness\SupplierAwardReadinessProbe::class);
+        $this->app->singleton(Reporting\Award\Services\SupplierAwardReportBindingFactory::class);
+        $this->app->singleton(Reporting\Award\SupplierAwardPublishedRuntimeBindingRegistrar::class);
 
         $this->app->singleton(
             Reporting\Cycle\Contracts\ProcurementProcessEventStore::class,

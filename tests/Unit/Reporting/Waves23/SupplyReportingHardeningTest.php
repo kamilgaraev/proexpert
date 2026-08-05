@@ -442,7 +442,7 @@ final class SupplyReportingHardeningTest extends TestCase
         );
     }
 
-    public function test_award_filters_use_immutable_pinned_dimensions_and_party_namespace(): void
+    public function test_award_filters_use_server_scope_and_immutable_selection_period(): void
     {
         $source = $this->source(
             'app/BusinessModules/Features/Procurement/Reporting/Award/Queries/'
@@ -450,10 +450,10 @@ final class SupplyReportingHardeningTest extends TestCase
         );
 
         self::assertStringContainsString('supplier_award_decision_versions.project_id', $source);
-        self::assertStringContainsString('selected_supplier_party_id', $source);
-        self::assertStringContainsString("dimension_snapshot->>'procurement_method'", $source);
-        self::assertStringContainsString("dimension_snapshot->>'currency'", $source);
-        self::assertStringContainsString('jsonb_array_elements', $source);
+        self::assertStringContainsString("['period_start']", $source);
+        self::assertStringContainsString("['period_end']", $source);
+        self::assertStringContainsString("whereBetween('supplier_award_decision_versions.selected_at'", $source);
+        self::assertStringNotContainsString('OwnerReportFilterApplier', $source);
         self::assertStringNotContainsString('supplier_proposals as', $source);
         self::assertStringNotContainsString('supplier_proposal_lines as', $source);
         self::assertStringNotContainsString('materials as', $source);
