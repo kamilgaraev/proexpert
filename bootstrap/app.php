@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-use App\Http\Middleware\JwtMiddleware;
-use App\Http\Middleware\SetOrganizationContext;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorResponseFactory;
-use App\Services\Logging\SafeLogWriter;
+use App\Http\Middleware\JwtMiddleware;
+use App\Http\Middleware\SetOrganizationContext;
 use App\Services\Logging\Context\RequestContext;
+use App\Services\Logging\SafeLogWriter;
 use App\Services\Monitoring\GlitchTipReportPolicy;
 use App\Services\Monitoring\SentryScopeService;
 use Illuminate\Foundation\Application;
@@ -55,6 +55,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
             'organization_context' => SetOrganizationContext::class,
             'project.context' => \App\Http\Middleware\ProjectContextMiddleware::class,
             'report.project-scope' => \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindProjectReportScope::class,
+            'report.organization-scope' => \App\BusinessModules\Core\Reporting\Http\Admin\Middleware\BindOrganizationReportScope::class,
 
             // Дополнительные middleware
             'request.dedup' => \App\Http\Middleware\RequestDedupMiddleware::class,

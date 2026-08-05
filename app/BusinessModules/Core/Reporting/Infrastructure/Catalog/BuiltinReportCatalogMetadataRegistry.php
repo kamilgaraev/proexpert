@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublis
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
 
 final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatalogMetadataRegistry
 {
@@ -20,6 +21,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
+        private WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
     ) {}
 
     public function published(string $code): ReportCatalogMetadata
@@ -29,6 +31,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->budgetPlanFact->metadata()->code => $this->budgetPlanFact->metadata(),
             $this->projectLaborCost->metadata()->code => $this->projectLaborCost->metadata(),
             $this->payrollReadiness->metadata()->code => $this->payrollReadiness->metadata(),
+            $this->workforceCapacity->metadata()->code => $this->workforceCapacity->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }

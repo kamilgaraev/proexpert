@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
@@ -16,7 +17,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
 
-final readonly class PayrollReadinessQueryService implements ReportDrillDownProvider, ReportRowQuery
+final readonly class PayrollReadinessQueryService implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
     public function __construct(private PayrollReadinessDatabasePort $database) {}
 

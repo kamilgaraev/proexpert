@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateCont
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
 use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
@@ -81,7 +82,9 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.project-labor-cost.runs.store',
             'admin.reports.payroll-readiness.runs.store',
             'admin.reports.project-labor-cost.options',
-            'admin.reports.payroll-readiness.options' => $this->targets->createRun(
+            'admin.reports.payroll-readiness.options',
+            'admin.reports.workforce-capacity.runs.store',
+            'admin.reports.workforce-capacity.options' => $this->targets->createRun(
                 $this->routeId($request, 'reportCode'),
             ),
             'admin.reports.runs.show', 'admin.reports.runs.rows' => $this->targets->run(
@@ -124,6 +127,7 @@ final readonly class AuthorizeReportDefinitionAccess
             ProjectMarginCandidateContract::CODE,
             ProjectLaborCostCandidateContract::CODE,
             PayrollReadinessCandidateContract::CODE,
+            WorkforceCapacityCandidateContract::CODE,
         ], true)) {
             $this->deny();
         }

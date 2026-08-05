@@ -49,13 +49,13 @@ use InvalidArgumentException;
 
 final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDatabasePort
 {
-    private const CAPACITY_FORMULA = 'workforce-capacity.v1';
+    public const CAPACITY_FORMULA = 'workforce-capacity.v1';
 
     private const ATTENDANCE_FORMULA = 'attendance.v1';
 
-    private const SCHEMA_VERSION = 'workforce-report-source.v1';
+    public const SCHEMA_VERSION = 'workforce-report-source.v1';
 
-    private const SORTS = [
+    public const SORTS = [
         'workforce_capacity' => [
             'month', 'department_name', 'position_name', 'project_name', 'planned_fte',
             'assigned_fte', 'vacancy_fte', 'capacity_hours', 'rate',
@@ -957,7 +957,11 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         $payload = $this->visibleRow($this->json($row->row_payload), $code, $context);
-        $this->assertProjectAccess($context->scope, $payload['project_id'] ?? null);
+        $this->assertProjectAccess(
+            $context->scope,
+            $payload['project_id'] ?? null,
+            $code === 'workforce_capacity',
+        );
         $sourceRefs = $payload['source_refs'] ?? [];
         if ($code === 'attendance_execution' && $context->visibility->canViewAudit) {
             $sourceRefs = [...$sourceRefs, ...($payload['audit_refs'] ?? [])];
@@ -1264,7 +1268,11 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         if ($code === 'attendance_execution' && ! $context->visibility->canViewAudit) {
             unset($row['audit_refs']);
         }
-        $this->assertProjectAccess($context->scope, $row['project_id'] ?? null);
+        $this->assertProjectAccess(
+            $context->scope,
+            $row['project_id'] ?? null,
+            $code === 'workforce_capacity',
+        );
         foreach ($row['source_refs'] ?? [] as $ref) {
             if (is_array($ref) && isset($ref['type'], $ref['id'])) {
                 $this->assertScopedResource(
@@ -1298,8 +1306,11 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         return $row;
     }
 
-    private function assertProjectAccess(ReportScope $scope, mixed $projectId): void
-    {
+    private function assertProjectAccess(
+        ReportScope $scope,
+        mixed $projectId,
+        bool $allowOrganizationScoped = false,
+    ): void {
         $resourceProjectIds = array_map(
             static fn (object $resource): int => $resource->id,
             array_values(array_filter(
@@ -1307,7 +1318,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 static fn (object $resource): bool => $resource->kind === 'project',
             )),
         );
-        if ($projectId === null && ($scope->projectIds !== [] || $resourceProjectIds !== [])) {
+        if ($projectId === null
+            && ! $allowOrganizationScoped
+            && ($scope->projectIds !== [] || $resourceProjectIds !== [])) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         if ($projectId !== null
@@ -1857,8 +1870,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             static fn (string $id): array => ['id' => $id],
             [
                 'month', 'department_name', 'position_name', 'project_name', 'employment_type',
-                'rate_as_of', 'planned_fte',
-                'assigned_fte', 'vacancy_fte', 'capacity_hours', 'rate_type', 'currency', 'rate',
+                'rate_as_of', 'planned_fte', 'assigned_fte', 'vacancy_fte', 'overstaffing_fte',
+                'vacancy_percent', 'planned_capacity_hours', 'capacity_hours', 'rate_type',
+                'currency', 'rate', 'period_cost_run_rate', 'quality_warnings', 'drill',
             ],
         );
     }

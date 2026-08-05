@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublis
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
 
 final readonly class BuiltinReportSchedulingCapabilityRegistry implements ReportSchedulingCapabilityRegistry
 {
@@ -20,6 +21,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
+        private WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -29,6 +31,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->budgetPlanFact->scheduling()->code => $this->budgetPlanFact->scheduling(),
             $this->projectLaborCost->scheduling()->code => $this->projectLaborCost->scheduling(),
             $this->payrollReadiness->scheduling()->code => $this->payrollReadiness->scheduling(),
+            $this->workforceCapacity->scheduling()->code => $this->workforceCapacity->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }

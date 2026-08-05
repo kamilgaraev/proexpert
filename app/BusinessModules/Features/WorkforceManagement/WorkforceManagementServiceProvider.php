@@ -6,13 +6,19 @@ namespace App\BusinessModules\Features\WorkforceManagement;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\WorkforceReportDatabasePort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabaseWorkforceReportAdapter;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessOptionsService;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessReportBindingFactory;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityOptionsService;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityReportBindingFactory;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 
@@ -28,6 +34,15 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
         $this->app->scoped(PayrollReadinessReportBindingFactory::class);
         $this->app->scoped(PayrollReadinessPublishedRuntimeBindingRegistrar::class);
         $this->app->scoped(PayrollReadinessOptionsService::class, static fn ($app): PayrollReadinessOptionsService => new PayrollReadinessOptionsService($app['db']->connection()));
+        $this->app->scoped(WorkforceReportDatabasePort::class, static fn ($app): DatabaseWorkforceReportAdapter => new DatabaseWorkforceReportAdapter(
+            $app['db']->connection(),
+            $app->make(Reporting\Formulas\WorkforceCapacityFormula::class),
+            $app->make(Reporting\Formulas\AttendanceExecutionFormula::class),
+        ));
+        $this->app->singleton(WorkforceCapacityCandidateContract::class);
+        $this->app->scoped(WorkforceCapacityReportBindingFactory::class);
+        $this->app->scoped(WorkforceCapacityPublishedRuntimeBindingRegistrar::class);
+        $this->app->scoped(WorkforceCapacityOptionsService::class, static fn ($app): WorkforceCapacityOptionsService => new WorkforceCapacityOptionsService($app['db']->connection()));
         $this->app->singleton(
             Reporting\PayrollReadiness\Contracts\PayrollReadinessEvidenceSource::class,
             Reporting\PayrollReadiness\Services\EloquentPayrollReadinessEvidenceSource::class,
@@ -107,6 +122,7 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
     {
         $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
             $this->app->make(PayrollReadinessPublishedRuntimeBindingRegistrar::class)->register($assembler);
+            $this->app->make(WorkforceCapacityPublishedRuntimeBindingRegistrar::class)->register($assembler);
         });
         $this->loadMigrationsFrom(__DIR__.'/migrations');
         $this->loadRoutesFrom(__DIR__.'/routes.php');

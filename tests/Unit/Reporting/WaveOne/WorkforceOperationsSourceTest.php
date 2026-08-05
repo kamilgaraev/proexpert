@@ -6,6 +6,7 @@ namespace Tests\Unit\Reporting\WaveOne;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionProvider;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\EffectiveAssignmentSource;
@@ -32,6 +33,7 @@ final class WorkforceOperationsSourceTest extends TestCase
         self::assertContains(ReportDataProvider::class, class_implements(WorkforceCapacityProvider::class));
         self::assertContains(ReportRowQuery::class, class_implements(WorkforceReportQueryService::class));
         self::assertContains(ReportDrillDownProvider::class, class_implements(WorkforceReportQueryService::class));
+        self::assertContains(ReportDrillDownTokenColumns::class, class_implements(WorkforceReportQueryService::class));
     }
 
     #[Test]

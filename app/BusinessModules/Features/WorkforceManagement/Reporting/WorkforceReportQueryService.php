@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
@@ -16,11 +17,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\WorkforceReportDatabasePort;
 
-final readonly class WorkforceReportQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class WorkforceReportQueryService implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
-    public function __construct(private WorkforceReportDatabasePort $database)
-    {
-    }
+    public function __construct(private WorkforceReportDatabasePort $database) {}
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
     {
@@ -52,5 +51,10 @@ final readonly class WorkforceReportQueryService implements ReportRowQuery, Repo
         ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         return $this->database->drillDown($context, $snapshot, $input);
+    }
+
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'source_refs'];
     }
 }
