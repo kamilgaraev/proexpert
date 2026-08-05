@@ -290,13 +290,17 @@ final class QualityDefectService
             $url = $photo['url'] ?? null;
 
             if (($photo['file'] ?? null) instanceof UploadedFile) {
-                $url = $this->fileService->upload(
-                    $photo['file'],
-                    "quality-control/defects/{$defect->id}",
-                    null,
-                    'private',
-                    $organization
-                );
+                try {
+                    $url = $this->fileService->upload(
+                        $photo['file'],
+                        "quality-control/defects/{$defect->id}",
+                        null,
+                        'private',
+                        $organization
+                    );
+                } catch (\Throwable) {
+                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
+                }
 
                 if ($url === false) {
                     throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
