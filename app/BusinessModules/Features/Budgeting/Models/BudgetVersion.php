@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class BudgetVersion extends Model
@@ -63,6 +64,11 @@ final class BudgetVersion extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(BudgetLine::class, 'budget_version_id');
+    }
+
+    public function amounts(): HasManyThrough
+    {
+        return $this->hasManyThrough(BudgetAmount::class, BudgetLine::class, 'budget_version_id', 'budget_line_id');
     }
 
     public function importBatches(): HasMany

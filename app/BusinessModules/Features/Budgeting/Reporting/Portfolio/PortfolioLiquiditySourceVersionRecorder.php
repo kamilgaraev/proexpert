@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
@@ -15,6 +17,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
 use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceGap;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceVersion;
+use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
@@ -37,6 +40,7 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             return null;
         }
         [$sourceType, $sourceId, $organizationId] = $identity;
+        $tombstone = $tombstone || $this->isInactive($source);
         $item = $tombstone ? null : $this->calendarItem($source);
         if (! $tombstone
             && ! $source instanceof CashGapOpeningBalance
@@ -109,6 +113,48 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             $source instanceof BudgetAmount => $source->loadMissing(['line.version', 'line.article']),
             default => null,
         };
+    }
+
+    private function isInactive(Model $source): bool
+    {
+        if ($source instanceof PaymentDocument) {
+            $status = $source->status instanceof PaymentDocumentStatus
+                ? $source->status->value
+                : (string) $source->status;
+
+            return ! in_array($status, [
+                PaymentDocumentStatus::SUBMITTED->value,
+                PaymentDocumentStatus::PENDING_APPROVAL->value,
+                PaymentDocumentStatus::APPROVED->value,
+                PaymentDocumentStatus::SCHEDULED->value,
+                PaymentDocumentStatus::PARTIALLY_PAID->value,
+            ], true) || (float) $source->remaining_amount <= 0;
+        }
+        if ($source instanceof PaymentSchedule) {
+            return $source->status !== 'pending'
+                || (float) $source->paid_amount >= (float) $source->amount;
+        }
+        if ($source instanceof PaymentTransaction) {
+            $status = $source->status instanceof PaymentTransactionStatus
+                ? $source->status->value
+                : (string) $source->status;
+
+            return $status !== PaymentTransactionStatus::COMPLETED->value;
+        }
+        if ($source instanceof BudgetLimitReservation) {
+            return $source->status !== BudgetLimitReservation::STATUS_RESERVED;
+        }
+        if ($source instanceof BudgetAmount) {
+            return ! in_array($source->line?->version?->status, [
+                BudgetWorkflowService::STATUS_APPROVED,
+                BudgetWorkflowService::STATUS_ACTIVE,
+            ], true);
+        }
+        if ($source instanceof CashGapOpeningBalance) {
+            return $source->status !== CashGapOpeningBalance::STATUS_APPROVED;
+        }
+
+        return false;
     }
 
     private function calendarItem(Model $source): ?PaymentCalendarItem

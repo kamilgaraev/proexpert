@@ -24,6 +24,7 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -144,6 +145,17 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'status' => BudgetLimitReservation::STATUS_RELEASED,
             'release_reason' => 'Отменено',
         ]);
+        $reservation = BudgetLimitReservation::query()
+            ->where('payment_document_id', $document->id)
+            ->latest('id')
+            ->firstOrFail();
+        $versions = DB::table('budgeting_portfolio_liquidity_source_versions')
+            ->where('source_type', 'budget_limit_reservation')
+            ->where('source_id', (string) $reservation->id)
+            ->orderBy('id')
+            ->get();
+        $this->assertGreaterThanOrEqual(3, $versions->count());
+        $this->assertNull($versions->last()->payload);
 
         $document->forceFill(['status' => PaymentDocumentStatus::APPROVED])->save();
         $this->service()->syncReservation($document->fresh(), $context->user);

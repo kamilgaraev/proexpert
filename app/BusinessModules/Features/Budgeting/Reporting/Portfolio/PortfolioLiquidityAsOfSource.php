@@ -96,6 +96,10 @@ final readonly class PortfolioLiquidityAsOfSource
 
                 continue;
             }
+            if ($version->source_type === 'budget_amount'
+                && ! in_array($payload['status'] ?? null, ['approved', 'active'], true)) {
+                continue;
+            }
             $calendarItems[] = $this->calendarItem($payload);
         }
 

@@ -10,7 +10,13 @@ use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseS
 use App\BusinessModules\Features\Budgeting\Contracts\PlanFactSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
 use App\BusinessModules\Features\Budgeting\Infrastructure\Persistence\EloquentBudgetingReportSourceCloseStore;
+use App\BusinessModules\Features\Budgeting\Models\BudgetAmount;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
+use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
+use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBudgetVersionObserver;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionObserver;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
@@ -95,6 +101,11 @@ final class BudgetingServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        BudgetAmount::observe(PortfolioLiquiditySourceVersionObserver::class);
+        BudgetLimitReservation::observe(PortfolioLiquiditySourceVersionObserver::class);
+        CashGapOpeningBalance::observe(PortfolioLiquiditySourceVersionObserver::class);
+        BudgetVersion::observe(PortfolioLiquidityBudgetVersionObserver::class);
+
         $this->app->afterResolving(
             ReportDefinitionBindingAssembler::class,
             function (ReportDefinitionBindingAssembler $assembler): void {

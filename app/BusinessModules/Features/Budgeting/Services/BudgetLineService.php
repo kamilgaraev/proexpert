@@ -106,6 +106,17 @@ final class BudgetLineService
 
         DB::transaction(function () use ($version, $rows, $mode): void {
             if ($mode === 'replace_lines') {
+                BudgetAmount::query()
+                    ->whereHas(
+                        'line',
+                        static fn (Builder $query): Builder => $query->where('budget_version_id', $version->id),
+                    )
+                    ->orderBy('id')
+                    ->chunkById(500, static function ($amounts): void {
+                        foreach ($amounts as $amount) {
+                            $amount->delete();
+                        }
+                    });
                 BudgetLine::query()->where('budget_version_id', $version->id)->delete();
             }
 
