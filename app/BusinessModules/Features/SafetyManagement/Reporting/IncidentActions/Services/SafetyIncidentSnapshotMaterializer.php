@@ -63,6 +63,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         array $ledgerBinding,
     ): SafetyIncidentSnapshot {
         $organizationId = $context->scope->organizationId;
+        $this->assertPublicFilterValues($query);
         CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration($organizationId, $ledgerBinding);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
@@ -937,5 +938,27 @@ final readonly class SafetyIncidentSnapshotMaterializer
             is_array($value) ? $value : [$value],
             static fn (mixed $item): bool => is_int($item) || is_string($item),
         ));
+    }
+
+    private function assertPublicFilterValues(ReportQuery $query): void
+    {
+        $subjectTypes = $this->filterValues($query->filters->values['subject_type'] ?? null);
+        $severities = $this->filterValues($query->filters->values['severity'] ?? null);
+        $statuses = $this->filterValues($query->filters->values['status'] ?? null);
+        if (array_diff($subjectTypes, ['incident', 'violation', 'corrective_action']) !== []
+            || array_diff($severities, ['minor', 'major', 'high', 'critical']) !== []
+            || array_diff($statuses, [
+                'reported',
+                'triage',
+                'investigation',
+                'corrective_actions',
+                'open',
+                'resolved',
+                'verified',
+                'closed',
+                'cancelled',
+            ]) !== []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
+        }
     }
 }
