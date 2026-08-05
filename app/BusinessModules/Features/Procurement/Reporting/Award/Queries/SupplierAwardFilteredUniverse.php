@@ -9,16 +9,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardDecisionVersion;
-use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
+use DateTimeImmutable;
+use Exception;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\DB;
 
 final readonly class SupplierAwardFilteredUniverse
 {
     public function __construct(
         private ReportSourceAccessPolicy $sourceAccess,
-        private OwnerReportFilterApplier $filters,
     ) {}
 
     public function query(ReportExecutionContext $context, ReportQuery $query): Builder
@@ -62,62 +61,31 @@ final readonly class SupplierAwardFilteredUniverse
                     $context->scope->projectIds,
                 ),
             );
-        $this->filters->apply($builder, $this->filters->only($query->filters, [
-            'project', 'buyer', 'supplier', 'decision', 'method', 'currency', 'non_lowest', 'period',
-        ]), [
-            'project' => 'supplier_award_decision_versions.project_id',
-            'buyer' => 'supplier_award_decision_versions.selected_by',
-            'supplier' => 'supplier_award_decision_versions.selected_supplier_party_id',
-            'decision' => 'supplier_award_decision_versions.decision_id',
-            'method' => DB::raw("supplier_award_decision_versions.dimension_snapshot->>'procurement_method'"),
-            'currency' => DB::raw("supplier_award_decision_versions.dimension_snapshot->>'currency'"),
-            'non_lowest' => [
-                'column' => 'supplier_award_decision_versions.is_lowest_price_selected',
-                'invert_boolean' => true,
-            ],
-            'period' => 'supplier_award_decision_versions.selected_at',
-        ]);
-        $this->applyPinnedLineFilter($builder, $query, 'material', 'material_id');
-        $this->applyPinnedLineFilter($builder, $query, 'category', 'category');
+        [$periodStart, $periodEnd] = $this->period($query);
+        $builder->whereBetween('supplier_award_decision_versions.selected_at', [$periodStart, $periodEnd]);
 
         return $builder
             ->select('supplier_award_decision_versions.*')
             ->distinct();
     }
 
-    private function applyPinnedLineFilter(
-        Builder $builder,
-        ReportQuery $query,
-        string $filter,
-        string $dimension,
-    ): void {
-        $condition = $query->filters->values[$filter] ?? null;
-        if (! is_array($condition)) {
-            return;
+    private function period(ReportQuery $query): array
+    {
+        $start = $query->filters->values['period_start'] ?? null;
+        $end = $query->filters->values['period_end'] ?? null;
+        if (! is_string($start) || ! is_string($end)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, ['fields' => 'filters']);
         }
-        $operator = $condition['operator'] ?? null;
-        $values = match ($operator) {
-            'eq' => [$condition['value'] ?? null],
-            'in' => (array) ($condition['value'] ?? []),
-            'neq' => [$condition['value'] ?? null],
-            'not_in' => (array) ($condition['value'] ?? []),
-            default => throw ReportContractException::fromCode(
-                ReportErrorCode::REPORT_FILTER_UNSUPPORTED,
-            ),
-        };
-        if ($values === []) {
-            $builder->whereRaw('1 = 0');
+        try {
+            $periodStart = new DateTimeImmutable($start.' 00:00:00');
+            $periodEnd = new DateTimeImmutable($end.' 23:59:59.999999');
+        } catch (Exception) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, ['fields' => 'filters']);
+        }
+        if ($periodStart > $periodEnd || $periodStart->format('Y-m-d') !== $start || $periodEnd->format('Y-m-d') !== $end) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, ['fields' => 'filters']);
+        }
 
-            return;
-        }
-        $method = in_array($operator, ['neq', 'not_in'], true) ? 'whereNotExists' : 'whereExists';
-        $builder->{$method}(function ($line) use ($dimension, $values): void {
-            $line->selectRaw('1')
-                ->fromRaw(
-                    "jsonb_array_elements(supplier_award_decision_versions.dimension_snapshot->'lines') "
-                    .'as pinned_line',
-                )
-                ->whereIn(DB::raw("pinned_line->>'{$dimension}'"), array_map('strval', $values));
-        });
+        return [$periodStart, $periodEnd];
     }
 }

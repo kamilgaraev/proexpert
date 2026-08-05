@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
+use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
@@ -24,6 +25,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
         private WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
         private ProcurementCycleBuiltinPublishedReport $procurementCycle,
+        private SupplierAwardBuiltinPublishedReport $supplierAward,
     ) {}
 
     public function published(string $code): ReportCatalogMetadata
@@ -35,6 +37,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->payrollReadiness->metadata()->code => $this->payrollReadiness->metadata(),
             $this->workforceCapacity->metadata()->code => $this->workforceCapacity->metadata(),
             $this->procurementCycle->metadata()->code => $this->procurementCycle->metadata(),
+            $this->supplierAward->metadata()->code => $this->supplierAward->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }

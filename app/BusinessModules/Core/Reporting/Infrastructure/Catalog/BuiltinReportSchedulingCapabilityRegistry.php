@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
+use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
@@ -24,6 +25,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
         private WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
         private ProcurementCycleBuiltinPublishedReport $procurementCycle,
+        private SupplierAwardBuiltinPublishedReport $supplierAward,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -35,6 +37,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->payrollReadiness->scheduling()->code => $this->payrollReadiness->scheduling(),
             $this->workforceCapacity->scheduling()->code => $this->workforceCapacity->scheduling(),
             $this->procurementCycle->scheduling()->code => $this->procurementCycle->scheduling(),
+            $this->supplierAward->scheduling()->code => $this->supplierAward->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }
