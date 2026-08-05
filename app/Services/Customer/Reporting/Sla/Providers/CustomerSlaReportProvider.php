@@ -62,6 +62,10 @@ final readonly class CustomerSlaReportProvider implements ReportDataProvider
         $overdue = (clone $rows)->where(static function ($builder): void {
             $builder->where('first_response_breached', true)->orWhere('resolution_breached', true);
         })->count();
+        $firstResponseBreached = (clone $rows)->where('first_response_breached', true)->count();
+        $resolutionBreached = (clone $rows)->where('resolution_breached', true)->count();
+        $firstResponseKnown = (clone $rows)->whereNotNull('first_response_seconds')->count();
+        $resolutionKnown = (clone $rows)->whereNotNull('resolution_seconds')->count();
         $qualityStatus = $knownActorSides === $rowCount
             ? ReportQualityStatus::COMPLETE
             : ReportQualityStatus::PARTIAL;
@@ -73,7 +77,15 @@ final readonly class CustomerSlaReportProvider implements ReportDataProvider
                 DateTimeImmutable::createFromInterface($record->generated_at),
                 $record->stale_at === null ? null : DateTimeImmutable::createFromInterface($record->stale_at),
             ),
-            ['workflow_count' => $rowCount, 'overdue_count' => $overdue],
+            [
+                'workflow_count' => $rowCount,
+                'overdue_count' => $overdue,
+                'first_response_breached_count' => $firstResponseBreached,
+                'resolution_breached_count' => $resolutionBreached,
+                'first_response_known_count' => $firstResponseKnown,
+                'resolution_known_count' => $resolutionKnown,
+                'actor_side_unknown_count' => $rowCount - $knownActorSides,
+            ],
             $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable()
                 ? ReportFreshnessStatus::STALE
                 : ReportFreshnessStatus::FRESH,
@@ -107,13 +119,20 @@ final readonly class CustomerSlaReportProvider implements ReportDataProvider
                 null,
             ),
             [
-                ['id' => 'opened_at', 'type' => 'datetime'],
+                ['id' => 'row_key', 'type' => 'string'],
+                ['id' => 'project_id', 'type' => 'integer'],
+                ['id' => 'customer_organization_id', 'type' => 'integer'],
                 ['id' => 'workflow_type', 'type' => 'string'],
+                ['id' => 'workflow_id', 'type' => 'integer'],
+                ['id' => 'priority', 'type' => 'string'],
+                ['id' => 'status', 'type' => 'string'],
+                ['id' => 'opened_at', 'type' => 'datetime'],
                 ['id' => 'first_response_seconds', 'type' => 'integer'],
                 ['id' => 'resolution_seconds', 'type' => 'integer'],
                 ['id' => 'open_aging_seconds', 'type' => 'integer'],
                 ['id' => 'first_response_breached', 'type' => 'boolean'],
                 ['id' => 'resolution_breached', 'type' => 'boolean'],
+                ['id' => 'actor_side_complete', 'type' => 'boolean'],
             ],
             ['admin_only' => true, 'drill_down' => true, 'export_formats' => ['csv', 'xlsx']],
         );

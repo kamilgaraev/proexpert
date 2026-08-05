@@ -20,6 +20,8 @@
     "profile.edit",
     "admin.access",
     "admin.dashboard.view",
+    "customer.sla_report.view",
+    "customer.sla_report.export",
     "admin.projects.view",
     "admin.users.view",
     "admin.users.create",

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Customer\Reporting\Sla\Readiness;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -32,9 +34,11 @@ final readonly class CustomerSlaReadinessProbe implements ReportSourceReadinessP
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        $issues = DB::table('customer_issues')
+        [$periodFrom, $periodTo, $workflowTypes] = $this->filters($query);
+        $issues = ! in_array('issue', $workflowTypes, true) ? collect() : DB::table('customer_issues')
             ->where('organization_id', $context->scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
+            ->whereBetween('created_at', [$periodFrom, $periodTo])
             ->when(
                 $query->scope->projectIds !== [],
                 fn ($builder) => $builder->whereIn('project_id', $query->scope->projectIds),
@@ -47,9 +51,10 @@ final readonly class CustomerSlaReadinessProbe implements ReportSourceReadinessP
                 'created_at' => (string) $row->created_at,
                 'updated_at' => (string) $row->updated_at,
             ]);
-        $requests = DB::table('customer_requests')
+        $requests = ! in_array('request', $workflowTypes, true) ? collect() : DB::table('customer_requests')
             ->where('organization_id', $context->scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
+            ->whereBetween('created_at', [$periodFrom, $periodTo])
             ->when(
                 $query->scope->projectIds !== [],
                 fn ($builder) => $builder->whereIn('project_id', $query->scope->projectIds),
@@ -137,6 +142,34 @@ final readonly class CustomerSlaReadinessProbe implements ReportSourceReadinessP
             hash('sha256', CanonicalJson::encode($output)),
             $ready ? CarbonImmutable::now('UTC') : null,
         );
+    }
+
+    private function filters(ReportQuery $query): array
+    {
+        $from = $query->filters->values['period_from'] ?? null;
+        $to = $query->filters->values['period_to'] ?? null;
+        $types = $query->filters->values['workflow_types'] ?? ['issue', 'request'];
+        if (! is_string($from)
+            || ! is_string($to)
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $from) !== 1
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $to) !== 1
+            || ! is_array($types)
+            || ! array_is_list($types)
+            || $types === []
+            || array_filter($types, static fn (mixed $type): bool => ! is_string($type)
+                || ! in_array($type, ['issue', 'request'], true)) !== []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
+        }
+        $periodFrom = CarbonImmutable::createFromFormat('!Y-m-d', $from, 'UTC');
+        $periodTo = CarbonImmutable::createFromFormat('!Y-m-d', $to, 'UTC')?->endOfDay();
+        if (! $periodFrom instanceof CarbonImmutable
+            || ! $periodTo instanceof CarbonImmutable
+            || $periodFrom->greaterThan($periodTo)
+            || $periodTo->toDateString() > CarbonImmutable::instance($query->asOf)->toDateString()) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
+        }
+
+        return [$periodFrom, $periodTo, array_values(array_unique($types))];
     }
 
     private function selectPolicy(\Illuminate\Support\Collection $policies, object $event): ?object

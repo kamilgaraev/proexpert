@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Customer\Reporting\Sla\Services;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -39,6 +41,12 @@ final readonly class CustomerSlaSnapshotMaterializer
         ) {
             throw new InvalidArgumentException('customer_sla_context_invalid');
         }
+        [$periodFrom, $periodTo, $workflowTypes] = $this->filters($query);
+        $normalizedFilters = [
+            'period_from' => $periodFrom->toDateString(),
+            'period_to' => $periodTo->toDateString(),
+            'workflow_types' => $workflowTypes,
+        ];
         $events = CustomerWorkflowEvent::query()
             ->where('organization_id', $query->scope->organizationId)
             ->where('occurred_at', '<=', $query->asOf)
@@ -51,21 +59,15 @@ final readonly class CustomerSlaSnapshotMaterializer
             ->orderBy('occurred_at')
             ->orderBy('id')
             ->get();
-        if ($events->isEmpty()) {
-            throw new InvalidArgumentException('customer_sla_event_source_unavailable');
-        }
         $policies = CustomerSlaPolicyVersion::query()
             ->where('organization_id', $query->scope->organizationId)
             ->where('effective_from', '<=', $query->asOf)
             ->orderBy('effective_from')
             ->orderBy('id')
             ->get();
-        if ($policies->isEmpty()) {
-            throw new InvalidArgumentException('customer_sla_policy_unavailable');
-        }
-
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'as_of' => $query->asOf->format(DATE_ATOM),
+            'filters' => $normalizedFilters,
             'event_hashes' => $events->pluck('evidence_hash')->all(),
             'policy_versions' => $policies->map(static fn (CustomerSlaPolicyVersion $policy): array => [
                 'id' => (int) $policy->id,
@@ -76,7 +78,24 @@ final readonly class CustomerSlaSnapshotMaterializer
         ]));
         $generatedAt = CarbonImmutable::now('UTC');
         $snapshotId = (string) Str::ulid();
-        $groups = $events->groupBy(static fn (CustomerWorkflowEvent $event): string => $event->workflow_type.':'.$event->workflow_id);
+        $groups = $events
+            ->groupBy(static fn (CustomerWorkflowEvent $event): string => $event->workflow_type.':'.$event->workflow_id)
+            ->filter(static function (Collection $workflowEvents) use ($periodFrom, $periodTo, $workflowTypes): bool {
+                $opened = $workflowEvents->first(
+                    static fn (CustomerWorkflowEvent $event): bool => $event->event_type === CustomerWorkflowEventType::OPENED,
+                );
+
+                if (! $opened instanceof CustomerWorkflowEvent
+                    || ! in_array($opened->workflow_type, $workflowTypes, true)) {
+                    return false;
+                }
+                $openedAt = CarbonImmutable::instance($opened->occurred_at);
+
+                return ! $openedAt->lessThan($periodFrom) && ! $openedAt->greaterThan($periodTo);
+            });
+        if ($groups->isNotEmpty() && $policies->isEmpty()) {
+            throw new InvalidArgumentException('customer_sla_policy_unavailable');
+        }
 
         DB::transaction(function () use (
             $query,
@@ -86,6 +105,7 @@ final readonly class CustomerSlaSnapshotMaterializer
             $generatedAt,
             $snapshotId,
             $groups,
+            $normalizedFilters,
         ): void {
             DB::table('organizations')
                 ->where('id', $query->scope->organizationId)
@@ -107,7 +127,7 @@ final readonly class CustomerSlaSnapshotMaterializer
                 'source_hash' => $sourceHash,
                 'formula_version' => self::FORMULA_VERSION,
                 'scope_identity' => $query->scope->canonicalIdentity(),
-                'filters' => $query->filters->values,
+                'filters' => $normalizedFilters,
                 'as_of' => $query->asOf,
                 'generated_at' => $generatedAt,
                 'stale_at' => $generatedAt->addMinutes(15),
@@ -200,6 +220,37 @@ final readonly class CustomerSlaSnapshotMaterializer
             ReportSnapshotClassification::OPERATIONAL,
             null,
         );
+    }
+
+    private function filters(ReportQuery $query): array
+    {
+        $from = $query->filters->values['period_from'] ?? null;
+        $to = $query->filters->values['period_to'] ?? null;
+        $types = $query->filters->values['workflow_types'] ?? ['issue', 'request'];
+        if (! is_string($from)
+            || ! is_string($to)
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $from) !== 1
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $to) !== 1
+            || ! is_array($types)
+            || ! array_is_list($types)
+            || $types === []
+            || array_filter($types, static fn (mixed $type): bool => ! is_string($type)
+                || ! in_array($type, ['issue', 'request'], true)) !== []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
+        }
+        $periodFrom = CarbonImmutable::createFromFormat('!Y-m-d', $from, 'UTC');
+        $periodTo = CarbonImmutable::createFromFormat('!Y-m-d', $to, 'UTC')?->endOfDay();
+        if (! $periodFrom instanceof CarbonImmutable
+            || ! $periodTo instanceof CarbonImmutable
+            || $periodFrom->greaterThan($periodTo)
+            || $periodTo->toDateString() > CarbonImmutable::instance($query->asOf)->toDateString()) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
+        }
+
+        $types = array_values(array_unique($types));
+        sort($types, SORT_STRING);
+
+        return [$periodFrom, $periodTo, $types];
     }
 
     private function selectPolicy(Collection $policies, CustomerWorkflowEvent $event): CustomerSlaPolicyVersion

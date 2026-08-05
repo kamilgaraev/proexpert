@@ -31,6 +31,8 @@
     "erp_controls.sod_conflicts.view",
     "erp_controls.sod_conflicts.resolve",
     "admin.*",
+    "customer.sla_report.view",
+    "customer.sla_report.export",
     "legal_archive.view",
     "legal_archive.create",
     "legal_archive.update",

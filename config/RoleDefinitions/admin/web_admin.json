@@ -22,6 +22,8 @@
     "admin.contracts.edit",
     "admin.reports.view",
     "admin.reports.export",
+    "customer.sla_report.view",
+    "customer.sla_report.export",
     "admin.catalogs.manage",
     "mdm.view",
     "mdm.manage",
