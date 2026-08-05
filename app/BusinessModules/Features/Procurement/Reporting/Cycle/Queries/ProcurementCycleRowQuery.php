@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Queries;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
@@ -19,8 +20,13 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementP
 use App\Support\Reporting\EloquentOwnerDrillDown;
 use App\Support\Reporting\EloquentOwnerReportRows;
 
-final readonly class ProcurementCycleRowQuery implements ReportDrillDownProvider, ReportRowQuery
+final readonly class ProcurementCycleRowQuery implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['stage_breakdown' => 'stage_events', 'audit_timeline' => 'audit_events'];
+    }
+
     private const SORT_FIELDS = [
         'cohort_date',
         'purchase_request_line_id',

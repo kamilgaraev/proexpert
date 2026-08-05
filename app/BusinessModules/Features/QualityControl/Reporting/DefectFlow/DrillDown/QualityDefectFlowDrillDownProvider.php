@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Drill
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -16,8 +17,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Support\ScopedReportSourceGuard;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowRow;
 
-final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDownProvider
+final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDownProvider, ReportDrillDownTokenColumns
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'evidence_refs'];
+    }
+
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,

@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportEvidenceRedactor
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceObjectAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Rows\StableDrillDownPage;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -16,8 +17,13 @@ use App\Services\Customer\Reporting\Sla\Models\CustomerSlaRow;
 use InvalidArgumentException;
 use JsonException;
 
-final readonly class CustomerSlaDrillDownProvider implements ReportDrillDownProvider
+final readonly class CustomerSlaDrillDownProvider implements ReportDrillDownProvider, ReportDrillDownTokenColumns
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'event_refs'];
+    }
+
     public function __construct(
         private ReportSourceObjectAuthorizer $sources,
         private ReportEvidenceRedactor $redactor,

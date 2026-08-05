@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
@@ -39,8 +40,13 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementCycleSourceSnapshotWriter;
 
-final readonly class ProcurementCycleReportAdapter implements ReportDataProvider, ReportDrillDownProvider, ReportRowQuery
+final readonly class ProcurementCycleReportAdapter implements ReportDataProvider, ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
+    public function drillDownTokenColumns(): array
+    {
+        return [self::STAGE_DRILL_COLUMN => 'stage_events', self::AUDIT_DRILL_COLUMN => 'audit_events'];
+    }
+
     public const REPORT_CODE = 'procurement_cycle';
 
     public const SOURCE_KIND = 'procurement.cycle';

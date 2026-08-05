@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
@@ -18,8 +19,13 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\BaselineSch
 use App\Support\Reporting\ImmutableOwnerProjectionReader;
 use App\Support\Reporting\ReportSourceObjectAccessAuthorizer;
 
-final readonly class BaselineScheduleVarianceQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class BaselineScheduleVarianceQueryService implements ReportRowQuery, ReportDrillDownProvider, ReportDrillDownTokenColumns
 {
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'evidence_refs'];
+    }
+
     private ImmutableOwnerProjectionReader $reader;
 
     private ReportSourceObjectAccessAuthorizer $sourceAccess;

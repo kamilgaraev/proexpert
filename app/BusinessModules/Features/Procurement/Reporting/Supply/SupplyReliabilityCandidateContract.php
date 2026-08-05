@@ -31,7 +31,7 @@ final readonly class SupplyReliabilityCandidateContract
             'supplier_id', 'ordered_quantity', 'net_received_quantity', 'delay_bucket', 'eligible',
             'on_time', 'in_full', 'stable_in_full', 'mature', 'otif', 'quantity_otif_numerator',
             'quantity_otif_denominator', 'value_otif_numerator_minor', 'value_otif_denominator_minor',
-            'value_currency', 'value_basis', 'quality_warnings',
+            'value_currency', 'value_basis', 'quality_warnings', 'drill',
         ]);
     }
 

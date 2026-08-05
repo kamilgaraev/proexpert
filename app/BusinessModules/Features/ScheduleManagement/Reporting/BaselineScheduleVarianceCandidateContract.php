@@ -40,7 +40,7 @@ final readonly class BaselineScheduleVarianceCandidateContract
             'row_key', 'wbs_code', 'task_name', 'planned_start', 'planned_end',
             'start_variance_days', 'end_variance_days', 'duration_variance_days',
             'total_float_days', 'free_float_days', 'critical', 'overdue',
-            'overdue_days', 'status', 'warning_codes',
+            'overdue_days', 'status', 'warning_codes', 'drill',
         ]);
     }
 
