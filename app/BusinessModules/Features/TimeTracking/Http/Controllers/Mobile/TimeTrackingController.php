@@ -9,6 +9,7 @@ use App\BusinessModules\Features\TimeTracking\Services\MobileTimeTrackingService
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,8 +23,7 @@ final class TimeTrackingController extends Controller
     public function __construct(
         private readonly MobileTimeTrackingService $service,
         private readonly AuthorizationService $authorizationService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -41,7 +41,7 @@ final class TimeTrackingController extends Controller
 
             $result = $this->service->paginateEntries(
                 (int) $request->attributes->get('current_organization_id'),
-                (int) $request->user()?->id,
+                $this->mobileUser($request),
                 $validated,
                 min((int) $request->input('per_page', 20), 50)
             );
@@ -59,6 +59,8 @@ final class TimeTrackingController extends Controller
             ]);
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'index');
         }
@@ -77,7 +79,7 @@ final class TimeTrackingController extends Controller
             ]);
             $summary = $this->service->dailySummary(
                 (int) $request->attributes->get('current_organization_id'),
-                (int) $request->user()?->id,
+                $this->mobileUser($request),
                 $validated['date'],
                 isset($validated['project_id']) ? (int) $validated['project_id'] : null
             );
@@ -130,7 +132,7 @@ final class TimeTrackingController extends Controller
             return MobileResponse::success(
                 new MobileTimeEntryResource($this->service->createManualEntry(
                     (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
+                    $this->mobileUser($request),
                     $validated
                 )),
                 trans_message('time_tracking.mobile.messages.entry_created'),
@@ -157,7 +159,7 @@ final class TimeTrackingController extends Controller
             return MobileResponse::success(
                 new MobileTimeEntryResource($this->service->startTimer(
                     (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
+                    $this->mobileUser($request),
                     $validated
                 )),
                 trans_message('time_tracking.mobile.messages.timer_started'),
@@ -270,7 +272,7 @@ final class TimeTrackingController extends Controller
     private function ensurePermission(Request $request, string $permission): ?JsonResponse
     {
         $user = $request->user();
-        if (!$user || !$this->authorizationService->can($user, $permission, [
+        if (! $user || ! $this->authorizationService->can($user, $permission, [
             'organization_id' => (int) $request->attributes->get('current_organization_id'),
         ])) {
             return MobileResponse::error(
@@ -282,6 +284,17 @@ final class TimeTrackingController extends Controller
         }
 
         return null;
+    }
+
+    private function mobileUser(Request $request): User
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw new DomainException(trans_message('time_tracking.mobile.errors.permission_denied'));
+        }
+
+        return $user;
     }
 
     private function entryRules(bool $requireHours, bool $requireStartTime = false): array

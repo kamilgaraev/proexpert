@@ -25,6 +25,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use App\Models\MeasurementUnit;
 use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -37,7 +38,8 @@ class SiteRequestController extends Controller
         private readonly SiteRequestTemplateService $templateService,
         private readonly SiteRequestCalendarService $calendarService,
         private readonly SiteRequestWorkflowService $workflowService,
-        private readonly AuthorizationService $authorizationService
+        private readonly AuthorizationService $authorizationService,
+        private readonly MobileProjectAccessResolver $projectAccess,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -60,6 +62,12 @@ class SiteRequestController extends Controller
                 'project_id',
                 'search',
             ]);
+            $this->assertProjectAccess($user, $organizationId, $filters['project_id'] ?? null);
+            $filters['project_ids'] = $this->projectAccess
+                ->query($user, $organizationId)
+                ->pluck('projects.id')
+                ->map(static fn ($id): int => (int) $id)
+                ->all();
 
             if ($scope === 'approvals') {
                 if (! $this->canReviewRequests($user, $organizationId)) {
@@ -91,6 +99,8 @@ class SiteRequestController extends Controller
                 'per_page' => $requests->perPage(),
                 'total' => $requests->total(),
             ]);
+        } catch (\DomainException $e) {
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             Log::error('site_requests.mobile.index.error', [
                 'user_id' => auth()->id(),
@@ -147,6 +157,7 @@ class SiteRequestController extends Controller
             }
 
             $validated = $request->validated();
+            $this->assertProjectAccess($user, $organizationId, $validated['project_id'] ?? null);
 
             if (isset($validated['materials']) && is_array($validated['materials'])) {
                 $items = [];
@@ -510,19 +521,21 @@ class SiteRequestController extends Controller
                 'project_id' => ['required', 'integer', 'exists:projects,id'],
             ]);
 
-            $siteRequest = $this->templateService->createFromTemplate(
-                $templateId,
-                $organizationId,
-                $userId,
-                $validated['project_id']
-            );
-
             /** @var User|null $user */
             $user = auth()->user();
 
             if (! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
+
+            $this->assertProjectAccess($user, $organizationId, $validated['project_id']);
+
+            $siteRequest = $this->templateService->createFromTemplate(
+                $templateId,
+                $organizationId,
+                $userId,
+                $validated['project_id']
+            );
 
             return MobileResponse::success(
                 $this->makeSiteRequestPayload($siteRequest, $request, $user, $organizationId),
@@ -557,6 +570,15 @@ class SiteRequestController extends Controller
                 'project_id' => ['nullable', 'integer'],
             ]);
 
+            /** @var User|null $user */
+            $user = auth()->user();
+
+            if (! $user) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
+            $this->assertProjectAccess($user, $organizationId, $request->input('project_id'));
+
             $events = $this->calendarService->getCalendarEvents(
                 $organizationId,
                 Carbon::parse($request->input('start_date')),
@@ -565,6 +587,8 @@ class SiteRequestController extends Controller
             );
 
             return MobileResponse::success(SiteRequestCalendarEventResource::collection($events));
+        } catch (\DomainException $e) {
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             Log::error('site_requests.mobile.calendar.error', [
                 'user_id' => auth()->id(),
@@ -573,6 +597,20 @@ class SiteRequestController extends Controller
 
             return MobileResponse::error(trans_message('site_requests::mobile.calendar_error'), 500);
         }
+    }
+
+    private function assertProjectAccess(User $user, int $organizationId, mixed $projectId): void
+    {
+        if ($projectId === null || $projectId === '') {
+            return;
+        }
+
+        $this->projectAccess->assert(
+            $user,
+            $organizationId,
+            (int) $projectId,
+            trans_message('site_requests::mobile.not_found'),
+        );
     }
 
     public function meta(Request $request): JsonResponse

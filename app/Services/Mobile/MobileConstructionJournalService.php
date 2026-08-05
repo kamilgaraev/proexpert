@@ -39,9 +39,9 @@ class MobileConstructionJournalService
 
     public function __construct(
         private readonly ConstructionJournalPayloadService $payloadService,
-        private readonly AuthorizationService $authorizationService
-    ) {
-    }
+        private readonly AuthorizationService $authorizationService,
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function resolveProject(User $user, ?int $projectId): Project
     {
@@ -55,23 +55,12 @@ class MobileConstructionJournalService
             throw new DomainException(trans_message('mobile_construction_journal.errors.project_not_found'));
         }
 
-        $query = Project::query()
-            ->where('organization_id', $organizationId)
-            ->where('id', $projectId);
-
-        if (!$user->isOrganizationAdmin($organizationId)) {
-            $query->whereHas('users', function ($usersQuery) use ($user): void {
-                $usersQuery->where('users.id', $user->id);
-            });
-        }
-
-        $project = $query->first();
-
-        if (!$project) {
-            throw new DomainException(trans_message('mobile_construction_journal.errors.project_not_found'));
-        }
-
-        return $project;
+        return $this->projectAccess->resolve(
+            $user,
+            $organizationId,
+            $projectId,
+            trans_message('mobile_construction_journal.errors.project_not_found'),
+        );
     }
 
     public function assertJournalAccess(User $user, ConstructionJournal $journal): void
@@ -133,19 +122,19 @@ class MobileConstructionJournalService
                 'materials.material',
             ]);
 
-        if (!empty($filters['status'])) {
+        if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
 
-        if (!empty($filters['date'])) {
+        if (! empty($filters['date'])) {
             $query->whereDate('entry_date', $filters['date']);
         }
 
-        if (!empty($filters['date_from'])) {
+        if (! empty($filters['date_from'])) {
             $query->whereDate('entry_date', '>=', $filters['date_from']);
         }
 
-        if (!empty($filters['date_to'])) {
+        if (! empty($filters['date_to'])) {
             $query->whereDate('entry_date', '<=', $filters['date_to']);
         }
 
@@ -313,12 +302,12 @@ class MobileConstructionJournalService
     {
         $status = JournalStatusEnum::tryFrom($this->requiredPayloadString($payload, 'status'));
 
-        if (!$status) {
+        if (! $status) {
             throw new DomainException(trans_message('mobile_construction_journal.errors.invalid_status'));
         }
 
         $payload['status'] = $status->value;
-        $payload['status_label'] = trans_message('mobile_construction_journal.statuses.journal.' . $status->value);
+        $payload['status_label'] = trans_message('mobile_construction_journal.statuses.journal.'.$status->value);
         $payload['available_actions'] = $this->mapActionList($this->requiredPayloadArray($payload, 'available_actions'));
 
         if (isset($payload['entries']) && is_array($payload['entries'])) {
@@ -335,12 +324,12 @@ class MobileConstructionJournalService
     {
         $status = JournalEntryStatusEnum::tryFrom($this->requiredPayloadString($payload, 'status'));
 
-        if (!$status) {
+        if (! $status) {
             throw new DomainException(trans_message('mobile_construction_journal.errors.invalid_status'));
         }
 
         $payload['status'] = $status->value;
-        $payload['status_label'] = trans_message('mobile_construction_journal.statuses.entry.' . $status->value);
+        $payload['status_label'] = trans_message('mobile_construction_journal.statuses.entry.'.$status->value);
         $payload['available_actions'] = $this->mapActionList($this->requiredPayloadArray($payload, 'available_actions'));
 
         if (isset($payload['journal']) && is_array($payload['journal'])) {
@@ -384,13 +373,13 @@ class MobileConstructionJournalService
             ->map(function (mixed $action): array {
                 $key = (string) $action;
 
-                if (!in_array($key, self::ACTIONS, true)) {
+                if (! in_array($key, self::ACTIONS, true)) {
                     throw new DomainException(trans_message('mobile_construction_journal.errors.invalid_action'));
                 }
 
                 return [
                     'action' => $key,
-                    'label' => trans_message('mobile_construction_journal.actions.' . $key),
+                    'label' => trans_message('mobile_construction_journal.actions.'.$key),
                 ];
             })
             ->values()
@@ -402,16 +391,15 @@ class MobileConstructionJournalService
         int $organizationId,
         ?OrganizationWarehouse $custodyWarehouse,
         bool $canIssueFromProject
-    ): array
-    {
+    ): array {
         $material = $delivery->material;
         $measurementUnit = $material?->measurementUnit;
 
-        if (!$material) {
+        if (! $material) {
             throw new DomainException(trans_message('mobile_construction_journal.errors.material_missing'));
         }
 
-        if (!$measurementUnit) {
+        if (! $measurementUnit) {
             throw new DomainException(trans_message('mobile_construction_journal.errors.material_measurement_unit_missing'));
         }
 
@@ -499,7 +487,7 @@ class MobileConstructionJournalService
     {
         $value = $payload[$key] ?? null;
 
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             throw new DomainException(trans_message('mobile_construction_journal.errors.incomplete_payload'));
         }
 

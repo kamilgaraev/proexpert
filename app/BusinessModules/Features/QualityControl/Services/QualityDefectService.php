@@ -43,6 +43,10 @@ final class QualityDefectService
         $query = QualityDefect::forOrganization($organizationId)
             ->with(self::RESOURCE_RELATIONS);
 
+        if (array_key_exists('project_ids', $filters)) {
+            $query->whereIn('project_id', $filters['project_ids']);
+        }
+
         if (! empty($filters['status'])) {
             $query->withStatus((string) $filters['status']);
         }
@@ -74,10 +78,11 @@ final class QualityDefectService
         return $query->orderBy($sortBy, $sortDir)->paginate($perPage);
     }
 
-    public function find(int $id, int $organizationId): ?QualityDefect
+    public function find(int $id, int $organizationId, ?array $projectIds = null): ?QualityDefect
     {
         return QualityDefect::forOrganization($organizationId)
             ->with(self::RESOURCE_RELATIONS)
+            ->when($projectIds !== null, fn ($query) => $query->whereIn('project_id', $projectIds))
             ->find($id);
     }
 
@@ -342,8 +347,8 @@ final class QualityDefectService
     private function assertProjectBelongsToOrganization(int $projectId, int $organizationId): void
     {
         $exists = Project::query()
-            ->where('id', $projectId)
-            ->where('organization_id', $organizationId)
+            ->accessibleByOrganization($organizationId)
+            ->whereKey($projectId)
             ->exists();
 
         if (! $exists) {

@@ -10,24 +10,23 @@ use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\Models\JournalMaterial;
 use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use Illuminate\Support\Collection;
 
 class ProjectMaterialStockService
 {
+    public function __construct(private readonly MobileProjectAccessResolver $projectAccess) {}
+
     public function getProjectStock(int $organizationId, ?int $projectId = null, ?User $user = null): array
     {
         $deliveries = ProjectMaterialDelivery::query()
             ->where('organization_id', $organizationId)
             ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
             ->when($projectId !== null && $projectId > 0, fn ($query) => $query->where('project_id', $projectId))
-            ->when(
-                $user !== null && !$user->isOrganizationAdmin($organizationId),
-                function ($query) use ($user): void {
-                    $query->whereHas('project.users', function ($usersQuery) use ($user): void {
-                        $usersQuery->where('users.id', $user->id);
-                    });
-                }
-            )
+            ->when($user !== null, fn ($query) => $query->whereIn(
+                'project_id',
+                $this->projectAccess->query($user, $organizationId)->select('projects.id'),
+            ))
             ->with([
                 'project',
                 'material.measurementUnit',
@@ -214,7 +213,7 @@ class ProjectMaterialStockService
         foreach ($balances as $balance) {
             $warehouse = $balance->warehouse;
 
-            if (!$warehouse || !$warehouse->project_id) {
+            if (! $warehouse || ! $warehouse->project_id) {
                 continue;
             }
 
@@ -226,6 +225,7 @@ class ProjectMaterialStockService
 
             if ($warehouse->warehouse_type === OrganizationWarehouse::TYPE_PROJECT) {
                 $quantities[$key]['on_project_quantity'] += (float) $balance->available_quantity;
+
                 continue;
             }
 

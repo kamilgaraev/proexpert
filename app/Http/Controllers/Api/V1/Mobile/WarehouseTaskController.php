@@ -7,7 +7,9 @@ namespace App\Http\Controllers\Api\V1\Mobile;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseTaskStatusRequest;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use App\Services\Mobile\MobileWarehouseTaskService;
+use DomainException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,13 +18,24 @@ use Illuminate\Support\Facades\Log;
 class WarehouseTaskController extends Controller
 {
     public function __construct(
-        private readonly MobileWarehouseTaskService $taskService
-    ) {
-    }
+        private readonly MobileWarehouseTaskService $taskService,
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function index(Request $request, int $warehouseId): JsonResponse
     {
         try {
+            $projectId = $request->integer('project_id');
+
+            if ($projectId > 0) {
+                $this->projectAccess->assert(
+                    $request->user(),
+                    (int) $request->user()->current_organization_id,
+                    $projectId,
+                    trans_message('basic_warehouse.task.not_found'),
+                );
+            }
+
             return MobileResponse::success(
                 $this->taskService->listTasks(
                     (int) $request->user()->current_organization_id,
@@ -46,6 +59,8 @@ class WarehouseTaskController extends Controller
             );
         } catch (ModelNotFoundException) {
             return MobileResponse::error(trans_message('basic_warehouse.task.warehouse_not_found'), 404);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             Log::error('mobile.warehouse.tasks.index.error', [
                 'user_id' => $request->user()?->id,

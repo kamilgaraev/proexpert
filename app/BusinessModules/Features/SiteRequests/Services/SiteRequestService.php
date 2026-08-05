@@ -728,6 +728,10 @@ class SiteRequestService
             $query->forProject($filters['project_id']);
         }
 
+        if (array_key_exists('project_ids', $filters)) {
+            $query->whereIn('project_id', $filters['project_ids']);
+        }
+
         if (! empty($filters['user_id'])) {
             $query->forUser($filters['user_id']);
         }

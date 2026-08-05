@@ -23,8 +23,7 @@ final class BudgetEstimateController extends Controller
     public function __construct(
         private readonly MobileBudgetEstimateService $service,
         private readonly AuthorizationService $authorizationService
-    ) {
-    }
+    ) {}
 
     public function summary(Request $request): JsonResponse
     {
@@ -37,7 +36,7 @@ final class BudgetEstimateController extends Controller
                 'project_id' => ['required', 'integer'],
             ]);
             $user = $request->user();
-            if (!$user instanceof User) {
+            if (! $user instanceof User) {
                 return MobileResponse::error(
                     trans_message('budget_estimates.mobile.errors.permission_denied'),
                     403,
@@ -77,8 +76,18 @@ final class BudgetEstimateController extends Controller
                 'status' => ['nullable', 'string', Rule::in(MobileBudgetEstimateService::STATUSES)],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             ]);
+            $user = $request->user();
+            if (! $user instanceof User) {
+                return MobileResponse::error(
+                    trans_message('budget_estimates.mobile.errors.permission_denied'),
+                    403,
+                    null,
+                    ['error_code' => 'PERMISSION_DENIED']
+                );
+            }
             $result = $this->service->paginateEstimates(
                 (int) $request->attributes->get('current_organization_id'),
+                $user,
                 $validated,
                 min((int) $request->input('per_page', 20), 50)
             );
@@ -110,8 +119,13 @@ final class BudgetEstimateController extends Controller
         }
 
         try {
+            $user = $request->user();
+            if (! $user instanceof User) {
+                return MobileResponse::error(trans_message('budget_estimates.mobile.errors.permission_denied'), 403);
+            }
             $model = $this->service->findEstimate(
                 (int) $request->attributes->get('current_organization_id'),
+                $user,
                 $estimate
             );
 
@@ -150,12 +164,8 @@ final class BudgetEstimateController extends Controller
                 'approve' => ['comment' => ['nullable', 'string', 'max:2000']],
                 'request_changes' => ['comment' => ['required', 'string', 'max:2000']],
             });
-            $model = $this->service->findEstimate(
-                (int) $request->attributes->get('current_organization_id'),
-                $estimate
-            );
             $user = $request->user();
-            if (!$user instanceof User) {
+            if (! $user instanceof User) {
                 return MobileResponse::error(
                     trans_message('budget_estimates.mobile.errors.permission_denied'),
                     403,
@@ -163,6 +173,11 @@ final class BudgetEstimateController extends Controller
                     ['error_code' => 'PERMISSION_DENIED']
                 );
             }
+            $model = $this->service->findEstimate(
+                (int) $request->attributes->get('current_organization_id'),
+                $user,
+                $estimate
+            );
             $updated = match ($action) {
                 'approve' => $this->service->approve($model, (int) $user->id, $validated['comment'] ?? null),
                 'request_changes' => $this->service->requestChanges($model, (int) $user->id, $validated['comment']),
@@ -186,7 +201,7 @@ final class BudgetEstimateController extends Controller
         $user = $request->user();
         $organizationId = (int) $request->attributes->get('current_organization_id');
 
-        if (!$user || $organizationId <= 0) {
+        if (! $user || $organizationId <= 0) {
             return MobileResponse::error(
                 trans_message('budget_estimates.mobile.errors.permission_denied'),
                 403,

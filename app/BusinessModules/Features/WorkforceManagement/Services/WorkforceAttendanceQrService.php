@@ -6,8 +6,8 @@ namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\BusinessModules\Features\WorkforceManagement\Exceptions\WorkforceAttendanceException;
-use App\Models\Project;
 use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +17,8 @@ final class WorkforceAttendanceQrService
 {
     private const TOKEN_TTL_MINUTES = 5;
 
+    public function __construct(private readonly MobileProjectAccessResolver $projectAccess) {}
+
     public function issue(int $organizationId, User $user, array $payload): array
     {
         $workDate = CarbonImmutable::parse((string) $payload['work_date'])->toDateString();
@@ -24,7 +26,7 @@ final class WorkforceAttendanceQrService
         $employee = $this->employeeForSelfAttendance($organizationId, $user, $workDate);
 
         if ($projectId !== null) {
-            $this->assertProject($organizationId, $projectId);
+            $this->assertProject($organizationId, $user, $projectId);
         }
 
         $token = Str::random(80);
@@ -51,7 +53,7 @@ final class WorkforceAttendanceQrService
             'employee_id' => (int) $employee->id,
             'employee_label' => $employee->full_name,
             'project_id' => $projectId,
-            'project_label' => $projectId !== null ? $this->projectLabel($organizationId, $projectId) : null,
+            'project_label' => $projectId !== null ? $this->projectLabel($organizationId, $user, $projectId) : null,
             'work_date' => $workDate,
             'status' => 'active',
             'status_label' => trans_message('workforce.attendance.qr_status_ready'),
@@ -91,6 +93,7 @@ final class WorkforceAttendanceQrService
                 DB::table('workforce_attendance_qr_tokens')
                     ->where('id', $token->id)
                     ->update(['status' => 'expired', 'updated_at' => now()]);
+
                 return $this->rejected($token, trans_message('workforce.errors.qr_token_expired'), 'expired_scan');
             }
 
@@ -102,7 +105,7 @@ final class WorkforceAttendanceQrService
             }
 
             if ($token->project_id !== null) {
-                $this->assertProject($organizationId, (int) $token->project_id);
+                $this->assertProject($organizationId, $scanner, (int) $token->project_id);
             }
 
             DB::table('workforce_attendance_qr_tokens')
@@ -131,7 +134,7 @@ final class WorkforceAttendanceQrService
                 'employee_id' => (int) $employee->id,
                 'employee_label' => $employee->full_name,
                 'project_id' => $token->project_id !== null ? (int) $token->project_id : null,
-                'project_label' => $token->project_id !== null ? $this->projectLabel($organizationId, (int) $token->project_id) : null,
+                'project_label' => $token->project_id !== null ? $this->projectLabel($organizationId, $scanner, (int) $token->project_id) : null,
                 'work_date' => $workDate,
                 'status' => 'at_work',
                 'status_label' => trans_message('workforce.attendance.qr_status_confirmed'),
@@ -170,7 +173,7 @@ final class WorkforceAttendanceQrService
         $employee = $this->employeeForSelfAttendance($organizationId, $user, $workDate);
 
         if ($projectId !== null) {
-            $this->assertProject($organizationId, $projectId);
+            $this->assertProject($organizationId, $user, $projectId);
         }
 
         if ($this->confirmedAttendanceExists($organizationId, (int) $employee->id, $workDate, $projectId)) {
@@ -204,7 +207,7 @@ final class WorkforceAttendanceQrService
             'employee_id' => (int) $employee->id,
             'employee_label' => $employee->full_name,
             'project_id' => $projectId,
-            'project_label' => $projectId !== null ? $this->projectLabel($organizationId, $projectId) : null,
+            'project_label' => $projectId !== null ? $this->projectLabel($organizationId, $user, $projectId) : null,
             'work_date' => $workDate,
             'status' => 'at_work',
             'status_label' => trans_message('workforce.attendance.qr_status_confirmed'),
@@ -222,7 +225,7 @@ final class WorkforceAttendanceQrService
         $employee = $this->linkedEmployee($organizationId, (int) $user->id, $dateTo);
 
         if ($projectId !== null) {
-            $this->assertProject($organizationId, $projectId);
+            $this->assertProject($organizationId, $user, $projectId);
         }
 
         $items = DB::table('workforce_attendance_scan_events as scan')
@@ -389,7 +392,7 @@ final class WorkforceAttendanceQrService
 
     private function nextPersonnelNumber(int $organizationId, int $userId): string
     {
-        $base = 'USER-' . $userId;
+        $base = 'USER-'.$userId;
         $candidate = $base;
         $suffix = 2;
 
@@ -399,7 +402,7 @@ final class WorkforceAttendanceQrService
                 ->where('personnel_number', $candidate)
                 ->exists()
         ) {
-            $candidate = $base . '-' . $suffix;
+            $candidate = $base.'-'.$suffix;
             $suffix++;
         }
 
@@ -434,19 +437,21 @@ final class WorkforceAttendanceQrService
         return $employee->dismissal_date === null || ! $employee->dismissal_date->lt(CarbonImmutable::parse($workDate));
     }
 
-    private function assertProject(int $organizationId, int $projectId): void
+    private function assertProject(int $organizationId, User $user, int $projectId): void
     {
-        if (! Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
-            throw new DomainException(trans_message('workforce.errors.qr_project_unavailable'));
-        }
+        $this->projectAccess->assert(
+            $user,
+            $organizationId,
+            $projectId,
+            trans_message('workforce.errors.qr_project_unavailable'),
+        );
     }
 
-    private function projectLabel(int $organizationId, int $projectId): ?string
+    private function projectLabel(int $organizationId, User $user, int $projectId): ?string
     {
-        return Project::query()
-            ->where('organization_id', $organizationId)
-            ->whereKey($projectId)
-            ->value('name');
+        return $this->projectAccess
+            ->resolve($user, $organizationId, $projectId, trans_message('workforce.errors.qr_project_unavailable'))
+            ->name;
     }
 
     private function tokenHash(string $token): string
@@ -479,8 +484,7 @@ final class WorkforceAttendanceQrService
         ?string $deviceId,
         string $source,
         mixed $scannedAt = null
-    ): int
-    {
+    ): int {
         $scannedAt ??= now();
 
         return (int) DB::table('workforce_attendance_scan_events')->insertGetId([
@@ -513,6 +517,7 @@ final class WorkforceAttendanceQrService
             ->where(function ($query) use ($projectId): void {
                 if ($projectId === null) {
                     $query->whereNull('project_id');
+
                     return;
                 }
 
@@ -535,7 +540,7 @@ final class WorkforceAttendanceQrService
             'status' => 'at_work',
             'status_label' => trans_message('workforce.presence.at_work'),
             'source' => $source,
-            'source_label' => trans_message('workforce.presence_sources.' . $source),
+            'source_label' => trans_message('workforce.presence_sources.'.$source),
             'confirmed_at' => CarbonImmutable::parse((string) $scan->scanned_at)->toIso8601String(),
         ];
     }

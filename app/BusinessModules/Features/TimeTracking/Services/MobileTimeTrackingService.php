@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\TimeTracking\Services;
 
 use App\BusinessModules\Features\TimeTracking\DTOs\MobileTimeEntryPage;
-use App\Models\Project;
 use App\Models\ScheduleTask;
 use App\Models\TimeEntry;
+use App\Models\User;
 use App\Models\WorkType;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
@@ -20,9 +21,17 @@ final class MobileTimeTrackingService
 {
     public const STATUSES = ['draft', 'submitted', 'approved', 'rejected'];
 
-    public function paginateEntries(int $organizationId, int $userId, array $filters, int $perPage): MobileTimeEntryPage
+    public function __construct(
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
+
+    public function paginateEntries(int $organizationId, User $user, array $filters, int $perPage): MobileTimeEntryPage
     {
-        $query = $this->baseQuery($organizationId, $userId, $filters);
+        if (isset($filters['project_id'])) {
+            $this->assertProject($user, $organizationId, (int) $filters['project_id']);
+        }
+
+        $query = $this->baseQuery($organizationId, (int) $user->id, $filters);
         $summary = $this->summaryFromEntries((clone $query)->get());
         $paginator = $query
             ->orderByDesc('work_date')
@@ -32,15 +41,15 @@ final class MobileTimeTrackingService
         return new MobileTimeEntryPage($paginator, $summary);
     }
 
-    public function dailySummary(int $organizationId, int $userId, string $date, ?int $projectId): array
+    public function dailySummary(int $organizationId, User $user, string $date, ?int $projectId): array
     {
         $filters = ['date' => $date];
         if ($projectId !== null) {
-            $this->assertProject($organizationId, $projectId);
+            $this->assertProject($user, $organizationId, $projectId);
             $filters['project_id'] = $projectId;
         }
 
-        $entries = $this->baseQuery($organizationId, $userId, $filters)
+        $entries = $this->baseQuery($organizationId, (int) $user->id, $filters)
             ->orderByDesc('id')
             ->get();
         $summary = $this->summaryFromEntries($entries);
@@ -64,16 +73,17 @@ final class MobileTimeTrackingService
             ->whereKey($entryId)
             ->first();
 
-        if (!$entry) {
+        if (! $entry) {
             throw new DomainException(trans_message('time_tracking.mobile.errors.entry_not_found'));
         }
 
         return $entry;
     }
 
-    public function createManualEntry(int $organizationId, int $userId, array $data): TimeEntry
+    public function createManualEntry(int $organizationId, User $user, array $data): TimeEntry
     {
-        $this->assertProject($organizationId, (int) $data['project_id']);
+        $userId = (int) $user->id;
+        $this->assertProject($user, $organizationId, (int) $data['project_id']);
         $this->assertWorkType($organizationId, $data['work_type_id'] ?? null);
         $this->assertTask($organizationId, (int) $data['project_id'], $data['task_id'] ?? null);
 
@@ -103,10 +113,11 @@ final class MobileTimeTrackingService
         });
     }
 
-    public function startTimer(int $organizationId, int $userId, array $data): TimeEntry
+    public function startTimer(int $organizationId, User $user, array $data): TimeEntry
     {
+        $userId = (int) $user->id;
         $projectId = (int) $data['project_id'];
-        $this->assertProject($organizationId, $projectId);
+        $this->assertProject($user, $organizationId, $projectId);
         $this->assertWorkType($organizationId, $data['work_type_id'] ?? null);
         $this->assertTask($organizationId, $projectId, $data['task_id'] ?? null);
 
@@ -142,7 +153,7 @@ final class MobileTimeTrackingService
 
     public function stopTimer(TimeEntry $entry, int $userId, array $data): TimeEntry
     {
-        if (!$this->isActiveTimer($entry)) {
+        if (! $this->isActiveTimer($entry)) {
             throw new DomainException(trans_message('time_tracking.mobile.errors.no_active_timer'));
         }
 
@@ -170,7 +181,7 @@ final class MobileTimeTrackingService
 
     public function submitEntry(TimeEntry $entry): TimeEntry
     {
-        if ($this->isActiveTimer($entry) || $entry->hours_worked === null || !in_array($entry->status, ['draft', 'rejected'], true)) {
+        if ($this->isActiveTimer($entry) || $entry->hours_worked === null || ! in_array($entry->status, ['draft', 'rejected'], true)) {
             throw new DomainException(trans_message('time_tracking.mobile.errors.submit_forbidden'));
         }
 
@@ -209,7 +220,7 @@ final class MobileTimeTrackingService
                 'custom_fields' => $this->withMobileState($entry, $state),
             ])->save();
 
-            if (!$entry->submit()) {
+            if (! $entry->submit()) {
                 throw new DomainException(trans_message('time_tracking.mobile.errors.correction_forbidden'));
             }
 
@@ -256,7 +267,7 @@ final class MobileTimeTrackingService
         $billableHours = 0.0;
 
         foreach ($entries as $entry) {
-            if (!$entry instanceof TimeEntry) {
+            if (! $entry instanceof TimeEntry) {
                 continue;
             }
 
@@ -282,16 +293,14 @@ final class MobileTimeTrackingService
         ];
     }
 
-    private function assertProject(int $organizationId, int $projectId): void
+    private function assertProject(User $user, int $organizationId, int $projectId): void
     {
-        $exists = Project::query()
-            ->where('organization_id', $organizationId)
-            ->whereKey($projectId)
-            ->exists();
-
-        if (!$exists) {
-            throw new DomainException(trans_message('time_tracking.mobile.errors.project_not_found'));
-        }
+        $this->projectAccess->assert(
+            $user,
+            $organizationId,
+            $projectId,
+            trans_message('time_tracking.mobile.errors.project_not_found'),
+        );
     }
 
     private function assertWorkType(int $organizationId, mixed $workTypeId): void
@@ -306,7 +315,7 @@ final class MobileTimeTrackingService
             ->whereKey((int) $workTypeId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('time_tracking.mobile.errors.work_type_not_found'));
         }
     }
@@ -323,7 +332,7 @@ final class MobileTimeTrackingService
             ->whereKey((int) $taskId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('time_tracking.mobile.errors.task_not_found'));
         }
     }
@@ -333,7 +342,7 @@ final class MobileTimeTrackingService
         $start = CarbonImmutable::createFromFormat('H:i', $startTime);
         $end = CarbonImmutable::createFromFormat('H:i', $endTime);
 
-        if (!$start instanceof CarbonImmutable || !$end instanceof CarbonImmutable) {
+        if (! $start instanceof CarbonImmutable || ! $end instanceof CarbonImmutable) {
             throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_time'));
         }
 

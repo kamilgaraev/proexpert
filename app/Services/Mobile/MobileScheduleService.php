@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Services\Mobile;
 
 use App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent;
-use App\Models\Project;
 use App\Models\User;
 use Carbon\Carbon;
 use DomainException;
@@ -13,6 +12,8 @@ use Illuminate\Support\Collection;
 
 class MobileScheduleService
 {
+    public function __construct(private readonly MobileProjectAccessResolver $projectAccess) {}
+
     public function build(User $user, ?int $projectId = null): array
     {
         $organizationId = (int) $user->current_organization_id;
@@ -23,17 +24,16 @@ class MobileScheduleService
 
         $project = null;
         if ($projectId !== null) {
-            $project = Project::query()
-                ->where('organization_id', $organizationId)
-                ->find($projectId);
-
-            if (!$project) {
-                throw new DomainException(trans_message('mobile_schedule.errors.project_not_found'));
-            }
+            $project = $this->projectAccess->resolve(
+                $user,
+                $organizationId,
+                $projectId,
+                trans_message('mobile_schedule.errors.project_not_found'),
+            );
         }
 
         $baseQuery = ProjectEvent::query()
-            ->where('organization_id', $organizationId);
+            ->whereIn('project_id', $this->projectAccess->query($user, $organizationId)->select('projects.id'));
 
         if ($projectId !== null) {
             $baseQuery->where('project_id', $projectId);
@@ -109,28 +109,28 @@ class MobileScheduleService
 
     private function translateEventType(string $type): string
     {
-        if (!in_array($type, ['inspection', 'delivery', 'meeting', 'maintenance', 'weather', 'other'], true)) {
+        if (! in_array($type, ['inspection', 'delivery', 'meeting', 'maintenance', 'weather', 'other'], true)) {
             throw new DomainException(trans_message('mobile_schedule.errors.load_failed'));
         }
 
-        return trans_message('mobile_schedule.event_types.' . $type);
+        return trans_message('mobile_schedule.event_types.'.$type);
     }
 
     private function translateStatus(string $status): string
     {
-        if (!in_array($status, ['scheduled', 'in_progress', 'completed', 'cancelled'], true)) {
+        if (! in_array($status, ['scheduled', 'in_progress', 'completed', 'cancelled'], true)) {
             throw new DomainException(trans_message('mobile_schedule.errors.load_failed'));
         }
 
-        return trans_message('mobile_schedule.statuses.' . $status);
+        return trans_message('mobile_schedule.statuses.'.$status);
     }
 
     private function translatePriority(string $priority): string
     {
-        if (!in_array($priority, ['low', 'normal', 'high', 'critical'], true)) {
+        if (! in_array($priority, ['low', 'normal', 'high', 'critical'], true)) {
             throw new DomainException(trans_message('mobile_schedule.errors.load_failed'));
         }
 
-        return trans_message('mobile_schedule.priorities.' . $priority);
+        return trans_message('mobile_schedule.priorities.'.$priority);
     }
 }

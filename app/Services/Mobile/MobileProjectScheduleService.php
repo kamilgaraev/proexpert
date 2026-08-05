@@ -25,8 +25,8 @@ use App\Enums\Schedule\TaskStatusEnum;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\User;
-use DomainException;
 use DateTimeImmutable;
+use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -38,6 +38,7 @@ class MobileProjectScheduleService
         private readonly QualityDefectService $qualityDefectService,
         private readonly SafetyManagementService $safetyManagementService,
         private readonly WorkConstraintEventRecorder $constraintEvents,
+        private readonly MobileProjectAccessResolver $projectAccess,
     ) {}
 
     public function list(User $user, ?int $projectId): array
@@ -51,7 +52,6 @@ class MobileProjectScheduleService
         $project = $this->resolveAccessibleProject($user, $organizationId, $projectId);
 
         $schedules = ProjectSchedule::query()
-            ->where('organization_id', $organizationId)
             ->where('project_id', $project->id)
             ->withCount([
                 'tasks',
@@ -91,7 +91,6 @@ class MobileProjectScheduleService
         }
 
         $schedule = ProjectSchedule::query()
-            ->where('organization_id', $organizationId)
             ->where('id', $scheduleId)
             ->with([
                 'project:id,name',
@@ -144,7 +143,6 @@ class MobileProjectScheduleService
         $project = $this->resolveAccessibleProject($user, $organizationId, $projectId);
 
         $dailyPlans = DailyWorkPlan::query()
-            ->where('organization_id', $organizationId)
             ->where('project_id', $project->id)
             ->whereIn('status', ['published', 'in_progress', 'submitted'])
             ->with([
@@ -216,7 +214,7 @@ class MobileProjectScheduleService
             $this->constraintEvents->pinLinkedEvidence(
                 $constraint->refresh(),
                 (int) $user->id,
-                new DateTimeImmutable(),
+                new DateTimeImmutable,
             );
 
             return $action + ['created' => true];
@@ -242,17 +240,16 @@ class MobileProjectScheduleService
 
     private function findAccessibleProject(User $user, int $organizationId, int $projectId): ?Project
     {
-        $query = Project::query()
-            ->where('organization_id', $organizationId)
-            ->where('id', $projectId);
-
-        if (! $user->isOrganizationAdmin($organizationId)) {
-            $query->whereHas('users', function ($usersQuery) use ($user): void {
-                $usersQuery->where('users.id', $user->id);
-            });
+        try {
+            return $this->projectAccess->resolve(
+                $user,
+                $organizationId,
+                $projectId,
+                trans_message('mobile_schedule.errors.project_not_found'),
+            );
+        } catch (DomainException) {
+            return null;
         }
-
-        return $query->first();
     }
 
     private function mapSchedules(Collection $schedules): array
@@ -337,7 +334,6 @@ class MobileProjectScheduleService
         $organizationId = (int) $user->current_organization_id;
 
         $assignment = DailyWorkPlanAssignment::query()
-            ->where('organization_id', $organizationId)
             ->with(['dailyWorkPlan', 'scheduleTask', 'journalEntry', 'lookaheadPlanTask.constraints'])
             ->find($assignmentId);
 
@@ -355,7 +351,6 @@ class MobileProjectScheduleService
         $organizationId = (int) $user->current_organization_id;
 
         $dailyPlan = DailyWorkPlan::query()
-            ->where('organization_id', $organizationId)
             ->with(['assignments.scheduleTask', 'assignments.journalEntry', 'assignments.lookaheadPlanTask.constraints'])
             ->find($dailyPlanId);
 
@@ -373,7 +368,6 @@ class MobileProjectScheduleService
         $organizationId = (int) $user->current_organization_id;
 
         $constraint = WorkConstraint::query()
-            ->where('organization_id', $organizationId)
             ->with(['scheduleTask'])
             ->find($constraintId);
 

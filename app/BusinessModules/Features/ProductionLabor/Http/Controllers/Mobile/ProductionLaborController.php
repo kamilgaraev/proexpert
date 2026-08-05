@@ -10,6 +10,8 @@ use App\BusinessModules\Features\ProductionLabor\Http\Resources\ProductionLaborW
 use App\BusinessModules\Features\ProductionLabor\Services\ProductionLaborService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,17 +21,42 @@ use Illuminate\Validation\ValidationException;
 
 final class ProductionLaborController extends Controller
 {
-    public function __construct(private readonly ProductionLaborService $service)
-    {
-    }
+    public function __construct(
+        private readonly ProductionLaborService $service,
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function workOrders(Request $request): JsonResponse
     {
         try {
+            $projectId = $request->input('project_id');
+
+            if ($projectId !== null && $projectId !== '') {
+                $user = $request->user();
+
+                if (! $user instanceof User) {
+                    throw new DomainException(trans_message('production_labor.errors.project_not_found'));
+                }
+
+                $this->projectAccess->assert(
+                    $user,
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $projectId,
+                    trans_message('production_labor.errors.project_not_found'),
+                );
+            }
+
             $paginator = $this->service->paginateWorkOrders(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 50),
-                $request->only(['project_id', 'status'])
+                [
+                    ...$request->only(['project_id', 'status']),
+                    'project_ids' => $this->projectAccess
+                        ->query($this->mobileUser($request), (int) $request->attributes->get('current_organization_id'))
+                        ->pluck('projects.id')
+                        ->map(static fn ($id): int => (int) $id)
+                        ->all(),
+                ]
             );
 
             return MobileResponse::success([
@@ -41,6 +68,8 @@ final class ProductionLaborController extends Controller
                     'last_page' => $paginator->lastPage(),
                 ],
             ]);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'work_orders.index');
         }
@@ -131,6 +160,17 @@ final class ProductionLaborController extends Controller
         ]);
 
         return MobileResponse::error(trans_message('production_labor.errors.unexpected'), 500);
+    }
+
+    private function mobileUser(Request $request): User
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw new DomainException(trans_message('production_labor.errors.project_not_found'));
+        }
+
+        return $user;
     }
 
     private function validated(Request $request, array $rules): array

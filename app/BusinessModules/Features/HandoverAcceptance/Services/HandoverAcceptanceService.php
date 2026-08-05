@@ -43,6 +43,7 @@ final class HandoverAcceptanceService
     {
         return AcceptanceScope::query()
             ->where('organization_id', $organizationId)
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->when(! empty($filters['planned_from']), fn ($query) => $query->whereDate('planned_acceptance_date', '>=', (string) $filters['planned_from']))
@@ -357,46 +358,51 @@ final class HandoverAcceptanceService
         return $scope->fresh(self::SCOPE_RELATIONS);
     }
 
-    public function findScope(int $organizationId, int $id): AcceptanceScope
+    public function findScope(int $organizationId, int $id, ?array $projectIds = null): AcceptanceScope
     {
         return AcceptanceScope::query()
             ->where('organization_id', $organizationId)
+            ->when($projectIds !== null, fn ($query) => $query->whereIn('project_id', $projectIds))
             ->with(self::SCOPE_RELATIONS)
             ->find($id)
             ?? throw new DomainException(trans_message('handover_acceptance.errors.scope_not_found'));
     }
 
-    public function findSession(int $organizationId, int $id): AcceptanceSession
+    public function findSession(int $organizationId, int $id, ?array $projectIds = null): AcceptanceSession
     {
         return AcceptanceSession::query()
             ->where('organization_id', $organizationId)
+            ->when($projectIds !== null, fn ($query) => $query->whereHas('scope', fn ($scope) => $scope->whereIn('project_id', $projectIds)))
             ->with(['scope.location'])
             ->find($id)
             ?? throw new DomainException(trans_message('handover_acceptance.errors.session_not_found'));
     }
 
-    public function findFinding(int $organizationId, int $id): AcceptanceFinding
+    public function findFinding(int $organizationId, int $id, ?array $projectIds = null): AcceptanceFinding
     {
         return AcceptanceFinding::query()
             ->where('organization_id', $organizationId)
+            ->when($projectIds !== null, fn ($query) => $query->whereHas('scope', fn ($scope) => $scope->whereIn('project_id', $projectIds)))
             ->with(['qualityDefect'])
             ->find($id)
             ?? throw new DomainException(trans_message('handover_acceptance.errors.finding_not_found'));
     }
 
-    public function findChecklistItem(int $organizationId, int $id): AcceptanceChecklistItem
+    public function findChecklistItem(int $organizationId, int $id, ?array $projectIds = null): AcceptanceChecklistItem
     {
         return AcceptanceChecklistItem::query()
             ->whereHas('checklist', fn ($query) => $query->where('organization_id', $organizationId))
+            ->when($projectIds !== null, fn ($query) => $query->whereHas('checklist.scope', fn ($scope) => $scope->whereIn('project_id', $projectIds)))
             ->with(['checklist.items'])
             ->find($id)
             ?? throw new DomainException(trans_message('handover_acceptance.errors.checklist_item_not_found'));
     }
 
-    public function findPackageDocument(int $organizationId, int $id): HandoverPackageDocument
+    public function findPackageDocument(int $organizationId, int $id, ?array $projectIds = null): HandoverPackageDocument
     {
         return HandoverPackageDocument::query()
             ->whereHas('package', fn ($query) => $query->where('organization_id', $organizationId))
+            ->when($projectIds !== null, fn ($query) => $query->whereHas('package.scope', fn ($scope) => $scope->whereIn('project_id', $projectIds)))
             ->find($id)
             ?? throw new DomainException(trans_message('handover_acceptance.errors.package_document_not_found'));
     }
@@ -404,7 +410,7 @@ final class HandoverAcceptanceService
     private function findProject(int $organizationId, int $projectId): Project
     {
         return Project::query()
-            ->where('organization_id', $organizationId)
+            ->accessibleByOrganization($organizationId)
             ->find($projectId)
             ?? throw new DomainException(trans_message('handover_acceptance.errors.project_not_found'));
     }

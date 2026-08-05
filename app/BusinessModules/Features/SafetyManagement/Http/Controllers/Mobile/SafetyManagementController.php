@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Http\Controllers\Mobile;
 
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyBriefingResource;
-use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyComplianceResultResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionFindingResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyViolationResource;
@@ -15,6 +15,8 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -72,8 +74,8 @@ final class SafetyManagementController extends Controller
 
     public function __construct(
         private readonly SafetyManagementService $service,
-    ) {
-    }
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function dashboard(Request $request): JsonResponse
     {
@@ -239,7 +241,11 @@ final class SafetyManagementController extends Controller
                 return MobileResponse::error(trans_message('safety_management.errors.briefing_not_found'), 404);
             }
 
+            $this->assertProjectAccess($request, $briefing->project_id);
+
             return MobileResponse::success(new SafetyBriefingResource($briefing));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             Log::error('safety_management.mobile.briefings.show.error', [
                 'user_id' => $request->user()?->id,
@@ -254,6 +260,17 @@ final class SafetyManagementController extends Controller
     public function signBriefingParticipant(Request $request, int $id, int $participantId): JsonResponse
     {
         try {
+            $existing = $this->service->findMobileBriefing(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $id
+            );
+
+            if ($existing === null) {
+                return MobileResponse::error(trans_message('safety_management.errors.briefing_not_found'), 404);
+            }
+
+            $this->assertProjectAccess($request, $existing->project_id);
             $briefing = $this->service->signMobileBriefingParticipant(
                 (int) $request->attributes->get('current_organization_id'),
                 (int) $request->user()?->id,
@@ -570,6 +587,8 @@ final class SafetyManagementController extends Controller
                 return MobileResponse::error(trans_message('safety_management.errors.violation_not_found'), 404);
             }
 
+            $this->assertProjectAccess($request, $violation->project_id);
+
             return MobileResponse::success(new SafetyViolationResource($this->service->resolveViolation(
                 $violation,
                 (int) $request->user()?->id,
@@ -734,10 +753,32 @@ final class SafetyManagementController extends Controller
 
     private function mobilePermit(Request $request, int $id): ?SafetyWorkPermit
     {
-        return $this->service->findMobilePermit(
+        $permit = $this->service->findMobilePermit(
             (int) $request->attributes->get('current_organization_id'),
             (int) $request->user()?->id,
             $id
+        );
+
+        if ($permit instanceof SafetyWorkPermit) {
+            $this->assertProjectAccess($request, $permit->project_id);
+        }
+
+        return $permit;
+    }
+
+    private function assertProjectAccess(Request $request, mixed $projectId): void
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw new DomainException(trans_message('safety_management.errors.project_not_found'));
+        }
+
+        $this->projectAccess->assert(
+            $user,
+            (int) $request->attributes->get('current_organization_id'),
+            (int) $projectId,
+            trans_message('safety_management.errors.project_not_found'),
         );
     }
 
@@ -749,7 +790,42 @@ final class SafetyManagementController extends Controller
             throw new ValidationException($validator);
         }
 
-        return $validator->validated();
+        $validated = $validator->validated();
+        $projectId = $validated['project_id'] ?? null;
+
+        if (array_key_exists('project_id', $rules)) {
+            $user = $request->user();
+            $validated['project_ids'] = $user instanceof User
+                ? $this->projectAccess
+                    ->query($user, (int) $request->attributes->get('current_organization_id'))
+                    ->pluck('projects.id')
+                    ->map(static fn ($id): int => (int) $id)
+                    ->all()
+                : [];
+        }
+
+        if ($projectId !== null && $projectId !== '') {
+            $user = $request->user();
+
+            if (! $user instanceof User) {
+                throw new DomainException(trans_message('safety_management.errors.project_not_found'));
+            }
+
+            try {
+                $this->projectAccess->assert(
+                    $user,
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $projectId,
+                    trans_message('safety_management.errors.project_not_found'),
+                );
+            } catch (DomainException $exception) {
+                throw ValidationException::withMessages([
+                    'project_id' => [$exception->getMessage()],
+                ]);
+            }
+        }
+
+        return $validated;
     }
 
     private function validationMessages(): array

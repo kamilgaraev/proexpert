@@ -260,6 +260,7 @@ final class SafetyManagementService
     {
         return SafetyIncident::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->when(! empty($filters['reported_by_user_id']), fn ($query) => $query->where('reported_by_user_id', (int) $filters['reported_by_user_id']))
@@ -271,6 +272,7 @@ final class SafetyManagementService
     {
         return SafetyViolation::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->when(! empty($filters['assigned_to_user_id']), fn ($query) => $query->where(function ($scope) use ($filters): void {
@@ -667,6 +669,7 @@ final class SafetyManagementService
         return SafetyInspection::forOrganization($organizationId)
             ->with(['project:id,name', 'items', 'findings'])
             ->withCount('findings')
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->when(! empty($filters['inspection_type']), fn ($query) => $query->where('inspection_type', (string) $filters['inspection_type']))
@@ -754,6 +757,7 @@ final class SafetyManagementService
     {
         return SafetyInspectionFinding::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->when(! empty($filters['assigned_to_user_id']), fn ($query) => $query->where('assigned_to_user_id', (int) $filters['assigned_to_user_id']))
@@ -842,6 +846,7 @@ final class SafetyManagementService
 
         return SafetyWorkPermit::forOrganization($organizationId)
             ->with(['project:id,name', 'responsibleUser:id,name', 'participants.employee:id,last_name,first_name,middle_name'])
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->where(function ($query) use ($userId, $employee): void {
                 $query->where('responsible_user_id', $userId)
                     ->orWhereHas('participants', static function ($relation) use ($userId, $employee): void {
@@ -884,6 +889,7 @@ final class SafetyManagementService
         $employee = $this->employeeForUser($organizationId, $userId);
 
         $permits = SafetyWorkPermit::forOrganization($organizationId)
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->where(function ($query) use ($userId, $employee): void {
                 $query->where('responsible_user_id', $userId)
@@ -897,6 +903,7 @@ final class SafetyManagementService
             });
 
         $violations = SafetyViolation::forOrganization($organizationId)
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->where(function ($query) use ($userId): void {
                 $query->where('assigned_to_user_id', $userId)
@@ -904,6 +911,7 @@ final class SafetyManagementService
             });
 
         $findings = SafetyInspectionFinding::forOrganization($organizationId)
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->where('assigned_to_user_id', $userId);
 
@@ -1903,6 +1911,7 @@ final class SafetyManagementService
         array $filters = []
     ): Builder {
         return SafetyBriefing::forOrganization($organizationId)
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->whereHas('participants', static function ($relation) use ($userId, $employee): void {
                 $relation->where('user_id', $userId);
 
@@ -2191,8 +2200,8 @@ final class SafetyManagementService
     private function assertProjectBelongsToOrganization(int $projectId, int $organizationId): void
     {
         $exists = Project::query()
-            ->where('id', $projectId)
-            ->where('organization_id', $organizationId)
+            ->accessibleByOrganization($organizationId)
+            ->whereKey($projectId)
             ->exists();
 
         if (! $exists) {

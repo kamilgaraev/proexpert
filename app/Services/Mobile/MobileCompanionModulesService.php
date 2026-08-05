@@ -100,15 +100,15 @@ final class MobileCompanionModulesService
         private readonly AuthorizationService $authorizationService,
         private readonly AccessController $accessController,
         private readonly ChangeManagementService $changeManagementService,
-        private readonly ExecutiveDocumentationService $executiveDocumentationService
-    ) {
-    }
+        private readonly ExecutiveDocumentationService $executiveDocumentationService,
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function canView(string $slug, User $user, int $organizationId): bool
     {
         $config = $this->moduleConfig($slug);
 
-        if (!$this->accessController->hasModuleAccess($organizationId, $config['access_slug'])) {
+        if (! $this->accessController->hasModuleAccess($organizationId, $config['access_slug'])) {
             return false;
         }
 
@@ -118,7 +118,16 @@ final class MobileCompanionModulesService
     public function list(string $slug, User $user, int $organizationId, array $filters, int $perPage): array
     {
         $config = $this->moduleConfig($slug);
-        $query = $this->queryFor($slug, $organizationId);
+        $query = $this->queryFor($slug, $user, $organizationId);
+
+        if (($filters['project_id'] ?? null) !== null && ($filters['project_id'] ?? '') !== '') {
+            $this->projectAccess->assert(
+                $user,
+                $organizationId,
+                (int) $filters['project_id'],
+                trans_message('mobile_companions.errors.item_not_found'),
+            );
+        }
 
         $this->applyProjectFilter($query, $slug, $filters['project_id'] ?? null);
         $this->applySearch($query, $slug, $filters['q'] ?? null);
@@ -147,7 +156,7 @@ final class MobileCompanionModulesService
     public function detail(string $slug, int $id, User $user, int $organizationId): array
     {
         $config = $this->moduleConfig($slug);
-        $model = $this->findModel($slug, $organizationId, $id);
+        $model = $this->findModel($slug, $user, $organizationId, $id);
 
         return [
             'module' => $this->modulePayload($slug, $config),
@@ -169,9 +178,9 @@ final class MobileCompanionModulesService
     ): array {
         if ($slug === 'change-management' && $action === 'submit') {
             $this->ensureActionPermission($user, $organizationId, ['change-management.create', 'change-management.edit']);
-            $change = $this->findModel($slug, $organizationId, $id);
+            $change = $this->findModel($slug, $user, $organizationId, $id);
 
-            if (!$change instanceof ChangeRequest) {
+            if (! $change instanceof ChangeRequest) {
                 throw new DomainException(trans_message('mobile_companions.errors.item_not_found'));
             }
 
@@ -185,9 +194,9 @@ final class MobileCompanionModulesService
                 'executive-documentation.review',
                 'executive-documentation.approve',
             ]);
-            $set = $this->findModel($slug, $organizationId, $id);
+            $set = $this->findModel($slug, $user, $organizationId, $id);
 
-            if (!$set instanceof ExecutiveDocumentSet) {
+            if (! $set instanceof ExecutiveDocumentSet) {
                 throw new DomainException(trans_message('mobile_companions.errors.item_not_found'));
             }
 
@@ -207,7 +216,7 @@ final class MobileCompanionModulesService
     {
         $config = self::MODULES[$slug] ?? null;
 
-        if (!is_array($config)) {
+        if (! is_array($config)) {
             throw new DomainException(trans_message('mobile_companions.errors.module_not_found'));
         }
 
@@ -225,29 +234,58 @@ final class MobileCompanionModulesService
         ];
     }
 
-    private function queryFor(string $slug, int $organizationId): Builder
+    private function queryFor(string $slug, User $user, int $organizationId): Builder
     {
+        $projectIds = $this->projectAccess
+            ->query($user, $organizationId)
+            ->pluck('projects.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+
         return match ($slug) {
             'contract-management' => Contract::query()
                 ->forOrganization($organizationId)
+                ->where(function (Builder $query) use ($projectIds): void {
+                    $query->whereIn('project_id', $projectIds)
+                        ->orWhere(function (Builder $withoutPrimaryProject) use ($projectIds): void {
+                            $withoutPrimaryProject
+                                ->whereNull('project_id')
+                                ->where(function (Builder $projectsQuery) use ($projectIds): void {
+                                    $projectsQuery
+                                        ->whereHas('projects', fn (Builder $projectQuery) => $projectQuery->whereIn('projects.id', $projectIds))
+                                        ->orWhereDoesntHave('projects');
+                                });
+                        });
+                })
                 ->with(['project', 'contractor', 'supplier'])
                 ->withCount(['performanceActs', 'payments']),
             'change-management' => ChangeRequest::query()
                 ->forOrganization($organizationId)
+                ->whereIn('project_id', $projectIds)
                 ->with(['project', 'impact', 'approvals', 'variationOrders']),
             'executive-documentation' => ExecutiveDocumentSet::query()
                 ->forOrganization($organizationId)
+                ->whereIn('project_id', $projectIds)
                 ->with(['project', 'documents.remarks', 'transmittal'])
                 ->withCount(['documents']),
             'project-management' => Project::query()
-                ->accessibleByOrganization($organizationId)
+                ->whereIn('projects.id', $projectIds)
                 ->withCount(['users', 'contracts', 'completedWorks']),
             'catalog-management' => Material::query()
                 ->where('organization_id', $organizationId)
                 ->with(['measurementUnit']),
             'brigades' => BrigadeProfile::query()
-                ->with(['members', 'assignments.project', 'specializations'])
-                ->withCount(['members', 'assignments'])
+                ->with([
+                    'members',
+                    'assignments' => fn (Builder $assignmentQuery) => $assignmentQuery->whereIn('project_id', $projectIds),
+                    'assignments.project',
+                    'specializations',
+                ])
+                ->withCount([
+                    'members',
+                    'assignments' => fn (Builder $assignmentQuery) => $assignmentQuery->whereIn('project_id', $projectIds),
+                ])
+                ->whereHas('assignments', fn (Builder $assignmentQuery) => $assignmentQuery->whereIn('project_id', $projectIds))
                 ->where(function (Builder $query) use ($organizationId): void {
                     $query->where('organization_id', $organizationId)
                         ->orWhereHas('assignments', static function (Builder $assignmentQuery) use ($organizationId): void {
@@ -256,17 +294,18 @@ final class MobileCompanionModulesService
                 }),
             'video-monitoring' => VideoCamera::query()
                 ->where('organization_id', $organizationId)
+                ->whereIn('project_id', $projectIds)
                 ->with(['project'])
                 ->withCount(['events']),
             default => throw new DomainException(trans_message('mobile_companions.errors.module_not_found')),
         };
     }
 
-    private function findModel(string $slug, int $organizationId, int $id): Model
+    private function findModel(string $slug, User $user, int $organizationId, int $id): Model
     {
-        $model = $this->queryFor($slug, $organizationId)->whereKey($id)->first();
+        $model = $this->queryFor($slug, $user, $organizationId)->whereKey($id)->first();
 
-        if (!$model instanceof Model) {
+        if (! $model instanceof Model) {
             throw new DomainException(trans_message('mobile_companions.errors.item_not_found'));
         }
 
@@ -368,7 +407,7 @@ final class MobileCompanionModulesService
             return;
         }
 
-        if (!in_array($status, $config['statuses'], true)) {
+        if (! in_array($status, $config['statuses'], true)) {
             throw new DomainException(trans_message('mobile_companions.errors.status_not_supported'));
         }
 
@@ -949,7 +988,7 @@ final class MobileCompanionModulesService
             return null;
         }
 
-        return trans_message('mobile_companions.statuses.' . str_replace('-', '_', $status));
+        return trans_message('mobile_companions.statuses.'.str_replace('-', '_', $status));
     }
 
     private function statusTone(?string $status): string

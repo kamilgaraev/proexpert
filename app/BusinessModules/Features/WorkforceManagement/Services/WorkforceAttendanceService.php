@@ -173,7 +173,7 @@ final class WorkforceAttendanceService
             ->whereIn('work_schedule_id', $scheduleIds)
             ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
             ->get()
-            ->keyBy(fn (object $record): string => $record->work_schedule_id . ':' . $record->work_date);
+            ->keyBy(fn (object $record): string => $record->work_schedule_id.':'.$record->work_date);
     }
 
     private function correctionsForPeriod(int $organizationId, array $employeeIds, CarbonImmutable $start, CarbonImmutable $end, ?int $projectId): Collection
@@ -189,7 +189,7 @@ final class WorkforceAttendanceService
             ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
             ->orderBy('created_at')
             ->get()
-            ->keyBy(fn (object $record): string => $record->employee_id . ':' . $record->work_date . ':' . ($record->project_id ?? 'all'));
+            ->keyBy(fn (object $record): string => $record->employee_id.':'.$record->work_date.':'.($record->project_id ?? 'all'));
     }
 
     private function qrScansForPeriod(int $organizationId, array $employeeIds, CarbonImmutable $start, CarbonImmutable $end, ?int $projectId): Collection
@@ -206,7 +206,7 @@ final class WorkforceAttendanceService
             ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
             ->orderBy('scanned_at')
             ->get()
-            ->keyBy(fn (object $record): string => $record->employee_id . ':' . $record->work_date . ':' . ($record->project_id ?? 'all'));
+            ->keyBy(fn (object $record): string => $record->employee_id.':'.$record->work_date.':'.($record->project_id ?? 'all'));
     }
 
     private function row(object $assignment, array $days, Collection $scheduleDays, Collection $corrections, Collection $qrScans): array
@@ -229,15 +229,15 @@ final class WorkforceAttendanceService
 
     private function day(object $assignment, string $date, Collection $scheduleDays, Collection $corrections, Collection $qrScans): array
     {
-        $correction = $corrections->get($assignment->employee_id . ':' . $date . ':' . ($assignment->project_id ?? 'all'))
-            ?? $corrections->get($assignment->employee_id . ':' . $date . ':all');
+        $correction = $corrections->get($assignment->employee_id.':'.$date.':'.($assignment->project_id ?? 'all'))
+            ?? $corrections->get($assignment->employee_id.':'.$date.':all');
 
         if ($correction !== null) {
             return $this->presence((string) $correction->status, $date, $correction->hours !== null ? (float) $correction->hours : null, 'manual_correction');
         }
 
-        $qrScan = $qrScans->get($assignment->employee_id . ':' . $date . ':' . ($assignment->project_id ?? 'all'))
-            ?? $qrScans->get($assignment->employee_id . ':' . $date . ':all');
+        $qrScan = $qrScans->get($assignment->employee_id.':'.$date.':'.($assignment->project_id ?? 'all'))
+            ?? $qrScans->get($assignment->employee_id.':'.$date.':all');
 
         if ($qrScan !== null) {
             return $this->presence(
@@ -256,7 +256,7 @@ final class WorkforceAttendanceService
             return $this->presence('not_scheduled', $date, null, 'schedule');
         }
 
-        $scheduleDay = $scheduleDays->get($assignment->work_schedule_id . ':' . $date);
+        $scheduleDay = $scheduleDays->get($assignment->work_schedule_id.':'.$date);
 
         if ($scheduleDay !== null && $scheduleDay->day_type !== 'work') {
             return $this->presence('scheduled_day_off', $date, 0, 'schedule');
@@ -274,7 +274,7 @@ final class WorkforceAttendanceService
             'project_label' => $record->project_label,
             'work_date' => (string) $record->work_date,
             'status' => (string) $record->status,
-            'status_label' => trans_message('workforce.presence.' . $record->status),
+            'status_label' => trans_message('workforce.presence.'.$record->status),
             'hours' => $record->hours !== null ? $this->hours($record->hours) : null,
             'reason' => (string) $record->reason,
             'source_label' => trans_message('workforce.presence_sources.manual_correction'),
@@ -343,7 +343,7 @@ final class WorkforceAttendanceService
 
     private function assertProject(int $organizationId, int $projectId): void
     {
-        if (! Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
+        if (! Project::query()->accessibleByOrganization($organizationId)->whereKey($projectId)->exists()) {
             throw new DomainException(trans_message('workforce.errors.project_not_found'));
         }
     }

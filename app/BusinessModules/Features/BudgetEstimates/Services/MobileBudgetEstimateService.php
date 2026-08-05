@@ -11,6 +11,7 @@ use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -41,13 +42,13 @@ final class MobileBudgetEstimateService
     ];
 
     public function __construct(
-        private readonly AuthorizationService $authorizationService
-    ) {
-    }
+        private readonly AuthorizationService $authorizationService,
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function projectSummary(int $organizationId, int $projectId, User $user): array
     {
-        $project = $this->findProject($organizationId, $projectId);
+        $project = $this->findProject($organizationId, $projectId, $user);
         $estimates = $this->estimateListQuery($organizationId, ['project_id' => $project->id])
             ->limit(30)
             ->get();
@@ -76,9 +77,9 @@ final class MobileBudgetEstimateService
         ];
     }
 
-    public function paginateEstimates(int $organizationId, array $filters, int $perPage): MobileBudgetEstimatePage
+    public function paginateEstimates(int $organizationId, User $user, array $filters, int $perPage): MobileBudgetEstimatePage
     {
-        $this->findProject($organizationId, (int) $filters['project_id']);
+        $this->findProject($organizationId, (int) $filters['project_id'], $user);
 
         $query = $this->estimateListQuery($organizationId, $filters);
         $summary = $this->totalsPayload((clone $query)->get());
@@ -90,7 +91,7 @@ final class MobileBudgetEstimateService
         return new MobileBudgetEstimatePage($paginator, $summary);
     }
 
-    public function findEstimate(int $organizationId, int $estimateId): Estimate
+    public function findEstimate(int $organizationId, User $user, int $estimateId): Estimate
     {
         $estimate = Estimate::query()
             ->with([
@@ -99,14 +100,20 @@ final class MobileBudgetEstimateService
                 'sections.items.measurementUnit',
                 'items.measurementUnit',
             ])
-            ->where('organization_id', $organizationId)
             ->whereNull('parent_estimate_id')
             ->whereKey($estimateId)
             ->first();
 
-        if (!$estimate instanceof Estimate) {
+        if (! $estimate instanceof Estimate) {
             throw new DomainException(trans_message('budget_estimates.mobile.errors.estimate_not_found'));
         }
+
+        $this->projectAccess->assert(
+            $user,
+            $organizationId,
+            (int) $estimate->project_id,
+            trans_message('budget_estimates.mobile.errors.estimate_not_found'),
+        );
 
         return $estimate;
     }
@@ -130,7 +137,12 @@ final class MobileBudgetEstimateService
                 'user_id' => $userId,
             ]);
 
-            return $this->findEstimate((int) $estimate->organization_id, (int) $estimate->id);
+            return $estimate->fresh([
+                'project',
+                'approvedBy',
+                'sections.items.measurementUnit',
+                'items.measurementUnit',
+            ]);
         });
     }
 
@@ -153,7 +165,12 @@ final class MobileBudgetEstimateService
                 'user_id' => $userId,
             ]);
 
-            return $this->findEstimate((int) $estimate->organization_id, (int) $estimate->id);
+            return $estimate->fresh([
+                'project',
+                'approvedBy',
+                'sections.items.measurementUnit',
+                'items.measurementUnit',
+            ]);
         });
     }
 
@@ -173,7 +190,6 @@ final class MobileBudgetEstimateService
         return Estimate::query()
             ->with(['project', 'approvedBy'])
             ->withCount(['sections', 'items'])
-            ->where('organization_id', $organizationId)
             ->whereNull('parent_estimate_id')
             ->where('project_id', (int) $filters['project_id'])
             ->when(isset($filters['status']), static function (Builder $query) use ($filters): void {
@@ -203,18 +219,14 @@ final class MobileBudgetEstimateService
         });
     }
 
-    private function findProject(int $organizationId, int $projectId): Project
+    private function findProject(int $organizationId, int $projectId, User $user): Project
     {
-        $project = Project::query()
-            ->where('organization_id', $organizationId)
-            ->whereKey($projectId)
-            ->first();
-
-        if (!$project instanceof Project) {
-            throw new DomainException(trans_message('budget_estimates.mobile.errors.project_not_found'));
-        }
-
-        return $project;
+        return $this->projectAccess->resolve(
+            $user,
+            $organizationId,
+            $projectId,
+            trans_message('budget_estimates.mobile.errors.project_not_found'),
+        );
     }
 
     private function estimateItemIds(array $estimateIds): array

@@ -21,14 +21,21 @@ use Illuminate\Support\Facades\DB;
 final class MachineryOperationsService
 {
     private const ASSET_RELATIONS = ['machinery:id,name,code,category', 'currentProject:id,name', 'currentScheduleTask:id,name'];
+
     private const SHIFT_RELATIONS = ['asset:id,name,asset_code,status', 'project:id,name', 'assignment:id,status'];
 
     public function paginateAssets(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
     {
         return MachineryAsset::forOrganization($organizationId)
             ->with(self::ASSET_RELATIONS)
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('current_project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(array_key_exists('project_ids', $filters), function ($query) use ($filters): void {
+                $query->where(function ($projectQuery) use ($filters): void {
+                    $projectQuery->whereNull('current_project_id')
+                        ->orWhereIn('current_project_id', $filters['project_ids']);
+                });
+            })
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('current_project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderBy('name')
             ->paginate($perPage);
     }
@@ -37,9 +44,10 @@ final class MachineryOperationsService
     {
         return MachineryShiftReport::forOrganization($organizationId)
             ->with(self::SHIFT_RELATIONS)
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['asset_id']), fn ($query) => $query->where('asset_id', (int) $filters['asset_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['asset_id']), fn ($query) => $query->where('asset_id', (int) $filters['asset_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderByDesc('report_date')
             ->paginate($perPage);
     }
@@ -48,9 +56,9 @@ final class MachineryOperationsService
     {
         return MachineryMaintenanceOrder::forOrganization($organizationId)
             ->with(['asset:id,name,asset_code,status', 'project:id,name'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['asset_id']), fn ($query) => $query->where('asset_id', (int) $filters['asset_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['asset_id']), fn ($query) => $query->where('asset_id', (int) $filters['asset_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderByDesc('created_at')
             ->paginate($perPage);
     }
@@ -88,7 +96,7 @@ final class MachineryOperationsService
 
     public function assignAsset(MachineryAsset $asset, int $userId, array $data): MachineryAssignment
     {
-        if (!in_array($asset->status, ['available', 'assigned'], true)) {
+        if (! in_array($asset->status, ['available', 'assigned'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.asset_assign_invalid_status'));
         }
 
@@ -134,7 +142,7 @@ final class MachineryOperationsService
 
     public function setMaintenance(MachineryAsset $asset): MachineryAsset
     {
-        if (!in_array($asset->status, ['available', 'assigned', 'in_operation', 'unavailable'], true)) {
+        if (! in_array($asset->status, ['available', 'assigned', 'in_operation', 'unavailable'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.asset_maintenance_invalid_status'));
         }
 
@@ -156,7 +164,7 @@ final class MachineryOperationsService
 
     public function returnAvailable(MachineryAsset $asset): MachineryAsset
     {
-        if (!in_array($asset->status, ['assigned', 'in_operation', 'maintenance', 'unavailable'], true)) {
+        if (! in_array($asset->status, ['assigned', 'in_operation', 'maintenance', 'unavailable'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.asset_available_invalid_status'));
         }
 
@@ -194,7 +202,7 @@ final class MachineryOperationsService
         $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
         $this->assertOptionalAssignmentBelongsToOrganization($data['assignment_id'] ?? null, $organizationId);
 
-        if (!in_array($asset->status, ['assigned', 'in_operation'], true)) {
+        if (! in_array($asset->status, ['assigned', 'in_operation'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.shift_asset_not_operational'));
         }
 
@@ -356,7 +364,7 @@ final class MachineryOperationsService
 
     public function completeMaintenanceOrder(MachineryMaintenanceOrder $order, int $userId, ?string $comment): MachineryMaintenanceOrder
     {
-        if (!in_array($order->status, ['open', 'in_progress'], true)) {
+        if (! in_array($order->status, ['open', 'in_progress'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.maintenance_complete_invalid_status'));
         }
 
@@ -440,7 +448,7 @@ final class MachineryOperationsService
 
     private function assertProjectBelongsToOrganization(int $projectId, int $organizationId): void
     {
-        if (!Project::query()->where('id', $projectId)->where('organization_id', $organizationId)->exists()) {
+        if (! Project::query()->accessibleByOrganization($organizationId)->whereKey($projectId)->exists()) {
             throw new DomainException(trans_message('machinery_operations.errors.project_not_found'));
         }
     }
@@ -465,7 +473,7 @@ final class MachineryOperationsService
             })
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('machinery_operations.errors.machinery_not_found'));
         }
     }
@@ -476,21 +484,21 @@ final class MachineryOperationsService
             return;
         }
 
-        if (!ScheduleTask::query()->where('id', (int) $scheduleTaskId)->where('organization_id', $organizationId)->exists()) {
+        if (! ScheduleTask::query()->where('id', (int) $scheduleTaskId)->where('organization_id', $organizationId)->exists()) {
             throw new DomainException(trans_message('machinery_operations.errors.schedule_task_not_found'));
         }
     }
 
     private function assertOptionalAssignmentBelongsToOrganization(mixed $assignmentId, int $organizationId): void
     {
-        if ($assignmentId !== null && !MachineryAssignment::forOrganization($organizationId)->where('id', (int) $assignmentId)->exists()) {
+        if ($assignmentId !== null && ! MachineryAssignment::forOrganization($organizationId)->where('id', (int) $assignmentId)->exists()) {
             throw new DomainException(trans_message('machinery_operations.errors.assignment_not_found'));
         }
     }
 
     private function assertOptionalShiftBelongsToOrganization(mixed $shiftId, int $organizationId): void
     {
-        if ($shiftId !== null && !MachineryShiftReport::forOrganization($organizationId)->where('id', (int) $shiftId)->exists()) {
+        if ($shiftId !== null && ! MachineryShiftReport::forOrganization($organizationId)->where('id', (int) $shiftId)->exists()) {
             throw new DomainException(trans_message('machinery_operations.errors.shift_not_found'));
         }
     }

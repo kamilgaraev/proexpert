@@ -10,6 +10,8 @@ use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryShi
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,22 +23,26 @@ final class MachineryOperationsController extends Controller
 {
     public function __construct(
         private readonly MachineryOperationsService $service,
-    ) {
-    }
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function assets(Request $request): JsonResponse
     {
         try {
+            $this->assertProjectAccess($request, $request->input('project_id'));
             $assets = $this->service->paginateAssets(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
                 [
                     'project_id' => $request->input('project_id'),
+                    'project_ids' => $this->accessibleProjectIds($request),
                     'status' => $request->input('status'),
                 ]
             );
 
             return MobileResponse::success(MachineryAssetResource::collection($assets->getCollection()));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'assets.index');
         }
@@ -83,17 +89,21 @@ final class MachineryOperationsController extends Controller
     public function shifts(Request $request): JsonResponse
     {
         try {
+            $this->assertProjectAccess($request, $request->input('project_id'));
             $shifts = $this->service->paginateShifts(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
                 [
                     'project_id' => $request->input('project_id'),
+                    'project_ids' => $this->accessibleProjectIds($request),
                     'asset_id' => $request->input('asset_id'),
                     'status' => $request->input('status'),
                 ]
             );
 
             return MobileResponse::success(MachineryShiftReportResource::collection($shifts->getCollection()));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'shifts.index');
         }
@@ -107,6 +117,8 @@ final class MachineryOperationsController extends Controller
             if ($shift === null) {
                 return MobileResponse::error(trans_message('machinery_operations.errors.shift_not_found'), 404);
             }
+
+            $this->assertProjectAccess($request, $shift->project_id);
 
             return MobileResponse::success(new MachineryShiftReportResource($this->service->submitShift($shift)));
         } catch (DomainException $exception) {
@@ -124,8 +136,8 @@ final class MachineryOperationsController extends Controller
                 'project_id' => ['required', 'integer'],
                 'shift_report_id' => ['nullable', 'integer'],
                 'reason' => ['required', 'string', 'max:80'],
-                'started_at' => ['required', 'date', 'before_or_equal:' . now()->toDateTimeString()],
-                'ended_at' => ['nullable', 'date', 'after:started_at', 'before_or_equal:' . now()->toDateTimeString()],
+                'started_at' => ['required', 'date', 'before_or_equal:'.now()->toDateTimeString()],
+                'ended_at' => ['nullable', 'date', 'after:started_at', 'before_or_equal:'.now()->toDateTimeString()],
                 'duration_minutes' => ['required', 'integer', 'min:1'],
                 'comment' => ['nullable', 'string', 'max:2000'],
             ]);
@@ -157,7 +169,7 @@ final class MachineryOperationsController extends Controller
             $validated = $this->validated($request, [
                 'asset_id' => ['required', 'integer'],
                 'project_id' => ['required', 'integer'],
-                'issued_at' => ['required', 'date', 'before_or_equal:' . now()->toDateTimeString()],
+                'issued_at' => ['required', 'date', 'before_or_equal:'.now()->toDateTimeString()],
                 'fuel_type' => ['required', 'string', 'max:80'],
                 'quantity' => ['required', 'numeric', 'min:0.001'],
                 'unit' => ['required', 'string', 'max:20'],
@@ -194,7 +206,7 @@ final class MachineryOperationsController extends Controller
                 'asset_id' => ['required', 'integer'],
                 'project_id' => ['required', 'integer'],
                 'shift_report_id' => ['nullable', 'integer'],
-                'recorded_at' => ['required', 'date', 'before_or_equal:' . now()->toDateTimeString()],
+                'recorded_at' => ['required', 'date', 'before_or_equal:'.now()->toDateTimeString()],
                 'quantity' => ['required', 'numeric', 'min:0.001'],
                 'unit' => ['required', 'string', 'max:20'],
                 'comment' => ['nullable', 'string', 'max:2000'],
@@ -241,7 +253,45 @@ final class MachineryOperationsController extends Controller
             throw new ValidationException($validator);
         }
 
-        return $validator->validated();
+        $validated = $validator->validated();
+        $this->assertProjectAccess($request, $validated['project_id'] ?? null);
+
+        return $validated;
+    }
+
+    private function assertProjectAccess(Request $request, mixed $projectId): void
+    {
+        if ($projectId === null || $projectId === '') {
+            return;
+        }
+
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw new DomainException(trans_message('machinery_operations.errors.project_not_found'));
+        }
+
+        $this->projectAccess->assert(
+            $user,
+            (int) $request->attributes->get('current_organization_id'),
+            (int) $projectId,
+            trans_message('machinery_operations.errors.project_not_found'),
+        );
+    }
+
+    private function accessibleProjectIds(Request $request): array
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            return [];
+        }
+
+        return $this->projectAccess
+            ->query($user, (int) $request->attributes->get('current_organization_id'))
+            ->pluck('projects.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
     }
 
     private function validationMessages(): array

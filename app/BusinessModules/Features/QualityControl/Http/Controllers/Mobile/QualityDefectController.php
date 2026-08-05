@@ -10,21 +10,23 @@ use App\BusinessModules\Features\QualityControl\Http\Resources\QualityDefectReso
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rules\File;
+use Illuminate\Validation\ValidationException;
 
 final class QualityDefectController extends Controller
 {
     public function __construct(
         private readonly QualityDefectService $service,
-    ) {
-    }
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -40,6 +42,7 @@ final class QualityDefectController extends Controller
                 'sort_by' => ['nullable', 'string', Rule::in(['created_at', 'due_date', 'severity', 'status'])],
                 'sort_dir' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
             ]);
+            $filters['project_ids'] = $this->accessibleProjectIds($request);
 
             $defects = $this->service->paginate($organizationId, $perPage, $filters);
 
@@ -72,7 +75,7 @@ final class QualityDefectController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $defect = $this->service->find($id, $organizationId);
+            $defect = $this->service->find($id, $organizationId, $this->accessibleProjectIds($request));
 
             if ($defect === null) {
                 return MobileResponse::error(trans_message('quality_control.errors.not_found'), 404);
@@ -145,7 +148,7 @@ final class QualityDefectController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->start(
                 $defect,
@@ -174,7 +177,7 @@ final class QualityDefectController extends Controller
                 'photos.*.caption' => ['nullable', 'string', 'max:255'],
                 'photos.*.metadata' => ['nullable', 'array'],
             ]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->resolve(
                 $defect,
@@ -195,7 +198,7 @@ final class QualityDefectController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->verify(
                 $defect,
@@ -221,7 +224,7 @@ final class QualityDefectController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $this->validated($request, ['comment' => ['required', 'string', 'max:1000']]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->reject(
                 $defect,
@@ -241,15 +244,30 @@ final class QualityDefectController extends Controller
         }
     }
 
-    private function findOrFail(int $id, int $organizationId)
+    private function findOrFail(Request $request, int $id, int $organizationId)
     {
-        $defect = $this->service->find($id, $organizationId);
+        $defect = $this->service->find($id, $organizationId, $this->accessibleProjectIds($request));
 
         if ($defect === null) {
             throw new DomainException(trans_message('quality_control.errors.not_found'));
         }
 
         return $defect;
+    }
+
+    private function accessibleProjectIds(Request $request): array
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            return [];
+        }
+
+        return $this->projectAccess
+            ->query($user, (int) $request->attributes->get('current_organization_id'))
+            ->pluck('projects.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
     }
 
     private function failedAction(string $action, int $id, \Throwable $e): JsonResponse
@@ -271,7 +289,33 @@ final class QualityDefectController extends Controller
             throw new ValidationException($validator);
         }
 
-        return $validator->validated();
+        $validated = $validator->validated();
+        $projectId = $validated['project_id'] ?? null;
+
+        if ($projectId !== null && $projectId !== '') {
+            $user = $request->user();
+
+            if (! $user instanceof User) {
+                throw ValidationException::withMessages([
+                    'project_id' => [trans_message('quality_control.errors.project_not_found')],
+                ]);
+            }
+
+            try {
+                $this->projectAccess->assert(
+                    $user,
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $projectId,
+                    trans_message('quality_control.errors.project_not_found'),
+                );
+            } catch (DomainException $exception) {
+                throw ValidationException::withMessages([
+                    'project_id' => [$exception->getMessage()],
+                ]);
+            }
+        }
+
+        return $validated;
     }
 
     private function validationMessages(): array

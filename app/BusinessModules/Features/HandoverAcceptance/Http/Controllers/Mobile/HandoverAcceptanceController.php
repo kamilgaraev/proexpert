@@ -11,6 +11,8 @@ use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\HandoverPacka
 use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,7 +36,10 @@ final class HandoverAcceptanceController extends Controller
         'rejected',
     ];
 
-    public function __construct(private readonly HandoverAcceptanceService $service) {}
+    public function __construct(
+        private readonly HandoverAcceptanceService $service,
+        private readonly MobileProjectAccessResolver $projectAccess,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -45,6 +50,30 @@ final class HandoverAcceptanceController extends Controller
                 'planned_from' => ['nullable', 'date'],
                 'planned_to' => ['nullable', 'date', 'after_or_equal:planned_from'],
             ]);
+
+            if (isset($validated['project_id'])) {
+                $user = $request->user();
+
+                if (! $user instanceof User) {
+                    throw ValidationException::withMessages([
+                        'project_id' => [trans_message('handover_acceptance.errors.project_not_found')],
+                    ]);
+                }
+
+                try {
+                    $this->projectAccess->assert(
+                        $user,
+                        (int) $request->attributes->get('current_organization_id'),
+                        (int) $validated['project_id'],
+                        trans_message('handover_acceptance.errors.project_not_found'),
+                    );
+                } catch (DomainException $exception) {
+                    throw ValidationException::withMessages([
+                        'project_id' => [$exception->getMessage()],
+                    ]);
+                }
+            }
+            $validated['project_ids'] = $this->accessibleProjectIds($request);
 
             $scopes = $this->service->listScopes(
                 (int) $request->attributes->get('current_organization_id'),
@@ -77,7 +106,8 @@ final class HandoverAcceptanceController extends Controller
         try {
             return MobileResponse::success(new AcceptanceScopeResource($this->service->findScope(
                 (int) $request->attributes->get('current_organization_id'),
-                $scope
+                $scope,
+                $this->accessibleProjectIds($request),
             )));
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 404);
@@ -95,7 +125,11 @@ final class HandoverAcceptanceController extends Controller
             ]);
 
             $reviewed = $this->service->reviewChecklistItem(
-                $this->service->findChecklistItem((int) $request->attributes->get('current_organization_id'), $item),
+                $this->service->findChecklistItem(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $item,
+                    $this->accessibleProjectIds($request),
+                ),
                 (int) $request->user()?->id,
                 $validated
             );
@@ -130,7 +164,11 @@ final class HandoverAcceptanceController extends Controller
 
             return MobileResponse::success(
                 new AcceptanceFindingResource($this->service->addFinding(
-                    $this->service->findSession((int) $request->attributes->get('current_organization_id'), $session),
+                    $this->service->findSession(
+                        (int) $request->attributes->get('current_organization_id'),
+                        $session,
+                        $this->accessibleProjectIds($request),
+                    ),
                     (int) $request->user()?->id,
                     $validated
                 )),
@@ -156,7 +194,11 @@ final class HandoverAcceptanceController extends Controller
             $validated = $this->validated($request, ['resolution_comment' => ['required', 'string', 'max:2000']]);
 
             return MobileResponse::success(new AcceptanceFindingResource($this->service->resolveFinding(
-                $this->service->findFinding((int) $request->attributes->get('current_organization_id'), $finding),
+                $this->service->findFinding(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $finding,
+                    $this->accessibleProjectIds($request),
+                ),
                 (int) $request->user()?->id,
                 $validated
             )));
@@ -268,7 +310,11 @@ final class HandoverAcceptanceController extends Controller
             }
 
             $uploaded = $this->service->uploadDocument(
-                $this->service->findPackageDocument((int) $request->attributes->get('current_organization_id'), $document),
+                $this->service->findPackageDocument(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $document,
+                    $this->accessibleProjectIds($request),
+                ),
                 $file
             );
 
@@ -293,13 +339,32 @@ final class HandoverAcceptanceController extends Controller
     {
         try {
             return MobileResponse::success(new AcceptanceScopeResource($action(
-                $this->service->findScope((int) $request->attributes->get('current_organization_id'), $scope)
+                $this->service->findScope(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $scope,
+                    $this->accessibleProjectIds($request),
+                )
             )));
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, $logAction);
         }
+    }
+
+    private function accessibleProjectIds(Request $request): array
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            return [];
+        }
+
+        return $this->projectAccess
+            ->query($user, (int) $request->attributes->get('current_organization_id'))
+            ->pluck('projects.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
     }
 
     private function failed(Request $request, \Throwable $exception, string $action): JsonResponse

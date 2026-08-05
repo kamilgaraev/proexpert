@@ -25,14 +25,14 @@ final class ProductionLaborService
 {
     public function __construct(
         private readonly SafetyComplianceService $safetyComplianceService,
-    ) {
-    }
+    ) {}
 
     public function paginateWorkOrders(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
         return ProductionLaborWorkOrder::query()
             ->with(['project:id,name', 'lines'])
             ->where('organization_id', $organizationId)
+            ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when($filters['project_id'] ?? null, fn ($query, $projectId) => $query->where('project_id', $projectId))
             ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
             ->latest()
@@ -141,7 +141,7 @@ final class ProductionLaborService
 
     public function submitWorkOrder(ProductionLaborWorkOrder $workOrder): ProductionLaborWorkOrder
     {
-        if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+        if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.submit_invalid_status'));
         }
 
@@ -209,7 +209,7 @@ final class ProductionLaborService
 
     public function cancelWorkOrder(ProductionLaborWorkOrder $workOrder): ProductionLaborWorkOrder
     {
-        if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+        if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.cancel_invalid_status'));
         }
 
@@ -223,7 +223,7 @@ final class ProductionLaborService
         $line = $this->findLine($organizationId, (int) $payload['work_order_line_id']);
         $workOrder = $line->workOrder;
 
-        if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+        if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.output_invalid_status'));
         }
 
@@ -231,7 +231,7 @@ final class ProductionLaborService
         $accepted = (float) $line->accepted_quantity;
         $planned = (float) $line->planned_quantity;
 
-        if (!$allowOverrun && $planned > 0 && round($accepted + $quantity, 4) > $planned) {
+        if (! $allowOverrun && $planned > 0 && round($accepted + $quantity, 4) > $planned) {
             throw new DomainException(trans_message('production_labor.errors.output_over_plan'));
         }
 
@@ -270,7 +270,7 @@ final class ProductionLaborService
     {
         $workOrder = $this->findWorkOrder($organizationId, (int) $payload['work_order_id']);
 
-        if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+        if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.timesheet_invalid_status'));
         }
 
@@ -301,7 +301,7 @@ final class ProductionLaborService
                     throw new DomainException(trans_message('production_labor.errors.worker_name_not_allowed_for_payroll'));
                 }
 
-                if (!(bool) $includeInPayroll && $workerName === '') {
+                if (! (bool) $includeInPayroll && $workerName === '') {
                     throw new DomainException(trans_message('production_labor.errors.worker_or_brigade_required'));
                 }
 
@@ -380,7 +380,7 @@ final class ProductionLaborService
             ->where('organization_id', $organizationId)
             ->find($id);
 
-        if (!$workOrder) {
+        if (! $workOrder) {
             throw new DomainException(trans_message('production_labor.errors.work_order_not_found'));
         }
 
@@ -394,7 +394,7 @@ final class ProductionLaborService
             ->where('organization_id', $organizationId)
             ->find($id);
 
-        if (!$line) {
+        if (! $line) {
             throw new DomainException(trans_message('production_labor.errors.line_not_found'));
         }
 
@@ -404,11 +404,11 @@ final class ProductionLaborService
     private function assertProject(int $organizationId, int $projectId): void
     {
         $exists = Project::query()
-            ->where('organization_id', $organizationId)
+            ->accessibleByOrganization($organizationId)
             ->whereKey($projectId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('production_labor.errors.project_not_found'));
         }
     }
@@ -457,7 +457,7 @@ final class ProductionLaborService
             ->whereDate('valid_until', '>=', $shiftDate)
             ->first();
 
-        if (!$permit instanceof SafetyWorkPermit) {
+        if (! $permit instanceof SafetyWorkPermit) {
             throw new DomainException(trans_message('production_labor.errors.safety_permit_required'));
         }
 
@@ -500,7 +500,7 @@ final class ProductionLaborService
         string $shiftDate,
         bool $includeInPayroll
     ): ?WorkforceEmployee {
-        if (!$includeInPayroll) {
+        if (! $includeInPayroll) {
             return null;
         }
 
@@ -512,7 +512,7 @@ final class ProductionLaborService
             ->where('organization_id', $organizationId)
             ->find((int) $employeeId);
 
-        if (!$employee) {
+        if (! $employee) {
             throw new DomainException(trans_message('production_labor.errors.employee_not_found'));
         }
 
