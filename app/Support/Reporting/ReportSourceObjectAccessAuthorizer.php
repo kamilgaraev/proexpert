@@ -16,6 +16,7 @@ final readonly class ReportSourceObjectAccessAuthorizer
         'task_dependency' => 'dependency',
         'performance_act' => 'act',
         'contract_performance_act' => 'act',
+        'approved_act' => 'act',
         'performance_act_line' => 'act_line',
         'completed_work' => 'work',
         'work_constraint' => 'constraint',

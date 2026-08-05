@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Http\Admin\Middleware;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
 use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
+use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceCandidateContract;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
@@ -93,6 +94,7 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.workforce-capacity.runs.store',
             'admin.reports.workforce-capacity.options',
             'admin.reports.portfolio-liquidity.options',
+            'admin.reports.holding-performance.runs.store',
             'admin.reports.intercompany-contract-flows.runs.store',
             'admin.reports.intercompany-contract-flows.options' => $this->targets->createRun(
                 $this->routeId($request, 'reportCode'),
@@ -140,6 +142,7 @@ final readonly class AuthorizeReportDefinitionAccess
             ProjectLaborCostCandidateContract::CODE,
             PayrollReadinessCandidateContract::CODE,
             WorkforceCapacityCandidateContract::CODE,
+            HoldingPerformanceCandidateContract::CODE,
             IntercompanyContractFlowCandidateContract::CODE,
         ], true)) {
             $this->deny();

@@ -308,7 +308,9 @@ final readonly class HoldingAllocationFactProjector
                 throw new InvalidArgumentException('holding_allocation_percentage_invalid');
             }
         }
-        $currency = mb_strtoupper((string) $source['currency']);
+        $currency = $source['currency'] === null
+            ? null
+            : mb_strtoupper((string) $source['currency']);
 
         return new HoldingAllocationFact(
             organizationId: (int) $source['organization_id'],
@@ -446,7 +448,7 @@ final readonly class HoldingAllocationFactProjector
         $missing = [];
         foreach ($required as $field) {
             if (! array_key_exists($field, $source)
-                || (! in_array($field, ['contractor_id', 'work_type_category'], true)
+                || (! in_array($field, ['contractor_id', 'work_type_category', 'currency'], true)
                     && $source[$field] === null)
                 || $source[$field] === ''
                 || ($field === 'hierarchy_organization_ids' && $source[$field] === [])) {

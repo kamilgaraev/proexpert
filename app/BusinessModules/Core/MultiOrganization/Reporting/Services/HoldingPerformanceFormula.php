@@ -6,18 +6,23 @@ namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFact;
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingPerformanceMetricRow;
+use App\Enums\CurrencyCode;
 
 final readonly class HoldingPerformanceFormula
 {
-    public function row(HoldingAllocationFact $fact): HoldingPerformanceMetricRow
+    public function row(HoldingAllocationFact $fact, ?string $periodStart = null): HoldingPerformanceMetricRow
     {
+        $currency = $fact->currency === null
+            ? null
+            : CurrencyCode::tryFrom(mb_strtoupper($fact->currency))?->value;
+
         return new HoldingPerformanceMetricRow(
             organizationId: $fact->organizationId,
             holdingId: $fact->holdingId,
             contributorOrganizationId: $fact->contributorOrganizationId,
             projectId: $fact->projectId,
-            currency: $fact->currency,
-            periodStart: substr($fact->recognizedOn, 0, 7) . '-01',
+            currency: $currency,
+            periodStart: $periodStart ?? substr($fact->recognizedOn, 0, 7).'-01',
             monetaryBasis: $fact->monetaryBasis,
             contractedMinor: $fact->monetaryBasis === 'contracted' ? $fact->amountMinor : 0,
             acceptedAccrualMinor: $fact->monetaryBasis === 'accepted_accrual' ? $fact->amountMinor : 0,
@@ -31,18 +36,16 @@ final readonly class HoldingPerformanceFormula
     {
         $currencies = [];
         $unknownCurrencyCount = 0;
-        $excludedAmountMinor = 0;
         $eligibleCount = 0;
 
         foreach ($rows as $row) {
-            if (!$row instanceof HoldingPerformanceMetricRow) {
+            if (! $row instanceof HoldingPerformanceMetricRow) {
                 continue;
             }
             $eligibleCount++;
 
             if ($row->currency === null) {
                 $unknownCurrencyCount++;
-                $excludedAmountMinor += $row->amountMinor();
                 continue;
             }
 
@@ -63,7 +66,7 @@ final readonly class HoldingPerformanceFormula
             'quality' => [
                 'eligible_count' => $eligibleCount,
                 'unknown_currency_count' => $unknownCurrencyCount,
-                'excluded_amount_minor' => $excludedAmountMinor,
+                'excluded_amount_minor' => null,
             ],
         ];
     }

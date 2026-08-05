@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Catalog;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowBuiltinPublishedReport;
+use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceBuiltinPublishedReport;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
@@ -53,6 +54,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private HandoverReadinessBuiltinPublishedReport $handoverReadiness,
         private ContractorScorecardBuiltinPublishedReport $contractorScorecard,
         private CustomerSlaBuiltinPublishedReport $customerSla,
+        private HoldingPerformanceBuiltinPublishedReport $holdingPerformance,
         private IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
     ) {}
 
@@ -79,6 +81,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->handoverReadiness->metadata()->code => $this->handoverReadiness->metadata(),
             $this->contractorScorecard->metadata()->code => $this->contractorScorecard->metadata(),
             $this->customerSla->metadata()->code => $this->customerSla->metadata(),
+            $this->holdingPerformance->metadata()->code => $this->holdingPerformance->metadata(),
             $this->intercompanyContractFlow->metadata()->code => $this->intercompanyContractFlow->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };

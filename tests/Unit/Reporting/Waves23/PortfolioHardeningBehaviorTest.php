@@ -8,7 +8,6 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedW
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\HoldingPerformanceRowQuery;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
-use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceFormula;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceSnapshotMaterializer;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
@@ -129,7 +128,7 @@ final class PortfolioHardeningBehaviorTest extends TestCase
     public function allocation_drill_down_uses_contract_identity_for_contract_route(): void
     {
         $query = new HoldingPerformanceRowQuery(
-            new HoldingPerformanceSnapshotMaterializer(new HoldingPerformanceFormula),
+            (new \ReflectionClass(HoldingPerformanceSnapshotMaterializer::class))->newInstanceWithoutConstructor(),
         );
         $method = new ReflectionMethod($query, 'routeParams');
 
@@ -147,7 +146,7 @@ final class PortfolioHardeningBehaviorTest extends TestCase
     public function allocation_drill_down_authorizes_the_routed_contract_target(): void
     {
         $query = new HoldingPerformanceRowQuery(
-            new HoldingPerformanceSnapshotMaterializer(new HoldingPerformanceFormula),
+            (new \ReflectionClass(HoldingPerformanceSnapshotMaterializer::class))->newInstanceWithoutConstructor(),
         );
         $method = new ReflectionMethod($query, 'authorizationIdentity');
 
@@ -244,15 +243,20 @@ final class PortfolioHardeningBehaviorTest extends TestCase
     }
 
     #[Test]
-    public function accepted_work_observer_records_inactive_creation_anchor(): void
+    public function accepted_work_lifecycle_records_inactive_creation_anchor(): void
     {
-        $source = file_get_contents(dirname(__DIR__, 4).'/app/Observers/ContractPerformanceActObserver.php');
+        $source = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Core/MultiOrganization/Reporting/Services/'
+            .'HoldingAcceptedWorkLifecycleRecorder.php',
+        );
 
         self::assertIsString($source);
         self::assertStringContainsString(
-            'HoldingAcceptedWorkEventVersion::record($act, $active, $occurredAt, historyComplete: true)',
+            'historyComplete: true',
             $source,
         );
+        self::assertStringContainsString('$this->facts->projectEvent($event)', $source);
     }
 
     #[Test]
@@ -357,14 +361,14 @@ final class PortfolioHardeningBehaviorTest extends TestCase
     {
         $source = file_get_contents(
             dirname(__DIR__, 4)
-            .'/app/BusinessModules/Core/MultiOrganization/Reporting/Listeners/ProjectHoldingAllocationFacts.php',
+            .'/app/BusinessModules/Core/MultiOrganization/Reporting/Services/HoldingPaymentEventFactProducer.php',
         );
 
         self::assertIsString($source);
         self::assertStringContainsString(
-            'CurrencyCode::tryFrom(mb_strtoupper($eventCurrency)) !== null',
+            'CurrencyCode::tryFrom($currency) === null',
             $source,
         );
-        self::assertStringContainsString("\$currencyValid ? null : 'currency'", $source);
+        self::assertStringContainsString("\$missing[] = 'currency'", $source);
     }
 }

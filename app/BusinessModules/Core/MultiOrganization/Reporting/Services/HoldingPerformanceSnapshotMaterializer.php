@@ -5,14 +5,16 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFact;
-use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingHierarchySnapshot;
+use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationCheckpointSource;
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingPerformanceMetricRow;
+use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingPerformanceProjectionCoverage;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationProjectionGap;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPerformanceRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPerformanceSnapshot;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
@@ -33,11 +35,12 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use DateTimeInterface;
+use DateTimeZone;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Throwable;
+use InvalidArgumentException;
 
 final readonly class HoldingPerformanceSnapshotMaterializer
 {
@@ -45,7 +48,12 @@ final readonly class HoldingPerformanceSnapshotMaterializer
 
     public function __construct(
         private HoldingPerformanceFormula $formula,
-        private HoldingHierarchyResolver $hierarchies = new HoldingHierarchyResolver,
+        private HoldingAllocationCheckpointSourceAssembler $sources,
+        private HoldingAllocationFactProjector $projector,
+        private HoldingPerformanceImmutableEventSource $events,
+        private HoldingPerformanceImmutableProjectionSynchronizer $synchronizer,
+        private HoldingPerformanceProjectionCoverageInspector $projectionCoverage,
+        private ?CanonicalReportSourceHashBuilder $sourceHashes = null,
     ) {}
 
     public function materialize(
@@ -54,14 +62,70 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
-        $hierarchy = $this->hierarchy($context, $query->asOf);
-        $recordedCutoff = now()->toImmutable();
+        try {
+            $coverageStartedAt = $this->events->coverageStartedAt(
+                $this->sources->coverageStartedAt($query->asOf),
+                $context->scope->timezone,
+            );
+            $this->events->assertPeriodCovered(
+                $query->filters->values,
+                $coverageStartedAt,
+                $context->scope->timezone,
+            );
+            $openingBoundary = $this->sources->openingBoundary($query);
+            $batch = $this->sources->assembleOpeningState($context->scope, $query, $openingBoundary);
+            if ($batch->gaps !== []) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            foreach ($batch->sources as $source) {
+                if (! $source instanceof HoldingAllocationCheckpointSource) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+                }
+                $this->projector->persist($source->fact, $source->evidence);
+            }
+            $contractVersionIds = array_values(array_unique(array_map(
+                static fn (HoldingAllocationCheckpointSource $source): int => $source->fact->sourceVersion,
+                $batch->sources,
+            )));
+            sort($contractVersionIds, SORT_NUMERIC);
+            $hierarchy = $batch->hierarchy;
+            $projectionCutoff = now()->toImmutable();
+            $this->synchronizer->synchronize(
+                $hierarchy->organizationIds,
+                $context->scope->projectIds,
+                $coverageStartedAt,
+                $query->asOf,
+                $projectionCutoff,
+            );
+            $recordedCutoff = now()->toImmutable();
+            $projectionCoverage = $this->projectionCoverage->inspect(
+                $hierarchy->holdingId,
+                $hierarchy->organizationIds,
+                $context->scope->projectIds,
+                $coverageStartedAt,
+                $query->asOf,
+                $recordedCutoff,
+            );
+            if (! $projectionCoverage->complete()) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+        } catch (ReportContractException $exception) {
+            throw $exception;
+        } catch (InvalidArgumentException $exception) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
+                previous: $exception,
+            );
+        }
         $facts = $this->facts(
             $context,
             $query,
             $hierarchy->holdingId,
             $hierarchy->organizationIds,
             $recordedCutoff,
+            $coverageStartedAt,
+            $projectionCoverage,
+            $contractVersionIds,
         )
             ->orderBy('id')
             ->get();
@@ -69,12 +133,20 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         $sourcePayload = [[
             'holding_id' => $hierarchy->holdingId,
             'hierarchy_version' => $hierarchy->version,
+            'opening_boundary' => $openingBoundary->format(DateTimeInterface::ATOM),
             'source_schema_version' => $query->definition->sourceSchemaVersion,
+            'source_watermark' => $batch->watermark,
+            'projection_coverage_watermark' => $projectionCoverage->watermark,
         ]];
 
         foreach ($facts as $factRecord) {
             $fact = $this->fact($factRecord);
-            $metricRows[] = $this->formula->row($fact);
+            $metricRows[] = $this->formula->row(
+                $fact,
+                $fact->monetaryBasis === 'contracted'
+                    ? $this->openingPeriodStart($openingBoundary, $context->scope->timezone)
+                    : null,
+            );
             $sourcePayload[] = [
                 'id' => (int) $factRecord->getKey(),
                 'source_hash' => (string) $factRecord->source_hash,
@@ -95,6 +167,21 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             ->whereIn('organization_id', $hierarchy->organizationIds)
             ->where('business_effective_at', '<=', $query->asOf)
             ->where('recorded_at', '<=', $recordedCutoff)
+            ->where(static fn (Builder $basis): Builder => $basis
+                ->where(static fn (Builder $contracted): Builder => $contracted
+                    ->where('monetary_basis', 'contracted')
+                    ->whereIn('source_type', ['contract_checkpoint', 'contract'])
+                    ->whereIn('source_version', $contractVersionIds))
+                ->orWhere(static fn (Builder $accepted): Builder => $accepted
+                    ->where('monetary_basis', 'accepted_accrual')
+                    ->where('source_type', 'performance_act')
+                    ->where('business_effective_at', '>=', $coverageStartedAt)
+                    ->whereIn('source_version', $projectionCoverage->contributingActVersionIds))
+                ->orWhere(static fn (Builder $cash): Builder => $cash
+                    ->where('monetary_basis', 'cash')
+                    ->where('source_type', 'payment_transaction_event')
+                    ->where('business_effective_at', '>=', $coverageStartedAt)
+                    ->whereIn('source_version', $projectionCoverage->contributingPaymentVersionIds)))
             ->where(static fn (Builder $builder): Builder => $builder
                 ->where(static fn (Builder $recorded): Builder => $recorded
                     ->whereNull('resolved_at')
@@ -229,7 +316,12 @@ final readonly class HoldingPerformanceSnapshotMaterializer
 
         $progress->advance(100);
 
-        return $this->ref($context, HoldingPerformanceSnapshot::query()->findOrFail($snapshotId));
+        $record = HoldingPerformanceSnapshot::query()->findOrFail($snapshotId);
+        $provisional = $this->ref($context, $record);
+        $canonical = ($this->sourceHashes ?? new CanonicalReportSourceHashBuilder)
+            ->build($query, $provisional, $this->result($context, $provisional));
+
+        return $this->ref($context, $record, $canonical);
     }
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
@@ -266,7 +358,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             ->first();
         if (! $record instanceof HoldingPerformanceSnapshot
             || $snapshot->kind !== self::CODE
-            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->source_hash, $snapshot->materializedSourceHash->value)
             || ! hash_equals((string) $record->definition_hash, $snapshot->definitionHash->value)
             || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
             || ! hash_equals((string) $record->query_hash, (string) ($snapshot->watermarks['query_hash'] ?? ''))) {
@@ -327,23 +419,63 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         int $holdingId,
         array $organizationIds,
         DateTimeInterface $recordedCutoff,
+        DateTimeInterface $coverageStartedAt,
+        HoldingPerformanceProjectionCoverage $projectionCoverage,
+        array $contractVersionIds,
     ): Builder {
         $builder = HoldingAllocationFactVersion::query()
             ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->where('holding_id', $holdingId)
             ->whereIn('organization_id', $organizationIds)
             ->whereIn('contributor_organization_id', $organizationIds)
+            ->whereIn('project_id', $context->scope->projectIds)
             ->where('business_effective_at', '<=', $query->asOf)
             ->where('recorded_at', '<=', $recordedCutoff)
-            ->whereNotExists(function (QueryBuilder $newer) use ($query, $recordedCutoff): void {
+            ->where(static fn (Builder $basis): Builder => $basis
+                ->where(static fn (Builder $contracted): Builder => $contracted
+                    ->where('monetary_basis', 'contracted')
+                    ->whereIn('source_type', ['contract_checkpoint', 'contract'])
+                    ->whereIn('source_version', $contractVersionIds))
+                ->orWhere(static fn (Builder $accepted): Builder => $accepted
+                    ->where('monetary_basis', 'accepted_accrual')
+                    ->where('source_type', 'performance_act')
+                    ->where('business_effective_at', '>=', $coverageStartedAt)
+                    ->whereIn('source_version', $projectionCoverage->contributingActVersionIds))
+                ->orWhere(static fn (Builder $cash): Builder => $cash
+                    ->where('monetary_basis', 'cash')
+                    ->where('source_type', 'payment_transaction_event')
+                    ->where('business_effective_at', '>=', $coverageStartedAt)
+                    ->whereIn('source_version', $projectionCoverage->contributingPaymentVersionIds)))
+            ->whereNotExists(function (QueryBuilder $newer) use (
+                $query,
+                $recordedCutoff,
+                $projectionCoverage,
+                $contractVersionIds,
+            ): void {
                 $newer
                     ->selectRaw('1')
                     ->from('holding_allocation_fact_versions as newer_fact')
-                    ->whereColumn('newer_fact.holding_id', 'holding_allocation_fact_versions.holding_id')
-                    ->whereColumn('newer_fact.organization_id', 'holding_allocation_fact_versions.organization_id')
-                    ->whereColumn('newer_fact.source_type', 'holding_allocation_fact_versions.source_type')
-                    ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id')
+                    ->where('newer_fact.source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
                     ->whereColumn('newer_fact.monetary_basis', 'holding_allocation_fact_versions.monetary_basis')
+                    ->where(static fn (QueryBuilder $identity): QueryBuilder => $identity
+                        ->where(static fn (QueryBuilder $contracted): QueryBuilder => $contracted
+                            ->where('holding_allocation_fact_versions.monetary_basis', 'contracted')
+                            ->whereIn('holding_allocation_fact_versions.source_type', ['contract_checkpoint', 'contract'])
+                            ->whereIn('newer_fact.source_type', ['contract_checkpoint', 'contract'])
+                            ->whereIn('newer_fact.source_version', $contractVersionIds)
+                            ->whereColumn('newer_fact.allocation_id', 'holding_allocation_fact_versions.allocation_id'))
+                        ->orWhere(static fn (QueryBuilder $source): QueryBuilder => $source
+                            ->where('holding_allocation_fact_versions.monetary_basis', 'accepted_accrual')
+                            ->where('holding_allocation_fact_versions.source_type', 'performance_act')
+                            ->where('newer_fact.source_type', 'performance_act')
+                            ->whereIn('newer_fact.source_version', $projectionCoverage->contributingActVersionIds)
+                            ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id'))
+                        ->orWhere(static fn (QueryBuilder $source): QueryBuilder => $source
+                            ->where('holding_allocation_fact_versions.monetary_basis', 'cash')
+                            ->where('holding_allocation_fact_versions.source_type', 'payment_transaction_event')
+                            ->where('newer_fact.source_type', 'payment_transaction_event')
+                            ->whereIn('newer_fact.source_version', $projectionCoverage->contributingPaymentVersionIds)
+                            ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id')))
                     ->where('newer_fact.business_effective_at', '<=', $query->asOf)
                     ->where('newer_fact.recorded_at', '<=', $recordedCutoff)
                     ->where(static fn (QueryBuilder $tuple): QueryBuilder => $tuple
@@ -385,55 +517,47 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                                                 'holding_allocation_fact_versions.id',
                                             )))))));
             });
-        if ($context->scope->projectIds !== []) {
-            $builder->whereIn('project_id', $context->scope->projectIds);
-        }
-
         $filters = $query->filters->values;
         foreach ([
             'organization_ids' => 'contributor_organization_id',
             'project_ids' => 'project_id',
+            'contractor_ids' => 'contractor_id',
+            'contract_statuses' => 'contract_status',
             'currencies' => 'currency',
         ] as $filter => $column) {
             if (isset($filters[$filter]) && is_array($filters[$filter]) && $filters[$filter] !== []) {
                 $builder->whereIn($column, $filters[$filter]);
             }
         }
-        if (isset($filters['period_from']) && is_string($filters['period_from'])) {
-            $builder->whereDate('recognized_on', '>=', $filters['period_from']);
-        }
-        if (isset($filters['period_to']) && is_string($filters['period_to'])) {
-            $builder->whereDate('recognized_on', '<=', $filters['period_to']);
+        $periodFrom = isset($filters['period_from']) && is_string($filters['period_from'])
+            ? $filters['period_from']
+            : null;
+        $periodTo = isset($filters['period_to']) && is_string($filters['period_to'])
+            ? $filters['period_to']
+            : null;
+        if ($periodFrom !== null || $periodTo !== null) {
+            $builder->where(static function (Builder $period) use ($periodFrom, $periodTo): void {
+                $period->where('monetary_basis', 'contracted')
+                    ->orWhere(static function (Builder $events) use ($periodFrom, $periodTo): void {
+                        $events->whereIn('monetary_basis', ['accepted_accrual', 'cash']);
+                        if ($periodFrom !== null) {
+                            $events->whereDate('recognized_on', '>=', $periodFrom);
+                        }
+                        if ($periodTo !== null) {
+                            $events->whereDate('recognized_on', '<=', $periodTo);
+                        }
+                    });
+            });
         }
 
         return $builder;
     }
 
-    private function hierarchy(
-        ReportExecutionContext $context,
-        DateTimeInterface $asOf,
-    ): HoldingHierarchySnapshot
+    private function openingPeriodStart(DateTimeInterface $openingBoundary, DateTimeZone $timezone): string
     {
-        try {
-            $hierarchy = $this->hierarchies->resolveAt($context->scope->organizationId, $asOf);
-        } catch (ReportContractException $exception) {
-            throw $exception;
-        } catch (Throwable $exception) {
-            throw ReportContractException::fromCode(
-                ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
-                previous: $exception,
-            );
-        }
-        $authorizedIds = $context->scope->holdingOrganizationIds;
-        $historicalIds = $hierarchy->organizationIds;
-        sort($authorizedIds, SORT_NUMERIC);
-        sort($historicalIds, SORT_NUMERIC);
-        if ($hierarchy->holdingId !== $context->scope->organizationId
-            || $authorizedIds !== $historicalIds) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
-        }
-
-        return $hierarchy;
+        return DateTimeImmutable::createFromInterface($openingBoundary)
+            ->setTimezone($timezone)
+            ->format('Y-m-01');
     }
 
     private function fact(HoldingAllocationFactVersion $record): HoldingAllocationFact
@@ -473,10 +597,13 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         $rows = [];
 
         foreach ($metricRows as $metric) {
+            if ($metric->currency === null) {
+                continue;
+            }
             $identity = implode(':', [
                 $metric->contributorOrganizationId,
                 $metric->projectId,
-                $metric->currency ?? 'unknown',
+                $metric->currency,
                 $metric->periodStart,
                 $metric->monetaryBasis,
             ]);
@@ -544,15 +671,21 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         }
     }
 
-    private function ref(ReportExecutionContext $context, HoldingPerformanceSnapshot $record): ReportSnapshotRef
+    private function ref(
+        ReportExecutionContext $context,
+        HoldingPerformanceSnapshot $record,
+        ?Sha256Hash $canonicalHash = null,
+    ): ReportSnapshotRef
     {
+        $materializedHash = new Sha256Hash((string) $record->source_hash);
+
         return new ReportSnapshotRef(
             self::CODE,
             (string) $record->getKey(),
             $context->scope,
             new Sha256Hash((string) $record->definition_hash),
             (string) $record->formula_version,
-            new Sha256Hash((string) $record->source_hash),
+            $canonicalHash ?? $materializedHash,
             new DateTimeImmutable((string) $record->generated_at),
             null,
             [
@@ -567,6 +700,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             ],
             ReportSnapshotClassification::OPERATIONAL,
             null,
+            $materializedHash,
         );
     }
 
@@ -576,7 +710,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             'holding_allocations',
             'holding_facts',
             'snapshot_'.strtolower($snapshotId),
-            'holding_facts_v1',
+            HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION,
             'watermark_'.$watermark,
             $count,
             $hash,
