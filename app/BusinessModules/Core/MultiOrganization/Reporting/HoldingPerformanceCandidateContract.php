@@ -44,7 +44,7 @@ final readonly class HoldingPerformanceCandidateContract
     public const FORMULA_VERSION = 'holding_performance.v1';
     public const SOURCE_SCHEMA_VERSION = 'holding_allocation_facts.v2';
     public const FORMULA_HASH = '59c4e2d23349656ae8948679fcea4dc59da5be20792b865afb17da2b9a667f20';
-    public const SOURCE_HASH = '84b44cd2bf4d78e669ac6157592de51e883bfaae0ee959ce6f5ffe75384298a0';
+    public const SOURCE_HASH = 'd67f655bb2bf811289ae7fab8177a25d2dac78bd08d3a3a3b22be7f292aff344';
 
     public function filters(): array
     {
