@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportEvidenceRedactor
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceObjectAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Rows\StableDrillDownPage;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -16,12 +17,17 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use InvalidArgumentException;
 use JsonException;
 
-final readonly class ContractorScorecardDrillDownProvider implements ReportDrillDownProvider
+final readonly class ContractorScorecardDrillDownProvider implements ReportDrillDownProvider, ReportDrillDownTokenColumns
 {
     public function __construct(
         private ReportSourceObjectAuthorizer $sources,
         private ReportEvidenceRedactor $redactor,
     ) {}
+
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'evidence_refs'];
+    }
 
     public function drillDown(
         ReportExecutionContext $context,

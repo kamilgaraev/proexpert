@@ -323,6 +323,7 @@
       "contractor_marketplace.categories.view",
       "contractor_marketplace.search.view",
       "contractor_marketplace.profile.view",
+      "contractor_marketplace.reports.export",
       "contractor_marketplace.profile.edit",
       "contractor_marketplace.profile.publish",
       "contractor_marketplace.offers.view",

@@ -25,6 +25,7 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceA
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsBuiltinPublishedReport;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
 
 final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportDefinitionRegistry
@@ -48,10 +49,11 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         SafetyIncidentActionsBuiltinPublishedReport $safetyIncidentActions,
         WorkforceAdmissionBuiltinPublishedReport $workforceAdmission,
         HandoverReadinessBuiltinPublishedReport $handoverReadiness,
+        ContractorScorecardBuiltinPublishedReport $contractorScorecard,
         CustomerSlaBuiltinPublishedReport $customerSla,
     ) {
         $byCode = [];
-        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $baselineScheduleVariance->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $customerSla->definition()] as $definition) {
+        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $baselineScheduleVariance->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $contractorScorecard->definition(), $customerSla->definition()] as $definition) {
             $byCode[$definition->code] = $definition;
         }
         ksort($byCode, SORT_STRING);

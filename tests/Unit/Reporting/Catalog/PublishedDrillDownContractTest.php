@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Catalog;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardCandidateContract;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DrillDown\ContractorScorecardDrillDownProvider;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DrillDown\InventoryRiskDrillDownProvider;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskCandidateContract;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Queries\SupplierAwardRowQuery;
@@ -47,6 +49,7 @@ final class PublishedDrillDownContractTest extends TestCase
     {
         yield [BaselineScheduleVarianceQueryService::class, new BaselineScheduleVarianceCandidateContract];
         yield [CustomerSlaDrillDownProvider::class, new CustomerSlaCandidateContract];
+        yield [ContractorScorecardDrillDownProvider::class, new ContractorScorecardCandidateContract];
         yield [SupplierAwardRowQuery::class, new SupplierAwardCandidateContract];
         yield [SupplyReliabilityDrillDownProvider::class, new SupplyReliabilityCandidateContract];
         yield [InventoryRiskDrillDownProvider::class, new InventoryRiskCandidateContract];

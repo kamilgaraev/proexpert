@@ -19,6 +19,7 @@ use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceProfile
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceRatingService;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceSearchService;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceWorkCategoryService;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
@@ -41,15 +42,26 @@ class ContractorMarketplaceServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardObservationReader::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardPolicyWriter::class);
         $this->app->scoped(Reporting\Scorecard\Services\ContractorScorecardSnapshotMaterializer::class);
-        $this->app->singleton(Reporting\Scorecard\Providers\ContractorScorecardReportProvider::class);
+        $this->app->scoped(Reporting\Scorecard\Providers\ContractorScorecardReportProvider::class);
         $this->app->singleton(Reporting\Scorecard\Queries\ContractorScorecardRowQuery::class);
         $this->app->singleton(Reporting\Scorecard\DrillDown\ContractorScorecardDrillDownProvider::class);
         $this->app->singleton(Reporting\Scorecard\Readiness\ContractorScorecardReadinessProbe::class);
         $this->app->singleton(Reporting\Scorecard\Backfill\ContractorScorecardBackfill::class);
+        $this->app->singleton(Reporting\Scorecard\ContractorScorecardCandidateContract::class);
+        $this->app->scoped(Reporting\Scorecard\ContractorScorecardReportBindingFactory::class);
+        $this->app->scoped(Reporting\Scorecard\ContractorScorecardPublishedRuntimeBindingRegistrar::class);
     }
 
     public function boot(): void
     {
+        $this->app->resolving(
+            ReportDefinitionBindingAssembler::class,
+            function (ReportDefinitionBindingAssembler $assembler): void {
+                $this->app->make(Reporting\Scorecard\ContractorScorecardPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+            },
+        );
+
         Event::listen(MarketplaceProfilePublished::class, [RecordMarketplaceActivity::class, 'handleProfilePublished']);
         Event::listen(MarketplaceProfilePaused::class, [RecordMarketplaceActivity::class, 'handleProfilePaused']);
         Event::listen(MarketplaceHiringOfferSent::class, [RecordMarketplaceActivity::class, 'handleOfferSent']);

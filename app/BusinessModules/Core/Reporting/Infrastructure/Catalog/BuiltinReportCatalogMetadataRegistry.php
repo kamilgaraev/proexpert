@@ -23,6 +23,7 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceA
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsBuiltinPublishedReport;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
 
 final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatalogMetadataRegistry
@@ -43,6 +44,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private SafetyIncidentActionsBuiltinPublishedReport $safetyIncidentActions,
         private WorkforceAdmissionBuiltinPublishedReport $workforceAdmission,
         private HandoverReadinessBuiltinPublishedReport $handoverReadiness,
+        private ContractorScorecardBuiltinPublishedReport $contractorScorecard,
         private CustomerSlaBuiltinPublishedReport $customerSla,
     ) {}
 
@@ -64,6 +66,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->safetyIncidentActions->metadata()->code => $this->safetyIncidentActions->metadata(),
             $this->workforceAdmission->metadata()->code => $this->workforceAdmission->metadata(),
             $this->handoverReadiness->metadata()->code => $this->handoverReadiness->metadata(),
+            $this->contractorScorecard->metadata()->code => $this->contractorScorecard->metadata(),
             $this->customerSla->metadata()->code => $this->customerSla->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };

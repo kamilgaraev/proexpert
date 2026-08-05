@@ -121,6 +121,7 @@
       "contractor_marketplace.categories.view",
       "contractor_marketplace.search.view",
       "contractor_marketplace.profile.view",
+      "contractor_marketplace.reports.export",
       "contractor_marketplace.offers.view",
       "contractor_marketplace.offers.create",
       "contractor_marketplace.offers.cancel",

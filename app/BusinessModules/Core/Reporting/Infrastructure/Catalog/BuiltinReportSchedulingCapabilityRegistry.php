@@ -23,6 +23,7 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceA
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsBuiltinPublishedReport;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
 
 final readonly class BuiltinReportSchedulingCapabilityRegistry implements ReportSchedulingCapabilityRegistry
@@ -43,6 +44,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private SafetyIncidentActionsBuiltinPublishedReport $safetyIncidentActions,
         private WorkforceAdmissionBuiltinPublishedReport $workforceAdmission,
         private HandoverReadinessBuiltinPublishedReport $handoverReadiness,
+        private ContractorScorecardBuiltinPublishedReport $contractorScorecard,
         private CustomerSlaBuiltinPublishedReport $customerSla,
     ) {}
 
@@ -64,6 +66,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->safetyIncidentActions->scheduling()->code => $this->safetyIncidentActions->scheduling(),
             $this->workforceAdmission->scheduling()->code => $this->workforceAdmission->scheduling(),
             $this->handoverReadiness->scheduling()->code => $this->handoverReadiness->scheduling(),
+            $this->contractorScorecard->scheduling()->code => $this->contractorScorecard->scheduling(),
             $this->customerSla->scheduling()->code => $this->customerSla->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
