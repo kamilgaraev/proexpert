@@ -44,6 +44,7 @@ final class FileServiceCurrentObjectTest extends TestCase
 
         $stored = $files->putPrivate($key, $contents, 'application/pdf', $checksum);
         $link = $files->temporaryDownloadUrl($key, 300);
+        $readStream = $files->readCurrent($key);
         $files->deleteCurrent($key);
 
         self::assertInstanceOf(CurrentStoredFile::class, $stored);
@@ -61,6 +62,8 @@ final class FileServiceCurrentObjectTest extends TestCase
         self::assertSame(['sha256' => $checksum], $captured['Metadata'] ?? null);
         self::assertSame('*', $captured['IfNoneMatch'] ?? null);
         self::assertStringNotContainsStringIgnoringCase('versionid', $link);
+        self::assertSame('stored-body', stream_get_contents($readStream));
+        fclose($readStream);
         self::assertSame([$key], $disk->deletedKeys);
     }
 
@@ -180,6 +183,15 @@ final class FileServiceCurrentObjectTest extends TestCase
             public function temporaryUrl($path, $expiration, array $options = []): string
             {
                 return 'https://download.example.test/'.rawurlencode((string) $path).'?expires=300';
+            }
+
+            public function readStream($path)
+            {
+                $stream = fopen('php://temp', 'w+b');
+                fwrite($stream, 'stored-body');
+                rewind($stream);
+
+                return $stream;
             }
 
             public function delete($paths): bool

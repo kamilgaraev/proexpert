@@ -4,30 +4,36 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use Tests\TestCase;
-use App\Models\User;
-use App\Models\Organization;
-use App\Models\Project;
-use App\Models\Material;
-use App\Models\Module;
-use App\Models\OrganizationModuleActivation;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\Models\Material;
+use App\Models\Module;
+use App\Models\Organization;
+use App\Models\OrganizationModuleActivation;
 use App\Models\PersonalFile;
+use App\Models\Project;
 use App\Models\ReportFile;
+use App\Models\User;
 use App\Services\Export\ExcelExporterService;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
+use Mockery;
 use Tests\Support\AdminApiTestContext;
+use Tests\TestCase;
 
 class OfficialMaterialReportTest extends TestCase
 {
     use RefreshDatabase;
 
     private User $user;
+
     private Organization $organization;
+
     private Project $project;
+
     private OrganizationWarehouse $warehouse;
 
     protected function setUp(): void
@@ -58,9 +64,9 @@ class OfficialMaterialReportTest extends TestCase
             'status' => 'active',
             'activated_at' => now(),
         ]);
-        
+
         $this->project = Project::factory()->create([
-            'organization_id' => $this->organization->id
+            'organization_id' => $this->organization->id,
         ]);
 
         $this->warehouse = OrganizationWarehouse::query()->create([
@@ -78,18 +84,18 @@ class OfficialMaterialReportTest extends TestCase
         $this->flushHeaders();
 
         $response = $this->getJson('/api/v1/admin/reports/official-material-usage');
-        
+
         $response->assertStatus(401);
     }
 
     public function test_official_material_report_requires_project_id()
     {
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'date_from' => '2024-01-01',
-                'date_to' => '2024-01-31'
+                'date_to' => '2024-01-31',
             ]));
-        
+
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['project_id']);
     }
@@ -97,10 +103,10 @@ class OfficialMaterialReportTest extends TestCase
     public function test_official_material_report_requires_dates()
     {
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
-                'project_id' => $this->project->id
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
+                'project_id' => $this->project->id,
             ]));
-        
+
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['date_from', 'date_to']);
     }
@@ -112,10 +118,10 @@ class OfficialMaterialReportTest extends TestCase
         $this->createMovement($material, 'write_off', 100, '2024-01-15', 'С-1');
 
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'project_id' => $this->project->id,
                 'date_from' => '2024-01-01',
-                'date_to' => '2024-01-31'
+                'date_to' => '2024-01-31',
             ]));
 
         $response->assertStatus(200)
@@ -127,7 +133,7 @@ class OfficialMaterialReportTest extends TestCase
                         'materials',
                     ],
                     'filters',
-                    'generated_at'
+                    'generated_at',
                 ],
             ]);
 
@@ -137,10 +143,23 @@ class OfficialMaterialReportTest extends TestCase
         $this->assertSame(50.0, (float) $response->json('data.data.materials.0.usage.balance'));
     }
 
-    public function test_official_material_report_export_updates_existing_report_file_for_same_path(): void
+    public function test_official_material_report_export_creates_unique_immutable_objects(): void
     {
         Storage::fake('s3');
         Carbon::setTestNow(Carbon::parse('2026-05-13 23:15:00'));
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putPrivate')
+            ->twice()
+            ->andReturnUsing(static function (string $key, mixed $contents, string $mime, string $sha256): CurrentStoredFile {
+                $body = is_resource($contents) ? (string) stream_get_contents($contents) : (string) $contents;
+                Storage::disk('s3')->put($key, $body);
+
+                return new CurrentStoredFile($key, 'etag', strlen($body), $sha256, $mime);
+            });
+        $files->shouldReceive('temporaryDownloadUrl')
+            ->twice()
+            ->andReturn('https://download.example.test/official-material-report');
+        $this->app->instance(FileService::class, $files);
 
         try {
             $this->actingAs($this->user, 'api_admin');
@@ -168,13 +187,25 @@ class OfficialMaterialReportTest extends TestCase
             $this->assertNotNull($firstUrl);
             $this->assertNotNull($secondUrl);
 
-            $reportPath = 'org-' . $this->organization->id
-                . '/reports/official-material-usage/' . date('Y/m/d/')
-                . 'official_material_report_13-05-2026_23-15.xlsx';
+            $personalFiles = PersonalFile::query()
+                ->where('organization_id', $this->organization->id)
+                ->where('user_id', $this->user->id)
+                ->where('directory', 'reports/official-material-usage/2026/05/13')
+                ->get();
 
-            $this->assertSame(1, ReportFile::query()->where('path', $reportPath)->count());
-            $this->assertSame(2, PersonalFile::query()->where('user_id', $this->user->id)->count());
-            Storage::disk('s3')->assertExists($reportPath);
+            $this->assertCount(2, $personalFiles);
+            $this->assertCount(2, $personalFiles->pluck('storage_key')->unique());
+            $this->assertSame(2, ReportFile::query()
+                ->where('organization_id', $this->organization->id)
+                ->whereIn('path', $personalFiles->pluck('storage_key'))
+                ->count());
+            foreach ($personalFiles as $personalFile) {
+                $this->assertStringStartsWith(
+                    'org-'.$this->organization->id.'/personal-files/user-'.$this->user->id.'/',
+                    $personalFile->storage_key,
+                );
+                Storage::disk('s3')->assertExists($personalFile->storage_key);
+            }
         } finally {
             Carbon::setTestNow();
         }
@@ -188,15 +219,15 @@ class OfficialMaterialReportTest extends TestCase
         $this->createMovement($material2, 'write_off', 20, '2024-01-15');
 
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'project_id' => $this->project->id,
                 'date_from' => '2024-01-01',
                 'date_to' => '2024-01-31',
-                'material_id' => $material1->id
+                'material_id' => $material1->id,
             ]));
 
         $response->assertStatus(200);
-        
+
         $data = $response->json();
         $this->assertArrayHasKey('filters', $data['data']);
         $this->assertEquals($material1->id, $data['data']['filters']['material_id']);
@@ -211,15 +242,15 @@ class OfficialMaterialReportTest extends TestCase
         $this->createMovement($material, 'write_off', 30, '2024-01-15');
 
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'project_id' => $this->project->id,
                 'date_from' => '2024-01-01',
                 'date_to' => '2024-01-31',
-                'operation_type' => 'write_off'
+                'operation_type' => 'write_off',
             ]));
 
         $response->assertStatus(200);
-        
+
         $data = $response->json();
         $this->assertEquals('write_off', $data['data']['filters']['operation_type']);
         $this->assertSame(0.0, (float) $data['data']['data']['materials'][0]['received_from_customer']['volume']);
@@ -236,7 +267,7 @@ class OfficialMaterialReportTest extends TestCase
         $this->createMovement($otherMaterial, 'write_off', 20, '2024-01-15', 'M-11-003');
 
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'project_id' => $this->project->id,
                 'date_from' => '2024-01-01',
                 'date_to' => '2024-01-31',
@@ -256,7 +287,7 @@ class OfficialMaterialReportTest extends TestCase
     public function test_official_material_report_rejects_unknown_operation_type()
     {
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'project_id' => $this->project->id,
                 'date_from' => '2024-01-01',
                 'date_to' => '2024-01-31',
@@ -270,12 +301,12 @@ class OfficialMaterialReportTest extends TestCase
     public function test_official_material_report_validates_quantity_range()
     {
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'project_id' => $this->project->id,
                 'date_from' => '2024-01-01',
                 'date_to' => '2024-01-31',
                 'min_quantity' => 100,
-                'max_quantity' => 50
+                'max_quantity' => 50,
             ]));
 
         $response->assertStatus(422)
@@ -285,12 +316,12 @@ class OfficialMaterialReportTest extends TestCase
     public function test_official_material_report_validates_price_range()
     {
         $response = $this
-            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/official-material-usage?'.http_build_query([
                 'project_id' => $this->project->id,
                 'date_from' => '2024-01-01',
                 'date_to' => '2024-01-31',
                 'min_price' => 1000,
-                'max_price' => 500
+                'max_price' => 500,
             ]));
 
         $response->assertStatus(422)

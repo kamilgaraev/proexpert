@@ -3,17 +3,16 @@
 namespace App\Services\Export;
 
 use Symfony\Component\HttpFoundation\StreamedResponse;
-use App\Models\PersonalFile;
 use App\Models\ReportFile;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use App\Services\Logging\LoggingService;
-use App\Services\Storage\OrganizationStoragePath;
+use App\Services\Storage\FileService;
+use App\Services\Storage\PersonalFileService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection as SupportCollection;
-use Illuminate\Support\Str;
 use Exception;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
@@ -25,8 +24,11 @@ class ExcelExporterService
 {
     protected LoggingService $logging;
 
-    public function __construct(LoggingService $logging)
-    {
+    public function __construct(
+        LoggingService $logging,
+        private readonly PersonalFileService $personalFiles,
+        private readonly FileService $files,
+    ) {
         $this->logging = $logging;
     }
 
@@ -234,46 +236,45 @@ class ExcelExporterService
 
         try {
             $organization = $user->currentOrganization;
-            $extension = pathinfo($filename, PATHINFO_EXTENSION);
-            $storedName = (string) Str::uuid() . ($extension ? '.' . $extension : '');
-            $personalPath = $user->id . '/reports/' . $storedName;
-            $reportPath = $organization
-                ? OrganizationStoragePath::forOrganization($organization->id, 'reports/' . $storedName)
-                : $personalPath;
-            $path = $registerReportFile ? $reportPath : $personalPath;
-
-            $stored = app(\App\Services\Storage\FileService::class)
-                ->disk($organization)
-                ->put($path, $binaryContent);
-
-            if ($stored === false) {
-                Log::warning('[ExcelExporterService] Report file storage returned false', [
-                    'filename' => $filename,
-                    'user_id' => $user->id,
-                    'path' => $path,
-                ]);
-
+            if (! $organization) {
                 return false;
             }
+            $extension = pathinfo($filename, PATHINFO_EXTENSION);
+            $stream = fopen('php://temp', 'w+b');
+            if (! is_resource($stream)) {
+                return false;
+            }
+            try {
+                if (fwrite($stream, $binaryContent) !== strlen($binaryContent)) {
+                    return false;
+                }
+                rewind($stream);
+                $personalFile = $this->personalFiles->storeStream(
+                    (int) $organization->id,
+                    (int) $user->id,
+                    $stream,
+                    $filename,
+                    match (strtolower($extension)) {
+                        'csv' => 'text/csv',
+                        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        default => 'application/octet-stream',
+                    },
+                    'reports',
+                );
+            } finally {
+                fclose($stream);
+            }
 
-            PersonalFile::query()->create([
-                'user_id' => $user->id,
-                'path' => $path,
-                'filename' => $filename,
-                'size' => strlen($binaryContent),
-                'is_folder' => false,
-            ]);
-
-            if ($registerReportFile && $organization) {
+            if ($registerReportFile) {
                 ReportFile::query()->updateOrCreate(
-                    ['path' => $path],
+                    ['path' => $personalFile->storage_key],
                     [
                         'organization_id' => $organization->id,
                         'type' => $extension ?: 'reports',
                         'filename' => $filename,
                         'name' => $filename,
-                        'size' => strlen($binaryContent),
-                        'expires_at' => now()->addYear(),
+                        'size' => $personalFile->size,
+                        'expires_at' => null,
                         'user_id' => $user->id,
                     ]
                 );
@@ -284,7 +285,7 @@ class ExcelExporterService
             Log::warning('[ExcelExporterService] Failed to store report in personal files', [
                 'filename' => $filename,
                 'user_id' => $user->id,
-                'error' => $e->getMessage(),
+                'exception_class' => $e::class,
             ]);
 
             return false;
@@ -660,7 +661,7 @@ class ExcelExporterService
     /**
      * Сохраняет отчёт в указанном S3-диске и возвращает временный URL.
      */
-    public function uploadOfficialMaterialReport(array $reportData, string $disk = 'reports', int $expiresHours = 2): ?string
+    public function uploadOfficialMaterialReport(array $reportData): ?string
     {
         try {
             // Используем существующую логику генерации через StreamedResponse,
@@ -677,35 +678,51 @@ class ExcelExporterService
             $response->sendContent(); // запустит callback и запишет в output buffer
             $binaryContent = ob_get_clean();
 
-            // Путь теперь включает день для лучшей организаци ̃ии: YYYY/m/d/filename
-            /** @var \App\Services\Storage\FileService $fs */
-            $fs = app(\App\Services\Storage\FileService::class);
             $org = \App\Services\Organization\OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-            $relativePath = 'reports/official-material-usage/' . date('Y/m/d/') . $filename;
-            $path = $org
-                ? OrganizationStoragePath::forOrganization($org->id, $relativePath)
-                : 'shared/' . $relativePath;
-            $storage = $fs->disk($org);
-            $storage->put($path, $binaryContent);
+            $user = Auth::user();
+            if (! $org || ! $user instanceof \App\Models\User || ! is_string($binaryContent)) {
+                return null;
+            }
+            $stream = fopen('php://temp', 'w+b');
+            if (! is_resource($stream)) {
+                return null;
+            }
+            try {
+                if (fwrite($stream, $binaryContent) !== strlen($binaryContent)) {
+                    return null;
+                }
+                rewind($stream);
+                $personalFile = $this->personalFiles->storeStream(
+                    (int) $org->id,
+                    (int) $user->id,
+                    $stream,
+                    $filename,
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'reports/official-material-usage/'.now()->format('Y/m/d'),
+                );
+            } finally {
+                fclose($stream);
+            }
 
-            // Сохраняем запись в БД
             \App\Models\ReportFile::query()->updateOrCreate(
-                ['path' => $path],
+                ['path' => $personalFile->storage_key],
                 [
                     'type' => 'official-material-usage',
                     'filename' => $filename,
                     'name' => $filename,
-                    'size' => strlen($binaryContent),
-                    'expires_at' => now()->addYear(),
+                    'size' => $personalFile->size,
+                    'expires_at' => null,
                     'user_id' => Auth::id(),
-                    'organization_id' => $org?->id,
+                    'organization_id' => $org->id,
                 ]
             );
-            $this->storeReportInPersonalFiles($filename, $binaryContent, false);
 
-            return $storage->temporaryUrl($path, now()->addHours($expiresHours));
+            return $this->files->temporaryDownloadUrl(
+                (string) $personalFile->storage_key,
+                (int) config('filesystems.s3.download_ttl_seconds', 300),
+            );
         } catch (\Throwable $e) {
-            Log::error('[ExcelExporter] uploadOfficialMaterialReport failed', ['error' => $e->getMessage()]);
+            Log::error('[ExcelExporter] uploadOfficialMaterialReport failed', ['exception_class' => $e::class]);
             return null;
         }
     }

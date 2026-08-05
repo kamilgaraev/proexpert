@@ -119,6 +119,18 @@ class FileService
         return $url;
     }
 
+    /** @return resource */
+    public function readCurrent(string $key)
+    {
+        $this->assertOrganizationPath($key);
+        $stream = $this->disk()->readStream($key);
+        if (! is_resource($stream)) {
+            throw new \RuntimeException('storage_object_read_failed');
+        }
+
+        return $stream;
+    }
+
     public function deleteCurrent(string $key): void
     {
         $this->assertOrganizationPath($key);

@@ -10,9 +10,12 @@ use App\Models\PersonalFile;
 use App\Models\Project;
 use App\Models\ReportFile;
 use App\Models\User;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
+use Mockery;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -26,6 +29,16 @@ class AdvanceAccountReportWorkflowTest extends TestCase
         Carbon::setTestNow('2026-05-13 12:00:00');
 
         $context = AdminApiTestContext::create();
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putPrivate')
+            ->once()
+            ->andReturnUsing(static function (string $key, mixed $contents, string $mime, string $sha256): CurrentStoredFile {
+                $body = is_resource($contents) ? (string) stream_get_contents($contents) : (string) $contents;
+                Storage::disk('s3')->put($key, $body);
+
+                return new CurrentStoredFile($key, 'etag', strlen($body), $sha256, $mime);
+            });
+        $this->app->instance(FileService::class, $files);
         $user = $this->createOrganizationUser($context->organization, [
             'current_balance' => 1500,
             'total_issued' => 2500,
@@ -72,19 +85,20 @@ class AdvanceAccountReportWorkflowTest extends TestCase
         $this->assertFalse($topUserIds->contains($foreignUser->id));
 
         $file = PersonalFile::query()
+            ->where('organization_id', $context->organization->id)
             ->where('user_id', $context->user->id)
-            ->where('path', 'like', 'org-' . $context->organization->id . '/reports/%')
-            ->where('filename', 'like', 'advance_account_summary_report_%.json')
+            ->where('directory', 'reports')
+            ->where('original_name', 'like', 'advance_account_summary_report_%.json')
             ->first();
 
         $this->assertInstanceOf(PersonalFile::class, $file);
-        Storage::disk('s3')->assertExists($file->path);
+        Storage::disk('s3')->assertExists($file->storage_key);
 
         $reportFile = ReportFile::query()
             ->where('organization_id', $context->organization->id)
             ->where('user_id', $context->user->id)
-            ->where('path', $file->path)
-            ->where('filename', $file->filename)
+            ->where('path', $file->storage_key)
+            ->where('filename', $file->original_name)
             ->first();
 
         $this->assertInstanceOf(ReportFile::class, $reportFile);

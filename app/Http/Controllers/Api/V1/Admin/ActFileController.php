@@ -5,85 +5,40 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
 use App\Http\Requests\Api\V1\Admin\File\ListFilesRequest;
-use Illuminate\Http\JsonResponse;
-use App\Models\PersonalFile;
-use App\Services\Storage\FileService;
+use App\Http\Responses\AdminResponse;
 use App\Services\Organization\OrganizationContext;
+use App\Services\Storage\PersonalFileService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
+use function response;
 use function trans_message;
 
-/**
- * Контроллер файлов актов
- */
-class ActFileController extends Controller
+final class ActFileController extends Controller
 {
-    private const ACT_FILES_FOLDER = 'acts';
+    private const DIRECTORY = 'acts';
 
-    public function __construct(
-        protected FileService $fileService
-    ) {
-    }
+    public function __construct(private readonly PersonalFileService $personalFiles) {}
 
-    /**
-     * Получить список файлов актов
-     * 
-     * GET /api/v1/admin/act-files
-     */
     public function index(ListFilesRequest $request): JsonResponse
     {
         try {
-            $user = $request->user();
-            $params = $request->validated();
-            $sortBy = $params['sort_by'] ?? 'created_at';
-            $sortDir = $params['sort_dir'] ?? 'desc';
-            $perPage = (int)($params['per_page'] ?? 15);
-
-            $actFilesPath = $user->id . '/' . self::ACT_FILES_FOLDER . '/';
-
-            $query = PersonalFile::where('user_id', $user->id)
-                ->where('path', 'like', $actFilesPath . '%')
-                ->where('is_folder', false);
-
-            if (isset($params['filename'])) {
-                $query->where('filename', 'like', '%' . $params['filename'] . '%');
-            }
-
-            if (isset($params['date_from'])) {
-                $query->whereDate('created_at', '>=', $params['date_from']);
-            }
-
-            if (isset($params['date_to'])) {
-                $query->whereDate('created_at', '<=', $params['date_to']);
-            }
-
-            $query->orderBy($sortBy, $sortDir);
-            $paginator = $query->paginate($perPage);
-
-            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
-            $storage = $this->fileService->disk($org);
-
-            $paginator->getCollection()->transform(function (PersonalFile $file) use ($storage) {
-                $payload = $file->toArray();
-                $payload['path'] = $this->displayPersonalPath((int) $file->user_id, $file->path);
-                $payload['download_url'] = null;
-
-                try {
-                    if ($storage->exists($file->path)) {
-                        $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
-                    }
-                } catch (\Exception $e) {
-                    Log::warning('[ActFileController] Failed to create temporary URL', [
-                        'file_id' => $file->id,
-                        'error' => $e->getMessage()
-                    ]);
-                }
-
-                return $payload;
-            });
+            [$organizationId, $userId] = $this->scope($request);
+            $paginator = $this->personalFiles->paginate(
+                $organizationId,
+                $userId,
+                $request->validated(),
+                self::DIRECTORY,
+            );
+            $paginator->getCollection()->transform(
+                fn ($file): array => $this->personalFiles->payload($file),
+            );
 
             return AdminResponse::paginated(
                 $paginator->items(),
@@ -93,151 +48,108 @@ class ActFileController extends Controller
                     'per_page' => $paginator->perPage(),
                     'total' => $paginator->total(),
                 ],
-                trans_message('files.files_loaded')
+                trans_message('files.files_loaded'),
             );
-        } catch (\Throwable $e) {
-            Log::error('[ActFileController] Error loading act files', [
-                'error' => $e->getMessage()
-            ]);
+        } catch (Throwable $exception) {
+            $this->logFailure('act_files.index_failed', $exception, $request);
+
             return AdminResponse::error(trans_message('files.load_failed'), 500);
         }
     }
 
-    /**
-     * Получить конкретный файл акта
-     * 
-     * GET /api/v1/admin/act-files/{id}
-     */
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         try {
-            $user = request()->user();
-            $actFilesPath = $user->id . '/' . self::ACT_FILES_FOLDER . '/';
+            [$organizationId, $userId] = $this->scope($request);
+            $file = $this->personalFiles->findOwned(
+                $id,
+                $organizationId,
+                $userId,
+                self::DIRECTORY,
+            );
 
-            $file = PersonalFile::where('user_id', $user->id)
-                ->where('path', 'like', $actFilesPath . '%')
-                ->where('id', $id)
-                ->firstOrFail();
-
-            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
-            $storage = $this->fileService->disk($org);
-
-            $payload = $file->toArray();
-            $payload['path'] = $this->displayPersonalPath((int) $file->user_id, $file->path);
-            $payload['download_url'] = null;
-
-            if ($storage->exists($file->path)) {
-                $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
-            }
-
-            return AdminResponse::success($payload, trans_message('files.file_found'));
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::success(
+                $this->personalFiles->payload($file),
+                trans_message('files.file_found'),
+            );
+        } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('files.not_found'), 404);
-        } catch (\Throwable $e) {
+        } catch (Throwable $exception) {
+            $this->logFailure('act_files.show_failed', $exception, $request, $id);
+
             return AdminResponse::error(trans_message('files.operation_failed'), 500);
         }
     }
 
-    public function download(string $id): JsonResponse|StreamedResponse
+    public function download(Request $request, string $id): JsonResponse|StreamedResponse
     {
         try {
-            $user = request()->user();
-            $actFilesPath = $user->id . '/' . self::ACT_FILES_FOLDER . '/';
-
-            $file = PersonalFile::where('user_id', $user->id)
-                ->where('path', 'like', $actFilesPath . '%')
-                ->where('id', $id)
-                ->where('is_folder', false)
-                ->firstOrFail();
-
-            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
-            $storage = $this->fileService->disk($org);
-
-            if (!$storage->exists($file->path)) {
-                return AdminResponse::error(trans_message('files.not_found'), 404);
-            }
-
-            $stream = $storage->readStream($file->path);
-
-            if ($stream === false) {
-                return AdminResponse::error(trans_message('files.not_found'), 404);
-            }
+            [$organizationId, $userId] = $this->scope($request);
+            $file = $this->personalFiles->findOwned(
+                $id,
+                $organizationId,
+                $userId,
+                self::DIRECTORY,
+            );
+            $stream = $this->personalFiles->read($file);
 
             return response()->streamDownload(
                 static function () use ($stream): void {
                     fpassthru($stream);
-
-                    if (is_resource($stream)) {
-                        fclose($stream);
-                    }
+                    fclose($stream);
                 },
-                $file->filename ?: 'act-file',
-                [
-                    'Content-Type' => 'application/octet-stream',
-                ]
+                (string) $file->original_name,
+                ['Content-Type' => $file->mime_type ?: 'application/octet-stream'],
             );
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('files.not_found'), 404);
-        } catch (\Throwable $e) {
-            Log::error('[ActFileController] Error downloading act file', [
-                'error' => $e->getMessage(),
-                'file_id' => $id,
-            ]);
+        } catch (Throwable $exception) {
+            $this->logFailure('act_files.download_failed', $exception, $request, $id);
 
             return AdminResponse::error(trans_message('files.operation_failed'), 500);
         }
     }
 
-    /**
-     * Удалить файл акта
-     * 
-     * DELETE /api/v1/admin/act-files/{id}
-     */
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
         try {
-            $user = request()->user();
-            $actFilesPath = $user->id . '/' . self::ACT_FILES_FOLDER . '/';
-
-            $file = PersonalFile::where('user_id', $user->id)
-                ->where('path', 'like', $actFilesPath . '%')
-                ->where('id', $id)
-                ->firstOrFail();
-
-            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
-            $storage = $this->fileService->disk($org);
-
-            if ($storage->exists($file->path)) {
-                $storage->delete($file->path);
-            }
-
-            $file->delete();
+            [$organizationId, $userId] = $this->scope($request);
+            $this->personalFiles->delete($id, $organizationId, $userId, self::DIRECTORY);
 
             return AdminResponse::success(null, trans_message('files.deleted'));
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('files.not_found'), 404);
-        } catch (\Throwable $e) {
-            Log::error('[ActFileController] Error deleting act file', [
-                'error' => $e->getMessage(),
-                'file_id' => $id
-            ]);
+        } catch (Throwable $exception) {
+            $this->logFailure('act_files.delete_failed', $exception, $request, $id);
+
             return AdminResponse::error(trans_message('files.delete_failed'), 500);
         }
     }
 
-    private function displayPersonalPath(int $userId, string $path): string
+    /** @return array{0: int, 1: int} */
+    private function scope(Request $request): array
     {
-        $normalizedPath = trim(str_replace('\\', '/', $path), '/');
-        $quotedUserId = preg_quote((string) $userId, '/');
-
-        if (preg_match("/^{$quotedUserId}\/(.+)$/", $normalizedPath, $matches) === 1) {
-            return $matches[1];
+        $user = $request->user();
+        $organization = OrganizationContext::getOrganization() ?? $user?->currentOrganization;
+        $organizationId = (int) ($organization?->id ?? 0);
+        $userId = (int) ($user?->id ?? 0);
+        if ($organizationId < 1 || $userId < 1) {
+            throw new RuntimeException('personal_file_scope_missing');
         }
 
-        if ($normalizedPath === (string) $userId) {
-            return '';
-        }
+        return [$organizationId, $userId];
+    }
 
-        return $normalizedPath;
+    private function logFailure(
+        string $event,
+        Throwable $exception,
+        Request $request,
+        ?string $fileId = null,
+    ): void {
+        Log::error($event, [
+            'exception_class' => $exception::class,
+            'file_id' => $fileId,
+            'user_id' => $request->user()?->id,
+        ]);
     }
 }

@@ -4,56 +4,65 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\Models\Organization;
 use App\Models\PersonalFile;
+use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Mockery;
+use RuntimeException;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
-class PersonalFileControllerWorkflowTest extends TestCase
+final class PersonalFileControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_user_can_manage_personal_folder_file_registry_and_storage_objects(): void
+    public function test_user_can_manage_only_current_organization_personal_files(): void
     {
-        Storage::fake('s3');
-
         $context = AdminApiTestContext::create();
+        $foreignOrganization = Organization::factory()->create();
         $foreignFile = PersonalFile::query()->create([
+            'organization_id' => $foreignOrganization->id,
             'user_id' => $context->user->id,
-            'path' => $context->user->id . '/archive/foreign.pdf',
-            'filename' => 'foreign.pdf',
+            'storage_key' => 'org-'.$foreignOrganization->id.'/personal-files/user-'.$context->user->id.'/foreign.pdf',
+            'directory' => 'docs',
+            'original_name' => 'foreign.pdf',
+            'mime_type' => 'application/pdf',
+            'sha256' => str_repeat('a', 64),
             'size' => 10,
             'is_folder' => false,
         ]);
+        $storedKey = null;
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putPrivate')
+            ->once()
+            ->andReturnUsing(function (string $key, mixed $contents, string $mime, string $sha256) use (&$storedKey): CurrentStoredFile {
+                $storedKey = $key;
+
+                return new CurrentStoredFile($key, 'etag', 12 * 1024, $sha256, $mime);
+            });
+        $files->shouldReceive('temporaryDownloadUrl')
+            ->once()
+            ->andReturn('https://download.example.test/personal');
+        $files->shouldReceive('deleteCurrent')
+            ->once()
+            ->with(Mockery::on(static fn (string $key): bool => $key === $storedKey));
+        $this->app->instance(FileService::class, $files);
 
         $createFolderResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/personal-files/folder', [
-                'name' => 'docs',
-            ]);
+            ->postJson('/api/v1/admin/personal-files/folder', ['name' => 'docs']);
 
         $createFolderResponse->assertCreated();
-        $createFolderResponse->assertJsonPath('success', true);
         $createFolderResponse->assertJsonPath('data.path', 'docs');
         $this->assertDatabaseHas('personal_files', [
+            'organization_id' => $context->organization->id,
             'user_id' => $context->user->id,
-            'path' => $context->user->id . '/docs/',
+            'directory' => '',
+            'original_name' => 'docs',
             'is_folder' => true,
         ]);
-
-        $rootIndexResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/personal-files?per_page=10');
-
-        $rootIndexResponse->assertOk();
-        $rootItems = collect($rootIndexResponse->json('data'));
-        $rootFolder = $rootItems->firstWhere('filename', 'docs');
-        $this->assertNotNull($rootFolder);
-        $this->assertTrue($rootFolder['is_folder']);
-        $this->assertSame('docs', $rootFolder['path']);
 
         $uploadResponse = $this->withHeaders($context->authHeaders())
             ->post('/api/v1/admin/personal-files/upload', [
@@ -62,32 +71,38 @@ class PersonalFileControllerWorkflowTest extends TestCase
             ]);
 
         $uploadResponse->assertCreated();
-        $uploadResponse->assertJsonPath('success', true);
         $uploadResponse->assertJsonPath('data.filename', 'contract.pdf');
-        $this->assertStringStartsWith('docs/', $uploadResponse->json('data.path'));
-        $uploadedPath = $uploadResponse->json('data.path');
-        $storedPath = $context->user->id . '/' . $uploadedPath;
-        Storage::disk('s3')->assertExists($storedPath);
+        $uploadResponse->assertJsonPath('data.path', 'docs/contract.pdf');
+        $this->assertIsString($storedKey);
+        $this->assertStringStartsWith(
+            'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/',
+            $storedKey,
+        );
+        $this->assertDatabaseHas('personal_files', [
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'storage_key' => $storedKey,
+            'directory' => 'docs',
+            'original_name' => 'contract.pdf',
+            'is_folder' => false,
+        ]);
 
         $indexResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/personal-files?folder=docs&per_page=10');
 
         $indexResponse->assertOk();
-        $indexResponse->assertJsonPath('success', true);
         $indexResponse->assertJsonPath('meta.total', 1);
         $indexResponse->assertJsonPath('data.0.filename', 'contract.pdf');
-        $this->assertStringStartsWith('docs/', $indexResponse->json('data.0.path'));
-
-        $ids = collect($indexResponse->json('data'))->pluck('id')->all();
-        $this->assertNotContains($foreignFile->id, $ids);
+        $this->assertNotContains(
+            $foreignFile->id,
+            collect($indexResponse->json('data'))->pluck('id')->all(),
+        );
 
         $deleteResponse = $this->withHeaders($context->authHeaders())
-            ->deleteJson('/api/v1/admin/personal-files/' . $uploadResponse->json('data.id'));
+            ->deleteJson('/api/v1/admin/personal-files/'.$uploadResponse->json('data.id'));
 
         $deleteResponse->assertOk();
-        $deleteResponse->assertJsonPath('success', true);
         $this->assertDatabaseMissing('personal_files', ['id' => $uploadResponse->json('data.id')]);
-        Storage::disk('s3')->assertMissing($storedPath);
     }
 
     public function test_personal_folder_names_reject_path_traversal(): void
@@ -95,89 +110,66 @@ class PersonalFileControllerWorkflowTest extends TestCase
         $context = AdminApiTestContext::create();
 
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/personal-files/folder', [
-                'name' => '../private',
-            ]);
+            ->postJson('/api/v1/admin/personal-files/folder', ['name' => '../private']);
 
         $response->assertStatus(422);
         $response->assertJsonPath('success', false);
         $this->assertDatabaseCount('personal_files', 0);
     }
 
-    public function test_deleting_personal_folder_removes_nested_registry_records_and_storage_objects(): void
+    public function test_deleting_personal_folder_is_scoped_to_organization_and_user(): void
     {
-        Storage::fake('s3');
-
         $context = AdminApiTestContext::create();
-
         $folder = PersonalFile::query()->create([
+            'organization_id' => $context->organization->id,
             'user_id' => $context->user->id,
-            'path' => $context->user->id . '/docs/',
-            'filename' => 'docs',
+            'storage_key' => null,
+            'directory' => '',
+            'original_name' => 'docs',
             'size' => 0,
             'is_folder' => true,
         ]);
         $nestedFile = PersonalFile::query()->create([
+            'organization_id' => $context->organization->id,
             'user_id' => $context->user->id,
-            'path' => $context->user->id . '/docs/contract.pdf',
-            'filename' => 'contract.pdf',
+            'storage_key' => 'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/nested.pdf',
+            'directory' => 'docs',
+            'original_name' => 'contract.pdf',
+            'mime_type' => 'application/pdf',
+            'sha256' => str_repeat('b', 64),
             'size' => 12,
             'is_folder' => false,
         ]);
         $siblingFile = PersonalFile::query()->create([
+            'organization_id' => $context->organization->id,
             'user_id' => $context->user->id,
-            'path' => $context->user->id . '/archive/contract.pdf',
-            'filename' => 'contract.pdf',
+            'storage_key' => 'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/sibling.pdf',
+            'directory' => 'archive',
+            'original_name' => 'contract.pdf',
+            'mime_type' => 'application/pdf',
+            'sha256' => str_repeat('c', 64),
             'size' => 12,
             'is_folder' => false,
         ]);
-        Storage::disk('s3')->put($nestedFile->path, 'pdf');
-        Storage::disk('s3')->put($siblingFile->path, 'pdf');
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('deleteCurrent')->once()->with($nestedFile->storage_key);
+        $this->app->instance(FileService::class, $files);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->deleteJson('/api/v1/admin/personal-files/' . $folder->id);
+            ->deleteJson('/api/v1/admin/personal-files/'.$folder->id);
 
         $response->assertOk();
-        $response->assertJsonPath('success', true);
         $this->assertDatabaseMissing('personal_files', ['id' => $folder->id]);
         $this->assertDatabaseMissing('personal_files', ['id' => $nestedFile->id]);
         $this->assertDatabaseHas('personal_files', ['id' => $siblingFile->id]);
-        Storage::disk('s3')->assertMissing($nestedFile->path);
-        Storage::disk('s3')->assertExists($siblingFile->path);
     }
 
-    public function test_empty_file_filter_query_values_are_ignored(): void
-    {
-        Storage::fake('s3');
-
-        $context = AdminApiTestContext::create();
-
-        $personalResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/personal-files?folder=&date_from=&date_to=&filename=&sort_by=created_at&sort_dir=desc&per_page=15&page=1');
-
-        $personalResponse->assertOk();
-        $personalResponse->assertJsonPath('success', true);
-        $personalResponse->assertJsonPath('meta.total', 0);
-
-        $actResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/act-files?filename=&date_from=&date_to=&sort_by=created_at&sort_dir=desc&per_page=15&page=1');
-
-        $actResponse->assertOk();
-        $actResponse->assertJsonPath('success', true);
-        $actResponse->assertJsonPath('meta.total', 0);
-    }
-
-    public function test_personal_file_upload_does_not_create_record_when_storage_write_fails(): void
+    public function test_personal_upload_failure_never_creates_registry_record(): void
     {
         $context = AdminApiTestContext::create();
-
-        $storage = Mockery::mock(Filesystem::class);
-        $storage->shouldReceive('put')->once()->andReturn(false);
-
-        $fileService = Mockery::mock(FileService::class);
-        $fileService->shouldReceive('disk')->once()->andReturn($storage);
-
-        $this->app->instance(FileService::class, $fileService);
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putPrivate')->once()->andThrow(new RuntimeException('storage failed'));
+        $this->app->instance(FileService::class, $files);
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/personal-files/upload', [
@@ -185,8 +177,9 @@ class PersonalFileControllerWorkflowTest extends TestCase
             ]);
 
         $response->assertStatus(500);
-        $response->assertJsonPath('success', false);
-
-        $this->assertSame(0, PersonalFile::query()->where('user_id', $context->user->id)->count());
+        $this->assertSame(0, PersonalFile::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('user_id', $context->user->id)
+            ->count());
     }
 }

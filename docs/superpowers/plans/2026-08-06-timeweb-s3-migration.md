@@ -219,15 +219,15 @@ php artisan test tests/Unit/Storage/OrganizationStoragePathTest.php tests/Unit/S
 vendor/bin/phpstan analyse app/Services/Storage --memory-limit=1G
 ```
 
-- [ ] **Step 5: Commit, PR, merge и deploy**
+- [x] **Step 5: Commit, PR, merge и deploy**
 
 Commit: `refactor[backend]: создан единый шлюз файлового хранилища`.
 
-Создать PR в `main`, дождаться checks, merge, штатного deploy и выполнить тот же read-only smoke.
+PR #236 merged в `main` (`192958c38615a6da068870fc143a755191b8bfbd`); штатный deploy `31053775102` завершён успешно, release SHA совпал, новых storage-ошибок в production-логе не обнаружено.
 
 ---
 
-### Task 3: Персональные файлы и актуальные доменные вызовы
+### Task 3A: Персональные файлы и персональные отчёты
 
 **PR:** `refactor/timeweb-s3-domain-storage`
 
@@ -236,55 +236,79 @@ Commit: `refactor[backend]: создан единый шлюз файловог�
 - Modify: `app/Http/Controllers/Api/V1/Admin/ActFileController.php`
 - Modify: `app/Models/PersonalFile.php`
 - Create: `app/Services/Storage/PersonalFileService.php`
+- Create: `app/Http/Requests/Api/V1/Admin/File/CreatePersonalFolderRequest.php`
+- Create: `app/Http/Requests/Api/V1/Admin/File/UploadPersonalFileRequest.php`
 - Create: `database/migrations/2026_08_06_000050_scope_personal_files_to_organizations.php`
 - Modify: `app/Services/ActReport/ActReportFileService.php`
-- Modify: `app/BusinessModules/Features/AIAssistant/Services/Reports/AssistantReportFileService.php`
-- Modify: `app/BusinessModules/Features/AIAssistant/Actions/Reports/Tools/Generate*ReportTool.php`
-- Modify: `app/BusinessModules/Features/BudgetEstimates/Services/EstimateStructureSnapshotStorage.php`
-- Modify: `app/BusinessModules/Features/BudgetEstimates/Services/Import/FileStorageService.php`
-- Modify: `app/BusinessModules/Addons/EstimateGeneration/Normatives/Services/Storage/EstimateSourceStorageService.php`
-- Modify: `app/BusinessModules/Features/Procurement/Services/PurchaseOrderPdfService.php`
-- Modify: все актуальные production-файлы, найденные командой `rg -l "Storage::disk|S3Client|OrgBucketService" app`, кроме слоя `app/Services/Storage` и явно исключённого holding/CMS кода.
+- Modify: `app/Services/Export/ExcelExporterService.php`
+- Delete: `app/Console/Commands/CleanupPersonalFilesCommand.php`
 - Modify: `tests/Feature/Api/V1/Admin/PersonalFileControllerWorkflowTest.php`
 - Modify: `tests/Feature/Api/V1/Admin/ReportExportPersonalStorageTest.php`
-- Modify: соответствующие unit-тесты затронутых доменов.
+- Create: `tests/Unit/Storage/PersonalStorageArchitectureTest.php`
 
 **Interfaces:**
 - Consumes: `OrganizationStoragePath` и текущие-object методы `FileService` из Task 2.
-- Produces: все актуальные домены передают только организационный ключ; `PersonalFile` всегда содержит `organization_id` и `user_id`.
+- Produces: `PersonalFile` всегда содержит `organization_id` и `user_id`; персональные файлы и выгрузки сохраняются по уникальным ключам текущих объектов без отдельного диска.
 
-- [ ] **Step 1: Написать failing-тест tenant isolation персональных файлов**
+- [x] **Step 1: Написать failing-тест tenant isolation персональных файлов**
 
 Проверить, что upload создаёт ключ `org-42/personal-files/user-7/{uuid}.{ext}`, а list/download/delete фильтруют одновременно по `organization_id=42` и `user_id=7`.
 
-- [ ] **Step 2: Проверить RED**
+- [x] **Step 2: Проверить RED**
 
 Run: `php artisan test tests/Feature/Api/V1/Admin/PersonalFileControllerWorkflowTest.php --stop-on-failure`
 
 Expected: FAIL, текущая модель и запросы не используют `organization_id`.
 
-- [ ] **Step 3: Перевести персональные файлы через сервисный слой**
+- [x] **Step 3: Перевести персональные файлы через сервисный слой**
 
 Контроллеры оставляют только HTTP-валидацию/ответ. Загрузку, выборку, авторизацию, создание папок и удаление вынести в профильный сервис `app/Services/Storage/PersonalFileService.php`; все запросы ограничить парой organization/user.
 
-- [ ] **Step 4: Перевести остальные прямые вызовы**
+- [x] **Step 4: Перевести персональные отчёты и копии актов**
 
-Для каждого production-файла из scope заменить `Storage::disk('s3')`, `Storage::disk('reports')`, `Storage::disk('personals')`, `new S3Client` и `OrgBucketService` на методы `FileService`. Не менять holding/CMS-файлы; зафиксировать их как явные исключения архитектурного теста.
+Перевести `ExcelExporterService` и копирование файлов актов на `PersonalFileService`; отчётам установить бессрочное хранение, удалить автоматическую очистку персональных файлов и старый аргумент выбора диска.
 
-- [ ] **Step 5: Проверить GREEN**
+- [x] **Step 5: Проверить GREEN**
 
 Run:
 
 ```bash
-php artisan test tests/Feature/Api/V1/Admin/PersonalFileControllerWorkflowTest.php tests/Feature/Api/V1/Admin/ReportExportPersonalStorageTest.php tests/Unit/Storage --stop-on-failure
-vendor/bin/phpstan analyse app/Http/Controllers/Api/V1/Admin/PersonalFileController.php app/Http/Controllers/Api/V1/Admin/ActFileController.php app/Services/Storage app/Services/ActReport app/BusinessModules/Features/AIAssistant/Actions/Reports app/BusinessModules/Features/BudgetEstimates app/BusinessModules/Features/Procurement/Services/PurchaseOrderPdfService.php --memory-limit=1G
+php vendor/bin/phpunit tests/Unit/Storage/PersonalStorageArchitectureTest.php tests/Unit/Storage/FileServiceCurrentObjectTest.php tests/Unit/Storage/OrganizationStoragePathTest.php --stop-on-failure
+APP_ENV=testing vendor/bin/phpstan analyse app/Http/Controllers/Api/V1/Admin/PersonalFileController.php app/Http/Controllers/Api/V1/Admin/ActFileController.php app/Services/Storage/PersonalFileService.php app/Services/ActReport/ActReportFileService.php app/Services/Export/ExcelExporterService.php --memory-limit=1G
 ```
+
+DB-backed feature-тесты обновлены, но локально не запускаются по правилам workspace; их применит штатный CI/deploy. Миграция проверяется только синтаксически и не запускается вручную.
 
 - [ ] **Step 6: Commit, PR, merge и deploy**
 
 Commit: `refactor[backend]: файлы привязаны к организации и пользователю`.
 
 После deploy проверить создание/выдачу/удаление нового временного файла через прикладной smoke без сохранения секрета.
+
+---
+
+### Task 3B: Остальные актуальные доменные вызовы
+
+**PR:** `refactor/timeweb-s3-domain-callers`
+
+**Files:**
+- Modify: `app/BusinessModules/Features/AIAssistant/Services/Reports/AssistantReportFileService.php`
+- Modify: `app/BusinessModules/Features/AIAssistant/Actions/Reports/Tools/Generate*ReportTool.php`
+- Modify: `app/BusinessModules/Features/BudgetEstimates/Services/EstimateStructureSnapshotStorage.php`
+- Modify: `app/BusinessModules/Features/BudgetEstimates/Services/Import/FileStorageService.php`
+- Modify: `app/BusinessModules/Addons/EstimateGeneration/Normatives/Services/Storage/EstimateSourceStorageService.php`
+- Modify: `app/BusinessModules/Features/Procurement/Services/PurchaseOrderPdfService.php`
+- Modify: остальные актуальные production-файлы, найденные поиском `Storage::disk|S3Client|OrgBucketService`, кроме слоя `app/Services/Storage` и явно исключённых holding/CMS-файлов.
+
+**Interfaces:**
+- Consumes: `OrganizationStoragePath` и текущие-object методы `FileService`.
+- Produces: все актуальные домены передают только организационный ключ и не выбирают S3-диск или бакет.
+
+- [ ] **Step 1: Написать failing архитектурные и доменные тесты**
+- [ ] **Step 2: Проверить RED**
+- [ ] **Step 3: Перевести production-вызовы на `FileService`**
+- [ ] **Step 4: Проверить GREEN и границы исключений holding/CMS**
+- [ ] **Step 5: Commit, PR, merge и deploy**
 
 ---
 

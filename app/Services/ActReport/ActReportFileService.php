@@ -10,10 +10,10 @@ use App\Models\File;
 use App\Models\PersonalFile;
 use App\Models\User;
 use App\Services\Storage\FileService;
+use App\Services\Storage\PersonalFileService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Response;
-use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 use function trans_message;
@@ -22,10 +22,10 @@ class ActReportFileService
 {
     public function __construct(
         private readonly FileService $fileService,
+        private readonly PersonalFileService $personalFiles,
         private readonly ActReportAccessService $accessService,
         private readonly ActReportWorkflowService $workflowService
-    ) {
-    }
+    ) {}
 
     public function upload(
         ContractPerformanceAct $act,
@@ -44,7 +44,7 @@ class ActReportFileService
             $act->contract->organization
         );
 
-        if (!$path) {
+        if (! $path) {
             throw new BusinessLogicException(trans_message('act_reports.file_upload_failed'), 500);
         }
 
@@ -100,7 +100,7 @@ class ActReportFileService
         $file = $this->accessService->resolveActFile($act, $file);
         $storage = $this->fileService->disk($act->contract->organization);
 
-        if (!$storage->exists($file->path)) {
+        if (! $storage->exists($file->path)) {
             throw new BusinessLogicException(trans_message('act_reports.file_not_found'), 404);
         }
 
@@ -136,28 +136,21 @@ class ActReportFileService
     public function copyToPersonalStorage(ContractPerformanceAct $act, mixed $file, User $user): PersonalFile
     {
         $file = $this->accessService->resolveActFile($act, $file);
-        $storage = $this->fileService->disk($act->contract->organization);
-
-        if (!$storage->exists($file->path)) {
-            throw new BusinessLogicException(trans_message('act_reports.file_not_found'), 404);
-        }
-
-        $extension = pathinfo($file->original_name ?: $file->name, PATHINFO_EXTENSION);
         $filename = trim((string) ($file->original_name ?: $file->name));
-        $storedName = Str::uuid()->toString() . ($extension ? '.' . $extension : '');
-        $destination = ((int) $user->id) . '/acts/' . $storedName;
+        $stream = $this->fileService->readCurrent((string) $file->path);
 
-        if ($storage->copy($file->path, $destination) === false) {
-            throw new BusinessLogicException(trans_message('act_reports.file_upload_failed'), 500);
+        try {
+            return $this->personalFiles->storeStream(
+                (int) $act->contract->organization_id,
+                (int) $user->id,
+                $stream,
+                $filename !== '' ? $filename : 'act-file',
+                (string) ($file->mime_type ?: 'application/octet-stream'),
+                'acts',
+            );
+        } finally {
+            fclose($stream);
         }
-
-        return PersonalFile::query()->create([
-            'user_id' => $user->id,
-            'path' => $destination,
-            'filename' => $filename !== '' ? $filename : $storedName,
-            'size' => (int) ($file->size ?? 0),
-            'is_folder' => false,
-        ]);
     }
 
     public function format(File $file): array
