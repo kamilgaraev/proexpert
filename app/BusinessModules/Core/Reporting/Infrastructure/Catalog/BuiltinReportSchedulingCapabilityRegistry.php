@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
@@ -33,6 +34,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private ProjectMarginBuiltinPublishedReport $projectMargin,
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
         private PortfolioLiquidityBuiltinPublishedReport $portfolioLiquidity,
+        private WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
         private BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
@@ -56,6 +58,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->projectMargin->scheduling()->code => $this->projectMargin->scheduling(),
             $this->budgetPlanFact->scheduling()->code => $this->budgetPlanFact->scheduling(),
             $this->portfolioLiquidity->scheduling()->code => $this->portfolioLiquidity->scheduling(),
+            $this->wipCompletionForecast->scheduling()->code => $this->wipCompletionForecast->scheduling(),
             $this->baselineScheduleVariance->scheduling()->code => $this->baselineScheduleVariance->scheduling(),
             $this->projectLaborCost->scheduling()->code => $this->projectLaborCost->scheduling(),
             $this->payrollReadiness->scheduling()->code => $this->payrollReadiness->scheduling(),
