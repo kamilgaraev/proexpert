@@ -41,6 +41,8 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecuti
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionCandidateContract;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowBuiltinPublishedReport;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowCandidateContract;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionBuiltinPublishedReport;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionCandidateContract;
 use Illuminate\Foundation\Application;
 use LogicException;
 use PHPUnit\Framework\TestCase;
@@ -80,6 +82,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('inventory_risk', $registry->published('inventory_risk')->code);
         self::assertSame('attendance_execution', $registry->published('attendance_execution')->code);
         self::assertSame('quality_defect_flow', $registry->published('quality_defect_flow')->code);
+        self::assertSame('workforce_admission', $registry->published('workforce_admission')->code);
         self::assertSame('project_margin', $app->make(ReportCatalogMetadataRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportCatalogMetadataRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('project_labor_cost', $app->make(ReportCatalogMetadataRegistry::class)->published('project_labor_cost')->code);
@@ -91,6 +94,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('inventory_risk', $app->make(ReportCatalogMetadataRegistry::class)->published('inventory_risk')->code);
         self::assertSame('attendance_execution', $app->make(ReportCatalogMetadataRegistry::class)->published('attendance_execution')->code);
         self::assertSame('quality_defect_flow', $app->make(ReportCatalogMetadataRegistry::class)->published('quality_defect_flow')->code);
+        self::assertSame('workforce_admission', $app->make(ReportCatalogMetadataRegistry::class)->published('workforce_admission')->code);
         self::assertSame('project_margin', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportSchedulingCapabilityRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('project_labor_cost', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_labor_cost')->code);
@@ -102,6 +106,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('inventory_risk', $app->make(ReportSchedulingCapabilityRegistry::class)->published('inventory_risk')->code);
         self::assertSame('attendance_execution', $app->make(ReportSchedulingCapabilityRegistry::class)->published('attendance_execution')->code);
         self::assertSame('quality_defect_flow', $app->make(ReportSchedulingCapabilityRegistry::class)->published('quality_defect_flow')->code);
+        self::assertSame('workforce_admission', $app->make(ReportSchedulingCapabilityRegistry::class)->published('workforce_admission')->code);
     }
 
     public function test_budget_plan_fact_is_available_without_database_publication(): void
@@ -118,10 +123,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->inventoryRisk(),
             $this->attendanceExecution(),
             $this->qualityDefectFlow(),
+            $this->workforceAdmission(),
         );
         $registry = new CompositePublishedReportDefinitionRegistry($builtins, $this->registry([]));
 
-        self::assertSame(['attendance_execution', 'budget_plan_fact', 'inventory_risk', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'supplier_award_competitiveness', 'supply_reliability', 'workforce_capacity'], $registry->publishedCodes());
+        self::assertSame(['attendance_execution', 'budget_plan_fact', 'inventory_risk', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'supplier_award_competitiveness', 'supply_reliability', 'workforce_admission', 'workforce_capacity'], $registry->publishedCodes());
         self::assertSame('project_margin', $registry->published('project_margin')->code);
         $definition = $registry->published('budget_plan_fact');
         $payload = $definition->payload();
@@ -150,6 +156,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->inventoryRisk(),
             $this->attendanceExecution(),
             $this->qualityDefectFlow(),
+            $this->workforceAdmission(),
         );
 
         $expectedModules = [
@@ -164,6 +171,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             'inventory_risk' => 'basic-warehouse',
             'attendance_execution' => 'workforce-management',
             'quality_defect_flow' => 'quality-control',
+            'workforce_admission' => 'safety-management',
         ];
 
         foreach ($expectedModules as $code => $module) {
@@ -178,11 +186,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->workforceAdmission()),
             $this->registry(['ordinary_report' => $builtin]),
         );
 
-        self::assertSame(['attendance_execution', 'budget_plan_fact', 'inventory_risk', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'supplier_award_competitiveness', 'supply_reliability', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
+        self::assertSame(['attendance_execution', 'budget_plan_fact', 'inventory_risk', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'supplier_award_competitiveness', 'supply_reliability', 'workforce_admission', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
         self::assertSame($builtin, $registry->published('ordinary_report'));
     }
 
@@ -190,7 +198,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->workforceAdmission()),
             $this->registry(['budget_plan_fact' => $builtin]),
         );
 
@@ -277,5 +285,10 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     private function qualityDefectFlow(): QualityDefectFlowBuiltinPublishedReport
     {
         return new QualityDefectFlowBuiltinPublishedReport(new QualityDefectFlowCandidateContract);
+    }
+
+    private function workforceAdmission(): WorkforceAdmissionBuiltinPublishedReport
+    {
+        return new WorkforceAdmissionBuiltinPublishedReport(new WorkforceAdmissionCandidateContract);
     }
 }
