@@ -32,6 +32,9 @@ final class SafetyManagementServiceProvider extends ServiceProvider
         $this->app->singleton(Reporting\Admission\DrillDown\WorkforceAdmissionDrillDownProvider::class);
         $this->app->singleton(Reporting\Admission\Backfill\WorkforceAdmissionBackfill::class);
         $this->app->singleton(Reporting\Admission\Readiness\WorkforceAdmissionReadinessProbe::class);
+        $this->app->singleton(Reporting\Admission\WorkforceAdmissionCandidateContract::class);
+        $this->app->scoped(Reporting\Admission\WorkforceAdmissionReportBindingFactory::class);
+        $this->app->scoped(Reporting\Admission\WorkforceAdmissionPublishedRuntimeBindingRegistrar::class);
     }
 
     public function boot(): void
@@ -49,6 +52,14 @@ final class SafetyManagementServiceProvider extends ServiceProvider
         $this->app['router']->aliasMiddleware(
             'safety-management.active',
             Http\Middleware\EnsureSafetyManagementActive::class
+        );
+
+        $this->app->resolving(
+            \App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler::class,
+            function ($assembler): void {
+                $this->app->make(Reporting\Admission\WorkforceAdmissionPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+            },
         );
     }
 }
