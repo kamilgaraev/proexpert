@@ -56,9 +56,15 @@ final readonly class CustomerSlaCandidateContract
 
     public function assertRuntimeMatches(): void
     {
-        if (! hash_equals(self::FORMULA_HASH, self::classHash(CustomerSlaFormula::class))
-            || ! hash_equals(self::SOURCE_HASH, self::classHash(CustomerSlaSnapshotMaterializer::class))) {
-            throw new InvalidArgumentException('customer_sla_candidate_contract_drift');
+        $formulaHash = self::classHash(CustomerSlaFormula::class);
+        $sourceHash = self::classHash(CustomerSlaSnapshotMaterializer::class);
+        if (! hash_equals(self::FORMULA_HASH, $formulaHash)
+            || ! hash_equals(self::SOURCE_HASH, $sourceHash)) {
+            throw new InvalidArgumentException(sprintf(
+                'customer_sla_candidate_contract_drift:formula=%s:source=%s',
+                $formulaHash,
+                $sourceHash,
+            ));
         }
     }
 
