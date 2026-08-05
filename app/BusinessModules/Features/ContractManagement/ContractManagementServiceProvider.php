@@ -6,8 +6,16 @@ namespace App\BusinessModules\Features\ContractManagement;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Features\ContractManagement\Http\Controllers\ContractEstimateItemController;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureCandidateContract;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureProvider;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposurePublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureReportBindingFactory;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerSource;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerVersionObserver;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementProjectionService;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementQueryService;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -21,6 +29,13 @@ class ContractManagementServiceProvider extends ServiceProvider
     {
         $this->app->bind(ContractManagementModule::class);
         $this->app->singleton(ContractEstimateService::class);
+        $this->app->singleton(ContractSettlementExposureCandidateContract::class);
+        $this->app->scoped(ContractSettlementOwnerSource::class);
+        $this->app->scoped(ContractSettlementProjectionService::class);
+        $this->app->scoped(ContractSettlementQueryService::class);
+        $this->app->scoped(ContractSettlementExposureProvider::class);
+        $this->app->scoped(ContractSettlementExposureReportBindingFactory::class);
+        $this->app->scoped(ContractSettlementExposurePublishedRuntimeBindingRegistrar::class);
     }
 
     public function boot(): void
@@ -35,6 +50,15 @@ class ContractManagementServiceProvider extends ServiceProvider
         ] as $owner) {
             $owner::observe(ContractSettlementOwnerVersionObserver::class);
         }
+
+        $this->app->afterResolving(
+            ReportDefinitionBindingAssembler::class,
+            function (ReportDefinitionBindingAssembler $assembler): void {
+                $this->app
+                    ->make(ContractSettlementExposurePublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+            },
+        );
 
         Route::middleware([
             'api',

@@ -9,6 +9,8 @@ use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScor
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DrillDown\ContractorScorecardDrillDownProvider;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DrillDown\InventoryRiskDrillDownProvider;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskCandidateContract;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureCandidateContract;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementQueryService;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Queries\SupplierAwardRowQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardCandidateContract;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleCandidateContract;
@@ -47,6 +49,7 @@ final class PublishedDrillDownContractTest extends TestCase
 
     public static function simpleReports(): iterable
     {
+        yield [ContractSettlementQueryService::class, new ContractSettlementExposureCandidateContract];
         yield [BaselineScheduleVarianceQueryService::class, new BaselineScheduleVarianceCandidateContract];
         yield [CustomerSlaDrillDownProvider::class, new CustomerSlaCandidateContract];
         yield [ContractorScorecardDrillDownProvider::class, new ContractorScorecardCandidateContract];

@@ -188,10 +188,9 @@ final class FinanceOwnerReportingContractTest extends TestCase
     }
 
     #[Test]
-    public function owner_slice_does_not_publish_or_mutate_the_global_catalog(): void
+    public function owner_slice_does_not_mutate_the_global_catalog(): void
     {
         $forbidden = [
-            'PublishedReportDefinition',
             'ReportDefinitionBindingMap',
             'ReportCatalogActivationService',
             'ReportingCatalogServiceProvider',
