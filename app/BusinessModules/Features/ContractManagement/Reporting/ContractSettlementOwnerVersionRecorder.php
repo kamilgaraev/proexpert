@@ -11,6 +11,7 @@ use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSet
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\ContractProjectAllocation;
+use DateTimeInterface;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -25,21 +26,25 @@ final readonly class ContractSettlementOwnerVersionRecorder
         PaymentTransaction::class => 'payment_transaction',
     ];
 
-    public function record(Model $owner, string $operation): void
+    public function record(
+        Model $owner,
+        string $operation,
+        ?DateTimeInterface $occurredAt = null,
+    ): ContractSettlementOwnerVersion
     {
         $ownerType = self::TYPES[$owner::class] ?? throw new DomainException('contract_settlement_owner_type_invalid');
         $organizationId = $this->organizationId($owner);
         $payload = $owner->attributesToArray();
-        $occurredAt = $owner->updated_at ?? now();
+        $occurredAt ??= now();
 
-        DB::transaction(function () use (
+        return DB::transaction(function () use (
             $owner,
             $ownerType,
             $organizationId,
             $payload,
             $operation,
             $occurredAt,
-        ): void {
+        ): ContractSettlementOwnerVersion {
             $organization = DB::table('organizations')
                 ->where('id', $organizationId)
                 ->lockForUpdate()
@@ -61,10 +66,10 @@ final readonly class ContractSettlementOwnerVersionRecorder
                 'owner_id' => (string) $owner->getKey(),
                 'version' => $version,
                 'operation' => $operation,
-                'occurred_at' => $occurredAt->format(DATE_ATOM),
+                'occurred_at' => ContractSettlementOwnerTimestamp::canonical($occurredAt),
                 'payload' => $payload,
             ];
-            ContractSettlementOwnerVersion::query()->create([
+            return ContractSettlementOwnerVersion::query()->create([
                 ...$identity,
                 'owner_hash' => hash('sha256', CanonicalJson::encode($identity)),
             ]);
