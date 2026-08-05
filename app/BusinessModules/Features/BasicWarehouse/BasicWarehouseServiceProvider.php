@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse;
 
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
 
@@ -16,6 +17,10 @@ class BasicWarehouseServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->app->afterResolving(ReportDefinitionBindingAssembler::class, function (ReportDefinitionBindingAssembler $assembler): void {
+            $this->app->make(Reporting\InventoryRisk\InventoryRiskPublishedRuntimeBindingRegistrar::class)->register($assembler);
+        });
+
         $this->loadMigrations();
         
         $this->loadRoutes();

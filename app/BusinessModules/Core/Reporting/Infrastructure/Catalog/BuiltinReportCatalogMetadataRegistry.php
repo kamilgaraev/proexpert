@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataReg
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityBuiltinPublishedReport;
@@ -28,6 +29,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private ProcurementCycleBuiltinPublishedReport $procurementCycle,
         private SupplierAwardBuiltinPublishedReport $supplierAward,
         private SupplyReliabilityBuiltinPublishedReport $supplyReliability,
+        private InventoryRiskBuiltinPublishedReport $inventoryRisk,
     ) {}
 
     public function published(string $code): ReportCatalogMetadata
@@ -41,6 +43,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->procurementCycle->metadata()->code => $this->procurementCycle->metadata(),
             $this->supplierAward->metadata()->code => $this->supplierAward->metadata(),
             $this->supplyReliability->metadata()->code => $this->supplyReliability->metadata(),
+            $this->inventoryRisk->metadata()->code => $this->inventoryRisk->metadata(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };
     }

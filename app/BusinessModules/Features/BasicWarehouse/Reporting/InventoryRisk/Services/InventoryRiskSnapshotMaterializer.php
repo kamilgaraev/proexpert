@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -87,6 +89,7 @@ final readonly class InventoryRiskSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertScope($context, $query);
+        $this->statuses($query);
         $allowedWarehouseIds = $this->sourceAccess->allowedIds(
             $context->scope->resources,
             'warehouse',
@@ -105,7 +108,7 @@ final readonly class InventoryRiskSnapshotMaterializer
             );
         $this->filters->apply($balanceQuery, $this->filters->only($query->filters, [
             'organization', 'organization_id', 'warehouse', 'warehouse_id', 'project', 'project_id',
-            'material', 'material_id', 'category', 'abc', 'xyz', 'period',
+            'material', 'material_id', 'category', 'abc', 'xyz',
         ]), [
             'organization' => 'warehouse_daily_balance_rows.organization_id',
             'organization_id' => 'warehouse_daily_balance_rows.organization_id',
@@ -118,7 +121,6 @@ final readonly class InventoryRiskSnapshotMaterializer
             'category' => 'inventory_filter_material.category',
             'abc' => DB::raw("inventory_filter_material.additional_properties->>'abc_class'"),
             'xyz' => DB::raw("inventory_filter_material.additional_properties->>'xyz_class'"),
-            'period' => 'warehouse_daily_balance_rows.balance_date',
         ]);
         $balanceRows = $balanceQuery
             ->select('warehouse_daily_balance_rows.*')
@@ -497,18 +499,31 @@ final readonly class InventoryRiskSnapshotMaterializer
 
     private function matchesStatusFilter(string $status, ReportQuery $query): bool
     {
-        $condition = $query->filters->values['status'] ?? null;
-        if (! is_array($condition)) {
+        $statuses = $this->statuses($query);
+        if ($statuses === null) {
             return true;
         }
 
-        return match ($condition['operator'] ?? null) {
-            'eq' => $status === (string) ($condition['value'] ?? ''),
-            'neq' => $status !== (string) ($condition['value'] ?? ''),
-            'in' => in_array($status, (array) ($condition['value'] ?? []), true),
-            'not_in' => ! in_array($status, (array) ($condition['value'] ?? []), true),
-            default => false,
-        };
+        return in_array($status, $statuses, true);
+    }
+
+    private function statuses(ReportQuery $query): ?array
+    {
+        $statuses = $query->filters->values['statuses'] ?? null;
+        if ($statuses === null) {
+            return null;
+        }
+        if (! is_array($statuses)
+            || ! array_is_list($statuses)
+            || $statuses === []
+            || array_diff($statuses, ['healthy', 'reorder', 'excess']) !== []) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_REQUEST_INVALID,
+                ['fields' => 'filters'],
+            );
+        }
+
+        return $statuses;
     }
 
     private function snapshotRef(ReportQuery $query, InventoryRiskSnapshot $snapshot): ReportSnapshotRef
