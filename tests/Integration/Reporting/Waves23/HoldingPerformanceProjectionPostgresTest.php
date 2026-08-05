@@ -6,11 +6,15 @@ namespace Tests\Integration\Reporting\Waves23;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceBuiltinPublishedReport;
 use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceCandidateContract;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPaymentTransactionEventVersion;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationCheckpointSourceAssembler;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceImmutableEventSource;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceFormula;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceProjectionCoverageInspector;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPaymentEventFactProducer;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -33,6 +37,204 @@ use Tests\TestCase;
 #[Group('postgres')]
 final class HoldingPerformanceProjectionPostgresTest extends TestCase
 {
+    #[Test]
+    public function event_fact_previews_are_behaviorally_read_only(): void
+    {
+        if (config('database.default') !== 'pgsql') {
+            self::markTestSkipped('PostgreSQL integration only.');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $identity = random_int(500000000, 599999999);
+            $organizationId = $identity;
+            $projectId = $identity + 1;
+            $contractId = $identity + 2;
+            $allocationId = $identity + 3;
+            $coverageStartedAt = DB::table('holding_reporting_context_coverage')
+                ->whereIn('source_code', [
+                    'contract_dimensions',
+                    'organization_hierarchy',
+                    'allocation_dimensions',
+                ])
+                ->max('coverage_started_at');
+            self::assertIsString($coverageStartedAt);
+            $observedAt = CarbonImmutable::parse($coverageStartedAt);
+            $recognizedAt = $observedAt->addDay()->setTime(12, 0);
+            DB::table('holding_organization_hierarchy_events')->insert([
+                'organization_id' => $organizationId,
+                'parent_organization_id' => null,
+                'is_active' => true,
+                'hierarchy_level' => 0,
+                'hierarchy_path' => (string) $organizationId,
+                'observed_at' => $observedAt,
+                'is_deleted' => false,
+                'evidence_hash' => hash('sha256', 'preview-hierarchy-'.$identity),
+            ]);
+            DB::table('holding_contract_dimension_events')->insert([
+                'contract_id' => $contractId,
+                'organization_id' => $organizationId,
+                'contractor_id' => null,
+                'counterparty_organization_id' => null,
+                'contract_status' => 'active',
+                'work_type_category' => null,
+                'total_amount' => '1000.00',
+                'currency' => 'RUB',
+                'observed_at' => $observedAt,
+                'is_deleted' => false,
+                'evidence_hash' => hash('sha256', 'preview-contract-'.$identity),
+            ]);
+            DB::table('holding_allocation_context_events')->insert([
+                'allocation_id' => $allocationId,
+                'contract_id' => $contractId,
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'allocation_type' => 'percentage',
+                'allocated_amount' => null,
+                'allocated_percentage' => '50.0000',
+                'is_resolvable' => true,
+                'is_active' => true,
+                'observed_at' => $observedAt,
+                'is_deleted' => false,
+                'evidence_hash' => hash('sha256', 'preview-allocation-'.$identity),
+            ]);
+
+            $acceptedActiveId = DB::table('holding_accepted_work_event_versions')->insertGetId([
+                'event_key' => 'preview-accepted-active-'.str()->uuid(),
+                'performance_act_id' => $identity + 10,
+                'contract_id' => $contractId,
+                'project_id' => $projectId,
+                'organization_id' => $organizationId,
+                'active' => true,
+                'amount' => '125.50',
+                'status' => 'approved',
+                'occurred_at' => $recognizedAt,
+                'recorded_at' => $recognizedAt->addSecond(),
+                'history_complete' => true,
+                'source_hash' => hash('sha256', 'preview-accepted-active-'.$identity),
+            ]);
+            $acceptedInactiveId = DB::table('holding_accepted_work_event_versions')->insertGetId([
+                'event_key' => 'preview-accepted-inactive-'.str()->uuid(),
+                'performance_act_id' => $identity + 11,
+                'contract_id' => $contractId,
+                'project_id' => $projectId,
+                'organization_id' => $organizationId,
+                'active' => false,
+                'amount' => '125.50',
+                'status' => 'draft',
+                'occurred_at' => $recognizedAt,
+                'recorded_at' => $recognizedAt->addSeconds(2),
+                'history_complete' => true,
+                'source_hash' => hash('sha256', 'preview-accepted-inactive-'.$identity),
+            ]);
+            $acceptedMissingId = DB::table('holding_accepted_work_event_versions')->insertGetId([
+                'event_key' => 'preview-accepted-missing-'.str()->uuid(),
+                'performance_act_id' => $identity + 12,
+                'contract_id' => $contractId,
+                'project_id' => $projectId,
+                'organization_id' => $organizationId,
+                'active' => true,
+                'amount' => '125.50',
+                'status' => 'approved',
+                'occurred_at' => $recognizedAt,
+                'recorded_at' => $recognizedAt->addSeconds(3),
+                'history_complete' => false,
+                'source_hash' => hash('sha256', 'preview-accepted-missing-'.$identity),
+            ]);
+            $paymentActiveId = DB::table('holding_payment_transaction_event_versions')->insertGetId([
+                'transaction_id' => $identity + 20,
+                'payment_document_id' => $identity + 21,
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'contract_id' => $contractId,
+                'document_organization_id' => $organizationId,
+                'document_project_id' => $projectId,
+                'contract_organization_id' => $organizationId,
+                'contract_project_id' => $projectId,
+                'amount' => '200.00',
+                'currency' => 'RUB',
+                'status' => 'completed',
+                'active' => true,
+                'recognized_at' => $recognizedAt,
+                'occurred_at' => $recognizedAt,
+                'recorded_at' => $recognizedAt->addSecond(),
+                'history_complete' => true,
+                'source_hash' => hash('sha256', 'preview-payment-active-'.$identity),
+            ]);
+            $paymentInactiveId = DB::table('holding_payment_transaction_event_versions')->insertGetId([
+                'transaction_id' => $identity + 22,
+                'payment_document_id' => $identity + 23,
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'contract_id' => $contractId,
+                'document_organization_id' => $organizationId,
+                'document_project_id' => $projectId,
+                'contract_organization_id' => $organizationId,
+                'contract_project_id' => $projectId,
+                'amount' => null,
+                'currency' => null,
+                'status' => 'cancelled',
+                'active' => false,
+                'recognized_at' => $recognizedAt,
+                'occurred_at' => $recognizedAt,
+                'recorded_at' => $recognizedAt->addSeconds(2),
+                'history_complete' => true,
+                'source_hash' => hash('sha256', 'preview-payment-inactive-'.$identity),
+            ]);
+            $paymentMissingId = DB::table('holding_payment_transaction_event_versions')->insertGetId([
+                'transaction_id' => $identity + 24,
+                'payment_document_id' => $identity + 25,
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'contract_id' => $contractId,
+                'document_organization_id' => $organizationId,
+                'document_project_id' => $projectId,
+                'contract_organization_id' => $organizationId,
+                'contract_project_id' => $projectId,
+                'amount' => '200.00',
+                'currency' => 'RUB',
+                'status' => 'completed',
+                'active' => true,
+                'recognized_at' => $recognizedAt,
+                'occurred_at' => $recognizedAt,
+                'recorded_at' => $recognizedAt->addSeconds(3),
+                'history_complete' => false,
+                'source_hash' => hash('sha256', 'preview-payment-missing-'.$identity),
+            ]);
+
+            $accepted = $this->app->make(AcceptedWorkHoldingFactProducer::class);
+            $payments = $this->app->make(HoldingPaymentEventFactProducer::class);
+            $factCount = DB::table('holding_allocation_fact_versions')
+                ->where('organization_id', $organizationId)
+                ->count();
+            $gapCount = DB::table('holding_allocation_projection_gaps')
+                ->where('organization_id', $organizationId)
+                ->count();
+            $acceptedFact = $accepted->previewEvent(HoldingAcceptedWorkEventVersion::query()->findOrFail($acceptedActiveId));
+            $paymentFact = $payments->previewEvent(HoldingPaymentTransactionEventVersion::query()->findOrFail($paymentActiveId));
+
+            self::assertNotNull($acceptedFact);
+            self::assertSame(12_550, $acceptedFact->amountMinor);
+            self::assertSame('accepted_accrual', $acceptedFact->monetaryBasis);
+            self::assertNotNull($paymentFact);
+            self::assertSame(10_000, $paymentFact->amountMinor);
+            self::assertSame('cash', $paymentFact->monetaryBasis);
+            self::assertNull($accepted->previewEvent(HoldingAcceptedWorkEventVersion::query()->findOrFail($acceptedInactiveId)));
+            self::assertNull($accepted->previewEvent(HoldingAcceptedWorkEventVersion::query()->findOrFail($acceptedMissingId)));
+            self::assertNull($payments->previewEvent(HoldingPaymentTransactionEventVersion::query()->findOrFail($paymentInactiveId)));
+            self::assertNull($payments->previewEvent(HoldingPaymentTransactionEventVersion::query()->findOrFail($paymentMissingId)));
+            self::assertSame($factCount, DB::table('holding_allocation_fact_versions')
+                ->where('organization_id', $organizationId)
+                ->count());
+            self::assertSame($gapCount, DB::table('holding_allocation_projection_gaps')
+                ->where('organization_id', $organizationId)
+                ->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
     #[Test]
     public function checkpoint_day_is_rejected_until_the_first_complete_business_day(): void
     {

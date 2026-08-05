@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFact;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPaymentTransactionEventVersion;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
@@ -45,6 +46,16 @@ final readonly class HoldingPaymentEventFactProducer
         }
 
         return $this->projector->persist($this->projector->project($source), $source);
+    }
+
+    public function previewEvent(HoldingPaymentTransactionEventVersion $event): ?HoldingAllocationFact
+    {
+        $projection = $this->projection($event);
+        $source = $projection['source'];
+
+        return $projection['missing'] === [] && is_array($source)
+            ? $this->projector->project($source)
+            : null;
     }
 
     private function projection(HoldingPaymentTransactionEventVersion $event): array
