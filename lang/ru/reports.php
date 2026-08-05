@@ -18,7 +18,7 @@ return [
     'catalog' => [
         'project_portfolio_health' => json_decode('"\\u0417\\u0434\\u043e\\u0440\\u043e\\u0432\\u044c\\u0435 \\u043f\\u043e\\u0440\\u0442\\u0444\\u0435\\u043b\\u044f \\u043f\\u0440\\u043e\\u0435\\u043a\\u0442\\u043e\\u0432"'),
         'holding_performance' => json_decode('"\\u042d\\u0444\\u0444\\u0435\\u043a\\u0442\\u0438\\u0432\\u043d\\u043e\\u0441\\u0442\\u044c \\u0445\\u043e\\u043b\\u0434\\u0438\\u043d\\u0433\\u0430"'),
-        'intercompany_contract_flows' => json_decode('"\\u041c\\u0435\\u0436\\u0434\\u0443\\u043d\\u0430\\u0440\\u043e\\u0434\\u043d\\u044b\\u0435 \\u0434\\u043e\\u0433\\u043e\\u0432\\u043e\\u0440\\u043d\\u044b\\u0435 \\u043f\\u043e\\u0442\\u043e\\u043a\\u0438"'),
+        'intercompany_contract_flows' => 'Потоки по договорам холдинга',
         'portfolio_liquidity' => json_decode('"\\u041b\\u0438\\u043a\\u0432\\u0438\\u0434\\u043d\\u043e\\u0441\\u0442\\u044c \\u043f\\u043e\\u0440\\u0442\\u0444\\u0435\\u043b\\u044f"'),
         'project_evm_control' => json_decode('"\\u041a\\u043e\\u043d\\u0442\\u0440\\u043e\\u043b\\u044c EVM \\u043f\\u0440\\u043e\\u0435\\u043a\\u0442\\u0430"'),
         'baseline_schedule_variance' => json_decode('"\\u041e\\u0442\\u043a\\u043b\\u043e\\u043d\\u0435\\u043d\\u0438\\u0435 \\u043e\\u0442 \\u0431\\u0430\\u0437\\u043e\\u0432\\u043e\\u0433\\u043e \\u0433\\u0440\\u0430\\u0444\\u0438\\u043a\\u0430"'),

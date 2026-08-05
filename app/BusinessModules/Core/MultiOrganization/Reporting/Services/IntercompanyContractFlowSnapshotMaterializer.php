@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
-use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingHierarchySnapshot;
+use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationCheckpointSource;
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\IntercompanyFlowMetricRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationProjectionGap;
@@ -36,7 +36,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Throwable;
 
 final readonly class IntercompanyContractFlowSnapshotMaterializer
 {
@@ -44,7 +43,8 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
 
     public function __construct(
         private IntercompanyContractFlowFormula $formula,
-        private HoldingHierarchyResolver $hierarchies = new HoldingHierarchyResolver,
+        private HoldingAllocationCheckpointSourceAssembler $sources,
+        private HoldingAllocationFactProjector $projector,
     ) {}
 
     public function materialize(
@@ -53,7 +53,18 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
-        $hierarchy = $this->hierarchy($context, $query->asOf);
+        $batch = $this->sources->assemble($context->scope, $query);
+        if ($batch->gaps !== []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+        }
+        foreach ($batch->sources as $source) {
+            if (! $source instanceof HoldingAllocationCheckpointSource) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            $this->projector->persist($source->fact, $source->evidence);
+        }
+        $hierarchy = $batch->hierarchy;
+        $coverageStartedAt = new DateTimeImmutable($batch->coverageStartedAt);
         $recordedCutoff = now()->toImmutable();
         $facts = $this->facts(
             $context,
@@ -61,6 +72,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             $hierarchy->holdingId,
             $hierarchy->organizationIds,
             $recordedCutoff,
+            $coverageStartedAt,
         )
             ->orderBy('id')
             ->get();
@@ -70,6 +82,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             'holding_id' => $hierarchy->holdingId,
             'hierarchy_version' => $hierarchy->version,
             'source_schema_version' => $query->definition->sourceSchemaVersion,
+            'source_watermark' => $batch->watermark,
         ]];
         $unknown = 0;
 
@@ -79,7 +92,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             $metric = null;
             $linkedEvidenceMissing = $fact->linked_parent_allocation_id !== null
                 && ($fact->linked_incoming_minor === null || $fact->linked_outgoing_minor === null);
-            if ($currency === null || (string) $fact->flow_class === 'unclassified' || $linkedEvidenceMissing) {
+            if ($currency === null || $linkedEvidenceMissing) {
                 $unknown++;
             } else {
                 $metric = new IntercompanyFlowMetricRow(
@@ -131,7 +144,9 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         $projectionGaps = HoldingAllocationProjectionGap::query()
             ->where('holding_id', $hierarchy->holdingId)
             ->whereIn('organization_id', $hierarchy->organizationIds)
+            ->whereIn('source_type', ['contract_checkpoint', 'contract'])
             ->where('monetary_basis', 'contracted')
+            ->where('business_effective_at', '>=', $coverageStartedAt)
             ->where('business_effective_at', '<=', $query->asOf)
             ->where('recorded_at', '<=', $recordedCutoff)
             ->where(static fn (Builder $builder): Builder => $builder
@@ -210,9 +225,9 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         $hierarchyWatermark = $hierarchy->version;
         $sourceRef = new ReportSourceRef(
             'holding_allocations',
-            'holding_facts',
+            'contract_allocation_checkpoint',
             'snapshot_'.strtolower($snapshotId),
-            'holding_facts_v1',
+            $query->definition->sourceSchemaVersion,
             'watermark_'.$watermark,
             count($sourcePayload),
             $sourceHash,
@@ -368,13 +383,16 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         int $holdingId,
         array $organizationIds,
         DateTimeInterface $recordedCutoff,
+        DateTimeInterface $coverageStartedAt,
     ): Builder {
         $builder = HoldingAllocationFactVersion::query()
             ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->where('holding_id', $holdingId)
             ->whereIn('organization_id', $organizationIds)
+            ->whereIn('source_type', ['contract_checkpoint', 'contract'])
             ->where('monetary_basis', 'contracted')
             ->whereIn('contributor_organization_id', $organizationIds)
+            ->where('business_effective_at', '>=', $coverageStartedAt)
             ->where('business_effective_at', '<=', $query->asOf)
             ->where('recorded_at', '<=', $recordedCutoff)
             ->whereNotExists(function (QueryBuilder $newer) use ($query, $recordedCutoff): void {
@@ -383,9 +401,10 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
                     ->from('holding_allocation_fact_versions as newer_fact')
                     ->whereColumn('newer_fact.holding_id', 'holding_allocation_fact_versions.holding_id')
                     ->whereColumn('newer_fact.organization_id', 'holding_allocation_fact_versions.organization_id')
-                    ->whereColumn('newer_fact.source_type', 'holding_allocation_fact_versions.source_type')
-                    ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id')
+                    ->whereColumn('newer_fact.allocation_id', 'holding_allocation_fact_versions.allocation_id')
                     ->whereColumn('newer_fact.monetary_basis', 'holding_allocation_fact_versions.monetary_basis')
+                    ->where('newer_fact.source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
+                    ->whereIn('newer_fact.source_type', ['contract_checkpoint', 'contract'])
                     ->where('newer_fact.business_effective_at', '<=', $query->asOf)
                     ->where('newer_fact.recorded_at', '<=', $recordedCutoff)
                     ->where(static fn (QueryBuilder $tuple): QueryBuilder => $tuple
@@ -410,6 +429,8 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             'project_ids' => 'project_id',
             'organization_ids' => 'contributor_organization_id',
             'counterparty_ids' => 'counterparty_organization_id',
+            'contract_ids' => 'contract_id',
+            'work_type_categories' => 'work_type_category',
             'currencies' => 'currency',
         ] as $filter => $column) {
             if (isset($filters[$filter]) && is_array($filters[$filter]) && $filters[$filter] !== []) {
@@ -424,33 +445,6 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         }
 
         return $builder;
-    }
-
-    private function hierarchy(
-        ReportExecutionContext $context,
-        DateTimeInterface $asOf,
-    ): HoldingHierarchySnapshot
-    {
-        try {
-            $hierarchy = $this->hierarchies->resolveAt($context->scope->organizationId, $asOf);
-        } catch (ReportContractException $exception) {
-            throw $exception;
-        } catch (Throwable $exception) {
-            throw ReportContractException::fromCode(
-                ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
-                previous: $exception,
-            );
-        }
-        $authorizedIds = $context->scope->holdingOrganizationIds;
-        $historicalIds = $hierarchy->organizationIds;
-        sort($authorizedIds, SORT_NUMERIC);
-        sort($historicalIds, SORT_NUMERIC);
-        if ($hierarchy->holdingId !== $context->scope->organizationId
-            || $authorizedIds !== $historicalIds) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
-        }
-
-        return $hierarchy;
     }
 
     private function projectionRows(array $groups): array

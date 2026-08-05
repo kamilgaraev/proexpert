@@ -109,7 +109,8 @@ final class PortfolioOwnerPortContractTest extends TestCase
     public static function opaquePortCases(): array
     {
         $holding = new HoldingPerformanceSnapshotMaterializer(new HoldingPerformanceFormula);
-        $intercompany = new IntercompanyContractFlowSnapshotMaterializer(new IntercompanyContractFlowFormula);
+        $intercompany = (new ReflectionClass(IntercompanyContractFlowSnapshotMaterializer::class))
+            ->newInstanceWithoutConstructor();
 
         return [
             'project portfolio health' => [new BudgetingPortfolioQueryService, 'project_portfolio_health', 'risk_rank'],
