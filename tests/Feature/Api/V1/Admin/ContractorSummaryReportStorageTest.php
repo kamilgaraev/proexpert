@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use App\Models\PersonalFile;
 use App\Models\Contractor;
-use App\Models\Project;
 use App\Models\Module;
-use App\Models\OrganizationModuleActivation;
 use App\Models\Organization;
+use App\Models\OrganizationModuleActivation;
+use App\Models\PersonalFile;
+use App\Models\Project;
 use App\Models\ReportFile;
+use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
 use Tests\Support\AdminApiTestContext;
@@ -28,13 +28,14 @@ class ContractorSummaryReportStorageTest extends TestCase
         Storage::fake('s3');
 
         $context = AdminApiTestContext::create();
+        $this->fakeCurrentStorage();
         $this->activateReportsModule($context->organization->id);
         $project = Project::factory()->create([
             'organization_id' => $context->organization->id,
         ]);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/reports/contractor-summary?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/contractor-summary?'.http_build_query([
                 'project_id' => $project->id,
                 'date_from' => '',
                 'date_to' => '',
@@ -53,20 +54,21 @@ class ContractorSummaryReportStorageTest extends TestCase
         $response->assertJsonPath('success', true);
 
         $file = PersonalFile::query()
+            ->where('organization_id', $context->organization->id)
             ->where('user_id', $context->user->id)
-            ->where('path', 'like', 'org-' . $context->organization->id . '/reports/%')
-            ->where('filename', 'like', 'contractor_summary_report_%.json')
+            ->where('directory', 'reports')
+            ->where('original_name', 'like', 'contractor_summary_report_%.json')
             ->first();
 
         $this->assertInstanceOf(PersonalFile::class, $file);
         $this->assertGreaterThan(0, $file->size);
-        Storage::disk('s3')->assertExists($file->path);
+        Storage::disk('s3')->assertExists($file->storage_key);
 
         $reportFile = ReportFile::query()
             ->where('organization_id', $context->organization->id)
             ->where('user_id', $context->user->id)
-            ->where('path', $file->path)
-            ->where('filename', $file->filename)
+            ->where('path', $file->storage_key)
+            ->where('filename', $file->original_name)
             ->first();
 
         $this->assertInstanceOf(ReportFile::class, $reportFile);
@@ -92,7 +94,7 @@ class ContractorSummaryReportStorageTest extends TestCase
         ]);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/reports/contractor-summary?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/contractor-summary?'.http_build_query([
                 'project_id' => $foreignProject->id,
                 'contract_status' => 'active',
             ]));
@@ -117,7 +119,7 @@ class ContractorSummaryReportStorageTest extends TestCase
         ]);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/reports/contractor-summary?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/contractor-summary?'.http_build_query([
                 'project_id' => $project->id,
                 'contractor_ids' => [$foreignContractor->id],
                 'contract_status' => 'active',
@@ -134,16 +136,13 @@ class ContractorSummaryReportStorageTest extends TestCase
             'organization_id' => $context->organization->id,
         ]);
 
-        $storage = Mockery::mock(Filesystem::class);
-        $storage->shouldReceive('put')->once()->andThrow(new \RuntimeException('Storage unavailable'));
-
         $fileService = Mockery::mock(FileService::class);
-        $fileService->shouldReceive('disk')->once()->andReturn($storage);
+        $fileService->shouldReceive('putPrivate')->once()->andThrow(new \RuntimeException('Storage unavailable'));
 
         $this->app->instance(FileService::class, $fileService);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/reports/contractor-summary?' . http_build_query([
+            ->getJson('/api/v1/admin/reports/contractor-summary?'.http_build_query([
                 'project_id' => $project->id,
                 'contract_status' => 'active',
             ]));
@@ -176,5 +175,19 @@ class ContractorSummaryReportStorageTest extends TestCase
             'status' => 'active',
             'activated_at' => now(),
         ]);
+    }
+
+    private function fakeCurrentStorage(): void
+    {
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putPrivate')
+            ->once()
+            ->andReturnUsing(static function (string $key, mixed $contents, string $mime, string $sha256): CurrentStoredFile {
+                $body = is_resource($contents) ? (string) stream_get_contents($contents) : (string) $contents;
+                Storage::disk('s3')->put($key, $body);
+
+                return new CurrentStoredFile($key, 'etag', strlen($body), $sha256, $mime);
+            });
+        $this->app->instance(FileService::class, $files);
     }
 }

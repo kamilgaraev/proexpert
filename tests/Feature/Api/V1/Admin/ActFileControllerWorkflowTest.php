@@ -4,19 +4,18 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\ContractorType;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ContractPerformanceAct;
-use App\Enums\ContractorType;
 use App\Models\File;
 use App\Models\Organization;
 use App\Models\PersonalFile;
 use App\Models\Project;
 use App\Models\User;
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
@@ -29,36 +28,54 @@ class ActFileControllerWorkflowTest extends TestCase
 
     public function test_personal_act_files_are_listed_downloaded_and_deleted_from_user_act_folder(): void
     {
-        Storage::fake('s3');
-
         $context = AdminApiTestContext::create();
-        $path = $context->user->id . '/acts/act-scan.pdf';
-        $foreignFolderPath = $context->user->id . '/reports/report.pdf';
-        Storage::disk('s3')->put($path, 'personal act content');
-        Storage::disk('s3')->put($foreignFolderPath, 'report content');
+        $path = 'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/act-scan.pdf';
+        $foreignFolderPath = 'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/report.pdf';
 
         $file = PersonalFile::query()->create([
+            'organization_id' => $context->organization->id,
             'user_id' => $context->user->id,
-            'path' => $path,
-            'filename' => 'act-scan.pdf',
+            'storage_key' => $path,
+            'directory' => 'acts',
+            'original_name' => 'act-scan.pdf',
+            'mime_type' => 'application/pdf',
+            'sha256' => str_repeat('a', 64),
             'size' => 20,
             'is_folder' => false,
         ]);
         $foreignFolderFile = PersonalFile::query()->create([
+            'organization_id' => $context->organization->id,
             'user_id' => $context->user->id,
-            'path' => $foreignFolderPath,
-            'filename' => 'report.pdf',
+            'storage_key' => $foreignFolderPath,
+            'directory' => 'reports',
+            'original_name' => 'report.pdf',
+            'mime_type' => 'application/pdf',
+            'sha256' => str_repeat('b', 64),
             'size' => 14,
             'is_folder' => false,
         ]);
         $foreignUser = User::factory()->create();
         $foreignUserFile = PersonalFile::query()->create([
+            'organization_id' => $context->organization->id,
             'user_id' => $foreignUser->id,
-            'path' => $foreignUser->id . '/acts/foreign.pdf',
-            'filename' => 'foreign.pdf',
+            'storage_key' => 'org-'.$context->organization->id.'/personal-files/user-'.$foreignUser->id.'/foreign.pdf',
+            'directory' => 'acts',
+            'original_name' => 'foreign.pdf',
+            'mime_type' => 'application/pdf',
+            'sha256' => str_repeat('c', 64),
             'size' => 10,
             'is_folder' => false,
         ]);
+        $stream = fopen('php://temp', 'w+b');
+        $this->assertIsResource($stream);
+        fwrite($stream, 'personal act content');
+        rewind($stream);
+        $fileService = Mockery::mock(FileService::class);
+        $fileService->shouldReceive('temporaryDownloadUrl')->once()->with($path, 300)
+            ->andReturn('https://download.example.test/act');
+        $fileService->shouldReceive('readCurrent')->once()->with($path)->andReturn($stream);
+        $fileService->shouldReceive('deleteCurrent')->once()->with($path);
+        $this->app->instance(FileService::class, $fileService);
 
         $indexResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/act-files?per_page=10');
@@ -86,7 +103,6 @@ class ActFileControllerWorkflowTest extends TestCase
         $deleteResponse->assertOk();
         $deleteResponse->assertJsonPath('success', true);
         $this->assertDatabaseMissing('personal_files', ['id' => $file->id]);
-        Storage::disk('s3')->assertMissing($path);
     }
 
     public function test_act_report_files_are_listed_with_uploader_and_downloaded_as_binary_content(): void
@@ -237,12 +253,9 @@ class ActFileControllerWorkflowTest extends TestCase
             'category' => 'act_document',
         ]);
 
-        $storage = Mockery::mock(Filesystem::class);
-        $storage->shouldReceive('exists')->once()->with($path)->andReturn(true);
-        $storage->shouldReceive('copy')->once()->andReturn(false);
-
         $fileService = Mockery::mock(FileService::class);
-        $fileService->shouldReceive('disk')->once()->with(Mockery::type(Organization::class))->andReturn($storage);
+        $fileService->shouldReceive('readCurrent')->once()->with($path)
+            ->andThrow(new \RuntimeException('storage_object_read_failed'));
 
         $this->app->instance(FileService::class, $fileService);
 
@@ -252,15 +265,17 @@ class ActFileControllerWorkflowTest extends TestCase
         $response->assertStatus(500);
         $response->assertJsonPath('success', false);
 
-        $this->assertSame(0, PersonalFile::query()->where('user_id', $context->user->id)->count());
+        $this->assertSame(0, PersonalFile::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('user_id', $context->user->id)
+            ->count());
     }
 
     private function createActFixture(
         Organization $organization,
         User $user,
         ?Organization $contractorOrganization = null
-    ): array
-    {
+    ): array {
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $contractor = Contractor::query()->create([
             'organization_id' => $organization->id,
