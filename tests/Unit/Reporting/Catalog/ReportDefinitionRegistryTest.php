@@ -125,10 +125,10 @@ final class ReportDefinitionRegistryTest extends TestCase
         self::assertNotSame($first->definitionHash->value, $source->definitionHash->value);
     }
 
-    public function test_manifest_semantics_reject_arbitrary_source_modules(): void
+    public function test_manifest_semantics_reject_reports_as_source_module(): void
     {
         $definitions = $this->manifest()->definitions;
-        $definitions[0]['source_module'] = 'finance';
+        $definitions[0]['source_module'] = 'reports';
         $definitions[0]['core_access_mode'] = 'source_module_report';
 
         $this->expectException(LogicException::class);
@@ -137,17 +137,15 @@ final class ReportDefinitionRegistryTest extends TestCase
         (new ReportManifestSemanticValidator)->assertManagement(['definitions' => $definitions]);
     }
 
-    public function test_manifest_semantics_reject_source_mode_permission_fallbacks(): void
+    public function test_manifest_semantics_accept_owner_module_permissions(): void
     {
         $definitions = $this->manifest()->definitions;
-        $definitions[0]['source_module'] = 'act-reporting';
+        $definitions[0]['source_module'] = 'budgeting';
         $definitions[0]['core_access_mode'] = 'source_module_report';
-        $definitions[0]['formats'] = ['xlsx'];
-
-        $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('report_manifest_source_permission_policy_invalid');
 
         (new ReportManifestSemanticValidator)->assertManagement(['definitions' => $definitions]);
+
+        self::assertSame('budgeting', $definitions[0]['source_module']);
     }
 
     public function test_metadata_preserves_explicit_contiguous_manifest_ordinal(): void

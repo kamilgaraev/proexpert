@@ -65,9 +65,28 @@ final class ReportCoreAccessModeTest extends TestCase
         return [
             'workspace cannot use source module' => ['act-reporting', ReportCoreAccessMode::REPORTING_WORKSPACE],
             'source mode cannot use reports' => ['reports', ReportCoreAccessMode::SOURCE_MODULE_REPORT],
-            'source mode is allow-listed' => ['finance', ReportCoreAccessMode::SOURCE_MODULE_REPORT],
             'slug is canonical' => ['Act Reports', ReportCoreAccessMode::SOURCE_MODULE_REPORT],
         ];
+    }
+
+    public function test_source_mode_uses_owner_module_and_its_exact_permissions(): void
+    {
+        $definition = (new ReportDefinitionBuilder)
+            ->sourceModule('time-tracking')
+            ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
+            ->formats(['csv', 'xlsx'])
+            ->permissionPolicy(new ReportPermissionPolicy(
+                ['time_tracking.view'],
+                ['time_tracking.reports.export'],
+                ['time_tracking.cost.view'],
+                [],
+            ))
+            ->payload();
+
+        self::assertSame('time-tracking', $definition->sourceModule);
+        self::assertSame(['time_tracking.view'], $definition->permissionPolicy->viewPermissions);
+        self::assertSame(['time_tracking.reports.export'], $definition->permissionPolicy->exportPermissions);
+        self::assertSame(['time_tracking.cost.view'], $definition->permissionPolicy->sensitivePermissions);
     }
 
     public function test_access_contract_participates_in_canonical_authorization_identity(): void
@@ -89,24 +108,6 @@ final class ReportCoreAccessModeTest extends TestCase
             (new CurrentReportAuthorizationTarget($generic, ReportOperation::VIEW, null))->canonicalFingerprint(),
             (new CurrentReportAuthorizationTarget($source, ReportOperation::VIEW, null))->canonicalFingerprint(),
         );
-    }
-
-    public function test_source_export_permission_must_match_each_admitted_format(): void
-    {
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('report_source_module_permission_policy_invalid');
-
-        (new ReportDefinitionBuilder)
-            ->sourceModule('act-reporting')
-            ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
-            ->formats(['xlsx', 'pdf'])
-            ->permissionPolicy(new ReportPermissionPolicy(
-                ['act_reports.view'],
-                ['act_reports.export.excel'],
-                [],
-                [],
-            ))
-            ->payload();
     }
 
     public function test_requested_export_format_participates_in_authorization_identity(): void
