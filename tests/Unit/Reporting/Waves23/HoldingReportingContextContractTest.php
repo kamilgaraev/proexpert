@@ -109,8 +109,8 @@ final class HoldingReportingContextContractTest extends TestCase
     public function live_fact_producers_resolve_only_immutable_context_at_business_time(): void
     {
         $payment = $this->source(
-            'app/BusinessModules/Core/MultiOrganization/Reporting/Listeners/'
-            .'ProjectHoldingAllocationFacts.php',
+            'app/BusinessModules/Core/MultiOrganization/Reporting/Services/'
+            .'HoldingPaymentEventFactProducer.php',
         );
         $accepted = $this->source(
             'app/BusinessModules/Core/MultiOrganization/Reporting/Services/'
@@ -154,7 +154,7 @@ final class HoldingReportingContextContractTest extends TestCase
     }
 
     #[Test]
-    public function payment_event_pins_report_context_before_queued_processing(): void
+    public function payment_fact_listener_projects_only_append_only_transaction_event(): void
     {
         $event = $this->source('app/BusinessModules/Core/Payments/Events/PaymentDocumentPaid.php');
         $stateMachine = $this->source(
@@ -165,15 +165,7 @@ final class HoldingReportingContextContractTest extends TestCase
             .'ProjectHoldingAllocationFacts.php',
         );
 
-        foreach ([
-            'public ?int $organizationId',
-            'public ?int $projectId',
-            'public ?string $invoiceableType',
-            'public ?int $invoiceableId',
-            'public ?string $currency',
-        ] as $field) {
-            self::assertStringContainsString($field, $event);
-        }
+        self::assertStringContainsString('public ?int $transactionId', $event);
         foreach ([
             'recognizedAt: $document->paid_at',
             'organizationId: (int) $document->organization_id',
@@ -182,9 +174,10 @@ final class HoldingReportingContextContractTest extends TestCase
         ] as $capture) {
             self::assertStringContainsString($capture, $stateMachine);
         }
-        self::assertStringContainsString('$event->organizationId ?? $document->organization_id', $listener);
-        self::assertStringContainsString('$event->currency ?? $document->currency', $listener);
-        self::assertStringContainsString("'currency_mismatch'", $listener);
+        self::assertStringContainsString('HoldingPaymentTransactionEventVersion::query()', $listener);
+        self::assertStringContainsString('$this->payments->project($version)', $listener);
+        self::assertStringNotContainsString('$event->document', $listener);
+        self::assertStringNotContainsString('PaymentTransaction::query()', $listener);
     }
 
     #[Test]
@@ -200,12 +193,8 @@ final class HoldingReportingContextContractTest extends TestCase
                 .'IntercompanyContractFlowSnapshotMaterializer.php',
             ),
             $this->source(
-                'app/BusinessModules/Core/MultiOrganization/Reporting/Readiness/'
-                .'HoldingPerformanceReadinessProbe.php',
-            ),
-            $this->source(
-                'app/BusinessModules/Core/MultiOrganization/Reporting/Readiness/'
-                .'IntercompanyContractFlowReadinessProbe.php',
+                'app/BusinessModules/Core/MultiOrganization/Reporting/Services/'
+                .'HoldingPerformanceProjectionCoverageInspector.php',
             ),
         ];
 

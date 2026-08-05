@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Catalog;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowBuiltinPublishedReport;
+use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceBuiltinPublishedReport;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabilityRegistry;
@@ -53,6 +54,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private HandoverReadinessBuiltinPublishedReport $handoverReadiness,
         private ContractorScorecardBuiltinPublishedReport $contractorScorecard,
         private CustomerSlaBuiltinPublishedReport $customerSla,
+        private HoldingPerformanceBuiltinPublishedReport $holdingPerformance,
         private IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
     ) {}
 
@@ -79,6 +81,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->handoverReadiness->scheduling()->code => $this->handoverReadiness->scheduling(),
             $this->contractorScorecard->scheduling()->code => $this->contractorScorecard->scheduling(),
             $this->customerSla->scheduling()->code => $this->customerSla->scheduling(),
+            $this->holdingPerformance->scheduling()->code => $this->holdingPerformance->scheduling(),
             $this->intercompanyContractFlow->scheduling()->code => $this->intercompanyContractFlow->scheduling(),
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND),
         };

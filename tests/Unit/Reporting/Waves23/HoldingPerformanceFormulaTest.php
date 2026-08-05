@@ -19,6 +19,7 @@ final class HoldingPerformanceFormulaTest extends TestCase
             HoldingAllocationFact::contracted(1, 10, 100, 'RUB', 12_000),
             HoldingAllocationFact::contracted(1, 11, 100, 'RUB', 8_000),
             HoldingAllocationFact::contracted(1, 12, 100, null, 5_000),
+            HoldingAllocationFact::contracted(1, 13, 100, null, 7_000),
             HoldingAllocationFact::cash(1, 10, 100, 'RUB', 3_000),
         ];
 
@@ -26,8 +27,8 @@ final class HoldingPerformanceFormulaTest extends TestCase
 
         self::assertSame(20_000, $totals['currencies']['RUB']['contracted_minor']);
         self::assertSame(3_000, $totals['currencies']['RUB']['cash_minor']);
-        self::assertSame(1, $totals['quality']['unknown_currency_count']);
-        self::assertSame(5_000, $totals['quality']['excluded_amount_minor']);
+        self::assertSame(2, $totals['quality']['unknown_currency_count']);
+        self::assertNull($totals['quality']['excluded_amount_minor']);
     }
 
     #[Test]

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use Brick\Math\BigDecimal;
@@ -33,7 +34,7 @@ final readonly class AcceptedWorkHoldingFactProducer
             return null;
         }
 
-        $act->loadMissing(['contract.contractor', 'lines', 'completedWorks']);
+        $act->loadMissing('contract');
         $contract = $act->contract;
         $organizationId = (int) ($contract?->organization_id ?? 0);
         $projectId = (int) $act->project_id;
@@ -45,19 +46,151 @@ final readonly class AcceptedWorkHoldingFactProducer
         if (! $contract instanceof Contract || min($organizationId, $projectId, $sourceVersion) < 1) {
             return null;
         }
-        if ($recognizedAt === null) {
-            $this->projector->recordGap([
-                'organization_id' => $organizationId,
-                'source_type' => 'performance_act',
-                'source_id' => (int) $act->getKey(),
-                'source_version' => $sourceVersion,
-                'monetary_basis' => 'accepted_accrual',
-                'business_effective_at' => $act->created_at,
-            ], ['recognized_on']);
+
+        return $this->projectValues(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            contractId: (int) $contract->getKey(),
+            actId: (int) $act->getKey(),
+            sourceVersion: $sourceVersion,
+            amount: (string) $act->amount,
+            status: (string) $act->status,
+            active: $active,
+            recognizedAt: $recognizedAt,
+            historyComplete: true,
+            sourceHash: null,
+        );
+    }
+
+    public function canProjectEvent(HoldingAcceptedWorkEventVersion $event, ?int $holdingId = null): bool
+    {
+        $projection = $this->projectionForEvent($event);
+
+        return $projection['missing'] === []
+            && (! $event->active
+                || $holdingId === null
+                || ($projection['identity']['holding_id'] ?? null) === $holdingId);
+    }
+
+    public function projectEvent(HoldingAcceptedWorkEventVersion $event): ?HoldingAllocationFactVersion
+    {
+        $projection = $this->projectionForEvent($event);
+        if ($projection['missing'] !== []) {
+            $this->projector->recordGap($projection['identity'], $projection['missing']);
 
             return null;
         }
+        $source = $projection['source'];
+        if (! is_array($source)) {
+            return null;
+        }
+
+        return $this->projector->persist($this->projector->project($source), $source);
+    }
+
+    private function projectionForEvent(HoldingAcceptedWorkEventVersion $event): array
+    {
+        return $this->projection(
+            organizationId: (int) $event->organization_id,
+            projectId: (int) $event->project_id,
+            contractId: (int) $event->contract_id,
+            actId: (int) $event->performance_act_id,
+            sourceVersion: (int) $event->getKey(),
+            amount: (string) $event->amount,
+            status: (string) $event->status,
+            active: (bool) $event->active,
+            recognizedAt: $event->occurred_at,
+            historyComplete: (bool) $event->history_complete,
+            sourceHash: (string) $event->source_hash,
+        );
+    }
+
+    private function projectValues(
+        int $organizationId,
+        int $projectId,
+        int $contractId,
+        int $actId,
+        int $sourceVersion,
+        string $amount,
+        string $status,
+        bool $active,
+        ?DateTimeInterface $recognizedAt,
+        bool $historyComplete,
+        ?string $sourceHash,
+    ): ?HoldingAllocationFactVersion {
+        $projection = $this->projection(
+            $organizationId,
+            $projectId,
+            $contractId,
+            $actId,
+            $sourceVersion,
+            $amount,
+            $status,
+            $active,
+            $recognizedAt,
+            $historyComplete,
+            $sourceHash,
+        );
+        if ($projection['missing'] !== []) {
+            $this->projector->recordGap($projection['identity'], $projection['missing']);
+
+            return null;
+        }
+        $source = $projection['source'];
+        if (! is_array($source)) {
+            return null;
+        }
+
+        return $this->projector->persist($this->projector->project($source), $source);
+    }
+
+    private function projection(
+        int $organizationId,
+        int $projectId,
+        int $contractId,
+        int $actId,
+        int $sourceVersion,
+        string $amount,
+        string $status,
+        bool $active,
+        ?DateTimeInterface $recognizedAt,
+        bool $historyComplete,
+        ?string $sourceHash,
+    ): array {
+        $identity = [
+            'organization_id' => $organizationId,
+            'source_type' => 'performance_act',
+            'source_id' => $actId,
+            'source_version' => $sourceVersion,
+            'monetary_basis' => 'accepted_accrual',
+            'business_effective_at' => $recognizedAt,
+        ];
         $missing = [];
+        if (min($organizationId, $projectId, $contractId, $actId, $sourceVersion) < 1) {
+            $missing[] = 'accepted_work_event_identity';
+        }
+        if (! $historyComplete) {
+            $missing[] = 'accepted_work_event_history';
+        }
+        if ($recognizedAt === null) {
+            $missing[] = 'recognized_on';
+        }
+        if ($active && ! in_array(
+            $status,
+            [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED],
+            true,
+        )) {
+            $missing[] = 'accepted_work_status';
+        }
+        if ($sourceHash !== null && preg_match('/^[a-f0-9]{64}$/D', $sourceHash) !== 1) {
+            $missing[] = 'accepted_work_event_hash';
+        }
+        if ($missing !== []) {
+            return ['identity' => $identity, 'missing' => array_values(array_unique($missing)), 'source' => null];
+        }
+        if (! $active) {
+            return ['identity' => $identity, 'missing' => [], 'source' => null];
+        }
         try {
             $hierarchy = $this->hierarchies->resolveAt($organizationId, $recognizedAt);
         } catch (InvalidArgumentException $exception) {
@@ -69,7 +202,7 @@ final readonly class AcceptedWorkHoldingFactProducer
         try {
             $dimension = $this->contractDimensions->resolve(
                 $organizationId,
-                (int) $contract->getKey(),
+                $contractId,
                 $recognizedAt,
             );
         } catch (InvalidArgumentException $exception) {
@@ -81,7 +214,7 @@ final readonly class AcceptedWorkHoldingFactProducer
         try {
             $allocation = $this->allocationContexts->resolve(
                 $organizationId,
-                (int) $contract->getKey(),
+                $contractId,
                 $projectId,
                 $recognizedAt,
             );
@@ -91,45 +224,49 @@ final readonly class AcceptedWorkHoldingFactProducer
                 ? 'allocation_context_coverage'
                 : 'allocation_context';
         }
-        if ($missing !== []) {
-            $this->projector->recordGap([
-                'organization_id' => $organizationId,
-                'holding_id' => $hierarchy?->holdingId,
-                'hierarchy_version' => $hierarchy?->version,
-                'source_type' => 'performance_act',
-                'source_id' => (int) $act->getKey(),
-                'source_version' => $sourceVersion,
-                'monetary_basis' => 'accepted_accrual',
-                'business_effective_at' => $recognizedAt,
-            ], $missing);
-
-            return null;
-        }
-        if ($hierarchy === null || $dimension === null || $allocation === null) {
-            return null;
+        $identity = [
+            ...$identity,
+            'holding_id' => $hierarchy?->holdingId,
+            'hierarchy_version' => $hierarchy?->version,
+        ];
+        if ($missing !== [] || $hierarchy === null || $dimension === null || $allocation === null) {
+            return ['identity' => $identity, 'missing' => array_values(array_unique($missing)), 'source' => null];
         }
 
         $counterpartyOrganizationId = $dimension->counterpartyOrganizationId;
+        $dimensionRef = [
+            'type' => 'contract_dimension',
+            'id' => $dimension->eventId,
+            'hash' => $dimension->evidenceHash,
+        ];
+        if ($dimension->currency === null) {
+            $dimensionRef['currency_code'] = $dimension->rawCurrency;
+        }
         $sourceRefs = [
-            ['type' => 'approved_act', 'id' => (int) $act->getKey(), 'version' => $sourceVersion],
+            [
+                'type' => 'approved_act',
+                'id' => $actId,
+                'version' => $sourceVersion,
+            ],
             [
                 'type' => 'contract_allocation',
                 'id' => $allocation->allocationId,
-                'contract_id' => (int) $contract->getKey(),
+                'contract_id' => $contractId,
                 'version' => $allocation->eventId,
                 'hash' => $allocation->evidenceHash,
             ],
-            [
-                'type' => 'contract_dimension',
-                'id' => $dimension->eventId,
-                'hash' => $dimension->evidenceHash,
-            ],
+            $dimensionRef,
             [
                 'type' => 'organization_hierarchy',
                 'hash' => $hierarchy->version,
                 'evidence_hashes' => $hierarchy->evidenceHashes,
             ],
         ];
+        try {
+            $amountMinor = $active ? $this->moneyToMinor($amount) : 0;
+        } catch (InvalidArgumentException) {
+            return ['identity' => $identity, 'missing' => ['amount'], 'source' => null];
+        }
         $source = [
             'organization_id' => $organizationId,
             'holding_id' => $hierarchy->holdingId,
@@ -138,7 +275,7 @@ final readonly class AcceptedWorkHoldingFactProducer
             'contributor_organization_id' => $organizationId,
             'counterparty_organization_id' => $counterpartyOrganizationId === null ? null : (int) $counterpartyOrganizationId,
             'project_id' => $projectId,
-            'contract_id' => (int) $contract->getKey(),
+            'contract_id' => $contractId,
             'contractor_id' => $dimension->contractorId,
             'contract_status' => $dimension->contractStatus,
             'work_type_category' => $dimension->workTypeCategory,
@@ -148,14 +285,16 @@ final readonly class AcceptedWorkHoldingFactProducer
             'linked_incoming_minor' => null,
             'linked_outgoing_minor' => null,
             'source_type' => 'performance_act',
-            'source_id' => (int) $act->getKey(),
+            'source_id' => $actId,
             'source_version' => $sourceVersion,
             'monetary_basis' => 'accepted_accrual',
-            'allocated_amount_minor' => $active ? $this->moneyToMinor((string) $act->amount) : 0,
+            'allocated_amount_minor' => $amountMinor,
             'allocated_percentage' => null,
             'contract_amount_minor' => null,
             'currency' => $dimension->currency,
-            'currency_source' => 'contract_dimension',
+            'currency_source' => $dimension->currency === null
+                ? 'unknown_contract_dimension'
+                : 'contract_dimension',
             'tax_basis' => 'approved_act_amount',
             'recognized_on' => $recognizedAt->format('Y-m-d'),
             'business_effective_at' => $recognizedAt,
@@ -164,13 +303,8 @@ final readonly class AcceptedWorkHoldingFactProducer
             ],
         ];
         $missing = $this->projector->missingEvidence($source);
-        if ($missing !== []) {
-            $this->projector->recordGap($source, $missing);
 
-            return null;
-        }
-
-        return $this->projector->persist($this->projector->project($source), $source);
+        return ['identity' => $identity, 'missing' => $missing, 'source' => $missing === [] ? $source : null];
     }
 
     private function sourceVersion(int $eventVersionId): int

@@ -18,6 +18,7 @@ use Brick\Math\BigDecimal;
 use Brick\Math\Exception\MathException;
 use Brick\Math\RoundingMode;
 use Carbon\CarbonImmutable;
+use DateTimeImmutable;
 use DateTimeInterface;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -37,10 +38,71 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
         private HoldingAllocationFactProjector $projector,
     ) {}
 
+    public function coverageStartedAt(DateTimeInterface $asOf): CarbonImmutable
+    {
+        return $this->coverage($asOf)['started_at'];
+    }
+
     public function assemble(ReportScope $scope, ReportQuery $query): HoldingAllocationCheckpointBatch
     {
-        $coverage = $this->coverage($query->asOf);
-        $hierarchy = $this->hierarchies->resolveAt($scope->organizationId, $query->asOf);
+        return $this->assembleAt($scope, $query, $query->asOf, false);
+    }
+
+    public function assembleOpeningState(
+        ReportScope $scope,
+        ReportQuery $query,
+        DateTimeInterface $openingBoundary,
+    ): HoldingAllocationCheckpointBatch
+    {
+        return $this->assembleAt($scope, $query, $openingBoundary, true);
+    }
+
+    public function openingBoundary(ReportQuery $query): DateTimeImmutable
+    {
+        $timezone = $query->scope->timezone;
+        $asOf = DateTimeImmutable::createFromInterface($query->asOf)->setTimezone($timezone);
+        $periodFrom = $query->filters->values['period_from'] ?? null;
+        if ($periodFrom !== null && ! is_string($periodFrom)) {
+            throw new InvalidArgumentException('holding_performance_period_invalid');
+        }
+        if (is_string($periodFrom)) {
+            $boundary = DateTimeImmutable::createFromFormat('!Y-m-d', $periodFrom, $timezone);
+            if (! $boundary instanceof DateTimeImmutable || $boundary->format('Y-m-d') !== $periodFrom) {
+                throw new InvalidArgumentException('holding_performance_period_invalid');
+            }
+            if ($boundary > $asOf) {
+                throw new InvalidArgumentException('holding_performance_period_invalid');
+            }
+
+            return $boundary;
+        }
+
+        $periodTo = $query->filters->values['period_to'] ?? null;
+        if ($periodTo !== null && ! is_string($periodTo)) {
+            throw new InvalidArgumentException('holding_performance_period_invalid');
+        }
+        if (is_string($periodTo)) {
+            $boundary = DateTimeImmutable::createFromFormat('!Y-m-d', $periodTo, $timezone);
+            if (! $boundary instanceof DateTimeImmutable || $boundary->format('Y-m-d') !== $periodTo) {
+                throw new InvalidArgumentException('holding_performance_period_invalid');
+            }
+            $boundary = $boundary->setTime(23, 59, 59, 999999);
+
+            return $boundary < $asOf ? $boundary : $asOf;
+        }
+
+        return $asOf;
+    }
+
+    private function assembleAt(
+        ReportScope $scope,
+        ReportQuery $query,
+        DateTimeInterface $sourceAsOf,
+        bool $includeOpeningState,
+    ): HoldingAllocationCheckpointBatch
+    {
+        $coverage = $this->coverage($sourceAsOf);
+        $hierarchy = $this->hierarchies->resolveAt($scope->organizationId, $sourceAsOf);
         $authorizedOrganizations = $scope->holdingOrganizationIds;
         $historicalOrganizations = $hierarchy->organizationIds;
         sort($authorizedOrganizations, SORT_NUMERIC);
@@ -83,7 +145,7 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
             )
             ->whereIn('organization_id', $hierarchy->organizationIds)
             ->whereIn('project_id', $scope->projectIds)
-            ->where('observed_at', '<=', $query->asOf);
+            ->where('observed_at', '<=', $sourceAsOf);
         $allocations = DB::query()
             ->fromSub($timeline, 'latest_holding_allocation_context')
             ->where('timeline_position', 1)
@@ -98,7 +160,7 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
             ->unique()
             ->values()
             ->all();
-        $dimensions = $this->dimensions($contractIds, $query->asOf);
+        $dimensions = $this->dimensions($contractIds, $sourceAsOf);
         $sources = [];
         $gaps = [];
 
@@ -125,7 +187,7 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
 
                 continue;
             }
-            if (! $this->matchesFilters($source, $filters)) {
+            if (! $this->matchesFilters($source, $filters, $includeOpeningState)) {
                 continue;
             }
 
@@ -216,8 +278,9 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
     ): array {
         $type = ContractAllocationTypeEnum::tryFrom((string) $allocation->allocation_type)
             ?? throw new InvalidArgumentException('holding_allocation_method_invalid');
-        $currency = mb_strtoupper((string) $dimension->currency);
-        if (CurrencyCode::tryFrom($currency) === null
+        $rawCurrency = mb_strtoupper(trim((string) $dimension->currency));
+        $currency = CurrencyCode::tryFrom($rawCurrency)?->value;
+        if (preg_match('/^[A-Z]{3}$/D', $rawCurrency) !== 1
             || ! is_numeric($dimension->total_amount)
             || trim((string) $dimension->contract_status) === '') {
             throw new InvalidArgumentException('holding_contract_dimension_invalid');
@@ -255,6 +318,14 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
             ? $allocationObservedAt
             : $dimensionObservedAt;
         $projectId = (int) $allocation->project_id;
+        $dimensionRef = [
+            'type' => 'contract_dimension',
+            'id' => (int) $dimension->id,
+            'hash' => (string) $dimension->evidence_hash,
+        ];
+        if ($currency === null) {
+            $dimensionRef['currency_code'] = $rawCurrency;
+        }
 
         return [
             'organization_id' => (int) $allocation->organization_id,
@@ -289,7 +360,9 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
             'allocated_percentage' => $allocatedPercentage,
             'contract_amount_minor' => $this->moneyToMinor($contractAmount),
             'currency' => $currency,
-            'currency_source' => 'contract_dimension_checkpoint',
+            'currency_source' => $currency === null
+                ? 'unknown_contract_dimension_checkpoint'
+                : 'contract_dimension_checkpoint',
             'tax_basis' => 'contract_total',
             'recognized_on' => $observedAt->setTimezone($scope->timezone)->toDateString(),
             'business_effective_at' => $observedAt,
@@ -303,11 +376,7 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
                 'type' => 'allocation_context',
                 'id' => (int) $allocation->id,
                 'hash' => (string) $allocation->evidence_hash,
-            ], [
-                'type' => 'contract_dimension',
-                'id' => (int) $dimension->id,
-                'hash' => (string) $dimension->evidence_hash,
-            ], [
+            ], $dimensionRef, [
                 'type' => 'organization_hierarchy',
                 'hash' => (string) $hierarchy->version,
                 'evidence_hashes' => $hierarchy->evidenceHashes,
@@ -315,7 +384,7 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
         ];
     }
 
-    private function matchesFilters(array $source, array $filters): bool
+    private function matchesFilters(array $source, array $filters, bool $includeOpeningState): bool
     {
         foreach ([
             'project_ids' => 'project_id',
@@ -337,16 +406,18 @@ final readonly class HoldingAllocationCheckpointSourceAssembler
                 return false;
             }
         }
-        $recognizedOn = (string) $source['recognized_on'];
-        if (isset($filters['period_from'])
-            && is_string($filters['period_from'])
-            && $recognizedOn < $filters['period_from']) {
-            return false;
-        }
-        if (isset($filters['period_to'])
-            && is_string($filters['period_to'])
-            && $recognizedOn > $filters['period_to']) {
-            return false;
+        if (! $includeOpeningState) {
+            $recognizedOn = (string) $source['recognized_on'];
+            if (isset($filters['period_from'])
+                && is_string($filters['period_from'])
+                && $recognizedOn < $filters['period_from']) {
+                return false;
+            }
+            if (isset($filters['period_to'])
+                && is_string($filters['period_to'])
+                && $recognizedOn > $filters['period_to']) {
+                return false;
+            }
         }
 
         return true;

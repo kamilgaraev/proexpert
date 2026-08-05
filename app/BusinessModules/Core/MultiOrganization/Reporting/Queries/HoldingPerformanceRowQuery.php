@@ -20,10 +20,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\Support\Reporting\ReportSourceObjectAccessAuthorizer;
 use Illuminate\Database\Eloquent\Builder;
 
 final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvider, ReportRowQuery
 {
+    private ReportSourceObjectAccessAuthorizer $sourceAccess;
+
     private const SORTS = [
         'period_start',
         'contributor_organization_id',
@@ -35,7 +38,12 @@ final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvid
         'cash_minor',
     ];
 
-    public function __construct(private HoldingPerformanceSnapshotMaterializer $materializer) {}
+    public function __construct(
+        private HoldingPerformanceSnapshotMaterializer $materializer,
+        ?ReportSourceObjectAccessAuthorizer $sourceAccess = null,
+    ) {
+        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer;
+    }
 
     public function page(
         ReportExecutionContext $context,
@@ -104,10 +112,6 @@ final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvid
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
         }
 
-        $scoped = [];
-        foreach ($context->scope->resources as $resource) {
-            $scoped[$resource->kind.':'.$resource->id] = true;
-        }
         $details = [];
         $links = [];
         $sourceRefs = $this->sourceRefs($row->source_refs);
@@ -116,9 +120,12 @@ final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvid
         }
         foreach ($sourceRefs as $sourceRef) {
             $identity = $this->authorizationIdentity($sourceRef);
-            if (! isset($scoped[$identity])) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
-            }
+            $this->sourceAccess->assertAccessible(
+                $context,
+                $this->resourceType($sourceRef),
+                (int) $this->resourceId($sourceRef),
+                (int) $row->project_id,
+            );
             $details[] = [
                 'row_key' => $identity,
                 'column_id' => $input->cell->columnId,
@@ -229,9 +236,18 @@ final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvid
         }
         $refs = [];
         foreach ($value as $ref) {
-            if (! is_array($ref)
-                || ! is_string($ref['type'] ?? null)
-                || (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))) {
+            if (! is_array($ref) || ! is_string($ref['type'] ?? null)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+            }
+            if (! in_array($ref['type'], [
+                'contract_allocation',
+                'approved_act',
+                'payment_document',
+                'payment_transaction',
+            ], true)) {
+                continue;
+            }
+            if (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? ''))) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
             $normalized = ['type' => $ref['type'], 'id' => (string) $ref['id']];
@@ -241,10 +257,12 @@ final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvid
                 }
                 $normalized['contract_id'] = (string) $ref['contract_id'];
             }
-            $refs[] = $normalized;
+            $refs[$this->authorizationIdentity($normalized)] = $normalized;
         }
 
-        return $refs;
+        ksort($refs, SORT_STRING);
+
+        return array_values($refs);
     }
 
     private function routeName(string $type): string
@@ -273,7 +291,13 @@ final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvid
 
     private function resourceType(array $sourceRef): string
     {
-        return $sourceRef['type'] === 'contract_allocation' ? 'contract' : $sourceRef['type'];
+        return match ($sourceRef['type']) {
+            'contract_allocation' => 'contract',
+            'approved_act' => 'act',
+            'payment_document' => 'payment_document',
+            'payment_transaction' => 'payment_transaction',
+            default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN),
+        };
     }
 
     private function resourceId(array $sourceRef): string

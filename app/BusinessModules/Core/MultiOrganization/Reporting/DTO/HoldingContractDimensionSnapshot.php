@@ -22,7 +22,8 @@ final readonly class HoldingContractDimensionSnapshot
         public string $contractStatus,
         public ?string $workTypeCategory,
         public ?string $totalAmount,
-        public string $currency,
+        public string $rawCurrency,
+        public ?string $currency,
         public string $evidenceHash,
         public string $coverageStartedAt,
     ) {
@@ -35,6 +36,7 @@ final readonly class HoldingContractDimensionSnapshot
             }
         }
 
+        $normalizedCurrency = CurrencyCode::tryFrom($rawCurrency)?->value;
         if (min($eventId, $contractId, $organizationId) < 1
             || ($contractorId !== null && $contractorId < 1)
             || ($counterpartyOrganizationId !== null && $counterpartyOrganizationId < 1)
@@ -42,7 +44,8 @@ final readonly class HoldingContractDimensionSnapshot
             || ($workTypeCategory !== null
                 && ContractWorkTypeCategoryEnum::tryFrom($workTypeCategory) === null)
             || ($amount !== null && $amount->isNegative())
-            || CurrencyCode::tryFrom($currency) === null
+            || preg_match('/^[A-Z]{3}$/D', $rawCurrency) !== 1
+            || $currency !== $normalizedCurrency
             || preg_match('/^[a-f0-9]{64}$/D', $evidenceHash) !== 1
             || trim($coverageStartedAt) === '') {
             throw new InvalidArgumentException('holding_contract_dimension_snapshot_invalid');

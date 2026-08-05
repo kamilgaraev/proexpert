@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingContractDimensionSnapshot;
+use App\Enums\CurrencyCode;
 use DateTimeInterface;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -54,6 +55,8 @@ final readonly class HoldingContractDimensionResolver
             throw new InvalidArgumentException('holding_contract_dimension_unavailable');
         }
 
+        $rawCurrency = mb_strtoupper(trim((string) $event->currency));
+
         return new HoldingContractDimensionSnapshot(
             (int) $event->id,
             (int) $event->contract_id,
@@ -65,7 +68,8 @@ final readonly class HoldingContractDimensionResolver
             (string) $event->contract_status,
             $event->work_type_category === null ? null : (string) $event->work_type_category,
             $event->total_amount === null ? null : (string) $event->total_amount,
-            (string) $event->currency,
+            $rawCurrency,
+            CurrencyCode::tryFrom($rawCurrency)?->value,
             (string) $event->evidence_hash,
             (string) $coverage['coverage_started_at'],
         );

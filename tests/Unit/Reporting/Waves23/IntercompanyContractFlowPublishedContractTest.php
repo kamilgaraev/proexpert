@@ -27,6 +27,14 @@ use ReflectionClass;
 final class IntercompanyContractFlowPublishedContractTest extends TestCase
 {
     #[Test]
+    public function shared_holding_projection_fingerprint_matches_runtime(): void
+    {
+        (new IntercompanyContractFlowCandidateContract)->assertRuntimeMatches();
+
+        self::assertSame(64, strlen(IntercompanyContractFlowCandidateContract::SOURCE_HASH));
+    }
+
+    #[Test]
     public function published_contract_keeps_tenant_identity_server_owned(): void
     {
         $builtin = new IntercompanyContractFlowBuiltinPublishedReport(new IntercompanyContractFlowCandidateContract);

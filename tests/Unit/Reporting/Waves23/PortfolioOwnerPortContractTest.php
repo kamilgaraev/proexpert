@@ -10,7 +10,6 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\Providers\IntercompanyC
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\HoldingPerformanceRowQuery;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\IntercompanyContractFlowRowQuery;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
-use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceFormula;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceSnapshotMaterializer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowFormula;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowSnapshotMaterializer;
@@ -108,7 +107,8 @@ final class PortfolioOwnerPortContractTest extends TestCase
 
     public static function opaquePortCases(): array
     {
-        $holding = new HoldingPerformanceSnapshotMaterializer(new HoldingPerformanceFormula);
+        $holding = (new ReflectionClass(HoldingPerformanceSnapshotMaterializer::class))
+            ->newInstanceWithoutConstructor();
         $intercompany = (new ReflectionClass(IntercompanyContractFlowSnapshotMaterializer::class))
             ->newInstanceWithoutConstructor();
 

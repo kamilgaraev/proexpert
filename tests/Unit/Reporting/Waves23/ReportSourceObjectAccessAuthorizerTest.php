@@ -50,6 +50,19 @@ final class ReportSourceObjectAccessAuthorizerTest extends TestCase
     }
 
     #[Test]
+    public function approved_act_alias_uses_the_exact_act_resource_restriction(): void
+    {
+        $authorizer = new ReportSourceObjectAccessAuthorizer;
+        $context = $this->context([new ReportScopedResource('act', 9, 7)]);
+
+        $authorizer->assertAccessible($context, 'approved_act', 9, 7);
+        self::addToAssertionCount(1);
+
+        $this->expectException(ReportContractException::class);
+        $authorizer->assertAccessible($context, 'approved_act', 10, 7);
+    }
+
+    #[Test]
     public function row_and_export_source_references_are_checked_as_one_fail_closed_fence(): void
     {
         $authorizer = new ReportSourceObjectAccessAuthorizer;
