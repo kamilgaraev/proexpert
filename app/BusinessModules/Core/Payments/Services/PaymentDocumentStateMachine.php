@@ -229,7 +229,17 @@ class PaymentDocumentStateMachine
 
         $result = $this->transition($document, PaymentDocumentStatus::PAID, 'Полностью оплачен');
         
-        event(new PaymentDocumentPaid($document, $document->paid_amount, $transactionId));
+        event(new PaymentDocumentPaid(
+            document: $document,
+            amount: $document->paid_amount,
+            transactionId: $transactionId,
+            recognizedAt: $document->paid_at,
+            organizationId: (int) $document->organization_id,
+            projectId: $document->project_id === null ? null : (int) $document->project_id,
+            invoiceableType: $document->invoiceable_type,
+            invoiceableId: $document->invoiceable_id === null ? null : (int) $document->invoiceable_id,
+            currency: $document->currency,
+        ));
         
         return $result;
     }

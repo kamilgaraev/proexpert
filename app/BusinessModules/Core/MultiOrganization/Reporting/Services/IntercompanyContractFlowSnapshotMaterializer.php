@@ -36,6 +36,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 final readonly class IntercompanyContractFlowSnapshotMaterializer
 {
@@ -52,7 +53,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
-        $hierarchy = $this->hierarchy($context);
+        $hierarchy = $this->hierarchy($context, $query->asOf);
         $recordedCutoff = now()->toImmutable();
         $facts = $this->facts(
             $context,
@@ -369,6 +370,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         DateTimeInterface $recordedCutoff,
     ): Builder {
         $builder = HoldingAllocationFactVersion::query()
+            ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->where('holding_id', $holdingId)
             ->whereIn('organization_id', $organizationIds)
             ->where('monetary_basis', 'contracted')
@@ -424,11 +426,27 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         return $builder;
     }
 
-    private function hierarchy(ReportExecutionContext $context): HoldingHierarchySnapshot
+    private function hierarchy(
+        ReportExecutionContext $context,
+        DateTimeInterface $asOf,
+    ): HoldingHierarchySnapshot
     {
-        $hierarchy = $this->hierarchies->resolve($context->scope->organizationId);
+        try {
+            $hierarchy = $this->hierarchies->resolveAt($context->scope->organizationId, $asOf);
+        } catch (ReportContractException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
+                previous: $exception,
+            );
+        }
+        $authorizedIds = $context->scope->holdingOrganizationIds;
+        $historicalIds = $hierarchy->organizationIds;
+        sort($authorizedIds, SORT_NUMERIC);
+        sort($historicalIds, SORT_NUMERIC);
         if ($hierarchy->holdingId !== $context->scope->organizationId
-            || array_diff($context->scope->holdingOrganizationIds, $hierarchy->organizationIds) !== []) {
+            || $authorizedIds !== $historicalIds) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
         }
 

@@ -9,7 +9,7 @@ use LogicException;
 
 final class HoldingAllocationFactVersion extends Model
 {
-    public const SOURCE_SCHEMA_VERSION = 'holding_allocation_facts.v1';
+    public const SOURCE_SCHEMA_VERSION = 'holding_allocation_facts.v2';
 
     protected $table = 'holding_allocation_fact_versions';
 
@@ -26,6 +26,7 @@ final class HoldingAllocationFactVersion extends Model
             'counterparty_organization_id' => 'integer',
             'project_id' => 'integer',
             'contract_id' => 'integer',
+            'contractor_id' => 'integer',
             'allocation_id' => 'integer',
             'linked_parent_allocation_id' => 'integer',
             'linked_incoming_minor' => 'integer',

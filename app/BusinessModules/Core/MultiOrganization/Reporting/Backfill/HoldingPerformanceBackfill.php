@@ -151,10 +151,17 @@ final readonly class HoldingPerformanceBackfill
             }
             $before = $transaction->getKey();
             $this->paymentFacts->handle(new PaymentDocumentPaid(
-                $transaction->paymentDocument,
-                (string) $transaction->amount,
-                (int) $transaction->getKey(),
-                $transaction->value_date ?? $transaction->transaction_date ?? $transaction->created_at,
+                document: $transaction->paymentDocument,
+                amount: (string) $transaction->amount,
+                transactionId: (int) $transaction->getKey(),
+                recognizedAt: $transaction->value_date ?? $transaction->transaction_date ?? $transaction->created_at,
+                organizationId: (int) $transaction->organization_id,
+                projectId: $transaction->project_id === null ? null : (int) $transaction->project_id,
+                invoiceableType: $transaction->paymentDocument->invoiceable_type,
+                invoiceableId: $transaction->paymentDocument->invoiceable_id === null
+                    ? null
+                    : (int) $transaction->paymentDocument->invoiceable_id,
+                currency: $transaction->currency,
             ));
             $factIds[] = (int) $before;
         }

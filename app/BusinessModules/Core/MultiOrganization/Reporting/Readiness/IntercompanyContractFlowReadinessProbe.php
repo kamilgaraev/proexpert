@@ -44,6 +44,7 @@ final readonly class IntercompanyContractFlowReadinessProbe implements ReportDef
             return false;
         }
         $facts = HoldingAllocationFactVersion::query()
+            ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->where('holding_id', $hierarchy->holdingId)
             ->whereIn('organization_id', $hierarchy->organizationIds)
             ->where('monetary_basis', 'contracted');
@@ -73,6 +74,7 @@ final readonly class IntercompanyContractFlowReadinessProbe implements ReportDef
             && (int) $allocationWatermark > 0
             && (int) $snapshot->row_count > 0
             && HoldingAllocationFactVersion::query()
+                ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
                 ->whereIn('organization_id', $hierarchy->organizationIds)
                 ->where('monetary_basis', 'contracted')
                 ->whereDate('recognized_on', '<=', $snapshot->generated_at)

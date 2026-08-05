@@ -47,6 +47,7 @@ final readonly class HoldingPerformanceReadinessProbe implements ReportDefinitio
             return false;
         }
         $facts = HoldingAllocationFactVersion::query()
+            ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->where('holding_id', $hierarchy->holdingId)
             ->whereIn('organization_id', $hierarchy->organizationIds);
         $allocationWatermark = (string) ((clone $facts)->where('monetary_basis', 'contracted')->max('id') ?? 0);
@@ -101,6 +102,7 @@ final readonly class HoldingPerformanceReadinessProbe implements ReportDefinitio
             ->whereHas('contract', static fn ($query) => $query->whereIn('organization_id', $organizationIds))
             ->count();
         $projectedAllocations = HoldingAllocationFactVersion::query()
+            ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->whereIn('organization_id', $organizationIds)
             ->where('monetary_basis', 'contracted')
             ->whereDate('recognized_on', '<=', $asOf)
@@ -115,6 +117,7 @@ final readonly class HoldingPerformanceReadinessProbe implements ReportDefinitio
             ->distinct()
             ->count('id');
         $projectedActs = HoldingAllocationFactVersion::query()
+            ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->whereIn('organization_id', $organizationIds)
             ->where('monetary_basis', 'accepted_accrual')
             ->whereDate('recognized_on', '<=', $asOf)
@@ -127,6 +130,7 @@ final readonly class HoldingPerformanceReadinessProbe implements ReportDefinitio
             ->distinct()
             ->count('id');
         $projectedPayments = HoldingAllocationFactVersion::query()
+            ->where('source_schema_version', HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION)
             ->whereIn('organization_id', $organizationIds)
             ->where('monetary_basis', 'cash')
             ->whereDate('recognized_on', '<=', $asOf)
