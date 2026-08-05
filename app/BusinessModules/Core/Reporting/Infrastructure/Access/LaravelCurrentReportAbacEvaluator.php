@@ -11,6 +11,7 @@ use App\Domain\Authorization\Enums\ConditionType;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\RoleCondition;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Domain\Authorization\ValueObjects\PermissionSet;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
@@ -128,9 +129,29 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
                     continue;
                 }
 
-                $permissions[] = $modulePermission === '*' || str_starts_with($modulePermission, $module.'.')
-                    ? ($modulePermission === '*' ? $module.'.*' : $modulePermission)
-                    : $module.'.'.$modulePermission;
+                $moduleVariants = ModulePermissionAliases::variants($module);
+                if ($modulePermission === '*') {
+                    foreach ($moduleVariants as $variant) {
+                        $permissions[] = $variant.'.*';
+                    }
+
+                    continue;
+                }
+
+                $qualifiedForModule = false;
+                foreach ($moduleVariants as $variant) {
+                    if (str_starts_with($modulePermission, $variant.'.')) {
+                        $qualifiedForModule = true;
+                        break;
+                    }
+                }
+                if ($qualifiedForModule) {
+                    $permissions[] = $modulePermission;
+
+                    continue;
+                }
+
+                $permissions[] = $module.'.'.$modulePermission;
             }
         }
 
