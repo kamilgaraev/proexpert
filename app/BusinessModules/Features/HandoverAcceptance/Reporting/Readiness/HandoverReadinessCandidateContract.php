@@ -20,9 +20,12 @@ final readonly class HandoverReadinessCandidateContract
     public const FORMULA_VERSION = 'handover.v1';
     public const SOURCE_SCHEMA_VERSION = 'handover-readiness.v1';
     public const FORMULA_HASH = '480796625d579f1b2887bc92674efe7dff6e178da9272f34d3da830dca9bb8c5';
-    public const SOURCE_HASH = 'd452ed1af702aa8a42400ba0fed5e0aa9b4d93263ce23695a02ae751c1dc542d';
+    public const SOURCE_HASH = 'abf160e4af08783cd7f1ad8c08103590efa3334ff84a60a14d66b1f5a781ed21';
 
-    public function filters(): array { return []; }
+    public function filters(): array
+    {
+        return [['id' => 'as_of', 'required' => true]];
+    }
     public function columns(): array
     {
         return array_map(static fn (string $id): array => ['id' => $id], [

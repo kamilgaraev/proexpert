@@ -204,9 +204,13 @@ final readonly class HandoverReadinessSnapshotMaterializer
 
     private function assertContext(ReportExecutionContext $context, ReportQuery $query): void
     {
+        $asOf = $query->filters->values['as_of'] ?? null;
         if (
             $query->definition->code !== 'handover_readiness'
             || $context->scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
+            || ! is_string($asOf)
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $asOf) !== 1
+            || $asOf !== $query->asOf->format('Y-m-d')
         ) {
             throw new InvalidArgumentException('handover_readiness_context_invalid');
         }
