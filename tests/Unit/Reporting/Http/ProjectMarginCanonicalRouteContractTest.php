@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
@@ -33,6 +34,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString("->defaults('reportCode', 'project_margin')", $routes);
         self::assertStringContainsString("->middleware(['project.context', 'report.project-scope', \$resourceAccess])", $routes);
         self::assertStringContainsString("Route::get('/projects/{project}/project-margin/options'", $routes);
+        self::assertStringContainsString("Route::post('/projects/{project}/project-evm-control/runs'", $routes);
         self::assertStringContainsString("Route::post('/projects/{project}/wip-completion-forecast/runs'", $routes);
         self::assertStringContainsString("Route::get('/projects/{project}/wip-completion-forecast/options'", $routes);
         self::assertStringContainsString("Route::post('/projects/{project}/project-labor-cost/runs'", $routes);
@@ -42,7 +44,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString("Route::post('/workforce-capacity/runs'", $routes);
         self::assertStringContainsString("Route::get('/workforce-capacity/options'", $routes);
         self::assertStringContainsString("->middleware(['report.organization-scope', \$resourceAccess])", $routes);
-        self::assertSame(10, substr_count($routes, "'report.project-scope'"));
+        self::assertSame(11, substr_count($routes, "'report.project-scope'"));
 
         $middlewareFile = (new ReflectionClass(AuthorizeReportDefinitionAccess::class))->getFileName();
         self::assertIsString($middlewareFile);
@@ -50,6 +52,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertIsString($middleware);
         self::assertStringContainsString("'admin.reports.project-margin.runs.store'", $middleware);
         self::assertStringContainsString("'admin.reports.project-margin.options'", $middleware);
+        self::assertStringContainsString("'admin.reports.project-evm-control.runs.store'", $middleware);
         self::assertStringContainsString("'admin.reports.wip-completion-forecast.runs.store'", $middleware);
         self::assertStringContainsString("'admin.reports.wip-completion-forecast.options'", $middleware);
         self::assertStringContainsString('private function genericCreateRun', $middleware);
@@ -89,6 +92,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         return [
             'G09' => [ProjectMarginCandidateContract::CODE],
             'G10' => [BudgetPlanFactCandidateContract::CODE],
+            'G05' => [ProjectEvmControlCandidateContract::CODE],
             'G11' => [WipCompletionForecastCandidateContract::CODE],
             'G21' => [ProjectLaborCostCandidateContract::CODE],
             'G22' => [PayrollReadinessCandidateContract::CODE],
