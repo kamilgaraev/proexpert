@@ -16,11 +16,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
 
-final readonly class PayrollReadinessQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class PayrollReadinessQueryService implements ReportDrillDownProvider, ReportRowQuery
 {
-    public function __construct(private PayrollReadinessDatabasePort $database)
-    {
-    }
+    public function __construct(private PayrollReadinessDatabasePort $database) {}
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
     {
@@ -52,5 +50,10 @@ final readonly class PayrollReadinessQueryService implements ReportRowQuery, Rep
         ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         return $this->database->drillDown($context, $snapshot, $input);
+    }
+
+    public function drillDownTokenColumns(): array
+    {
+        return ['drill' => 'source_refs'];
     }
 }

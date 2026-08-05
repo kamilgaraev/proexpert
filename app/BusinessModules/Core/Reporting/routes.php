@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
@@ -105,6 +106,14 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'project_labor_cost')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-labor-cost.options');
+        Route::post('/projects/{project}/payroll-readiness/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'payroll_readiness')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('payroll-readiness.runs.store');
+        Route::get('/projects/{project}/payroll-readiness/options', PayrollReadinessReportOptionsController::class)
+            ->defaults('reportCode', 'payroll_readiness')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('payroll-readiness.options');
         Route::get('/runs/{runId}', [ReportRunController::class, 'show'])
             ->middleware($resourceAccess)
             ->name('runs.show');

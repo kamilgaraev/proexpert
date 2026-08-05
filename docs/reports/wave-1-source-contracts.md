@@ -6,7 +6,7 @@ G10 `budget_plan_fact` admitted and published after the owner-approved close, im
 
 G01 and G04 remain blocked by source readiness. G09 is admitted through the canonical runtime after its approved-close, immutable snapshot, replay and scoped provider contracts were completed.
 
-G06, G11, G12, G13 and G21-G24 remain blocked by an explicit source contract. Their binding status is `blocked_by_source_contract`, their provider is `null`, and they are not executable reports.
+G06, G11, G12, G13, workforce capacity and attendance execution remain blocked by an explicit source contract. G21 `project_labor_cost` is published. R22 `payroll_readiness` is admitted by the versioned payroll calculation source, immutable snapshot rows, blocker-dominant formula and scoped runtime binding delivered in its vertical implementation block.
 
 Other candidates retain their status below. The closed candidate-inventory manifest remains historical admission input and must not be used as runtime status for published G09 or G10.
 
@@ -87,7 +87,7 @@ This contract is consumed by both published G09 and G10 runtime bindings and is 
 | G21 workforce_capacity | Workforce management | employee_id, capacity_date, planned_hours, availability_hours, assignment_project_id, absence_hours | Employee, assignment, and calendar day | organization_id + employee_id + capacity_date | Calendar changes and approved absences are visible by the next reporting refresh. | A fixture with assignments and absences verifies capacity aggregation without cross-organization rows. |
 | G22 attendance_execution | Time tracking | employee_id, work_date, planned_hours, actual_hours, attendance_status, approved_at | Employee and work date | organization_id + employee_id + work_date | Only approved attendance is included; corrections are visible by the next reporting refresh. | A corrected attendance row replaces the prior approved value and updates execution hours once. |
 | G23 project_labor_cost | Time tracking and payroll | project_id, employee_id, work_date, approved_hours, labor_rate, rate_currency, rate_effective_at | Project, employee, and work date | organization_id + project_id + employee_id + work_date | Approved hours and the rate effective for the work date are used; later rate changes do not rewrite closed periods. | A period fixture verifies project labor cost with two effective rates and no use of unapproved hours. |
-| G24 payroll_readiness | Payroll | employee_id, payroll_period, payroll_status, required_input_status, approved_at, payment_date | Employee and payroll period | organization_id + employee_id + payroll_period | Readiness changes after approval or required-input correction and is final only after payroll-period close. | A payroll-period fixture verifies that missing required input is not ready and approved complete input is ready. |
+| G24 payroll_readiness | Payroll | Admitted: versioned payroll periods/calculation versions, immutable source and issue rows, transition history, effective rates and explicit currency | Employee, project, source row/issue and payroll period | organization_id + project_id + employee_id + payroll_period | The latest version at exact `as_of` is selected; blocking issues forbid readiness and locked source rows remain immutable. | Formula, source identity, blockers, scoped options, signed drill-down and runtime binding are covered by focused tests. |
 
 ## Source and formula contracts
 

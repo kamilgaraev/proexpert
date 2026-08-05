@@ -581,7 +581,8 @@
       "workforce.exports.generate",
       "workforce.exports.approve",
       "workforce.settings.manage",
-      "workforce.audit.view"
+      "workforce.audit.view",
+      "workforce.reports.export"
     ],
     "production-labor": [
       "production-labor.view",
