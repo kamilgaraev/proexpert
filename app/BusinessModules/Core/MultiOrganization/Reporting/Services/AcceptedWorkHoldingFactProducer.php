@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFact;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAcceptedWorkEventVersion;
 use App\Models\Contract;
@@ -86,6 +87,16 @@ final readonly class AcceptedWorkHoldingFactProducer
         }
 
         return $this->projector->persist($this->projector->project($source), $source);
+    }
+
+    public function previewEvent(HoldingAcceptedWorkEventVersion $event): ?HoldingAllocationFact
+    {
+        $projection = $this->projectionForEvent($event);
+        $source = $projection['source'];
+
+        return $projection['missing'] === [] && is_array($source)
+            ? $this->projector->project($source)
+            : null;
     }
 
     private function projectionForEvent(HoldingAcceptedWorkEventVersion $event): array

@@ -187,6 +187,38 @@ final class HoldingPerformancePublishedContractTest extends TestCase
     }
 
     #[Test]
+    public function event_fact_previews_reuse_projection_without_persistence_side_effects(): void
+    {
+        $accepted = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Core/MultiOrganization/Reporting/Services/AcceptedWorkHoldingFactProducer.php');
+        $payments = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Core/MultiOrganization/Reporting/Services/HoldingPaymentEventFactProducer.php');
+
+        self::assertIsString($accepted);
+        self::assertIsString($payments);
+        foreach ([$accepted, $payments] as $producer) {
+            self::assertStringContainsString('public function previewEvent(', $producer);
+            self::assertStringContainsString('?HoldingAllocationFact', $producer);
+            self::assertSame(1, substr_count($producer, 'public function previewEvent('));
+        }
+
+        $acceptedPreview = substr(
+            $accepted,
+            strpos($accepted, 'public function previewEvent('),
+            strpos($accepted, 'private function projectionForEvent(') - strpos($accepted, 'public function previewEvent('),
+        );
+        $paymentPreview = substr(
+            $payments,
+            strpos($payments, 'public function previewEvent('),
+            strpos($payments, 'private function projection(') - strpos($payments, 'public function previewEvent('),
+        );
+
+        foreach ([$acceptedPreview, $paymentPreview] as $preview) {
+            self::assertStringContainsString('$this->projector->project($source)', $preview);
+            self::assertStringNotContainsString('persist(', $preview);
+            self::assertStringNotContainsString('recordGap(', $preview);
+        }
+    }
+
+    #[Test]
     public function canonical_execution_hash_keeps_raw_materialized_identity_separate(): void
     {
         $definition = (new HoldingPerformanceBuiltinPublishedReport(new HoldingPerformanceCandidateContract))
