@@ -33,6 +33,8 @@
     "admin.*",
     "customer.sla_report.view",
     "customer.sla_report.export",
+    "reports.project_readiness.view",
+    "reports.project_readiness.export",
     "legal_archive.view",
     "legal_archive.create",
     "legal_archive.update",
