@@ -113,6 +113,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'project_margin')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-margin.options');
+        Route::post('/projects/{project}/project-evm-control/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'project_evm_control')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('project-evm-control.runs.store');
         Route::post('/projects/{project}/wip-completion-forecast/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'wip_completion_forecast')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])

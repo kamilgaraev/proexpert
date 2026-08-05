@@ -23,6 +23,8 @@ use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublis
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
@@ -88,6 +90,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('project_margin', $registry->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $registry->published('budget_plan_fact')->code);
         self::assertSame('portfolio_liquidity', $registry->published('portfolio_liquidity')->code);
+        self::assertSame('project_evm_control', $registry->published('project_evm_control')->code);
         self::assertSame('wip_completion_forecast', $registry->published('wip_completion_forecast')->code);
         self::assertSame('baseline_schedule_variance', $registry->published('baseline_schedule_variance')->code);
         self::assertSame('project_labor_cost', $registry->published('project_labor_cost')->code);
@@ -107,6 +110,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('project_margin', $app->make(ReportCatalogMetadataRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportCatalogMetadataRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('portfolio_liquidity', $app->make(ReportCatalogMetadataRegistry::class)->published('portfolio_liquidity')->code);
+        self::assertSame('project_evm_control', $app->make(ReportCatalogMetadataRegistry::class)->published('project_evm_control')->code);
         self::assertSame('wip_completion_forecast', $app->make(ReportCatalogMetadataRegistry::class)->published('wip_completion_forecast')->code);
         self::assertSame('baseline_schedule_variance', $app->make(ReportCatalogMetadataRegistry::class)->published('baseline_schedule_variance')->code);
         self::assertSame('project_labor_cost', $app->make(ReportCatalogMetadataRegistry::class)->published('project_labor_cost')->code);
@@ -125,6 +129,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('project_margin', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportSchedulingCapabilityRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('portfolio_liquidity', $app->make(ReportSchedulingCapabilityRegistry::class)->published('portfolio_liquidity')->code);
+        self::assertSame('project_evm_control', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_evm_control')->code);
         self::assertSame('wip_completion_forecast', $app->make(ReportSchedulingCapabilityRegistry::class)->published('wip_completion_forecast')->code);
         self::assertSame('baseline_schedule_variance', $app->make(ReportSchedulingCapabilityRegistry::class)->published('baseline_schedule_variance')->code);
         self::assertSame('project_labor_cost', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_labor_cost')->code);
@@ -183,6 +188,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->projectMargin(),
             new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract),
             $this->portfolioLiquidity(),
+            $this->projectEvmControl(),
             $this->wipCompletionForecast(),
             $this->baselineScheduleVariance(),
             $this->projectLaborCost(),
@@ -202,7 +208,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         );
         $registry = new CompositePublishedReportDefinitionRegistry($builtins, $this->registry([]));
 
-        self::assertSame(['attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'inventory_risk', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity'], $registry->publishedCodes());
+        self::assertSame(['attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'inventory_risk', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_evm_control', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity'], $registry->publishedCodes());
         self::assertSame('project_margin', $registry->published('project_margin')->code);
         $definition = $registry->published('budget_plan_fact');
         $payload = $definition->payload();
@@ -223,6 +229,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->projectMargin(),
             new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract),
             $this->portfolioLiquidity(),
+            $this->projectEvmControl(),
             $this->wipCompletionForecast(),
             $this->baselineScheduleVariance(),
             $this->projectLaborCost(),
@@ -244,6 +251,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         $expectedModules = [
             'budget_plan_fact' => 'budgeting',
             'portfolio_liquidity' => 'budgeting',
+            'project_evm_control' => 'budgeting',
             'wip_completion_forecast' => 'budgeting',
             'baseline_schedule_variance' => 'schedule-management',
             'project_margin' => 'budgeting',
@@ -277,11 +285,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->wipCompletionForecast(), $this->baselineScheduleVariance(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->projectEvmControl(), $this->wipCompletionForecast(), $this->baselineScheduleVariance(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla()),
             $this->registry(['ordinary_report' => $builtin]),
         );
 
-        self::assertSame(['attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'inventory_risk', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
+        self::assertSame(['attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'inventory_risk', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_evm_control', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
         self::assertSame($builtin, $registry->published('ordinary_report'));
     }
 
@@ -289,7 +297,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->wipCompletionForecast(), $this->baselineScheduleVariance(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->projectEvmControl(), $this->wipCompletionForecast(), $this->baselineScheduleVariance(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla()),
             $this->registry(['budget_plan_fact' => $builtin]),
         );
 
@@ -336,6 +344,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     private function portfolioLiquidity(): PortfolioLiquidityBuiltinPublishedReport
     {
         return new PortfolioLiquidityBuiltinPublishedReport(new PortfolioLiquidityCandidateContract);
+    }
+
+    private function projectEvmControl(): ProjectEvmControlBuiltinPublishedReport
+    {
+        return new ProjectEvmControlBuiltinPublishedReport(new ProjectEvmControlCandidateContract);
     }
 
     private function wipCompletionForecast(): WipCompletionForecastBuiltinPublishedReport

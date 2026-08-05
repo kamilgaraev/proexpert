@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
@@ -80,6 +81,7 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.project-budget-plan-fact.options',
             'admin.reports.project-margin.runs.store',
             'admin.reports.project-margin.options',
+            'admin.reports.project-evm-control.runs.store',
             'admin.reports.wip-completion-forecast.runs.store',
             'admin.reports.wip-completion-forecast.options',
             'admin.reports.project-labor-cost.runs.store',
@@ -128,6 +130,7 @@ final readonly class AuthorizeReportDefinitionAccess
         $reportCode = $this->routeId($request, 'reportCode');
         if (in_array($reportCode, [
             BudgetPlanFactCandidateContract::CODE,
+            ProjectEvmControlCandidateContract::CODE,
             ProjectMarginCandidateContract::CODE,
             WipCompletionForecastCandidateContract::CODE,
             ProjectLaborCostCandidateContract::CODE,

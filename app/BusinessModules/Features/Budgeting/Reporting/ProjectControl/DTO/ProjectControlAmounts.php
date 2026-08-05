@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO;
 
+use App\Enums\CurrencyCode;
 use InvalidArgumentException;
 
 final readonly class ProjectControlAmounts
@@ -16,7 +17,7 @@ final readonly class ProjectControlAmounts
         public ?int $approvedEtcMinor,
         public string $currency,
     ) {
-        if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
+        if (CurrencyCode::tryFrom($currency) === null) {
             throw new InvalidArgumentException('project_control_currency_invalid');
         }
     }

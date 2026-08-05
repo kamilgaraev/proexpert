@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataReg
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
@@ -34,6 +35,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private ProjectMarginBuiltinPublishedReport $projectMargin,
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
         private PortfolioLiquidityBuiltinPublishedReport $portfolioLiquidity,
+        private ProjectEvmControlBuiltinPublishedReport $projectEvmControl,
         private WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
         private BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
@@ -58,6 +60,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->projectMargin->metadata()->code => $this->projectMargin->metadata(),
             $this->budgetPlanFact->metadata()->code => $this->budgetPlanFact->metadata(),
             $this->portfolioLiquidity->metadata()->code => $this->portfolioLiquidity->metadata(),
+            $this->projectEvmControl->metadata()->code => $this->projectEvmControl->metadata(),
             $this->wipCompletionForecast->metadata()->code => $this->wipCompletionForecast->metadata(),
             $this->baselineScheduleVariance->metadata()->code => $this->baselineScheduleVariance->metadata(),
             $this->projectLaborCost->metadata()->code => $this->projectLaborCost->metadata(),

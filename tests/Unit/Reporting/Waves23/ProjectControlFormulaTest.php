@@ -11,6 +11,16 @@ use PHPUnit\Framework\TestCase;
 
 final class ProjectControlFormulaTest extends TestCase
 {
+    public function test_amounts_accept_only_supported_currency_codes(): void
+    {
+        self::assertSame('RUB', (new ProjectControlAmounts(1, 1, 1, 1, 1, 'RUB'))->currency);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('project_control_currency_invalid');
+
+        new ProjectControlAmounts(1, 1, 1, 1, 1, 'CNY');
+    }
+
     public function test_evm_derives_variances_indices_and_approved_eac(): void
     {
         $row = (new ProjectControlFormula)->calculate(new ProjectControlAmounts(
