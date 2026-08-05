@@ -1,5 +1,7 @@
 # R15: trusted evidence ingestion и per-code activation
 
+> **Статус: отменён 2026-08-04.** Описанный ниже signing/OIDC/admission/activation протокол не является частью продукта и не должен восстанавливаться. Решение заменено обязательной редакцией `docs/superpowers/plans/2026-08-04-reports-architecture-simplification.md`. Документ сохранён только как историческое объяснение удалённой архитектуры; фактическая поставка R15 описана в `r15-delivery-report.md`.
+
 ## Цель
 
 Опубликовать только `procurement_cycle` после успешного R15 runtime/conformance/PostgreSQL gate на одном commit SHA. До завершения этой цепочки активный management catalog остаётся `blocked`, а release request отсутствует.
