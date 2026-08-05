@@ -5,13 +5,12 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant\Reports;
 
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractPaymentsReportTool;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Report\ReportService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Facade;
-use Illuminate\Support\Facades\Storage;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -21,7 +20,6 @@ final class GenerateContractPaymentsReportToolTest extends TestCase
     protected function tearDown(): void
     {
         Carbon::setTestNow();
-        Facade::clearResolvedInstance('filesystem');
         Mockery::close();
 
         parent::tearDown();
@@ -53,21 +51,26 @@ final class GenerateContractPaymentsReportToolTest extends TestCase
                 echo '%PDF-contract-payments';
             }));
 
-        $disk = Mockery::mock();
-        $disk
-            ->shouldReceive('put')
+        $reportStorage = Mockery::mock(AssistantGeneratedReportStorage::class);
+        $reportStorage
+            ->shouldReceive('storePdf')
             ->once()
-            ->with(Mockery::pattern('/^org-77\/reports\/contract_payments_report_\d+\.pdf$/'), '%PDF-contract-payments')
-            ->andReturn(true);
-        $disk
-            ->shouldReceive('temporaryUrl')
-            ->once()
-            ->with(Mockery::type('string'), Mockery::type(\DateTimeInterface::class))
-            ->andReturn('https://storage.example.test/contract-payments.pdf');
+            ->with(
+                '%PDF-contract-payments',
+                Mockery::pattern('/^contract_payments_report_\d+\.pdf$/'),
+                $organization,
+                $user,
+            )
+            ->andReturn([
+                'pdf_url' => 'https://storage.example.test/contract-payments.pdf',
+                'filename' => 'contract-payments.pdf',
+                'storage_disk' => 's3',
+                'storage_path' => 'org-77/personal-files/user-12/report.pdf',
+                'expires_at' => null,
+                'size' => 22,
+            ]);
 
-        Storage::shouldReceive('disk')->twice()->with('s3')->andReturn($disk);
-
-        $result = (new GenerateContractPaymentsReportTool($reportService))->execute([
+        $result = (new GenerateContractPaymentsReportTool($reportService, $reportStorage))->execute([
             'period' => 'с начала проекта по сегодняшний день',
             'date_to' => '2026-05-04',
             'project_id' => 56,
@@ -75,6 +78,7 @@ final class GenerateContractPaymentsReportToolTest extends TestCase
 
         $this->assertSame('success', $result['status']);
         $this->assertSame('https://storage.example.test/contract-payments.pdf', $result['pdf_url']);
-        $this->assertSame('org-77/reports/'.$result['filename'], $result['storage_path']);
+        $this->assertSame('org-77/personal-files/user-12/report.pdf', $result['storage_path']);
+        $this->assertNull($result['expires_at']);
     }
 }

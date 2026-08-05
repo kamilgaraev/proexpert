@@ -3,22 +3,19 @@
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Report\ReportService;
-use App\Services\Storage\OrganizationStoragePath;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 class GenerateWarehouseStockReportTool implements AIToolInterface
 {
-    protected ReportService $reportService;
-
-    public function __construct(ReportService $reportService)
-    {
-        $this->reportService = $reportService;
-    }
+    public function __construct(
+        protected ReportService $reportService,
+        private readonly AssistantGeneratedReportStorage $reportStorage,
+    ) {}
 
     public function getName(): string
     {
@@ -46,6 +43,10 @@ class GenerateWarehouseStockReportTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        if (! $user instanceof User) {
+            return ['status' => 'error', 'message' => trans_message('errors.unauthenticated')];
+        }
+
         $requestData = [
             'format' => 'pdf',
         ];
@@ -67,22 +68,12 @@ class GenerateWarehouseStockReportTool implements AIToolInterface
             $content = ob_get_clean();
 
             $filename = 'warehouse_stock_report_'.time().'.pdf';
-            $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
-
-            if (Storage::disk('s3')->put($path, $content) !== true) {
-                throw new \RuntimeException('Не удалось сохранить отчет в S3.');
-            }
-            $expiresAt = now()->addHours(24);
-            $url = Storage::disk('s3')->temporaryUrl($path, $expiresAt);
+            $stored = $this->reportStorage->storePdf((string) $content, $filename, $organization, $user);
 
             return [
                 'status' => 'success',
                 'message' => 'Отчет по остаткам на складах успешно сгенерирован',
-                'pdf_url' => $url,
-                'filename' => $filename,
-                'storage_disk' => 's3',
-                'storage_path' => $path,
-                'expires_at' => $expiresAt->toIso8601String(),
+                ...$stored,
             ];
         } catch (\Exception $e) {
             Log::error('AI Tool Error (GenerateWarehouseStockReportTool): '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);

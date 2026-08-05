@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantOperationalReportEnricher;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantOperationalReportService;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantOperationalReportPeriodFilter;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantOperationalReportService;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
 use App\Models\Organization;
 use App\Models\User;
-use App\Services\Storage\FileService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -25,7 +25,7 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
         private readonly AssistantReportCatalog $reportCatalog,
         private readonly AssistantReportComposerInterface $reportComposer,
         private readonly AssistantOperationalReportEnricher $reportEnricher,
-        private readonly FileService $fileService,
+        private readonly AssistantGeneratedReportStorage $reportStorage,
         private readonly AssistantOperationalReportPeriodFilter $periodFilter = new AssistantOperationalReportPeriodFilter
     ) {}
 
@@ -71,6 +71,13 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        if (! $user instanceof User) {
+            return [
+                'status' => 'error',
+                'message' => trans_message('errors.unauthenticated'),
+            ];
+        }
+
         $reportType = $this->normalizeReportType($arguments['report_type'] ?? null);
         $period = $this->periodFilter->resolve($arguments);
 
@@ -104,29 +111,14 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
             ]);
 
             $filename = $reportType.'_report_'.time().'.pdf';
-            $path = $this->fileService->putContent($pdf->output(), 'reports', $filename, 'private', $organization);
-
-            if (! is_string($path)) {
-                throw new \RuntimeException('Не удалось сохранить отчет.');
-            }
-
-            $expiresAt = now()->addHours(24);
-            $url = $this->fileService->temporaryUrl($path, 1440, $organization);
-
-            if (! is_string($url) || $url === '') {
-                throw new \RuntimeException('Не удалось сформировать ссылку на отчет.');
-            }
+            $stored = $this->reportStorage->storePdf($pdf->output(), $filename, $organization, $user);
 
             return [
                 'status' => 'success',
                 'message' => 'Отчет «'.$definition->label.'» сформирован.',
                 'report_type' => $reportType,
                 'period' => $period['period'],
-                'pdf_url' => $url,
-                'filename' => $filename,
-                'storage_disk' => 's3',
-                'storage_path' => $path,
-                'expires_at' => $expiresAt->toIso8601String(),
+                ...$stored,
             ];
         } catch (Throwable $throwable) {
             Log::error('AI Tool Error (GenerateOperationalPdfReportTool): '.$throwable->getMessage(), [
@@ -151,8 +143,8 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
     }
 
     /**
-     * @param array<string, mixed> $arguments
-     * @param array{period: string, date_from: string|null, date_to: string|null, is_explicit: bool} $period
+     * @param  array<string, mixed>  $arguments
+     * @param  array{period: string, date_from: string|null, date_to: string|null, is_explicit: bool}  $period
      * @return array<string, mixed>|null
      */
     private function composeRagReport(
@@ -188,7 +180,7 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
     }
 
     /**
-     * @param array<string, mixed> $arguments
+     * @param  array<string, mixed>  $arguments
      */
     private function query(array $arguments, string $label): string
     {

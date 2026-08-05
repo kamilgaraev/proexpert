@@ -279,11 +279,13 @@ APP_ENV=testing vendor/bin/phpstan analyse app/Http/Controllers/Api/V1/Admin/Per
 
 DB-backed feature-тесты обновлены, но локально не запускаются по правилам workspace; их применит штатный CI/deploy. Миграция проверяется только синтаксически и не запускается вручную.
 
-- [ ] **Step 6: Commit, PR, merge и deploy**
+- [x] **Step 6: Commit, PR, merge и deploy**
 
 Commit: `refactor[backend]: файлы привязаны к организации и пользователю`.
 
 После deploy проверить создание/выдачу/удаление нового временного файла через прикладной smoke без сохранения секрета.
+
+Выполнено в PR #238 (`274ced1d8456b9eb787de75f6238f9262ae69496`), штатный deploy `31055973102` завершён успешно. Исправление DI для `ExcelExporterService` доставлено PR #239 (`276ab2a6cefeb95cf5987253dd332716c9a9e951`), deploy `31056538177` успешен; production SHA совпал, профильных ошибок в последних 500 строках лога нет.
 
 ---
 
@@ -303,6 +305,22 @@ Commit: `refactor[backend]: файлы привязаны к организац�
 **Interfaces:**
 - Consumes: `OrganizationStoragePath` и текущие-object методы `FileService`.
 - Produces: все актуальные домены передают только организационный ключ и не выбирают S3-диск или бакет.
+
+#### Task 3B.1: AI-отчёты
+
+**PR:** `refactor/timeweb-s3-ai-reports`
+
+- [x] **Step 1: Написать failing архитектурные и доменные тесты**
+- [x] **Step 2: Проверить RED**
+- [x] **Step 3: Перевести AI-отчёты на `PersonalFileService` и текущие-object методы `FileService`**
+- [x] **Step 4: Проверить GREEN и отсутствие прямого доступа к S3**
+- [ ] **Step 5: Commit, PR, merge и deploy**
+
+AI-отчёты сохраняются бессрочно по ключу `org-{organization_id}/personal-files/user-{user_id}/{uuid}.pdf`; временной является только download URL. Прямые вызовы `Storage::disk('s3')`, старый каталог `org-{id}/reports` и выбор диска удалены из генераторов.
+
+#### Task 3B.2: Остальные доменные вызовы
+
+**PR:** `refactor/timeweb-s3-domain-callers`
 
 - [ ] **Step 1: Написать failing архитектурные и доменные тесты**
 - [ ] **Step 2: Проверить RED**
