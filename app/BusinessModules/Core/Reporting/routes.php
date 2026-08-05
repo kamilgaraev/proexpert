@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContractFlowReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectEvmControlReportOptionsController;
@@ -95,6 +96,14 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'portfolio_liquidity')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('portfolio-liquidity.options');
+        Route::post('/intercompany-contract-flows/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'intercompany_contract_flows')
+            ->middleware($resourceAccess)
+            ->name('intercompany-contract-flows.runs.store');
+        Route::get('/intercompany-contract-flows/options', IntercompanyContractFlowReportOptionsController::class)
+            ->defaults('reportCode', 'intercompany_contract_flows')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('intercompany-contract-flows.options');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');

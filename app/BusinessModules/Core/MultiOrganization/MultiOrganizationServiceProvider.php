@@ -13,6 +13,7 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\IntercompanyCon
 use App\BusinessModules\Core\MultiOrganization\Reporting\Readiness\IntercompanyContractFlowReadinessProbe;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationCheckpointSourceAssembler;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowOptionsService;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowSnapshotMaterializer;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
@@ -36,6 +37,7 @@ class MultiOrganizationServiceProvider extends ServiceProvider
         $this->app->singleton(IntercompanyContractFlowCandidateContract::class);
         $this->app->scoped(HoldingAllocationFactProjector::class);
         $this->app->scoped(HoldingAllocationCheckpointSourceAssembler::class);
+        $this->app->scoped(IntercompanyContractFlowOptionsService::class);
         $this->app->scoped(IntercompanyContractFlowSnapshotMaterializer::class);
         $this->app->scoped(IntercompanyContractFlowsReportProvider::class);
         $this->app->scoped(IntercompanyContractFlowRowQuery::class);
