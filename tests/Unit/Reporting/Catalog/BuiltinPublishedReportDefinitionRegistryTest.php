@@ -23,6 +23,8 @@ use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublis
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
@@ -62,16 +64,19 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         self::assertSame('project_labor_cost', $registry->published('project_labor_cost')->code);
         self::assertSame('payroll_readiness', $registry->published('payroll_readiness')->code);
         self::assertSame('workforce_capacity', $registry->published('workforce_capacity')->code);
+        self::assertSame('procurement_cycle', $registry->published('procurement_cycle')->code);
         self::assertSame('project_margin', $app->make(ReportCatalogMetadataRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportCatalogMetadataRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('project_labor_cost', $app->make(ReportCatalogMetadataRegistry::class)->published('project_labor_cost')->code);
         self::assertSame('payroll_readiness', $app->make(ReportCatalogMetadataRegistry::class)->published('payroll_readiness')->code);
         self::assertSame('workforce_capacity', $app->make(ReportCatalogMetadataRegistry::class)->published('workforce_capacity')->code);
+        self::assertSame('procurement_cycle', $app->make(ReportCatalogMetadataRegistry::class)->published('procurement_cycle')->code);
         self::assertSame('project_margin', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_margin')->code);
         self::assertSame('budget_plan_fact', $app->make(ReportSchedulingCapabilityRegistry::class)->published('budget_plan_fact')->code);
         self::assertSame('project_labor_cost', $app->make(ReportSchedulingCapabilityRegistry::class)->published('project_labor_cost')->code);
         self::assertSame('payroll_readiness', $app->make(ReportSchedulingCapabilityRegistry::class)->published('payroll_readiness')->code);
         self::assertSame('workforce_capacity', $app->make(ReportSchedulingCapabilityRegistry::class)->published('workforce_capacity')->code);
+        self::assertSame('procurement_cycle', $app->make(ReportSchedulingCapabilityRegistry::class)->published('procurement_cycle')->code);
     }
 
     public function test_budget_plan_fact_is_available_without_database_publication(): void
@@ -82,10 +87,12 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->projectLaborCost(),
             $this->payrollReadiness(),
             $this->workforceCapacity(),
+            $this->procurementCycle(),
+            $this->procurementCycle(),
         );
         $registry = new CompositePublishedReportDefinitionRegistry($builtins, $this->registry([]));
 
-        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'project_labor_cost', 'project_margin', 'workforce_capacity'], $registry->publishedCodes());
+        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'workforce_capacity'], $registry->publishedCodes());
         self::assertSame('project_margin', $registry->published('project_margin')->code);
         $definition = $registry->published('budget_plan_fact');
         $payload = $definition->payload();
@@ -116,6 +123,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             'project_labor_cost' => 'time-tracking',
             'payroll_readiness' => 'workforce-management',
             'workforce_capacity' => 'workforce-management',
+            'procurement_cycle' => 'procurement',
         ];
 
         foreach ($expectedModules as $code => $module) {
@@ -130,11 +138,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle()),
             $this->registry(['ordinary_report' => $builtin]),
         );
 
-        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'project_labor_cost', 'project_margin', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
+        self::assertSame(['budget_plan_fact', 'payroll_readiness', 'procurement_cycle', 'project_labor_cost', 'project_margin', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
         self::assertSame($builtin, $registry->published('ordinary_report'));
     }
 
@@ -142,7 +150,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle()),
             $this->registry(['budget_plan_fact' => $builtin]),
         );
 
@@ -199,5 +207,10 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     private function workforceCapacity(): WorkforceCapacityBuiltinPublishedReport
     {
         return new WorkforceCapacityBuiltinPublishedReport(new WorkforceCapacityCandidateContract);
+    }
+
+    private function procurementCycle(): ProcurementCycleBuiltinPublishedReport
+    {
+        return new ProcurementCycleBuiltinPublishedReport(new ProcurementCycleCandidateContract);
     }
 }

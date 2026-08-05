@@ -76,6 +76,7 @@
       "procurement.contracts.view",
       "procurement.contracts.create",
       "procurement.dashboard.view",
+      "procurement.reports.export",
       "procurement.statistics.view"
     ],
     "advance-accounts": [
