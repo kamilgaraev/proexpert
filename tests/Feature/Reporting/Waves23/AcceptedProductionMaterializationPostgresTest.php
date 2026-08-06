@@ -163,6 +163,229 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         );
     }
 
+    public function test_history_checkpoint_is_created_for_new_organization_and_is_append_only(): void
+    {
+        $organization = Organization::factory()->create();
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')
+            ->where('organization_id', $organization->getKey())
+            ->first();
+
+        self::assertNotNull($checkpoint);
+        self::assertSame(0, (int) $checkpoint->excluded_legacy_act_count);
+        self::assertSame(0, (int) $checkpoint->performance_act_watermark_id);
+        self::assertSame(0, (int) $checkpoint->owner_version_count);
+        self::assertSame(0, (int) $checkpoint->owner_version_watermark_id);
+        self::assertSame(0, (int) $checkpoint->owner_member_count);
+        self::assertSame(0, (int) $checkpoint->owner_member_watermark_id);
+        self::assertSame(0, (int) $checkpoint->event_count);
+        self::assertSame(0, (int) $checkpoint->event_watermark_id);
+        self::assertSame(0, (int) $checkpoint->backfill_ledger_watermark_id);
+        $emptySetHash = hash('sha256', '');
+        self::assertSame($emptySetHash, (string) $checkpoint->legacy_act_set_hash);
+        self::assertSame($emptySetHash, (string) $checkpoint->owner_version_set_hash);
+        self::assertSame($emptySetHash, (string) $checkpoint->owner_member_set_hash);
+        self::assertSame($emptySetHash, (string) $checkpoint->event_set_hash);
+        self::assertSame($emptySetHash, (string) $checkpoint->backfill_ledger_set_hash);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', (string) $checkpoint->source_hash);
+
+        $this->assertMutationRejected(
+            static fn (): int => DB::table('production_acceptance_history_checkpoints')
+                ->where('organization_id', $organization->getKey())
+                ->update(['excluded_legacy_act_count' => 1]),
+        );
+        $this->assertMutationRejected(
+            static fn (): int => DB::table('production_acceptance_history_checkpoints')
+                ->where('organization_id', $organization->getKey())
+                ->delete(),
+        );
+    }
+
+    public function test_history_checkpoint_captures_existing_source_sets_and_separates_late_backdated_rows(): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: '2026-07-20',
+            rejectedAt: null,
+            signedAt: '2099-08-02T12:00:00Z',
+        );
+        [$ownerId, $ownerMemberId] = $this->insertOwnerVersion(
+            $organizationId,
+            $projectId,
+            'accepted',
+            '2026-07-20T00:00:00Z',
+            1,
+            $actId,
+            $lineId,
+        );
+        $eventId = $this->insertEvent(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            eventType: 'accepted',
+            quantity: '1.000',
+            recognizedAt: '2026-07-20T00:00:00Z',
+            performanceActId: $actId,
+            sourceLineId: $lineId,
+        );
+        $ledgerId = (int) DB::table('production_acceptance_backfill_ledger')->insertGetId([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'performance_act_id' => $actId,
+            'recognized_at' => '2026-07-20T00:00:00Z',
+            'status' => 'unprovable',
+            'reason' => 'historical_membership_unprovable',
+            'source_hash' => hash('sha256', 'checkpoint-ledger-'.$organizationId),
+            'recorded_at' => '2026-08-01T00:00:00Z',
+        ]);
+
+        $this->rerunHistoryCheckpointMigration();
+
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        self::assertNotNull($checkpoint);
+        self::assertSame(1, (int) $checkpoint->excluded_legacy_act_count);
+        self::assertSame($actId, (int) $checkpoint->performance_act_watermark_id);
+        self::assertSame(1, (int) $checkpoint->owner_version_count);
+        self::assertSame($ownerId, (int) $checkpoint->owner_version_watermark_id);
+        self::assertSame(1, (int) $checkpoint->owner_member_count);
+        self::assertSame($ownerMemberId, (int) $checkpoint->owner_member_watermark_id);
+        self::assertSame(1, (int) $checkpoint->event_count);
+        self::assertSame($eventId, (int) $checkpoint->event_watermark_id);
+        self::assertSame(1, (int) $checkpoint->unprovable_legacy_count);
+        self::assertSame($ledgerId, (int) $checkpoint->backfill_ledger_watermark_id);
+        self::assertSame(
+            (string) $checkpoint->event_set_hash,
+            $this->acceptanceEventSetHash($organizationId),
+        );
+        self::assertSame(
+            (string) $checkpoint->owner_member_set_hash,
+            $this->acceptanceOwnerMemberSetHash($organizationId),
+        );
+        self::assertSame(
+            (string) $checkpoint->source_hash,
+            (string) DB::table('production_acceptance_history_checkpoints')
+                ->where('organization_id', $organizationId)
+                ->selectRaw(<<<'SQL'
+encode(sha256(convert_to(jsonb_build_object(
+    'organization_id', organization_id,
+    'completed_at', to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+    'excluded_legacy_act_count', excluded_legacy_act_count,
+    'performance_act_watermark_id', performance_act_watermark_id,
+    'legacy_act_set_hash', legacy_act_set_hash,
+    'owner_version_count', owner_version_count,
+    'owner_version_watermark_id', owner_version_watermark_id,
+    'owner_version_set_hash', owner_version_set_hash,
+    'owner_member_count', owner_member_count,
+    'owner_member_watermark_id', owner_member_watermark_id,
+    'owner_member_set_hash', owner_member_set_hash,
+    'event_count', event_count,
+    'event_watermark_id', event_watermark_id,
+    'event_set_hash', event_set_hash,
+    'unprovable_legacy_count', unprovable_legacy_count,
+    'backfill_ledger_watermark_id', backfill_ledger_watermark_id,
+    'backfill_ledger_set_hash', backfill_ledger_set_hash
+)::text, 'UTF8')), 'hex') AS calculated_hash
+SQL)
+                ->value('calculated_hash'),
+        );
+
+        $lateEventId = $this->insertEvent(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            eventType: 'accepted',
+            quantity: '2.000',
+            recognizedAt: '2026-07-01T00:00:00Z',
+            performanceActId: $actId,
+            sourceLineId: $lineId + 1,
+        );
+        self::assertGreaterThan((int) $checkpoint->event_watermark_id, $lateEventId);
+        self::assertLessThan(
+            new DateTimeImmutable((string) $checkpoint->completed_at),
+            new DateTimeImmutable('2026-07-01T00:00:00Z'),
+        );
+        self::assertNotSame(
+            (string) $checkpoint->event_set_hash,
+            $this->acceptanceEventSetHash($organizationId),
+        );
+        $lateOwnerMemberId = (int) DB::table('production_acceptance_owner_members')->insertGetId([
+            'owner_version_id' => $ownerId,
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'performance_act_id' => $actId,
+            'source_line_type' => 'performance_act_line',
+            'source_line_id' => $lineId + 1,
+            'work_id' => 78,
+            'contractor_id' => 19,
+            'unit_code' => 'm3',
+            'zone' => 'B',
+        ]);
+        self::assertGreaterThan((int) $checkpoint->owner_member_watermark_id, $lateOwnerMemberId);
+        self::assertNotSame(
+            (string) $checkpoint->owner_member_set_hash,
+            $this->acceptanceOwnerMemberSetHash($organizationId),
+        );
+        $foreignOrganization = Organization::factory()->create();
+        $this->assertQueryRejected(
+            static fn (): int => DB::table('production_acceptance_owner_members')->insertGetId([
+                'owner_version_id' => $ownerId,
+                'organization_id' => $foreignOrganization->getKey(),
+                'project_id' => $projectId,
+                'performance_act_id' => $actId,
+                'source_line_type' => 'performance_act_line',
+                'source_line_id' => $lineId + 2,
+                'work_id' => 79,
+                'contractor_id' => 19,
+                'unit_code' => 'm3',
+                'zone' => 'C',
+            ]),
+            '23514',
+        );
+        $this->assertMutationRejected(
+            static fn (): int => DB::table('production_acceptance_history_checkpoints')
+                ->where('organization_id', $organizationId)
+                ->delete(),
+        );
+    }
+
+    public function test_history_checkpoint_rejects_preexisting_owner_member_scope_drift(): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: '2026-07-20',
+            rejectedAt: null,
+        );
+        [$ownerId] = $this->insertOwnerVersion(
+            $organizationId,
+            $projectId,
+            'accepted',
+            '2026-07-20T00:00:00Z',
+            1,
+            $actId,
+            $lineId,
+        );
+        $foreignOrganization = Organization::factory()->create();
+        DB::unprepared(
+            'DROP TRIGGER IF EXISTS production_acceptance_owner_members_scope_guard '
+            .'ON production_acceptance_owner_members',
+        );
+        DB::unprepared('DROP FUNCTION IF EXISTS production_acceptance_owner_member_scope_guard()');
+        DB::table('production_acceptance_owner_members')->insert([
+            'owner_version_id' => $ownerId,
+            'organization_id' => $foreignOrganization->getKey(),
+            'project_id' => $projectId,
+            'performance_act_id' => $actId,
+            'source_line_type' => 'performance_act_line',
+            'source_line_id' => $lineId + 1,
+            'work_id' => 78,
+            'contractor_id' => 19,
+            'unit_code' => 'm3',
+            'zone' => 'B',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('owner member scope drift detected');
+        $this->rerunHistoryCheckpointMigration();
+    }
+
     public function test_approval_after_as_of_is_not_part_of_candidate_universe(): void
     {
         [$scope] = $this->insertLifecycleOwner(
@@ -365,10 +588,12 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         string $eventType,
         string $effectiveAt,
         int $version,
+        int $performanceActId = 51,
+        int $sourceLineId = 91,
     ): array {
         $member = [
             'contractor_id' => 19,
-            'source_line_id' => 91,
+            'source_line_id' => $sourceLineId,
             'source_line_type' => 'performance_act_line',
             'unit_code' => 'm3',
             'work_id' => 77,
@@ -378,7 +603,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             'organization_id' => $organizationId,
             'project_id' => $projectId,
             'contract_id' => 21,
-            'performance_act_id' => 51,
+            'performance_act_id' => $performanceActId,
             'version' => $version,
             'event_type' => $eventType,
             'effective_at' => $effectiveAt,
@@ -401,7 +626,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             'owner_version_id' => $ownerId,
             'organization_id' => $organizationId,
             'project_id' => $projectId,
-            'performance_act_id' => 51,
+            'performance_act_id' => $performanceActId,
             'source_line_type' => $member['source_line_type'],
             'source_line_id' => $member['source_line_id'],
             'work_id' => $member['work_id'],
@@ -415,11 +640,81 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
 
     private function assertMutationRejected(callable $mutation): void
     {
+        $this->assertQueryRejected($mutation, '55000');
+    }
+
+    private function assertQueryRejected(callable $mutation, string $expectedCode): void
+    {
         try {
             DB::transaction($mutation);
-            self::fail('Expected append-only owner history mutation to be rejected.');
+            self::fail('Expected production acceptance source mutation to be rejected.');
         } catch (QueryException $exception) {
-            self::assertSame('55000', $exception->getCode());
+            self::assertSame($expectedCode, $exception->getCode());
         }
+    }
+
+    private function rerunHistoryCheckpointMigration(): void
+    {
+        DB::unprepared(
+            'DROP TRIGGER IF EXISTS most_seed_production_acceptance_history_checkpoint_v1 ON organizations',
+        );
+        DB::unprepared('DROP FUNCTION IF EXISTS most_seed_production_acceptance_history_checkpoint_v1()');
+        DB::unprepared(
+            'DROP TRIGGER IF EXISTS production_acceptance_owner_members_scope_guard '
+            .'ON production_acceptance_owner_members',
+        );
+        DB::unprepared('DROP FUNCTION IF EXISTS production_acceptance_owner_member_scope_guard()');
+        DB::unprepared('DROP TABLE production_acceptance_history_checkpoints');
+
+        $migration = require dirname(__DIR__, 4)
+            .'/database/migrations/2026_08_06_000150_create_production_acceptance_history_checkpoints.php';
+        $migration->up();
+    }
+
+    private function acceptanceEventSetHash(int $organizationId): string
+    {
+        return (string) DB::table('production_acceptance_events')
+            ->where('organization_id', $organizationId)
+            ->selectRaw(<<<'SQL'
+encode(sha256(convert_to(COALESCE(string_agg(
+    encode(sha256(convert_to(jsonb_build_array(id, source_hash)::text, 'UTF8')), 'hex'),
+    '' ORDER BY id
+), ''), 'UTF8')), 'hex') AS set_hash
+SQL)
+            ->value('set_hash');
+    }
+
+    private function acceptanceOwnerMemberSetHash(int $organizationId): string
+    {
+        return (string) DB::table('production_acceptance_owner_members as member')
+            ->join(
+                'production_acceptance_owner_versions as owner',
+                'owner.id',
+                '=',
+                'member.owner_version_id',
+            )
+            ->where('owner.organization_id', $organizationId)
+            ->selectRaw(<<<'SQL'
+encode(sha256(convert_to(COALESCE(string_agg(
+    encode(sha256(convert_to(jsonb_build_object(
+        'id', member.id,
+        'owner_version_id', member.owner_version_id,
+        'owner_organization_id', owner.organization_id,
+        'owner_project_id', owner.project_id,
+        'owner_performance_act_id', owner.performance_act_id,
+        'member_organization_id', member.organization_id,
+        'member_project_id', member.project_id,
+        'member_performance_act_id', member.performance_act_id,
+        'source_line_type', member.source_line_type,
+        'source_line_id', member.source_line_id,
+        'work_id', member.work_id,
+        'contractor_id', member.contractor_id,
+        'unit_code', member.unit_code,
+        'zone', member.zone
+    )::text, 'UTF8')), 'hex'),
+    '' ORDER BY member.id
+), ''), 'UTF8')), 'hex') AS set_hash
+SQL)
+            ->value('set_hash');
     }
 }
