@@ -31,7 +31,7 @@ final class ContractSettlementExposurePublishedContractTest extends TestCase
         ))->definition()->payload();
 
         self::assertSame([
-            'contract_ids', 'project_ids', 'allocation_ids', 'party_ids', 'directions',
+            'contract_ids', 'project_ids', 'allocation_ids', 'party_keys', 'directions',
             'instruments', 'statuses', 'due_from', 'due_to', 'currencies', 'period_from',
             'period_to', 'aging_buckets',
         ], array_column($definition->filters, 'id'));
@@ -43,6 +43,12 @@ final class ContractSettlementExposurePublishedContractTest extends TestCase
         self::assertSame([], $definition->permissionPolicy->sensitivePermissions);
         self::assertSame([], $definition->permissionPolicy->auditPermissions);
         self::assertSame(['csv', 'xlsx'], $definition->formats);
+        self::assertSame('2.0.0', $definition->contractVersion);
+        self::assertContains('party', array_column($definition->columns, 'id'));
+        self::assertNotContains('party_type', array_column($definition->columns, 'id'));
+        self::assertNotContains('party_key', array_column($definition->columns, 'id'));
+        self::assertContains('party', array_column($definition->sorts, 'id'));
+        self::assertNotContains('party_id', array_column($definition->sorts, 'id'));
     }
 
     public function test_runtime_binding_uses_projection_query_and_signed_drill(): void

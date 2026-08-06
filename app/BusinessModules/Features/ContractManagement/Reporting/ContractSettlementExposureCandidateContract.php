@@ -13,6 +13,9 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementExposureRow;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementInput;
+use App\BusinessModules\Features\ContractManagement\Reporting\Enums\ContractSettlementPartyType;
+use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureRecord;
+use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementSourceFact;
 use App\Enums\CurrencyCode;
 use InvalidArgumentException;
 use ReflectionClass;
@@ -21,9 +24,9 @@ final readonly class ContractSettlementExposureCandidateContract
 {
     public const CODE = 'contract_settlement_exposure';
     public const FORMULA_VERSION = ContractSettlementCalculator::FORMULA_VERSION;
-    public const SOURCE_SCHEMA_VERSION = 'contract_settlement_owner_history_v1';
-    public const FORMULA_HASH = '8502d3b6f8c1ec8c08a1aa384ae38a33415e119a5522d577d242444734eb0067';
-    public const SOURCE_HASH = '00fd6c6d98636d9d0d272578a0888afc50d19dc1f5cf0c7d3309a8f5e7362c54';
+    public const SOURCE_SCHEMA_VERSION = 'contract_settlement_owner_history_party_v2';
+    public const FORMULA_HASH = 'b0c715bcda2e44886ac32fd37e8dc3e30edc333adb01801e5f7f21481d65b9f2';
+    public const SOURCE_HASH = '10180b068e2b5697ab76c96bcbd597331b7d53e4147226250fa135f7d6c4d33c';
 
     public function filters(): array
     {
@@ -31,7 +34,7 @@ final readonly class ContractSettlementExposureCandidateContract
             ['id' => 'contract_ids', 'required' => false],
             ['id' => 'project_ids', 'required' => false],
             ['id' => 'allocation_ids', 'required' => false],
-            ['id' => 'party_ids', 'required' => false],
+            ['id' => 'party_keys', 'required' => false],
             ['id' => 'directions', 'required' => false],
             ['id' => 'instruments', 'required' => false],
             ['id' => 'statuses', 'required' => false],
@@ -47,7 +50,7 @@ final readonly class ContractSettlementExposureCandidateContract
     public function columns(): array
     {
         return array_map(static fn (string $id): array => ['id' => $id], [
-            'row_key', 'contract_id', 'allocation_id', 'project_id', 'party_id', 'direction',
+            'row_key', 'contract_id', 'allocation_id', 'project_id', 'party', 'direction',
             'currency', 'effective', 'accepted', 'cash', 'settlement', 'unperformed_exposure',
             'unpaid_exposure', 'aging_bucket', 'drill',
         ]);
@@ -58,7 +61,7 @@ final readonly class ContractSettlementExposureCandidateContract
         return [
             ['id' => 'contract_id', 'direction' => ReportSortDirection::ASC->value],
             ['id' => 'project_id', 'direction' => ReportSortDirection::ASC->value],
-            ['id' => 'party_id', 'direction' => ReportSortDirection::ASC->value],
+            ['id' => 'party', 'direction' => ReportSortDirection::ASC->value],
             ['id' => 'currency', 'direction' => ReportSortDirection::ASC->value],
             ['id' => 'effective', 'direction' => ReportSortDirection::DESC->value],
             ['id' => 'accepted', 'direction' => ReportSortDirection::DESC->value],
@@ -80,6 +83,7 @@ final readonly class ContractSettlementExposureCandidateContract
         if (! hash_equals(self::FORMULA_HASH, self::classesHash([
             ContractSettlementCalculator::class,
             ContractSettlementExposureRow::class,
+            ContractSettlementPartyType::class,
             SettlementAgingPolicy::class,
             SettlementAgingBucket::class,
             CurrencyCode::class,
@@ -89,6 +93,10 @@ final readonly class ContractSettlementExposureCandidateContract
             ContractSettlementAllocationConserver::class,
             ContractSettlementOwnerTimestamp::class,
             ContractSettlementInput::class,
+            ContractSettlementPartyType::class,
+            ContractSettlementQueryService::class,
+            ContractSettlementExposureRecord::class,
+            ContractSettlementSourceFact::class,
             FinanceSourceAccessPolicy::class,
         ]))) {
             throw new InvalidArgumentException('contract_settlement_exposure_candidate_contract_drift');

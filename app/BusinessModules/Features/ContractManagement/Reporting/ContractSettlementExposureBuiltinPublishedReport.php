@@ -12,7 +12,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFa
 
 final readonly class ContractSettlementExposureBuiltinPublishedReport
 {
-    public const CONTRACT_VERSION = '1.0.0';
+    public const CONTRACT_VERSION = '2.0.0';
     public const RENDERER_VERSION = '1.0.0';
     public const MANIFEST_ORDINAL = 14;
 

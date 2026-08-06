@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementInput;
+use App\BusinessModules\Features\ContractManagement\Reporting\Enums\ContractSettlementPartyType;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureSnapshot;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementSourceFact;
 use App\Enums\CurrencyCode;
@@ -75,11 +76,20 @@ final readonly class ContractSettlementProjectionService
             }
             $selectedInputs[] = $input;
             $rows[] = [
-                'row_key' => hash('sha256', $result->contractId.':'.$result->allocationId.':'.$result->direction.':'.$result->currency),
+                'row_key' => hash('sha256', implode(':', [
+                    $result->contractId,
+                    $result->allocationId,
+                    $result->partyKey() ?? 'party-missing',
+                    $result->direction,
+                    $result->currency,
+                ])),
                 'contract_id' => $result->contractId,
                 'allocation_id' => $result->allocationId,
                 'project_id' => $result->projectId,
                 'party_id' => $result->partyId,
+                'party_type' => $result->partyType?->value,
+                'party_key' => $result->partyKey(),
+                'party_label' => $result->partyLabel,
                 'direction' => $result->direction,
                 'currency' => $result->currency,
                 'currency_source' => 'contract_payment_owner',
@@ -162,6 +172,9 @@ final readonly class ContractSettlementProjectionService
                     'allocation_id' => $input->allocationId,
                     'project_id' => $input->projectId,
                     'party_id' => $input->partyId,
+                    'party_type' => $input->partyType?->value,
+                    'party_key' => $input->partyKey(),
+                    'party_label' => $input->partyLabel,
                     'direction' => $input->direction,
                     'currency' => $input->currency,
                     'currency_source' => 'contract_payment_owner',
@@ -312,6 +325,11 @@ final readonly class ContractSettlementProjectionService
                 allocationId: (int) $fact->allocation_id,
                 projectId: $fact->project_id === null ? null : (int) $fact->project_id,
                 partyId: $fact->party_id === null ? null : (int) $fact->party_id,
+                partyType: $fact->party_type === null
+                    ? null
+                    : (ContractSettlementPartyType::tryFrom((string) $fact->party_type)
+                        ?? throw new DomainException('contract_settlement_party_invalid')),
+                partyLabel: (string) $fact->party_label,
                 direction: (string) $fact->direction,
                 currency: $currency,
                 effectiveMinor: (int) $fact->effective_minor,
