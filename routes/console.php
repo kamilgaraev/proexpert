@@ -1,14 +1,14 @@
 <?php
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ExpireReportSubscriptionExecutionsJob;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\PruneReportSubscriptionDeliveriesJob;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ScheduleDueReportSubscriptionsJob;
 use App\Jobs\LegalArchive\MonitorLegalDocumentOutboxDeadLetters;
 use App\Jobs\LegalArchive\RecoverLegalDocumentOutboxMessages;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
-use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ScheduleDueReportSubscriptionsJob;
-use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ExpireReportSubscriptionExecutionsJob;
-use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\PruneReportSubscriptionDeliveriesJob;
 
 Schedule::job(new ScheduleDueReportSubscriptionsJob)->everyMinute()->withoutOverlapping(5)->onOneServer();
 Schedule::job(new ExpireReportSubscriptionExecutionsJob)->everyFiveMinutes()->withoutOverlapping(10)->onOneServer();
@@ -126,33 +126,6 @@ Schedule::command('avatars:cleanup')
         Log::channel('stderr')->error('Scheduled avatars:cleanup command failed.');
     })
     ->appendOutputTo(storage_path('logs/schedule-avatars-cleanup.log'));
-
-// Очистка старых файлов отчётов (старше 1 года)
-Schedule::command('reports:cleanup')
-    ->dailyAt('03:40')
-    ->withoutOverlapping(60)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled reports:cleanup command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-reports-cleanup.log'));
-
-// ДОБАВЛЕНО: Синхронизация записей report_files с бакетом S3
-Schedule::command('reports:sync')
-    ->dailyAt('03:30')
-    ->withoutOverlapping(60)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled reports:sync command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-reports-sync.log'));
-
-// ДОБАВЛЕНО: Почасовая синхронизация размера бакетов организаций
-Schedule::command('org:sync-bucket-usage')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(60)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled org:sync-bucket-usage command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-org-bucket-usage.log'));
 
 // Синхронизация данных подрядчиков, приглашённых как организации
 Schedule::command('contractors:sync-invited')
