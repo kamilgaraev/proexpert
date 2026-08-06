@@ -17,8 +17,7 @@
 
 - Используется только `prohelper-storage`; отдельные бакеты и Laravel-диски `reports` и `personals` удаляются.
 - Бакет приватный. Публичный ACL объектов не используется.
-- Все ключи начинаются с `org-{organization_id}/`.
-- Персональные файлы дополнительно изолируются сегментом `user-{user_id}`.
+- Все актуальные ключи начинаются с `org-{organization_id}/` и обязательно содержат сегмент актора: `user-{user_id}` для пользовательского действия либо `user-system` для системного действия.
 - Объекты получают уникальные неизменяемые ключи; перезапись бизнес-объекта по тому же ключу запрещена.
 - Целостность фиксируется SHA-256 и доменным аудитом в БД. Бизнес-логика не зависит от S3 `VersionId`.
 - Версионирование бакета остаётся включённым как инфраструктурная страховка, но не является частью прикладного контракта.
@@ -34,19 +33,19 @@
 ```text
 prohelper-storage/
 └── org-{organization_id}/
-    ├── reports/exports/{export_uuid}/{object_uuid}.{ext}
+    ├── reports/exports/{export_uuid}/user-{user_id}/{object_uuid}.{ext}
     ├── personal-files/user-{user_id}/{object_uuid}.{ext}
-    ├── legal-archive/{document_uuid}/{object_uuid}.{ext}
-    ├── quality-control/{entity_uuid}/{object_uuid}.{ext}
-    ├── estimates/{entity_uuid}/{object_uuid}.{ext}
-    ├── design-models/{package_uuid}/{object_uuid}.{ext}
-    ├── acts/{entity_uuid}/{object_uuid}.{ext}
-    └── temporary/{purpose}/{object_uuid}.{ext}
+    ├── legal-archive/{document_uuid}/user-{user_id}/{object_uuid}.{ext}
+    ├── quality-control/{entity_uuid}/user-{user_id}/{object_uuid}.{ext}
+    ├── estimates/{entity_uuid}/user-{user_id}/{object_uuid}.{ext}
+    ├── design-models/{package_uuid}/user-{user_id}/{object_uuid}.{ext}
+    ├── acts/{entity_uuid}/user-{user_id}/{object_uuid}.{ext}
+    └── temporary/{purpose}/user-system/{object_uuid}.{ext}
 ```
 
 Правила ключа:
 
-1. `organization_id` и, для персональных файлов, `user_id` берутся только из авторизованного серверного контекста.
+1. `organization_id` и `user_id` берутся только из авторизованного серверного контекста; для системного действия backend подставляет только фиксированный сегмент `user-system`.
 2. Имя загруженного пользователем файла не входит в ключ и хранится отдельно как `original_name`.
 3. Идентификатор объекта — UUID/ULID, созданный backend до загрузки.
 4. Расширение строится из разрешённого MIME-типа, а не из произвольного имени клиента.
@@ -102,7 +101,7 @@ initiated -> uploading -> verifying -> completed
 
 Поля `artifact_version_id`, `storage_version_id` и аналоги, которые содержат именно S3 `VersionId`, удаляются из прикладных контрактов и схемы. Доменные `document_version_id`, `estimate_version_id` и другие бизнес-версии не затрагиваются.
 
-Перед удалением старых S3-полей миграция удаляет неценные файловые записи и зависимые технические записи в порядке внешних ключей. Исходные бизнес-данные, из которых можно заново сформировать отчёт или документ, не удаляются.
+Перед удалением старых S3-полей миграция удаляет неценные файловые записи и зависимые технические записи в порядке внешних ключей. Одноразовый reset также удаляет бумажные юридические подписи вместе с legacy signature storage state; это необратимо и явно принято владельцем как старт с нуля, поскольку реальных пользователей и ценных production-данных не было. Будущие подписи этот reset не затрагивает. Исходные бизнес-данные, из которых можно заново сформировать отчёт или документ, не удаляются за исключением этой подтверждённой legacy signature boundary.
 
 ## 6. Laravel и окружение
 
@@ -155,7 +154,7 @@ MOST_S3_UPLOAD_TTL_SECONDS=900
 4. Удаление старых дисков, сервисов, команд и Yandex AI/Object Storage кода.
 5. Очистка неценных файловых записей и удаление зависимости от S3 `VersionId`.
 
-Откат каждого блока — возврат предыдущего релиза МОСТ. Откат никогда не включает Яндекс. После применения финальной очистки БД восстановление старых файловых записей не предусматривается и не требуется по принятому решению.
+После destructive reset откат допускается только на Timeweb-совместимый релиз МОСТ с `caf3a815d1cf706b0ed3ea86b0bb7d56716726eb` (hotfix PR #254) или более новый, с текущими `MOST_S3_*` и тем же бакетом `prohelper-storage`. Запрещены rollback миграции, восстановление старых файловых или signature-записей, Yandex fallback, второй бакет и публичный доступ.
 
 ## 10. Проверка
 
@@ -167,7 +166,7 @@ MOST_S3_UPLOAD_TTL_SECONDS=900
 - проверка config cache с полным набором `MOST_S3_*` и проверка отказа при неполном наборе;
 - проверка PR и штатного deploy workflow;
 - read-only production-smoke: версия релиза, отсутствие новых S3-ошибок в логах, доступность health endpoint;
-- отдельный реальный smoke Put/Head/Get/Delete в тестовом `org-{id}/temporary/smoke/` через прикладной API или безопасную команду релиза без вывода секрета.
+- отдельный реальный smoke Put/Head/Get/Delete в тестовом `org-{id}/temporary/smoke/user-system/{object_uuid}` через прикладной API или безопасную команду релиза без вывода секрета.
 
 ## 11. Что выполняется без простоя
 
@@ -194,3 +193,11 @@ MOST_S3_UPLOAD_TTL_SECONDS=900
 - [Timeweb Cloud: versioning](https://timeweb.cloud/docs/s3-storage/supported-features/s3-object-versioning)
 - [Timeweb Cloud: lifecycle](https://timeweb.cloud/docs/s3-storage/supported-features/object-lifecycle)
 - [Timeweb Cloud: дополнительные пользователи](https://timeweb.cloud/docs/s3-storage/manage-storage/additional-users)
+
+## 14. Эксплуатационный runbook и состояние внешних действий
+
+Эксплуатационный порядок, checklist, evidence и границы действий владельца закреплены в [runbook Timeweb S3](../../runbooks/timeweb-s3.md). Он является источником фактического статуса внешней конфигурации и не содержит секретов.
+
+По evidence владельца бакет `prohelper-storage` приватный, versioning включён, CDN и публичный домен не подключены. Дополнительный runtime-пользователь с доступом только Read+Write к этому бакету, точный CORS, lifecycle и ротация временного широкого ключа остаются внешними действиями до их явного подтверждения владельцем.
+
+Runtime Tasks 1–6 завершены и доставлены без простоя. PR #253 после merge остановил deploy до миграции из-за PDO-разбора JSONB `?&`; hotfix PR #254 заменил ровно два `DB::statement` на `DB::unprepared`. Deploy `31074703010` успешно применил одну миграцию. Старые объекты не переносятся, отчёты не имеют автоматической очистки, а откат не включает Yandex fallback.

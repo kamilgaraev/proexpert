@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Использовать один приватный бакет `prohelper-storage` и endpoint `https://s3.twcstorage.ru`.
-- Все актуальные ключи начинаются с `org-{organization_id}/`; персональные — с `org-{organization_id}/personal-files/user-{user_id}/`.
+- Все актуальные ключи начинаются с `org-{organization_id}/` и обязательно содержат `user-{user_id}` либо `user-system`; персональные имеют вид `org-{organization_id}/personal-files/user-{user_id}/`.
 - Не переносить старые объекты; полностью удалить неценные старые файловые записи.
 - Не создавать fallback, dual-read, dual-write, отдельные бакеты, CDN или новую CI/CD-инфраструктуру.
 - Не рефакторить холдинги, сайты холдингов и CMS.
@@ -185,8 +185,8 @@ self::assertSame(
     $paths->personal(42, 7, '018f4a8a-0000-7000-8000-000000000001', 'pdf'),
 );
 self::assertSame(
-    'org-42/reports/exports/01J4EXPORT/01J4OBJECT.xlsx',
-    $paths->forDomain(42, 'reports', 'exports/01J4EXPORT', '01J4OBJECT', 'xlsx'),
+    'org-42/reports/exports/01J4EXPORT/user-7/01J4OBJECT.xlsx',
+    $paths->forActor(42, 'reports', 'exports/01J4EXPORT', 7, '01J4OBJECT', 'xlsx'),
 );
 ```
 
@@ -327,7 +327,7 @@ AI-отчёты сохраняются бессрочно по ключу `org-{
 - [x] **Step 4: Проверить GREEN, потоковую передачу и неизменяемые ключи**
 - [x] **Step 5: Commit, PR, merge и deploy**
 
-Файлы импорта и снимки структуры получают UUID-ключи внутри `org-{organization_id}`; запись и чтение выполняются потоково через единый приватный бакет без выбора диска или бакета доменным кодом.
+Файлы импорта и снимки структуры получают UUID-ключи внутри actor-scoped `org-{organization_id}/.../user-{user_id}/` либо `user-system`; запись и чтение выполняются потоково через единый приватный бакет без выбора диска или бакета доменным кодом.
 
 Выполнено в PR #242 (`52a4276298f05383b0c69fa165646d190849972d`), штатный deploy `31059543494` завершён успешно. Production SHA совпал, профильных ошибок в последних 500 строках лога нет.
 
@@ -357,7 +357,7 @@ AI-отчёты сохраняются бессрочно по ключу `org-{
 **Подблок 3B.2c.2 — PDF заказов на поставку (`refactor/timeweb-s3-procurement`):**
 
 - [x] перевести запись и чтение почтового вложения с `OrgBucketService` на `FileService`;
-- [x] использовать неизменяемый UUID-ключ внутри `org-{id}/procurement/.../user-{id|system}`;
+- [x] использовать неизменяемый UUID-ключ внутри `org-{id}/procurement/.../user-{user_id}` для пользовательского действия либо `org-{id}/procurement/.../user-system` для системного действия;
 - [x] сохранять SHA-256, ETag, размер и MIME в metadata заказа;
 - [x] удалить публичный URL и хранение истекающей signed-ссылки в БД и очереди;
 - [x] удалять новый S3-объект только после подтверждённого rollback, не затрагивая объект при ошибке `afterCommit`;
@@ -540,11 +540,13 @@ rg -n "artifact_version_id|storage_version_id|VersionId|ListObjectVersions" app 
 
 Expected: остаются только явно документированные инфраструктурные/исторические упоминания вне прикладного runtime; production-контракты не зависят от VersionId.
 
-- [ ] **Step 6: Commit, PR, merge и deploy**
+- [x] **Step 6: Commit, PR, merge и deploy**
 
 Commit: `refactor[backend]: удалена зависимость от версий объектов S3`.
 
 После checks merge в `main`; штатный deploy применяет миграцию. Read-only проверить нулевые старые файловые записи, наличие новой схемы и отсутствие ошибок очередей/отчётов.
+
+Фактическое evidence: PR #253 (`9485294a1`) доставил runtime-изменения. Первый deploy остановился до миграции из-за PDO-разбора JSONB `?&`; hotfix PR #254 (`caf3a815d1cf706b0ed3ea86b0bb7d56716726eb`) заменил ровно два `DB::statement` на `DB::unprepared`. Deploy `31074703010` успешно применил одну миграцию. Старые файловые записи уничтожены по явному решению владельца; реальные пользователи отсутствовали.
 
 ---
 
@@ -561,7 +563,7 @@ Commit: `refactor[backend]: удалена зависимость от верс�
 - Consumes: завершённый runtime Tasks 1–6.
 - Produces: проверяемый runbook для CORS/lifecycle/key rotation и финальная evidence-сводка.
 
-- [ ] **Step 1: Зафиксировать внешний checklist Timeweb**
+- [x] **Step 1: Зафиксировать внешний checklist Timeweb**
 
 Runbook содержит без секретов:
 
@@ -577,7 +579,7 @@ Runbook содержит без секретов:
 [ ] rotate temporary runtime key after acceptance
 ```
 
-- [ ] **Step 2: Выполнить финальные проверки без дублирования уже пройденных наборов**
+- [x] **Step 2: Выполнить финальные проверки без дублирования уже пройденных наборов**
 
 Run:
 
@@ -590,15 +592,19 @@ rg -n "storage\.yandexcloud\.net|REPORTS_BUCKET|AWS_PERSONALS_BUCKET|OrgBucketSe
 
 Expected: тесты/Larastan/Pint PASS; legacy search не возвращает production runtime.
 
-- [ ] **Step 3: Независимое review и исправления**
+Полные runtime-наборы уже пройдены в Tasks 1–6 и не повторяются для документационного diff. Для Task 7 выполняются `git diff --check`, поиск секретов и старых ключей, ссылочная и структурная self-review runbook; evidence ранее пройденных runtime-проверок остаётся в PR и deploy-артефактах Tasks 1–6.
+
+- [x] **Step 3: Независимое review и исправления**
 
 Применить `superpowers:requesting-code-review`; исправлять только доказанные замечания, повторяя минимальные затронутые тесты.
+
+Первое task-review выявило три замечания; они исправлены в `a83870e60b77774fd8cac335f0dafd22b82e356d`, а scoped re-review не оставил открытых findings. Это evidence относится только к task-review и не подменяет отдельное final whole-branch review. До merge не выполняются runtime, DB и deploy-действия.
 
 - [ ] **Step 4: Commit, PR, merge и финальный deploy-smoke**
 
 Commit: `docs[backend]: добавлен runbook Timeweb S3`.
 
-После merge дождаться штатного deploy. Read-only подтвердить release SHA, health, отсутствие S3/queue/scheduler ошибок и успешный прикладной Put/Head/Get/Delete smoke в `org-{id}/temporary/smoke/`.
+После merge дождаться штатного deploy. Read-only подтвердить release SHA, health, отсутствие S3/queue/scheduler ошибок и успешный прикладной Put/Head/Get/Delete smoke в `org-{id}/temporary/smoke/user-system/{object_uuid}`.
 
 - [ ] **Step 5: Завершить цель**
 
