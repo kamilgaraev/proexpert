@@ -9,6 +9,9 @@ use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionCa
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionPublishedRuntimeBindingRegistrar;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionReportBindingFactory;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DrillDown\AcceptedProductionDrillDownProvider;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsService;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Options\CanonicalAcceptedProductionOptionsSource;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Providers\AcceptedProductionReportProvider;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Queries\AcceptedProductionRowQuery;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Readiness\AcceptedProductionReadinessProbe;
@@ -31,6 +34,8 @@ final class CompletedWorkReportingServiceProvider extends ServiceProvider
         $this->app->scoped(AcceptedProductionReportProvider::class);
         $this->app->scoped(AcceptedProductionRowQuery::class);
         $this->app->scoped(AcceptedProductionDrillDownProvider::class);
+        $this->app->scoped(AcceptedProductionOptionsSource::class, CanonicalAcceptedProductionOptionsSource::class);
+        $this->app->scoped(AcceptedProductionOptionsService::class);
         $this->app->scoped(AcceptedProductionReadinessProbe::class);
         $this->app->singleton(AcceptedProductionCandidateContract::class);
         $this->app->scoped(AcceptedProductionReportBindingFactory::class);

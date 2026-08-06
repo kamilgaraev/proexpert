@@ -38,6 +38,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString("Route::post('/projects/{project}/project-evm-control/runs'", $routes);
         self::assertStringContainsString("Route::get('/projects/{project}/project-evm-control/options'", $routes);
         self::assertStringContainsString("Route::post('/projects/{project}/accepted-production-progress/runs'", $routes);
+        self::assertStringContainsString("Route::get('/projects/{project}/accepted-production-progress/options'", $routes);
         self::assertStringContainsString("Route::post('/projects/{project}/wip-completion-forecast/runs'", $routes);
         self::assertStringContainsString("Route::get('/projects/{project}/wip-completion-forecast/options'", $routes);
         self::assertStringContainsString("Route::post('/projects/{project}/project-labor-cost/runs'", $routes);
@@ -47,7 +48,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString("Route::post('/workforce-capacity/runs'", $routes);
         self::assertStringContainsString("Route::get('/workforce-capacity/options'", $routes);
         self::assertStringContainsString("->middleware(['report.organization-scope', \$resourceAccess])", $routes);
-        self::assertSame(13, substr_count($routes, "'report.project-scope'"));
+        self::assertSame(14, substr_count($routes, "'report.project-scope'"));
 
         $middlewareFile = (new ReflectionClass(AuthorizeReportDefinitionAccess::class))->getFileName();
         self::assertIsString($middlewareFile);
@@ -58,6 +59,7 @@ final class ProjectMarginCanonicalRouteContractTest extends TestCase
         self::assertStringContainsString("'admin.reports.project-evm-control.runs.store'", $middleware);
         self::assertStringContainsString("'admin.reports.project-evm-control.options'", $middleware);
         self::assertStringContainsString("'admin.reports.accepted-production-progress.runs.store'", $middleware);
+        self::assertStringContainsString("'admin.reports.accepted-production-progress.options'", $middleware);
         self::assertStringContainsString("'admin.reports.wip-completion-forecast.runs.store'", $middleware);
         self::assertStringContainsString("'admin.reports.wip-completion-forecast.options'", $middleware);
         self::assertStringContainsString('private function genericCreateRun', $middleware);

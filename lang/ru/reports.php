@@ -94,6 +94,17 @@ return [
         'format_invalid' => 'Выбран некорректный формат отчета.',
     ],
     'options' => [
+        'accepted_production_progress' => [
+            'work' => 'Работа №:id',
+            'work_with_name' => 'Работа №:id — :name',
+            'act' => 'Акт №:number',
+            'act_by_id' => 'Акт №:id',
+            'contractor' => 'Подрядчик №:id',
+            'statuses' => [
+                'accepted' => 'Принято',
+                'reversed' => 'Отменено',
+            ],
+        ],
         'contract_settlement_exposure' => [
             'directions' => [
                 'receivable' => 'Дебиторская задолженность',
