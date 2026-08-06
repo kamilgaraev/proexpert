@@ -93,6 +93,7 @@ WITH boundary AS MATERIALIZED (
     SELECT
         request.organization_id,
         request.id,
+        version.id AS latest_version_id,
         jsonb_build_object(
             'request', to_jsonb(request),
             'project', COALESCE(to_jsonb(request_project), 'null'::jsonb),
@@ -126,6 +127,14 @@ WITH boundary AS MATERIALIZED (
       ON request_allocation.id = request.reporting_contract_project_allocation_id
     LEFT JOIN contracts AS request_contract
       ON request_contract.id = request_allocation.contract_id
+    LEFT JOIN LATERAL (
+        SELECT source.id
+        FROM change_request_versions AS source
+        WHERE source.organization_id = request.organization_id
+          AND source.change_request_id = request.id
+        ORDER BY source.id DESC
+        LIMIT 1
+    ) AS version ON true
     LEFT JOIN LATERAL (
         SELECT source.*
         FROM change_management_impacts AS source
@@ -162,6 +171,14 @@ WITH boundary AS MATERIALIZED (
         encode(sha256(convert_to(source_identity::text, 'UTF8')), 'hex') AS source_hash
     FROM request_projection
     WHERE unprojectable
+), request_version_gaps AS MATERIALIZED (
+    SELECT
+        organization_id,
+        'request_version_missing'::text AS gap_kind,
+        id AS source_id,
+        encode(sha256(convert_to(source_identity::text, 'UTF8')), 'hex') AS source_hash
+    FROM request_projection
+    WHERE latest_version_id IS NULL
 ), version_gaps AS MATERIALIZED (
     SELECT
         version.organization_id,
@@ -211,6 +228,18 @@ WITH boundary AS MATERIALIZED (
                'YYYY-MM-DD"T"HH24:MI:SS'
            ) || '+00:00'
        ))
+), version_workflow_event_gaps AS MATERIALIZED (
+    SELECT
+        version.organization_id,
+        'version_workflow_event_missing'::text AS gap_kind,
+        version.id AS source_id,
+        version.source_hash
+    FROM change_request_versions AS version
+    LEFT JOIN change_workflow_events AS event
+      ON event.organization_id = version.organization_id
+     AND event.change_request_id = version.change_request_id
+     AND event.version = version.version
+    WHERE event.id IS NULL
 ), workflow_event_gaps AS MATERIALIZED (
     SELECT
         event.organization_id,
@@ -238,6 +267,18 @@ WITH boundary AS MATERIALIZED (
                'YYYY-MM-DD"T"HH24:MI:SS'
            ) || '+00:00'
        ))
+), claim_link_missing_gaps AS MATERIALIZED (
+    SELECT
+        claim.organization_id,
+        'claim_link_missing'::text AS gap_kind,
+        claim.id AS source_id,
+        encode(sha256(convert_to(to_jsonb(claim)::text, 'UTF8')), 'hex') AS source_hash
+    FROM change_management_claims AS claim
+    LEFT JOIN change_claim_links AS link
+      ON link.organization_id = claim.organization_id
+     AND link.change_claim_id = claim.id
+    WHERE claim.change_request_id IS NOT NULL
+      AND link.id IS NULL
 ), claim_link_gaps AS MATERIALIZED (
     SELECT
         link.organization_id,
@@ -307,9 +348,15 @@ WITH boundary AS MATERIALIZED (
 ), integrity_gaps AS MATERIALIZED (
     SELECT * FROM request_gaps
     UNION ALL
+    SELECT * FROM request_version_gaps
+    UNION ALL
     SELECT * FROM version_gaps
     UNION ALL
+    SELECT * FROM version_workflow_event_gaps
+    UNION ALL
     SELECT * FROM workflow_event_gaps
+    UNION ALL
+    SELECT * FROM claim_link_missing_gaps
     UNION ALL
     SELECT * FROM claim_link_gaps
     UNION ALL

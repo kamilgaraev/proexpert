@@ -52,8 +52,11 @@ final class ChangeClaimHistoryBoundaryContractTest extends TestCase
         self::assertStringContainsString('change_claim_history_checkpoints_append_only', $migration);
         foreach ([
             'request_source_incomplete',
+            'request_version_missing',
             'version_scope_drift',
+            'version_workflow_event_missing',
             'workflow_event_scope_drift',
+            'claim_link_missing',
             'claim_link_scope_drift',
             'ledger_scope_drift',
         ] as $gapKind) {
@@ -106,6 +109,14 @@ final class ChangeClaimHistoryBoundaryContractTest extends TestCase
         self::assertStringNotContainsString('INSERT INTO change_workflow_events', $migration);
         self::assertStringNotContainsString('ChangeClaimBackfill', $migration);
         self::assertStringNotContainsString('ChangeWorkflowEventRecorder', $migration);
+        self::assertStringContainsString(
+            'source.change_request_id = request.id',
+            $migration,
+        );
+        self::assertStringContainsString('latest_version_id IS NULL', $migration);
+        self::assertStringContainsString('event.id IS NULL', $migration);
+        self::assertStringContainsString('claim.change_request_id IS NOT NULL', $migration);
+        self::assertStringContainsString('link.id IS NULL', $migration);
     }
 
     #[Test]
