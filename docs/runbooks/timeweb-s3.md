@@ -16,7 +16,7 @@
 
 ## Пространство ключей и изоляция
 
-Каждый ключ начинается с `org-{organization_id}/`. Если объект привязан к актору, сегмент области имеет вид `user-{user_id}`; системный актор всегда записывается как `user-system`:
+Каждый актуальный ключ обязательно начинается с `org-{organization_id}/` и содержит область актора: `user-{user_id}` для пользовательского действия либо `user-system` для системного действия. Ключ без actor-сегмента не является допустимым:
 
 ```text
 org-{organization_id}/{domain}/.../user-{user_id}/{object_uuid}.{ext}
@@ -26,10 +26,10 @@ org-{organization_id}/{domain}/.../user-system/{object_uuid}.{ext}
 Примеры действующих доменных путей:
 
 ```text
-org-{organization_id}/reports/exports/{export_uuid}/{object_uuid}.{ext}
+org-{organization_id}/reports/exports/{export_uuid}/user-{user_id}/{object_uuid}.{ext}
 org-{organization_id}/personal-files/user-{user_id}/{object_uuid}.{ext}
-org-{organization_id}/design-models/{package_uuid}/{object_uuid}.{ext}
-org-{organization_id}/temporary/{purpose}/{object_uuid}.{ext}
+org-{organization_id}/design-models/{package_uuid}/user-{user_id}/{object_uuid}.{ext}
+org-{organization_id}/temporary/{purpose}/user-system/{object_uuid}.{ext}
 ```
 
 Идентификатор объекта генерируется backend до загрузки; имя, переданное пользователем, не становится частью ключа. Нормализация не допускает выход за организационный префикс. `VersionId` не является частью прикладного контракта: целостность и идентичность фиксируются уникальным ключом, SHA-256, ETag, MIME и размером.
@@ -37,6 +37,8 @@ org-{organization_id}/temporary/{purpose}/{object_uuid}.{ext}
 ## Конфигурация приложения
 
 Ниже только имена `MOST_S3_*` и безопасные примеры. Значения ключа и секрета передаются в защищённые переменные окружения deployment-платформы, не в Git, журнал или этот документ.
+
+Реализованный контракт и значения по умолчанию подтверждаются [config/filesystems.php](../../config/filesystems.php) и [.env.example](../../.env.example): `ru-1`, `prohelper-storage`, `https://s3.twcstorage.ru`, path-style `true`, TTL скачивания `300` и TTL загрузки `900`. Эти файлы не содержат production-значений ключей.
 
 ```dotenv
 MOST_S3_ACCESS_KEY_ID=<runtime-access-key-id>
@@ -103,6 +105,8 @@ Lifecycle требует внешней настройки и отдельной
 ### Приватность, публичные политики и CDN
 
 Не включать привязку публичного домена, static website или CDN для `prohelper-storage`. При проверке bucket policy исключить public `Allow` для `Principal: "*"`; политики Timeweb могут управлять доступом к объектам и отдельно поддерживают ограничение транспорта HTTPS. [Документация Timeweb: bucket policies](https://timeweb.cloud/docs/s3-storage/supported-features/bucket-policies)
+
+Яндекс Геокодер не относится к S3-хранилищу и остаётся вне scope этого runbook. Удаление legacy-кода касается только Yandex Object Storage и AI storage code, а не несвязанной геокодер-интеграции.
 
 ## Ротация ключа runtime-пользователя
 
