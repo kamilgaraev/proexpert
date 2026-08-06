@@ -145,6 +145,16 @@ Lifecycle требует внешней настройки и отдельной
 
 Hotfix PR #254 заменил ровно два вызова `DB::statement` на `DB::unprepared`, чтобы PDO не разбирал JSONB-оператор `?&` как placeholder. Он не возвращает старое хранилище и не меняет целевую архитектуру.
 
+## Финальный статус и evidence
+
+Documentation PR [#255](https://github.com/kamilgaraev/proexpert/pull/255) merged в `main` с SHA `9d8ce9c65903dd20e3287d4ab504c970cbf2093e`. Штатный `.github/workflows/deploy-backend.yml` реагирует на push только в runtime-путях и не включает `docs/**`; поэтому documentation-only merge намеренно не создал deploy run. По требованию владельца manual workflow dispatch не выполнялся.
+
+Production остаётся на последнем успешном Timeweb deploy: SHA `caf3a815d1cf706b0ed3ea86b0bb7d56716726eb`, run `31074703010`. Это безопасный floor release для отката. После merge #255 read-only smoke подтвердил HTTP 200 для `https://api.xn--1-xtbgmf.xn--p1ai/ready` и `https://api.xn--1-xtbgmf.xn--p1ai/up`; последние 2000 строк `storage/logs/laravel.log` дали 0 совпадений по `AccessDenied|PutObject|GetObject|DeleteObject|ListObjectVersions|VersionId|reports:cleanup|personals:cleanup`.
+
+Владелец ранее подтвердил прямые Timeweb S3 Put/Get/Delete/Multipart до runtime-миграции. Это evidence транспорта S3, а не свежий прикладной write-smoke. Новый прикладной Put/Head/Get/Delete smoke не выполнялся, поскольку production-доступ `codex-ro` строго read-only. Его заменять не следует: доказательствами являются уже развёрнутый runtime, ранее пройденные тесты и owner transport check; ручной deploy не запускался.
+
+Миграция завершена. Остаются только внешние действия владельца из checklist: отдельный runtime-пользователь Read+Write только для `prohelper-storage`; точный HTTPS-origin CORS; lifecycle (abort incomplete multipart через 1 день, noncurrent versions через 30 дней, без expiration текущих объектов); ротация временного широкого ключа. Приватность бакета, versioning и отсутствие CDN/public domain подтверждены.
+
 ## Deploy, верификация и откат
 
 ### Перед штатным deploy
