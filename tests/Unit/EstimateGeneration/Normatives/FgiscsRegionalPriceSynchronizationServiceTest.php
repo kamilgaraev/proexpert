@@ -21,7 +21,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
         $workerSalary = Mockery::mock(FgiscsRegionalPriceUpdateService::class);
         $workerSalary->shouldReceive('syncTatarstan')
             ->once()
-            ->with('prices', 77, true, false, null)
+            ->with(77, true, false, null)
             ->ordered()
             ->andReturn([
                 'skipped' => true,
@@ -32,7 +32,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
         $buildingResources = Mockery::mock(FgiscsBuildingResourcePriceUpdateService::class);
         $buildingResources->shouldReceive('syncTatarstan')
             ->once()
-            ->with('prices', 77, false, true, null)
+            ->with(77, false, true, null)
             ->ordered()
             ->andReturn([
                 'status' => 'parsed',
@@ -41,7 +41,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
             ]);
         $workerSalary->shouldReceive('syncTatarstan')
             ->once()
-            ->with('prices', 77, true, false, null)
+            ->with(77, true, false, null)
             ->ordered()
             ->andReturn([
                 'status' => 'active',
@@ -50,7 +50,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
             ]);
 
         $result = (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
-            ->syncTatarstan('prices', 77);
+            ->syncTatarstan(77);
 
         self::assertSame('active', $result['status']);
         self::assertSame(11, $result['version_id']);
@@ -72,7 +72,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
         $this->expectExceptionMessage(FgiscsRegionalPriceSynchronizationException::WORKER_COMPONENT_FAILED);
 
         (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
-            ->syncTatarstan('prices', 77);
+            ->syncTatarstan(77);
     }
 
     public function test_mismatched_skipped_component_revisions_report_safe_final_state(): void
@@ -101,7 +101,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
 
         try {
             (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
-                ->syncTatarstan('prices', 77);
+                ->syncTatarstan(77);
             self::fail('Synchronization mismatch must fail.');
         } catch (FgiscsRegionalPriceSynchronizationException $exception) {
             self::assertSame(FgiscsRegionalPriceSynchronizationException::FINAL_VERSION_NOT_ACTIVE, $exception->failureCode);
@@ -149,7 +149,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
         ]]);
 
         $result = (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
-            ->syncSubject(16, 'prices');
+            ->syncSubject(16);
 
         self::assertSame('active', $result[0]['status']);
         self::assertSame(21, $result[0]['version_id']);

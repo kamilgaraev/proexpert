@@ -18,7 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\LaborPriceSpreadsheetParser;
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\TemporaryEstimateSourceFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -30,7 +30,6 @@ class FgiscsRegionalPriceUpdateService
         private readonly FgiscsClient $client,
         private readonly FgiscsRegionalCatalogService $catalogService,
         private readonly LaborPriceSpreadsheetParser $parser,
-        private readonly EstimateSourceStorageService $storageService,
         private readonly RegionalPriceQualityService $qualityService,
         private readonly RegionalPriceImportLifecycleService $lifecycleService,
         private readonly RegionalPriceVersionResolver $versionResolver,
@@ -39,12 +38,11 @@ class FgiscsRegionalPriceUpdateService
     /**
      * @return array<string, mixed>
      */
-    public function syncTatarstan(string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $force = false, ?callable $progress = null): array
+    public function syncTatarstan(?int $periodId = null, bool $latestOnly = true, bool $force = false, ?callable $progress = null): array
     {
         $catalog = $this->catalogService->syncTatarstan();
 
         return $this->syncPriceZone(
-            bucket: $bucket,
             region: $catalog['region'],
             priceZone: $catalog['price_zone'],
             periodId: $periodId,
@@ -58,7 +56,7 @@ class FgiscsRegionalPriceUpdateService
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function syncSupportedRegions(string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?callable $progress = null): array
+    public function syncSupportedRegions(?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?callable $progress = null): array
     {
         $results = [];
 
@@ -69,7 +67,7 @@ class FgiscsRegionalPriceUpdateService
             }
 
             foreach ($region->priceZones as $priceZone) {
-                array_push($results, ...$this->syncPriceZone($bucket, $region, $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
+                array_push($results, ...$this->syncPriceZone($region, $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
             }
         }
 
@@ -79,13 +77,13 @@ class FgiscsRegionalPriceUpdateService
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function syncSubject(int $subjectId, string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?callable $progress = null): array
+    public function syncSubject(int $subjectId, ?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?callable $progress = null): array
     {
         $catalog = $this->catalogService->syncSubject($subjectId);
         $results = [];
 
         foreach ($catalog['price_zones'] as $priceZone) {
-            array_push($results, ...$this->syncPriceZone($bucket, $catalog['region'], $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
+            array_push($results, ...$this->syncPriceZone($catalog['region'], $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
         }
 
         return $results;
@@ -94,7 +92,7 @@ class FgiscsRegionalPriceUpdateService
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function syncAllRegions(string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?int $limit = null, ?callable $progress = null): array
+    public function syncAllRegions(?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?int $limit = null, ?callable $progress = null): array
     {
         $results = [];
         $subjects = $this->catalogService->countrySubjects();
@@ -113,7 +111,7 @@ class FgiscsRegionalPriceUpdateService
                 $catalog = $this->catalogService->syncSubject((int) $subject['id'], null, (string) $subject['name'], true);
 
                 foreach ($catalog['price_zones'] as $priceZone) {
-                    array_push($results, ...$this->syncPriceZone($bucket, $catalog['region'], $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
+                    array_push($results, ...$this->syncPriceZone($catalog['region'], $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
                 }
             } catch (Throwable $exception) {
                 Log::error('[EstimateGeneration] FGIS CS worker salary regional sync failed.', [
@@ -146,6 +144,17 @@ class FgiscsRegionalPriceUpdateService
             : null;
     }
 
+    private function currentBucketName(): string
+    {
+        $name = config('filesystems.disks.s3.bucket');
+
+        if (! is_string($name) || trim($name) === '') {
+            throw new RuntimeException('storage_configuration_invalid');
+        }
+
+        return trim($name);
+    }
+
     private function databaseReason(Throwable $exception): ?string
     {
         $message = $this->databaseMessage($exception);
@@ -164,7 +173,6 @@ class FgiscsRegionalPriceUpdateService
      * @return array<int, array<string, mixed>>
      */
     private function syncPriceZone(
-        string $bucket,
         EstimateRegion $region,
         EstimatePriceZone $priceZone,
         ?int $periodId,
@@ -177,7 +185,7 @@ class FgiscsRegionalPriceUpdateService
         $results = [];
 
         foreach ($periods as $index => $period) {
-            $results[] = $this->syncPeriod($bucket, $region, $priceZone, $period, $latestOnly, ! $allPeriods || $index === 0, $force, $progress);
+            $results[] = $this->syncPeriod($region, $priceZone, $period, $latestOnly, ! $allPeriods || $index === 0, $force, $progress);
         }
 
         return $results;
@@ -186,7 +194,7 @@ class FgiscsRegionalPriceUpdateService
     /**
      * @return array<string, mixed>
      */
-    private function syncPeriod(string $bucket, EstimateRegion $region, EstimatePriceZone $priceZone, EstimatePricePeriod $period, bool $latestOnly, bool $activate, bool $force, ?callable $progress): array
+    private function syncPeriod(EstimateRegion $region, EstimatePriceZone $priceZone, EstimatePricePeriod $period, bool $latestOnly, bool $activate, bool $force, ?callable $progress): array
     {
         $baseVersionKey = $this->versionKey($period, $region, $priceZone);
         $versionKey = $this->versionResolver->resolveVersionKey(
@@ -239,7 +247,7 @@ class FgiscsRegionalPriceUpdateService
                 'version_key' => $versionKey,
             ],
             [
-                'bucket' => $bucket,
+                'bucket' => $this->currentBucketName(),
                 'prefix' => $prefix,
                 'status' => EstimateImportStatus::IMPORTING->value,
                 'files_count' => 1,
@@ -265,14 +273,11 @@ class FgiscsRegionalPriceUpdateService
                 'file' => $fileKey,
             ]);
             $download = $this->client->downloadWorkerSalary((int) $priceZone->fgiscs_price_zone_id, (int) $period->fgiscs_period_id);
-            $this->storageService->disk($bucket)->put($fileKey, $download->content);
 
             $regionalVersion->update([
                 'status' => RegionalPriceStatus::DOWNLOADED->value,
                 'files_count' => 1,
                 'metadata' => array_merge($regionalVersion->metadata ?? [], [
-                    'bucket' => $bucket,
-                    'file_key' => $fileKey,
                     'file_name' => $download->fileName,
                     'content_type' => $download->contentType,
                     'latest_only' => $latestOnly,
@@ -328,7 +333,7 @@ class FgiscsRegionalPriceUpdateService
                 'version_id' => $regionalVersion->id,
                 'version_key' => $versionKey,
                 'period' => $period->name,
-                'file_key' => $fileKey,
+                'source_file_name' => $download->fileName,
             ]);
         } catch (FgiscsDownloadUnavailableException $exception) {
             $regionalVersion->update([
@@ -385,8 +390,7 @@ class FgiscsRegionalPriceUpdateService
     {
         $regionalVersion->update(['status' => RegionalPriceStatus::PARSING->value]);
 
-        $path = tempnam(sys_get_temp_dir(), 'fgiscs-worker-salary-').'.xlsx';
-        file_put_contents($path, $content);
+        $path = TemporaryEstimateSourceFile::fromContents($content, 'xlsx', 'fgiscs-worker-salary-');
 
         $rowsRead = 0;
         $rowsImported = 0;

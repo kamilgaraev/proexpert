@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeResourceUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\TemporaryEstimateSourceFile;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Throwable;
@@ -41,12 +42,13 @@ class EstimateSourceImportService
     /**
      * @return array<string, mixed>
      */
-    public function import(string $sourceType, string $bucket, string $prefix, string $versionKey, ?callable $progress = null): array
+    public function import(int $organizationId, string $sourceType, string $prefix, string $versionKey, ?callable $progress = null): array
     {
         $sourceType = $this->normalizeToken($sourceType, 'source_type');
         $versionKey = $this->normalizeToken($versionKey, 'version_key');
-        $files = $this->storageService->listFiles($bucket, $prefix);
-        $datasetVersion = $this->upsertDatasetVersion($sourceType, $bucket, $prefix, $versionKey, count($files));
+        $scopedPrefix = $this->storageService->scopePrefix($organizationId, $prefix);
+        $files = $this->storageService->listFiles($organizationId, $prefix);
+        $datasetVersion = $this->upsertDatasetVersion($sourceType, $scopedPrefix, $versionKey, count($files));
 
         try {
             $stats = [
@@ -62,7 +64,7 @@ class EstimateSourceImportService
                     'source_type' => $sourceType,
                 ]);
 
-                $result = $this->importStoredFile($datasetVersion, $sourceType, $bucket, $fileKey, $progress);
+                $result = $this->importStoredFile($datasetVersion, $sourceType, $organizationId, $fileKey, $progress);
                 $stats['rows_read'] += (int) ($result['rows_read'] ?? 0);
                 $stats['rows_imported'] += (int) ($result['rows_imported'] ?? 0);
                 $stats['errors_count'] += (int) ($result['errors_count'] ?? 0);
@@ -78,8 +80,7 @@ class EstimateSourceImportService
             return array_merge([
                 'source_type' => $sourceType,
                 'version_key' => $versionKey,
-                'bucket' => $bucket,
-                'prefix' => $prefix,
+                'prefix' => $scopedPrefix,
                 'status' => EstimateImportStatus::PARSED->value,
             ], $stats);
         } catch (Throwable $exception) {
@@ -87,7 +88,7 @@ class EstimateSourceImportService
                 'files_count' => count($files),
                 'errors_count' => 1,
             ]);
-            $this->recordImportError($datasetVersion, $prefix, 'error', 'estimate_source_import_failed');
+            $this->recordImportError($datasetVersion, $scopedPrefix, 'error', 'estimate_source_import_failed');
 
             throw $exception;
         }
@@ -99,7 +100,7 @@ class EstimateSourceImportService
     private function importStoredFile(
         EstimateDatasetVersion $datasetVersion,
         string $sourceType,
-        string $bucket,
+        int $organizationId,
         string $fileKey,
         ?callable $progress = null
     ): array {
@@ -109,7 +110,7 @@ class EstimateSourceImportService
             return ['rows_read' => 0, 'rows_imported' => 0, 'errors_count' => 0];
         }
 
-        $localPath = $this->copySourceToTemporaryFile($bucket, $fileKey);
+        $localPath = $this->copySourceToTemporaryFile($organizationId, $fileKey);
 
         try {
             if ($sourceType === EstimateSourceType::FGIS_LABOR_PRICES->value) {
@@ -397,13 +398,12 @@ class EstimateSourceImportService
 
     private function upsertDatasetVersion(
         string $sourceType,
-        string $bucket,
         string $prefix,
         string $versionKey,
         int $filesCount
     ): EstimateDatasetVersion {
         $payload = [
-            'bucket' => $bucket,
+            'bucket' => $this->currentBucketName(),
             'prefix' => $prefix,
             'status' => EstimateImportStatus::IMPORTING->value,
             'files_count' => $filesCount,
@@ -546,43 +546,23 @@ class EstimateSourceImportService
         return $id !== null ? (int) $id : null;
     }
 
-    private function copySourceToTemporaryFile(string $bucket, string $fileKey): string
+    private function copySourceToTemporaryFile(int $organizationId, string $fileKey): string
     {
-        $stream = $this->storageService->openReadStream($bucket, $fileKey);
+        $stream = $this->storageService->openReadStream($organizationId, $fileKey);
         $extension = pathinfo($fileKey, PATHINFO_EXTENSION) ?: 'tmp';
-        $localPath = tempnam(sys_get_temp_dir(), 'estimate-source-');
 
-        if ($localPath === false) {
-            if (is_resource($stream)) {
-                fclose($stream);
-            }
+        return TemporaryEstimateSourceFile::fromStream($stream, $extension, 'estimate-source-');
+    }
 
-            throw new RuntimeException('Unable to create temporary file for estimate source import.');
+    private function currentBucketName(): string
+    {
+        $name = config('filesystems.disks.s3.bucket');
+
+        if (! is_string($name) || trim($name) === '') {
+            throw new RuntimeException('storage_configuration_invalid');
         }
 
-        $targetPath = $localPath.'.'.$extension;
-        rename($localPath, $targetPath);
-        $target = fopen($targetPath, 'wb');
-
-        if ($target === false) {
-            if (is_resource($stream)) {
-                fclose($stream);
-            }
-
-            throw new RuntimeException('Unable to open temporary file for estimate source import.');
-        }
-
-        try {
-            stream_copy_to_stream($stream, $target);
-        } finally {
-            fclose($target);
-
-            if (is_resource($stream)) {
-                fclose($stream);
-            }
-        }
-
-        return $targetPath;
+        return trim($name);
     }
 
     private function normalizeResourceType(?string $resourceType, ?string $code = null, ?string $name = null, ?array $rawData = null): string

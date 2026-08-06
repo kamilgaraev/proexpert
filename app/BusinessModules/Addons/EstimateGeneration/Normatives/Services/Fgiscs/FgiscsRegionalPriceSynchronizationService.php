@@ -17,14 +17,12 @@ class FgiscsRegionalPriceSynchronizationService
      * @return array<string, mixed>
      */
     public function syncTatarstan(
-        string $bucket,
         ?int $periodId = null,
         bool $force = false,
         bool $withSplitForm = true,
         ?callable $progress = null,
     ): array {
         $workerSalary = $this->workerSalaryService->syncTatarstan(
-            bucket: $bucket,
             periodId: $periodId,
             latestOnly: true,
             force: $force,
@@ -32,7 +30,6 @@ class FgiscsRegionalPriceSynchronizationService
         );
         $this->assertComponentSucceeded($workerSalary, 'worker_salary', $workerSalary);
         $buildingResources = $this->buildingResourceService->syncTatarstan(
-            bucket: $bucket,
             periodId: $periodId,
             force: $force,
             withSplitForm: $withSplitForm,
@@ -44,7 +41,6 @@ class FgiscsRegionalPriceSynchronizationService
         if (($buildingResources['status'] ?? null) !== RegionalPriceStatus::ACTIVE->value
             && ($buildingResources['version_id'] ?? null) !== ($workerSalary['version_id'] ?? null)) {
             $final = $this->workerSalaryService->syncTatarstan(
-                bucket: $bucket,
                 periodId: $periodId,
                 latestOnly: true,
                 force: false,
@@ -73,7 +69,6 @@ class FgiscsRegionalPriceSynchronizationService
      */
     public function syncSubject(
         int $subjectId,
-        string $bucket,
         ?int $periodId = null,
         bool $force = false,
         bool $withSplitForm = true,
@@ -81,7 +76,6 @@ class FgiscsRegionalPriceSynchronizationService
     ): array {
         $workerSalary = $this->workerSalaryService->syncSubject(
             subjectId: $subjectId,
-            bucket: $bucket,
             periodId: $periodId,
             latestOnly: true,
             allPeriods: false,
@@ -90,7 +84,6 @@ class FgiscsRegionalPriceSynchronizationService
         );
         $buildingResources = $this->buildingResourceService->syncSubject(
             subjectId: $subjectId,
-            bucket: $bucket,
             periodId: $periodId,
             force: $force,
             withSplitForm: $withSplitForm,
@@ -98,7 +91,6 @@ class FgiscsRegionalPriceSynchronizationService
         );
         $final = $this->workerSalaryService->syncSubject(
             subjectId: $subjectId,
-            bucket: $bucket,
             periodId: $periodId,
             latestOnly: true,
             allPeriods: false,
@@ -113,7 +105,6 @@ class FgiscsRegionalPriceSynchronizationService
      * @return array<int, array<string, mixed>>
      */
     public function syncAllRegions(
-        string $bucket,
         ?int $periodId = null,
         bool $force = false,
         bool $withSplitForm = true,
@@ -121,7 +112,6 @@ class FgiscsRegionalPriceSynchronizationService
         ?callable $progress = null,
     ): array {
         $workerSalary = $this->workerSalaryService->syncAllRegions(
-            bucket: $bucket,
             periodId: $periodId,
             latestOnly: true,
             allPeriods: false,
@@ -130,7 +120,6 @@ class FgiscsRegionalPriceSynchronizationService
             progress: $progress,
         );
         $buildingResources = $this->buildingResourceService->syncAllRegions(
-            bucket: $bucket,
             periodId: $periodId,
             force: $force,
             withSplitForm: $withSplitForm,
@@ -138,7 +127,6 @@ class FgiscsRegionalPriceSynchronizationService
             progress: $progress,
         );
         $final = $this->workerSalaryService->syncAllRegions(
-            bucket: $bucket,
             periodId: $periodId,
             latestOnly: true,
             allPeriods: false,

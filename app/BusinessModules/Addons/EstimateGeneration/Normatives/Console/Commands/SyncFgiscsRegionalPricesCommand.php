@@ -17,7 +17,6 @@ class SyncFgiscsRegionalPricesCommand extends Command
         {--all-regions}
         {--all-periods}
         {--limit=}
-        {--bucket=prohelper-storage}
         {--latest-only}
         {--period-id=}
         {--force}';
@@ -52,14 +51,12 @@ class SyncFgiscsRegionalPricesCommand extends Command
      */
     private function runSync(FgiscsRegionalPriceUpdateService $service, callable $progress): array
     {
-        $bucket = (string) $this->option('bucket');
         $periodId = $this->option('period-id') !== null ? (int) $this->option('period-id') : null;
         $allPeriods = (bool) $this->option('all-periods');
         $force = (bool) $this->option('force');
 
         if ((bool) $this->option('all-regions')) {
             return $service->syncAllRegions(
-                bucket: $bucket,
                 periodId: $periodId,
                 latestOnly: ! (bool) $this->option('all-periods'),
                 allPeriods: $allPeriods,
@@ -71,7 +68,6 @@ class SyncFgiscsRegionalPricesCommand extends Command
 
         if ((bool) $this->option('all-supported')) {
             return $service->syncSupportedRegions(
-                bucket: $bucket,
                 periodId: $periodId,
                 latestOnly: ! (bool) $this->option('all-periods'),
                 allPeriods: $allPeriods,
@@ -83,7 +79,6 @@ class SyncFgiscsRegionalPricesCommand extends Command
         if ($this->option('subject-id') !== null) {
             return $service->syncSubject(
                 subjectId: (int) $this->option('subject-id'),
-                bucket: $bucket,
                 periodId: $periodId,
                 latestOnly: ! (bool) $this->option('all-periods'),
                 allPeriods: $allPeriods,
@@ -98,7 +93,6 @@ class SyncFgiscsRegionalPricesCommand extends Command
 
         return [
             $service->syncTatarstan(
-                bucket: $bucket,
                 periodId: $periodId,
                 latestOnly: ! (bool) $this->option('all-periods'),
                 force: $force,
