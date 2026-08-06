@@ -203,7 +203,7 @@ SQL);
                 ]);
             }
             DB::table('estimate_generation_processing_units')->delete();
-            DB::statement(<<<'SQL'
+            DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_processing_units ADD CONSTRAINT eg_units_locator_provenance_ck CHECK (
     locator ?& ARRAY['source_kind', 'source_version', 'coordinate_space', 'artifact_path', 'artifact_sha256']
     AND jsonb_typeof(locator->'source_kind') = 'string'
@@ -410,7 +410,7 @@ SQL);
     {
         if (Schema::hasTable('estimate_generation_processing_units')) {
             DB::statement('ALTER TABLE estimate_generation_processing_units DROP CONSTRAINT IF EXISTS eg_units_locator_provenance_ck');
-            DB::statement(<<<'SQL'
+            DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_processing_units ADD CONSTRAINT eg_units_locator_provenance_ck CHECK (
     locator ?& ARRAY['source_kind', 'source_version', 'coordinate_space', 'artifact_path', 'artifact_sha256', 'artifact_version_id']
     AND locator->>'source_version' = source_version
