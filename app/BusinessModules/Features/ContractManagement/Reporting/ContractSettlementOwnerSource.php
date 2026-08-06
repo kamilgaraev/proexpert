@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementInput;
+use App\BusinessModules\Features\ContractManagement\Reporting\Enums\ContractSettlementPartyType;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerHistoryCheckpoint;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerVersion;
 use App\Enums\Contract\ContractAllocationTypeEnum;
@@ -22,6 +23,8 @@ use App\Models\ContractProjectAllocation;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Support\Collection;
+
+use function trans_message;
 
 final readonly class ContractSettlementOwnerSource
 {
@@ -233,7 +236,8 @@ final readonly class ContractSettlementOwnerSource
         }
 
         $direction = $this->direction($contract);
-        $partyId = $contract->contractor_id ?? $contract->supplier_id;
+        [$partyId, $partyType] = $this->partyIdentity($contract);
+        $partyLabel = $this->partyLabel($contract, $partyType);
         $inputs = [];
         $allowedAllocationIds = $this->resourceIds($query->scope, 'contract_allocation');
         foreach ($allocations as $allocation) {
@@ -246,7 +250,9 @@ final readonly class ContractSettlementOwnerSource
                 contractId: (int) $contract->id,
                 allocationId: $allocationId,
                 projectId: (int) $allocation->project_id,
-                partyId: $partyId === null ? null : (int) $partyId,
+                partyId: $partyId,
+                partyType: $partyType,
+                partyLabel: $partyLabel,
                 direction: $direction,
                 currency: $currency,
                 effectiveMinor: $effective[$allocationId],
@@ -377,9 +383,58 @@ final readonly class ContractSettlementOwnerSource
 
     private function direction(Contract $contract): string
     {
-        return $contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        return $this->contractSideType($contract) === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
             ? 'receivable'
             : 'payable';
+    }
+
+    private function partyIdentity(Contract $contract): array
+    {
+        $sideType = $this->contractSideType($contract);
+        if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+            return [null, null];
+        }
+
+        $partyType = $sideType->requiresSupplier()
+            ? ContractSettlementPartyType::SUPPLIER
+            : ContractSettlementPartyType::CONTRACTOR;
+        $partyId = $partyType === ContractSettlementPartyType::SUPPLIER
+            ? $contract->supplier_id
+            : $contract->contractor_id;
+        if (! is_numeric($partyId) || (int) $partyId < 1) {
+            throw new DomainException('contract_settlement_party_required');
+        }
+
+        return [(int) $partyId, $partyType];
+    }
+
+    private function contractSideType(Contract $contract): ContractSideTypeEnum
+    {
+        if ($contract->contract_side_type instanceof ContractSideTypeEnum) {
+            return $contract->contract_side_type;
+        }
+
+        return ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type)
+            ?? throw new DomainException('contract_settlement_contract_side_invalid');
+    }
+
+    private function partyLabel(Contract $contract, ?ContractSettlementPartyType $partyType): string
+    {
+        $number = trim((string) $contract->number);
+        if ($number === '') {
+            throw new DomainException('contract_settlement_contract_number_required');
+        }
+        $key = match ($partyType) {
+            ContractSettlementPartyType::CONTRACTOR => 'contractor',
+            ContractSettlementPartyType::SUPPLIER => 'supplier',
+            null => 'customer',
+        };
+
+        return trans_message(
+            'reports.contract_settlement_exposure.party_labels.'.$key,
+            ['number' => $number],
+            'ru',
+        );
     }
 
     /**
@@ -391,7 +446,7 @@ final readonly class ContractSettlementOwnerSource
             [['entity', 'entities', 'entity_ids', 'contract', 'contract_ids'], $input->contractId],
             [['project', 'project_ids'], $input->projectId],
             [['allocation', 'allocation_ids'], $input->allocationId],
-            [['party', 'party_ids'], $input->partyId],
+            [['party_keys'], $input->partyKey()],
             [['direction', 'directions'], $input->direction],
             [['currency', 'currencies'], $input->currency],
         ];
@@ -458,7 +513,7 @@ final readonly class ContractSettlementOwnerSource
             'organization_id',
             'entity', 'entities', 'entity_ids', 'contract', 'contract_ids',
             'project', 'project_ids', 'allocation', 'allocation_ids',
-            'party', 'party_ids', 'direction', 'directions',
+            'party_keys', 'direction', 'directions',
             'currency', 'currencies', 'instrument', 'instruments',
             'status', 'statuses', 'due_from', 'due_to', 'period_from', 'period_to',
             'aging_bucket', 'aging_buckets',

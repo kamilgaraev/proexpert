@@ -10,7 +10,7 @@ use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettle
 
 final readonly class ContractSettlementCalculator
 {
-    public const FORMULA_VERSION = 'contracts.settlement-exposure.v1';
+    public const FORMULA_VERSION = 'contracts.settlement-exposure.v2';
 
     public function calculate(
         ContractSettlementInput $input,
@@ -28,6 +28,8 @@ final readonly class ContractSettlementCalculator
             allocationId: $input->allocationId,
             projectId: $input->projectId,
             partyId: $input->partyId,
+            partyType: $input->partyType,
+            partyLabel: $input->partyLabel,
             direction: $input->direction,
             currency: $input->currency,
             effectiveMinor: $input->effectiveMinor,

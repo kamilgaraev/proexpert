@@ -37,6 +37,8 @@ use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 
+use function trans_message;
+
 final readonly class ContractSettlementQueryService implements ReportDrillDownProvider, ReportDrillDownTokenColumns, ReportRowQuery
 {
     public function __construct(
@@ -47,7 +49,7 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
     private const SORTS = [
         'contract_id' => 'contract_id',
         'project_id' => 'project_id',
-        'party_id' => 'party_id',
+        'party' => 'party_label',
         'currency' => 'currency',
         'effective' => 'effective_minor',
         'accepted' => 'accepted_minor',
@@ -86,20 +88,7 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
                 sourceHash: $snapshot->sourceHash,
                 externalConfirmationRole: 'confirmation_only',
             ),
-            rowSchema: [
-                ['id' => 'contract_id', 'type' => 'integer'],
-                ['id' => 'project_id', 'type' => 'integer'],
-                ['id' => 'party_id', 'type' => 'integer'],
-                ['id' => 'direction', 'type' => 'string'],
-                ['id' => 'currency', 'type' => 'currency'],
-                ['id' => 'effective', 'type' => 'money_minor'],
-                ['id' => 'accepted', 'type' => 'money_minor'],
-                ['id' => 'cash', 'type' => 'money_minor'],
-                ['id' => 'settlement', 'type' => 'money_minor'],
-                ['id' => 'unperformed_exposure', 'type' => 'money_minor'],
-                ['id' => 'unpaid_exposure', 'type' => 'money_minor'],
-                ['id' => 'aging_bucket', 'type' => 'string'],
-            ],
+            rowSchema: $this->rowSchema(),
             capabilities: [
                 'drill_down' => true,
                 'export' => $context->visibility->canExport,
@@ -193,8 +182,8 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
             'row_key' => (string) $row->row_key,
             'contract_id' => (int) $row->contract_id,
             'allocation_id' => (int) $row->allocation_id,
-            'project_id' => $row->project_id,
-            'party_id' => $row->party_id,
+            'project_id' => $row->project_id === null ? null : (int) $row->project_id,
+            'party' => (string) $row->party_label,
             'direction' => (string) $row->direction,
             'currency' => (string) $row->currency,
             'currency_source' => (string) $row->currency_source,
@@ -206,6 +195,41 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
             'unpaid_exposure' => (int) $row->unpaid_exposure_minor,
             'aging_bucket' => (string) $row->aging_bucket,
         ];
+    }
+
+    private function rowSchema(): array
+    {
+        $types = [
+            'contract_id' => 'integer',
+            'allocation_id' => 'integer',
+            'project_id' => 'integer',
+            'party' => 'string',
+            'direction' => 'string',
+            'currency' => 'currency',
+            'effective' => 'money_minor',
+            'accepted' => 'money_minor',
+            'cash' => 'money_minor',
+            'settlement' => 'money_minor',
+            'unperformed_exposure' => 'money_minor',
+            'unpaid_exposure' => 'money_minor',
+            'aging_bucket' => 'string',
+        ];
+
+        return array_map(
+            static fn (string $type, string $id): array => [
+                'id' => $id,
+                'type' => $type,
+                'labels' => [
+                    'ru-RU' => trans_message(
+                        'reports.contract_settlement_exposure.columns.'.$id,
+                        [],
+                        'ru',
+                    ),
+                ],
+            ],
+            $types,
+            array_keys($types),
+        );
     }
 
     private function quality(ContractSettlementExposureSnapshot $snapshot): ReportQuality

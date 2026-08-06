@@ -13,6 +13,8 @@ final class ContractSettlementExposureRecord extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'project_id' => 'integer',
+        'party_id' => 'integer',
         'source_refs' => 'array',
         'effective_minor' => 'integer',
         'accepted_minor' => 'integer',

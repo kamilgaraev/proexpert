@@ -13,6 +13,8 @@ final class ContractSettlementSourceFact extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'project_id' => 'integer',
+        'party_id' => 'integer',
         'effective_minor' => 'integer',
         'accepted_minor' => 'integer',
         'completed_cash_minor' => 'integer',
