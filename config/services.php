@@ -78,12 +78,6 @@ return [
         'clean_url' => 'https://cleaner.dadata.ru/api/v1/clean/',
     ],
 
-    'yandexgpt' => [
-        'api_key' => env('YANDEX_API_KEY'),
-        'folder_id' => env('YANDEX_FOLDER_ID'),
-        'model_uri' => env('YANDEX_MODEL_URI'),
-    ],
-
     'video_monitoring' => [
         'driver' => env('VIDEO_MONITORING_MEDIA_DRIVER', 'none'),
         'timeout' => (int) env('VIDEO_MONITORING_MEDIA_TIMEOUT', 5),

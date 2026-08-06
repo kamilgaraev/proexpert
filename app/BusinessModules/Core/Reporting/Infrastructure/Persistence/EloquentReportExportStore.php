@@ -84,7 +84,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
             $this->assertRunFence($context, $source, $parentRun, $fence);
             $currentContext = $fence->assertCurrent($context);
             $now = $this->clock->now();
-            if ($this->expired($parentRun->expires_at, $now) || $parentRun->status === 'expired') {
+            if ($parentRun->status === 'expired') {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
             }
             if ($parentRun->status !== 'ready') {
@@ -323,14 +323,13 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
             }
             $fence->assertCurrent($context);
-            $occurredAt = $this->clock->now();
-            if ($this->expired($record->expires_at, $occurredAt) || $record->status === ReportExportStatus::EXPIRED->value) {
+            if ($record->status === ReportExportStatus::EXPIRED->value) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED);
             }
             if ($record->status !== ReportExportStatus::READY->value) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
             }
-            if ($this->expired($parent->expires_at, $occurredAt) || $parent->status === 'expired') {
+            if ($parent->status === 'expired') {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
             }
             if ($parent->status !== 'ready') {
@@ -338,18 +337,9 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
             }
             $this->assertParentIdentity($record, $parent);
 
-            $ttlSeconds = min(
-                $requestedTtlSeconds,
-                $this->remainingSeconds($record->expires_at, $occurredAt),
-                $this->remainingSeconds($parent->expires_at, $occurredAt),
-            );
-            if ($ttlSeconds < 1) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED);
-            }
-
             return $presign(
                 $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs),
-                $ttlSeconds,
+                $requestedTtlSeconds,
             );
         });
     }
@@ -675,27 +665,6 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
     private function utc(DateTimeImmutable $value): string
     {
         return $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s.u\\Z');
-    }
-
-    private function expired(mixed $value, DateTimeImmutable $occurredAt): bool
-    {
-        if (! $value instanceof DateTimeInterface) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
-        }
-
-        return DateTimeImmutable::createFromInterface($value) <= $occurredAt;
-    }
-
-    private function remainingSeconds(mixed $value, DateTimeImmutable $occurredAt): int
-    {
-        if (! $value instanceof DateTimeInterface) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
-        }
-
-        return max(0, (int) floor(
-            (float) DateTimeImmutable::createFromInterface($value)->format('U.u')
-            - (float) $occurredAt->format('U.u'),
-        ));
     }
 
     private function serializableTransaction(Closure $callback): mixed

@@ -2,7 +2,6 @@
 
 namespace App\BusinessModules\Features\AIAssistant;
 
-use App\BusinessModules\Features\AIAssistant\Console\Commands\BackfillRagIndexCommand;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ApprovePaymentRequestTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateScheduleTaskTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractorSettlementsReportTool;
@@ -26,6 +25,7 @@ use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchUsersTo
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchWarehouseTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SendProjectNotificationTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateScheduleTaskStatusTool;
+use App\BusinessModules\Features\AIAssistant\Console\Commands\BackfillRagIndexCommand;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantCapabilityCatalog;
@@ -36,10 +36,9 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
-use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
-use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseContractFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseConstructionErpFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseContractFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseFinanceFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulsePeopleFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseProcurementFactSource;
@@ -48,20 +47,12 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseSiteRequestFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWarehouseFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
-use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantRagReportSourceRetriever;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposer;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportPdfWriterInterface;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSourceRetrieverInterface;
-use App\BusinessModules\Features\AIAssistant\Services\Reports\DompdfAssistantReportPdfWriter;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\YandexRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ChangeManagementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ConstructionJournalRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
@@ -74,15 +65,23 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PaymentRagSour
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PerformanceActRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProcurementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProductionLaborRagSource;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectPulseRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\QualityAndExecutiveDocsRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SafetyRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ScheduleRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SiteRequestRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WarehouseRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WorkCompletionRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantRagReportSourceRetriever;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposer;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportPdfWriterInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSourceRetrieverInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\DompdfAssistantReportPdfWriter;
+use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 
 class AIAssistantServiceProvider extends ServiceProvider
 {
@@ -99,10 +98,9 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(AssistantAgentExecutor::class);
         $this->app->singleton(AssistantResponseVerifier::class);
         $this->app->singleton(RagEmbeddingProviderInterface::class, function ($app): RagEmbeddingProviderInterface {
-            $provider = strtolower((string) config('ai-assistant.rag.embedding_provider', 'yandex'));
+            $provider = strtolower((string) config('ai-assistant.rag.embedding_provider', 'timeweb'));
 
             return match ($provider) {
-                'yandex' => $app->make(YandexRagEmbeddingProvider::class),
                 'openai' => $app->make(OpenAIRagEmbeddingProvider::class),
                 'timeweb' => new OpenAIRagEmbeddingProvider(
                     apiKey: config('ai-assistant.rag.embedding_api_key') ?: config('ai-assistant.llm.timeweb.api_key'),
@@ -111,7 +109,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                     baseUri: config('ai-assistant.rag.embedding_base_uri') ?: config('ai-assistant.llm.timeweb.base_uri'),
                     providerName: 'timeweb'
                 ),
-                default => $app->make(YandexRagEmbeddingProvider::class),
+                default => throw new InvalidArgumentException('ai_rag_embedding_provider_invalid'),
             };
         });
         $this->app->singleton(RagSourceRegistry::class, function ($app): RagSourceRegistry {
@@ -146,14 +144,13 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(AssistantReportPdfWriterInterface::class, DompdfAssistantReportPdfWriter::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
-            $provider = strtolower((string) config('ai-assistant.llm.provider', 'yandex'));
+            $provider = strtolower((string) config('ai-assistant.llm.provider', 'timeweb'));
 
             return match ($provider) {
-                'yandex' => $app->make(YandexGPTProvider::class),
                 'openai' => $app->make(OpenAIProvider::class),
                 'deepseek' => $app->make(DeepSeekProvider::class),
                 'timeweb' => $app->make(TimewebProvider::class),
-                default => $app->make(YandexGPTProvider::class),
+                default => throw new InvalidArgumentException('ai_llm_provider_invalid'),
             };
         });
 

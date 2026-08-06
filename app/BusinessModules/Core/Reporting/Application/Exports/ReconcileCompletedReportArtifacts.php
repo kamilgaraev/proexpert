@@ -79,7 +79,7 @@ final readonly class ReconcileCompletedReportArtifacts
         $export = $this->exports->get($context, $exportId);
         $source = $this->runs->exportSource($context, $export->runId);
         $published = $this->definitions->published($source->run->reportCode);
-        $this->assertIdentity($export, $source, $published, $occurredAt);
+        $this->assertIdentity($export, $source, $published);
         $columns = $published->definition->validatedSelectedColumnIds(
             $export->columns,
         );
@@ -189,13 +189,10 @@ final readonly class ReconcileCompletedReportArtifacts
         ReportExport $export,
         ReportRunExportSource $source,
         PublishedReportDefinition $published,
-        DateTimeImmutable $occurredAt,
     ): void {
         if (
             $export->status !== ReportExportStatus::UPLOADING
-            || $export->expiresAt <= $occurredAt
             || $source->run->status !== ReportRunStatus::READY
-            || $source->run->expiresAt <= $occurredAt
             || ! hash_equals($export->runId, $source->run->id)
             || ! hash_equals(
                 $published->definitionHash->value,

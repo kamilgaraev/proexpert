@@ -344,7 +344,6 @@ class AIAssistantService
                 (string) ($response['model'] ?? 'gpt-4o-mini'),
                 isset($response['input_tokens']) ? (int) $response['input_tokens'] : null,
                 isset($response['output_tokens']) ? (int) $response['output_tokens'] : null,
-                false,
                 isset($response['provider']) ? (string) $response['provider'] : null
             );
 
@@ -582,8 +581,7 @@ class AIAssistantService
         array $taskPlan,
         AssistantTaskState $state,
         string $toolName
-    ): AssistantRequestUnderstanding|array|null
-    {
+    ): AssistantRequestUnderstanding|array|null {
         $understanding = $this->requestUnderstandingFromPlan($taskPlan);
 
         if (! $this->canAgentExecuteTool($state, $toolName)) {

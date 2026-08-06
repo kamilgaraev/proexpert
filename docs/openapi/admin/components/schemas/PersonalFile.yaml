@@ -26,7 +26,7 @@ properties:
     format: uri
     nullable: true
     description: Временная ссылка для скачивания файла (null для папок, действует 30 минут)
-    example: "https://storage.yandexcloud.net/bucket/123/document.pdf?X-Amz-Algorithm=..."
+    example: "https://s3.twcstorage.ru/prohelper-storage/org-42/personal-files/user-123/document.pdf?X-Amz-Algorithm=..."
 required:
   - id
   - path

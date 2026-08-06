@@ -34,16 +34,6 @@ Schedule::command('reports:exports:reconcile-execution-leases')
     ->withoutOverlapping(5)
     ->onOneServer();
 
-Schedule::command('reports:retention:expire')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(10)
-    ->onOneServer();
-
-Schedule::command('reports:retention:delete-artifacts')
-    ->hourly()
-    ->withoutOverlapping(30)
-    ->onOneServer();
-
 Schedule::command('commercial:process-renewals --limit=100')
     ->everyMinute()
     ->timezone('Europe/Moscow')

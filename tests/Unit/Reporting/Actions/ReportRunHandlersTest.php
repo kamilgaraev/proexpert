@@ -53,16 +53,12 @@ use InvalidArgumentException;
 use PhpParser\Node;
 use PhpParser\Node\Arg;
 use PhpParser\Node\Expr\Assign;
-use PhpParser\Node\Expr\ClassConstFetch;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\PropertyFetch;
-use PhpParser\Node\Expr\StaticCall;
-use PhpParser\Node\Expr\Throw_;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Name;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Expression;
-use PhpParser\Node\Stmt\If_;
 use PhpParser\Node\Stmt\Return_;
 use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
@@ -225,7 +221,7 @@ final class ReportRunHandlersTest extends TestCase
 
         self::assertSame([], $this->storeFlowViolations($source, 'get', 'findIncludingExpired', 'hydrate', 2));
         self::assertSame([], $this->storeFlowViolations($source, 'queryForRun', 'findIncludingExpired', 'query', 2));
-        self::assertSame([], $this->storeFlowViolations($source, 'exportSource', 'find', 'exportSource', 3));
+        self::assertSame([], $this->storeFlowViolations($source, 'exportSource', 'find', 'exportSource', 2));
     }
 
     public function test_eloquent_flow_gate_rejects_dead_decoy_wrong_receiver_and_dynamic_lookup_mutants(): void
@@ -262,27 +258,6 @@ final class ReportRunHandlersTest extends TestCase
             );
         }
 
-        $exportMutants = [
-            'expired_guard_bypass' => str_replace(
-                '$this->isExpiredForExport($record->expires_at, $this->clock->now())',
-                'false',
-                $source,
-            ),
-            'expired_inclusive_export_lookup' => preg_replace(
-                '/(\$record = \$this->)find(\(\$context, \$runId\);\R        if \(\$this->isExpiredForExport)/',
-                '$1findIncludingExpired$2',
-                $source,
-                1,
-            ),
-        ];
-        foreach ($exportMutants as $name => $mutant) {
-            self::assertIsString($mutant);
-            self::assertNotSame(
-                [],
-                $this->storeFlowViolations($mutant, 'exportSource', 'find', 'exportSource', 3),
-                $name,
-            );
-        }
     }
 
     public function test_create_forwards_explicit_key_and_resolved_saved_view(): void
@@ -703,10 +678,6 @@ final class ReportRunHandlersTest extends TestCase
         if (count($lookupCalls) !== 1) {
             $violations[] = 'lookup_call_count';
         }
-        if ($methodName === 'exportSource' && ! $this->hasExactExpiredExportGuard($method->stmts[1] ?? null)) {
-            $violations[] = 'expired_export_guard';
-        }
-
         $last = $method->stmts[array_key_last($method->stmts)] ?? null;
         $consumer = $last instanceof Return_ ? $last->expr : null;
         if (! $consumer instanceof MethodCall
@@ -725,51 +696,6 @@ final class ReportRunHandlersTest extends TestCase
         }
 
         return $violations;
-    }
-
-    private function hasExactExpiredExportGuard(?Node $statement): bool
-    {
-        if (! $statement instanceof If_
-            || ! $statement->cond instanceof MethodCall
-            || ! $statement->cond->var instanceof Variable
-            || $statement->cond->var->name !== 'this'
-            || ! $statement->cond->name instanceof Node\Identifier
-            || $statement->cond->name->toString() !== 'isExpiredForExport'
-            || count($statement->cond->args) !== 2
-            || ! $statement->cond->args[0]->value instanceof PropertyFetch
-            || ! $statement->cond->args[0]->value->var instanceof Variable
-            || $statement->cond->args[0]->value->var->name !== 'record'
-            || ! $statement->cond->args[0]->value->name instanceof Node\Identifier
-            || $statement->cond->args[0]->value->name->toString() !== 'expires_at'
-            || ! $statement->cond->args[1]->value instanceof MethodCall
-            || ! $statement->cond->args[1]->value->var instanceof PropertyFetch
-            || ! $statement->cond->args[1]->value->var->var instanceof Variable
-            || $statement->cond->args[1]->value->var->var->name !== 'this'
-            || ! $statement->cond->args[1]->value->var->name instanceof Node\Identifier
-            || $statement->cond->args[1]->value->var->name->toString() !== 'clock'
-            || ! $statement->cond->args[1]->value->name instanceof Node\Identifier
-            || $statement->cond->args[1]->value->name->toString() !== 'now'
-            || count($statement->stmts) !== 1
-            || ! $statement->stmts[0] instanceof Expression
-            || ! $statement->stmts[0]->expr instanceof Throw_) {
-            return false;
-        }
-        $exception = $statement->stmts[0]->expr->expr;
-        if (! $exception instanceof StaticCall
-            || ! $exception->class instanceof Name
-            || $exception->class->toString() !== ReportContractException::class
-            || ! $exception->name instanceof Node\Identifier
-            || $exception->name->toString() !== 'fromCode'
-            || count($exception->args) !== 1
-            || ! $exception->args[0]->value instanceof ClassConstFetch
-            || ! $exception->args[0]->value->class instanceof Name
-            || $exception->args[0]->value->class->toString() !== \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::class
-            || ! $exception->args[0]->value->name instanceof Node\Identifier
-            || $exception->args[0]->value->name->toString() !== 'REPORT_SNAPSHOT_EXPIRED') {
-            return false;
-        }
-
-        return true;
     }
 
     private function hasExactVariableArgs(array $args, array $names): bool

@@ -41,7 +41,7 @@ properties:
     type: string
     format: uri
     description: Временная ссылка для скачивания файла (действует 5 минут)
-    example: "https://storage.yandexcloud.net/bucket/reports/material-usage/report.xlsx?X-Amz-Algorithm=..."
+    example: "https://s3.twcstorage.ru/prohelper-storage/org-42/reports/material-usage/report.xlsx?X-Amz-Algorithm=..."
 required:
   - id
   - path

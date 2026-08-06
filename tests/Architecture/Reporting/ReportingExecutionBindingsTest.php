@@ -71,9 +71,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportHttpAu
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\CoreReportAuditIntentConsumer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
-use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeleteExpiredReportArtifactsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeliverReportAuditIntentsCommand;
-use App\BusinessModules\Core\Reporting\Infrastructure\Console\ExpireReportsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\PublishReportDispatchIntentsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportDispatchIntentsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportExportExecutionLeasesCommand;
@@ -237,8 +235,6 @@ final class ReportingExecutionBindingsTest extends TestCase
             DeliverReportAuditIntentsCommand::class,
             ReconcileReportRunExecutionLeasesCommand::class,
             ReconcileReportExportExecutionLeasesCommand::class,
-            ExpireReportsCommand::class,
-            DeleteExpiredReportArtifactsCommand::class,
         ] as $command) {
             self::assertStringContainsString(class_basename($command).'::class', $providerSource);
         }

@@ -41,17 +41,7 @@ return [
     'conversation_history_days' => 90,
 
     'llm' => [
-        'provider' => $configEnv('LLM_PROVIDER', 'yandex'),
-
-        'yandex' => [
-            'api_key' => $configEnv('YANDEX_API_KEY'),
-            'folder_id' => $configEnv('YANDEX_FOLDER_ID', 'b1gbp06r4m40cduru9dg'),
-            'model_uri' => $configEnv('YANDEX_MODEL_URI', 'gpt://b1gbp06r4m40cduru9dg/aliceai-llm/latest'),
-            'max_tokens' => $configEnv('YANDEX_MAX_TOKENS', 2000),
-            'temperature' => $configEnv('YANDEX_TEMPERATURE', 0.7),
-            'use_async' => $configEnv('YANDEX_USE_ASYNC', false),
-            'timeout' => $configEnv('YANDEX_TIMEOUT', 60),
-        ],
+        'provider' => $configEnv('LLM_PROVIDER', 'timeweb'),
 
         'openai' => [
             'api_key' => $configEnv('OPENAI_API_KEY'),
@@ -130,16 +120,10 @@ return [
 
     'rag' => [
         'enabled' => true,
-        'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'yandex'),
+        'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'timeweb'),
         'embedding_api_key' => $configEnv('AI_RAG_EMBEDDING_API_KEY'),
         'embedding_base_uri' => $configEnv('AI_RAG_EMBEDDING_BASE_URI'),
         'embedding_model' => $configEnv('AI_RAG_EMBEDDING_MODEL', 'openai/text-embedding-3-large'),
-        'embedding_document_model_uri' => $configEnv('AI_RAG_EMBEDDING_DOCUMENT_MODEL_URI'),
-        'embedding_query_model_uri' => $configEnv('AI_RAG_EMBEDDING_QUERY_MODEL_URI'),
-        'embedding_endpoint' => $configEnv(
-            'AI_RAG_EMBEDDING_ENDPOINT',
-            'https://ai.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
-        ),
         'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 256),
         'queue_connection' => $configEnv('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),

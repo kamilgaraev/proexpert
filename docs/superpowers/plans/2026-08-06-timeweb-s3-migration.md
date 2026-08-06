@@ -426,7 +426,7 @@ php vendor/bin/phpunit tests/Unit/DesignManagement/DesignStoragePathServiceTest.
 vendor/bin/phpstan analyse app/Services/Storage/FileService.php app/BusinessModules/Features/DesignManagement --memory-limit=1G
 ```
 
-- [ ] **Step 6: Независимое review, commit, PR, merge и deploy**
+- [x] **Step 6: Независимое review, commit, PR, merge и deploy**
 
 ---
 
@@ -447,27 +447,27 @@ vendor/bin/phpstan analyse app/Services/Storage/FileService.php app/BusinessModu
 - Modify: `app/BusinessModules/Features/AIAssistant/config/ai-assistant.php`
 - Modify: `tests/Unit/AIAssistant/Rag/AIAssistantRagContainerTest.php`
 - Modify: `tests/Feature/Console/StorageCleanupCommandsTest.php`
-- Create: `tests/Unit/Storage/StorageArchitectureTest.php`
+- Create: `tests/Unit/Storage/LegacyStorageRuntimeRemovalTest.php`
 
 **Interfaces:**
 - Consumes: все домены уже работают через единый gateway.
 - Produces: runtime без Yandex storage/AI provider, org bucket sync, legacy report sync/cleanup и report retention deletion.
 
-- [ ] **Step 1: Написать failing архитектурный тест**
+- [x] **Step 1: Написать failing архитектурный тест**
 
 Сканировать `app/**/*.php` и падать при `Storage::disk('s3'|'reports'|'personals')`, `new S3Client`, `OrgBucketService`, `YANDEX_API_KEY`, `storage.yandexcloud.net`, `reports:cleanup`, `personals:cleanup`, `reports:retention:expire`, `reports:retention:delete-artifacts` вне разрешённого storage adapter и holding/CMS исключений.
 
-- [ ] **Step 2: Проверить RED**
+- [x] **Step 2: Проверить RED**
 
 Run: `php artisan test tests/Unit/Storage/StorageArchitectureTest.php --stop-on-failure`
 
 Expected: FAIL со списком оставшихся legacy-файлов.
 
-- [ ] **Step 3: Удалить legacy runtime**
+- [x] **Step 3: Удалить legacy runtime**
 
 Удалить классы, container bindings и schedule-записи. Создание организации больше не создаёт и не синхронизирует бакет. Удалить Yandex RAG provider и его config-ветку; Timeweb остаётся единственным AI/RAG provider. Геокодер Яндекса не затрагивать.
 
-- [ ] **Step 4: Проверить отсутствие команд и GREEN**
+- [x] **Step 4: Проверить отсутствие команд и GREEN**
 
 Run:
 

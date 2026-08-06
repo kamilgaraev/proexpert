@@ -165,9 +165,6 @@ final class EloquentReportRunStore implements ReportRunStore
     public function exportSource(ReportExecutionContext $context, string $runId): ReportRunExportSource
     {
         $record = $this->find($context, $runId);
-        if ($this->isExpiredForExport($record->expires_at, $this->clock->now())) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
-        }
 
         return $this->hydrator->exportSource($record, $this->pollAfterMs);
     }
@@ -759,12 +756,5 @@ final class EloquentReportRunStore implements ReportRunStore
         }
 
         return new DateTimeImmutable($value);
-    }
-
-    private function isExpiredForExport(mixed $expiresAtValue, DateTimeImmutable $now): bool
-    {
-        $expiresAt = $this->immutableInstant($expiresAtValue);
-
-        return ! $expiresAt instanceof DateTimeImmutable || $expiresAt <= $now;
     }
 }

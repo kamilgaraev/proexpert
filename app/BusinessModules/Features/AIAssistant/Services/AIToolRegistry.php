@@ -27,6 +27,7 @@ class AIToolRegistry
 
     /**
      * Retrieve all registered tools.
+     *
      * @return AIToolInterface[]
      */
     public function getTools(): array
@@ -45,8 +46,8 @@ class AIToolRegistry
     }
 
     /**
-     * Format all registered tools into the standard JSON Schema array 
-     * expected by OpenAI and YandexGPT for Function Calling.
+     * Format all registered tools into the standard JSON Schema array
+     * expected by OpenAI-compatible providers for Function Calling.
      */
     public function getToolsDefinitions(?array $allowedToolNames = null): array
     {
@@ -61,7 +62,7 @@ class AIToolRegistry
         }
 
         foreach ($this->tools as $tool) {
-            if (is_array($allowed) && !isset($allowed[$tool->getName()])) {
+            if (is_array($allowed) && ! isset($allowed[$tool->getName()])) {
                 continue;
             }
 
