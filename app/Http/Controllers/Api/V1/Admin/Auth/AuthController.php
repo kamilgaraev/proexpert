@@ -12,6 +12,7 @@ use App\Enums\Activity\ActivityResultEnum;
 use App\Enums\Activity\ActivitySeverityEnum;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Auth\LoginRequest;
+use App\Http\Resources\Api\V1\Admin\Auth\AdminAuthUserResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use App\Services\Activity\ActivityEventRecorder;
@@ -123,7 +124,7 @@ class AuthController extends Controller
                 }
 
                 return AdminResponse::success([
-                    'user' => $user,
+                    'user' => new AdminAuthUserResource($user),
                     'token' => $tokens->accessToken,
                     'token_type' => 'bearer',
                     'expires_in' => max(0, $tokens->accessExpiresAt->getTimestamp() - time()),
@@ -160,7 +161,7 @@ class AuthController extends Controller
             return AdminResponse::error(trans_message('auth.profile_not_found'), Response::HTTP_NOT_FOUND);
         }
 
-        return AdminResponse::success(['user' => $request->user()]);
+        return AdminResponse::success(['user' => new AdminAuthUserResource($request->user())]);
     }
 
     /**
