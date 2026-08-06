@@ -13,7 +13,6 @@ use Throwable;
 class SyncFgiscsBuildingResourcePricesCommand extends Command
 {
     protected $signature = 'estimates:regional-prices:sync-fgiscs-building-resources
-        {--bucket=prohelper-storage}
         {--period-id=}
         {--subject-id=}
         {--all-regions}
@@ -60,7 +59,6 @@ class SyncFgiscsBuildingResourcePricesCommand extends Command
     private function runSync(FgiscsRegionalPriceSynchronizationService $service, callable $progress): array
     {
         $arguments = [
-            'bucket' => (string) $this->option('bucket'),
             'periodId' => $this->option('period-id') !== null ? (int) $this->option('period-id') : null,
             'force' => (bool) $this->option('force'),
             'withSplitForm' => ! (bool) $this->option('without-split-form'),

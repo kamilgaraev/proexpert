@@ -17,9 +17,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Conjuncture\ResidentialConjuncturePriceImporter;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
-use Illuminate\Support\Facades\Log;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\TemporaryEstimateSourceFile;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -37,7 +37,6 @@ class FgiscsBuildingResourcePriceUpdateService
         private readonly FgiscsClient $client,
         private readonly FgiscsRegionalCatalogService $catalogService,
         private readonly FgiscsBuildingResourcePriceSpreadsheetParser $parser,
-        private readonly EstimateSourceStorageService $storageService,
         private readonly RegionalPriceImportLifecycleService $lifecycleService,
         private readonly RegionalPriceVersionResolver $versionResolver,
         private readonly FgiscsBuildingResourcePricePriority $pricePriority,
@@ -47,23 +46,22 @@ class FgiscsBuildingResourcePriceUpdateService
     /**
      * @return array<string, mixed>
      */
-    public function syncTatarstan(string $bucket, ?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?callable $progress = null): array
+    public function syncTatarstan(?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?callable $progress = null): array
     {
         $catalog = $this->catalogService->syncTatarstan();
         $period = $this->resolvePeriod((int) $catalog['price_zone']->fgiscs_price_zone_id, $periodId);
 
-        return $this->syncPeriod($bucket, $catalog['price_zone'], $period, $force, $withSplitForm, $progress);
+        return $this->syncPeriod($catalog['price_zone'], $period, $force, $withSplitForm, $progress);
     }
 
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function syncSubject(int $subjectId, string $bucket, ?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?callable $progress = null): array
+    public function syncSubject(int $subjectId, ?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?callable $progress = null): array
     {
         $catalog = $this->catalogService->syncSubject($subjectId);
 
         return $this->syncPriceZones(
-            $bucket,
             $catalog['price_zones'],
             $periodId,
             $force,
@@ -75,7 +73,7 @@ class FgiscsBuildingResourcePriceUpdateService
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function syncAllRegions(string $bucket, ?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?int $limit = null, ?callable $progress = null): array
+    public function syncAllRegions(?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?int $limit = null, ?callable $progress = null): array
     {
         $results = [];
 
@@ -87,7 +85,6 @@ class FgiscsBuildingResourcePriceUpdateService
             try {
                 array_push($results, ...$this->syncSubject(
                     (int) $subject['id'],
-                    $bucket,
                     $periodId,
                     $force,
                     $withSplitForm,
@@ -124,6 +121,17 @@ class FgiscsBuildingResourcePriceUpdateService
             : null;
     }
 
+    private function currentBucketName(): string
+    {
+        $name = config('filesystems.disks.s3.bucket');
+
+        if (! is_string($name) || trim($name) === '') {
+            throw new RuntimeException('storage_configuration_invalid');
+        }
+
+        return trim($name);
+    }
+
     private function databaseReason(Throwable $exception): ?string
     {
         $message = $this->databaseMessage($exception);
@@ -142,13 +150,13 @@ class FgiscsBuildingResourcePriceUpdateService
      * @param  \Illuminate\Support\Collection<int, EstimatePriceZone>  $priceZones
      * @return array<int, array<string, mixed>>
      */
-    private function syncPriceZones(string $bucket, Collection $priceZones, ?int $periodId, bool $force, bool $withSplitForm, ?callable $progress): array
+    private function syncPriceZones(Collection $priceZones, ?int $periodId, bool $force, bool $withSplitForm, ?callable $progress): array
     {
         $results = [];
 
         foreach ($priceZones as $priceZone) {
             $period = $this->resolvePeriod((int) $priceZone->fgiscs_price_zone_id, $periodId);
-            $results[] = $this->syncPeriod($bucket, $priceZone, $period, $force, $withSplitForm, $progress);
+            $results[] = $this->syncPeriod($priceZone, $period, $force, $withSplitForm, $progress);
         }
 
         return $results;
@@ -158,7 +166,6 @@ class FgiscsBuildingResourcePriceUpdateService
      * @return array<string, mixed>
      */
     private function syncPeriod(
-        string $bucket,
         EstimatePriceZone $priceZone,
         EstimatePricePeriod $period,
         bool $force,
@@ -235,7 +242,7 @@ class FgiscsBuildingResourcePriceUpdateService
                 'version_key' => $versionKey,
             ],
             [
-                'bucket' => $bucket,
+                'bucket' => $this->currentBucketName(),
                 'prefix' => $prefix,
                 'status' => EstimateImportStatus::IMPORTING->value,
                 'files_count' => $withSplitForm ? 2 : 1,
@@ -265,7 +272,6 @@ class FgiscsBuildingResourcePriceUpdateService
             $fileKey = $prefix.$fileName;
             $this->report($progress, 'download_started', ['file' => $fileKey]);
             $downloads[$fileKey] = $download();
-            $this->storageService->disk($bucket)->put($fileKey, $downloads[$fileKey]->content);
         }
 
         $regionalVersion->update([
@@ -360,8 +366,11 @@ class FgiscsBuildingResourcePriceUpdateService
                 ->delete();
 
             foreach ($downloads as $fileKey => $download) {
-                $path = tempnam(sys_get_temp_dir(), 'fgiscs-building-resources-').'.xlsx';
-                file_put_contents($path, $download->content);
+                $path = TemporaryEstimateSourceFile::fromContents(
+                    $download->content,
+                    'xlsx',
+                    'fgiscs-building-resources-',
+                );
 
                 try {
                     foreach ($this->parser->parse($path) as $price) {

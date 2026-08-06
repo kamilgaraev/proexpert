@@ -12,7 +12,7 @@ class ImportEstimateNormativesCommand extends Command
 {
     protected $signature = 'estimates:normatives:import
         {sourceType : Тип нормативного источника}
-        {--bucket= : Disk/bucket с исходниками}
+        {--organization-id= : Идентификатор организации-владельца}
         {--prefix= : Prefix внутри estimate-sources/}
         {--version-key= : Ключ версии нормативной базы}';
 
@@ -21,19 +21,22 @@ class ImportEstimateNormativesCommand extends Command
     public function handle(EstimateSourceImportService $importService): int
     {
         $sourceType = (string) $this->argument('sourceType');
-        $bucket = (string) $this->option('bucket');
+        $organizationIdValue = (string) $this->option('organization-id');
+        $organizationId = preg_match('/^[1-9][0-9]*$/D', $organizationIdValue) === 1
+            ? (int) $organizationIdValue
+            : 0;
         $prefix = (string) $this->option('prefix');
         $version = (string) $this->option('version-key');
 
-        if ($bucket === '' || $prefix === '' || $version === '') {
-            $this->error('Параметры --bucket, --prefix и --version обязательны.');
+        if ($organizationId < 1 || $prefix === '' || $version === '') {
+            $this->error('Параметры --organization-id, --prefix и --version-key обязательны.');
 
             return self::FAILURE;
         }
 
         try {
             $startedAt = microtime(true);
-            $stats = $importService->import($sourceType, $bucket, $prefix, $version, function (string $event, array $payload) use ($startedAt): void {
+            $stats = $importService->import($organizationId, $sourceType, $prefix, $version, function (string $event, array $payload) use ($startedAt): void {
                 $elapsed = max(0, (int) floor(microtime(true) - $startedAt));
                 $prefix = sprintf('[%s +%ss]', now()->format('Y-m-d H:i:s'), $elapsed);
 

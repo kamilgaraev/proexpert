@@ -131,6 +131,14 @@ class FileService
         return $stream;
     }
 
+    /** @return array<int, string> */
+    public function listCurrent(string $prefix): array
+    {
+        $this->assertOrganizationPath($prefix);
+
+        return array_values($this->disk()->allFiles($prefix));
+    }
+
     public function existsCurrent(string $key): bool
     {
         $this->assertOrganizationPath($key);
