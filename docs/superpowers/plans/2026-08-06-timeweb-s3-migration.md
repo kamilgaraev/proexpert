@@ -185,8 +185,8 @@ self::assertSame(
     $paths->personal(42, 7, '018f4a8a-0000-7000-8000-000000000001', 'pdf'),
 );
 self::assertSame(
-    'org-42/reports/exports/01J4EXPORT/01J4OBJECT.xlsx',
-    $paths->forDomain(42, 'reports', 'exports/01J4EXPORT', '01J4OBJECT', 'xlsx'),
+    'org-42/reports/exports/01J4EXPORT/user-7/01J4OBJECT.xlsx',
+    $paths->forActor(42, 'reports', 'exports/01J4EXPORT', 7, '01J4OBJECT', 'xlsx'),
 );
 ```
 
@@ -357,7 +357,7 @@ AI-отчёты сохраняются бессрочно по ключу `org-{
 **Подблок 3B.2c.2 — PDF заказов на поставку (`refactor/timeweb-s3-procurement`):**
 
 - [x] перевести запись и чтение почтового вложения с `OrgBucketService` на `FileService`;
-- [x] использовать неизменяемый UUID-ключ внутри `org-{id}/procurement/.../user-{id|system}`;
+- [x] использовать неизменяемый UUID-ключ внутри `org-{id}/procurement/.../user-{user_id}` для пользовательского действия либо `org-{id}/procurement/.../user-system` для системного действия;
 - [x] сохранять SHA-256, ETag, размер и MIME в metadata заказа;
 - [x] удалить публичный URL и хранение истекающей signed-ссылки в БД и очереди;
 - [x] удалять новый S3-объект только после подтверждённого rollback, не затрагивая объект при ошибке `afterCommit`;
