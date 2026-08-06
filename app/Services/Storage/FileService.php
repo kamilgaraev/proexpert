@@ -5,6 +5,7 @@ namespace App\Services\Storage;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Storage\DTO\CurrentMultipartCompletion;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
@@ -300,6 +301,84 @@ class FileService
             $sizeBytes,
             new Sha256Hash($checksumSha256),
             $upload->mime,
+        );
+    }
+
+    public function completeCurrentMultipart(
+        MultipartUpload $upload,
+        array $orderedParts,
+        int $expectedSizeBytes,
+    ): CurrentMultipartCompletion {
+        $sizeBytes = $this->assertMultipartParts($upload, $orderedParts);
+        if ($expectedSizeBytes < 1 || $sizeBytes !== $expectedSizeBytes) {
+            throw new \InvalidArgumentException('multipart_parts_size_mismatch');
+        }
+        $completedParts = array_map(
+            static fn (MultipartPart $part): array => [
+                'PartNumber' => $part->number,
+                'ETag' => $part->etag,
+            ],
+            $orderedParts,
+        );
+
+        try {
+            $result = $this->reportS3Client()->completeMultipartUpload([
+                'Bucket' => $this->reportBucket(),
+                'Key' => $upload->organizationPath,
+                'UploadId' => $upload->uploadId,
+                'MultipartUpload' => ['Parts' => $completedParts],
+                'IfNoneMatch' => '*',
+                '@http' => $this->s3HttpOptions(),
+            ]);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable', 0, $exception);
+        }
+
+        $etag = is_string($result['ETag'] ?? null)
+            ? trim($result['ETag'], " \t\n\r\0\x0B\"")
+            : '';
+        if (
+            $etag === ''
+            || (isset($result['Key'])
+                && (! is_string($result['Key'])
+                    || ! hash_equals($upload->organizationPath, $result['Key'])))
+            || (isset($result['Bucket'])
+                && (! is_string($result['Bucket'])
+                    || ! hash_equals($this->reportBucket(), $result['Bucket'])))
+        ) {
+            throw new VersionedObjectIntegrityException('s3_multipart_completion_identity_invalid');
+        }
+
+        return new CurrentMultipartCompletion(
+            $upload->organizationPath,
+            $etag,
+            $expectedSizeBytes,
+            $upload->mime,
+        );
+    }
+
+    public function verifyCurrentMultipart(CurrentMultipartCompletion $completion): CurrentStoredFile
+    {
+        $stream = $this->readCurrent($completion->key);
+        try {
+            [$streamedSizeBytes, $checksumSha256] = $this->hashReadStream($stream);
+        } finally {
+            fclose($stream);
+        }
+        if ($streamedSizeBytes !== $completion->sizeBytes) {
+            $this->deleteInvalidCurrentObject($completion->key);
+
+            throw new VersionedObjectIntegrityException('s3_multipart_current_object_size_mismatch');
+        }
+
+        return new CurrentStoredFile(
+            $completion->key,
+            $completion->etag,
+            $streamedSizeBytes,
+            $checksumSha256,
+            $completion->mime,
         );
     }
 
@@ -741,6 +820,39 @@ class FileService
         }
 
         return [$sizeBytes, hash_final($hash)];
+    }
+
+    /** @param resource $stream @return array{0: int, 1: string} */
+    private function hashReadStream($stream): array
+    {
+        $hash = hash_init('sha256');
+        $sizeBytes = 0;
+        while (! feof($stream)) {
+            $chunk = fread($stream, 1024 * 1024);
+            if ($chunk === false) {
+                throw new VersionedObjectIntegrityException('s3_multipart_current_object_read_failed');
+            }
+            $sizeBytes += strlen($chunk);
+            hash_update($hash, $chunk);
+        }
+
+        if ($sizeBytes < 1) {
+            throw new VersionedObjectIntegrityException('s3_multipart_current_object_read_failed');
+        }
+
+        return [$sizeBytes, hash_final($hash)];
+    }
+
+    private function deleteInvalidCurrentObject(string $key): void
+    {
+        try {
+            $this->deleteCurrent($key);
+        } catch (\Throwable $exception) {
+            Log::error('Failed to remove invalid completed multipart object', [
+                'key' => $key,
+                'exception' => $exception::class,
+            ]);
+        }
     }
 
     private function assertSafeStorageString(string $value, int $maxLength, string $error): void
