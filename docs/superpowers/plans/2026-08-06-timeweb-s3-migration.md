@@ -378,6 +378,15 @@ AI-отчёты сохраняются бессрочно по ключу `org-{
 - [x] убрать прямой вызов `FileService->disk()`;
 - [x] сохранять XLSX через `putPrivate` с SHA-256 и UUID-ключом;
 - [x] изолировать ключ и download URL по `org-{id}` и `user-{id}`;
+- [x] commit, PR, merge и deploy.
+
+Реализовано в PR #249 (`8ea158d3358d4ea6f5af7864d381618327ac779e`), штатный deploy `31063720907` завершён успешно. Production SHA совпал, профильных ошибок в последних 500 строках журнала нет.
+
+**Подблок 3B.2c.4 — чтение acceptance-бенчмарков (`refactor/timeweb-s3-benchmark-store`):**
+
+- [x] убрать последний прикладной вызов `FileService->disk()`;
+- [x] читать приватный org-объект через `readCurrent()` с прежним лимитом размера;
+- [x] проверить закрытие stream и отказ для пути вне benchmark namespace;
 - [ ] commit, PR, merge и deploy.
 
 - [ ] **Step 1: Написать failing архитектурные и доменные тесты**

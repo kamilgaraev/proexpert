@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
 use App\Services\Storage\FileService;
+use Throwable;
 
 final readonly class FileServiceAcceptanceBenchmarkObjectStore implements BenchmarkPrivateObjectStore
 {
@@ -16,7 +17,11 @@ final readonly class FileServiceAcceptanceBenchmarkObjectStore implements Benchm
             || str_contains($path, '..') || $maxBytes < 1 || $maxBytes > 64_000_000) {
             throw new BenchmarkContractException('private_object_path_invalid');
         }
-        $stream = $this->files->disk()->readStream($path);
+        try {
+            $stream = $this->files->readCurrent($path);
+        } catch (Throwable) {
+            throw new BenchmarkContractException('private_object_unavailable');
+        }
         if (! is_resource($stream)) {
             throw new BenchmarkContractException('private_object_unavailable');
         }
