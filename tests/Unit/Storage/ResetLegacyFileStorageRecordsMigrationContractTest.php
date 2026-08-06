@@ -8,6 +8,18 @@ use PHPUnit\Framework\TestCase;
 
 final class ResetLegacyFileStorageRecordsMigrationContractTest extends TestCase
 {
+    public function test_jsonb_constraint_sql_bypasses_pdo_placeholder_parsing(): void
+    {
+        $source = $this->migrationSource();
+        $jsonbConstraint = "DB::unprepared(<<<'SQL'\nALTER TABLE estimate_generation_processing_units ADD CONSTRAINT eg_units_locator_provenance_ck CHECK (\n    locator ?& ARRAY";
+
+        self::assertSame(2, substr_count($source, $jsonbConstraint));
+        self::assertStringNotContainsString(
+            "DB::statement(<<<'SQL'\nALTER TABLE estimate_generation_processing_units ADD CONSTRAINT eg_units_locator_provenance_ck CHECK (\n    locator ?& ARRAY",
+            $source,
+        );
+    }
+
     public function test_down_restores_and_validates_the_original_report_and_quality_constraints(): void
     {
         $source = $this->migrationSource();
