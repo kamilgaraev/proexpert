@@ -16,8 +16,8 @@ final class DesignStoragePathService
         string $originalName
     ): string {
         return $this->basePath($organizationId, $projectId, $packageId, $versionId)
-            . '/source/'
-            . $this->safeFileName($originalName, 'model.ifc');
+            .'/source/'
+            .$this->safeFileName($originalName, 'model.ifc');
     }
 
     public function derivativePath(
@@ -31,8 +31,8 @@ final class DesignStoragePathService
         $safeExtension = preg_replace('/[^a-z0-9]+/', '', $safeExtension) ?: 'frag';
 
         return $this->basePath($organizationId, $projectId, $packageId, $versionId)
-            . '/viewer/model.'
-            . $safeExtension;
+            .'/viewer/model.'
+            .$safeExtension;
     }
 
     public function documentSourcePath(
@@ -56,14 +56,16 @@ final class DesignStoragePathService
         int $organizationId,
         int $projectId,
         int $packageId,
+        int $userId,
         string $uploadId,
         string $originalName
     ): string {
         return sprintf(
-            'org-%d/pir/projects/%d/packages/%d/model-uploads/%s/source/%s',
+            'org-%d/pir/projects/%d/packages/%d/model-uploads/user-%d/%s/source/%s',
             $organizationId,
             $projectId,
             $packageId,
+            $userId,
             $this->safeUploadId($uploadId),
             $this->safeFileName($originalName, 'model.ifc')
         );
@@ -92,11 +94,11 @@ final class DesignStoragePathService
         }
 
         $safeExtension = preg_replace('/[^a-z0-9]+/', '', $extension);
-        if (!$safeExtension) {
+        if (! $safeExtension) {
             $safeExtension = (string) pathinfo($defaultName, PATHINFO_EXTENSION);
         }
 
-        return $safeStem . '.' . $safeExtension;
+        return $safeStem.'.'.$safeExtension;
     }
 
     private function safeUploadId(string $uploadId): string

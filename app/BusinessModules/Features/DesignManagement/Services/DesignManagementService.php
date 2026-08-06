@@ -26,7 +26,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use BackedEnum;
 
-final class DesignManagementService
+final class DesignManagementService implements Contracts\DesignModelRegistrationService
 {
     private const PACKAGE_RELATIONS = [
         'project:id,name,organization_id',

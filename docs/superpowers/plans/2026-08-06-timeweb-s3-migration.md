@@ -4,7 +4,7 @@
 
 **Goal:** Полностью перевести файловое хранилище МОСТ на один приватный бакет Timeweb Cloud S3 без переноса старых объектов, fallback на Яндекс и сохранения устаревших S3-контрактов.
 
-**Architecture:** `App\Services\Storage\FileService` — единственный прикладной шлюз к одному Laravel-диску `s3`; `OrganizationStoragePath` создаёт неизменяемые ключи `org-{organization_id}/...`, а крупные файлы загружаются напрямую multipart-частями по presigned URL. Домены сохраняют ключ, MIME, размер и SHA-256, но не зависят от S3 `VersionId`; старые файловые записи удаляются миграцией, потому что перенос объектов не выполняется.
+**Architecture:** `App\Services\Storage\FileService` — единственный прикладной шлюз к одному Laravel-диску `s3`; прикладные сервисы создают неизменяемые ключи `org-{organization_id}/.../user-{user_id}/...`. Существующая multipart-загрузка дизайн-моделей продолжает передавать части через Laravel API, но все S3-операции выполняет `FileService`; после завершения объект потоково перечитывается для проверки размера и вычисления SHA-256. Домены сохраняют ключ, MIME, размер и SHA-256, но не зависят от S3 `VersionId`; старые файловые записи удаляются миграцией, потому что перенос объектов не выполняется.
 
 **Tech Stack:** PHP 8.2+, Laravel 11, Flysystem AWS S3 v3, AWS SDK for PHP, PostgreSQL, PHPUnit/Pest, Larastan, GitHub CLI, существующий GitHub deploy workflow.
 
@@ -28,20 +28,13 @@
 ### Новые файлы
 
 - `app/Services/Storage/StorageRuntimeConfiguration.php` — валидация обязательной production-конфигурации Timeweb.
-- `app/Services/Storage/DTO/PresignedMultipartPart.php` — контракт URL одной multipart-части.
-- `app/Models/StorageMultipartUpload.php` — устойчивая multipart-сессия.
-- `app/Jobs/Storage/VerifyMultipartUpload.php` — потоковая проверка SHA-256 после завершения.
 - `app/Services/Storage/PersonalFileService.php` — бизнес-операции персональных файлов с organization/user scope.
-- `app/BusinessModules/Features/DesignManagement/Http/Requests/PresignDesignModelPartRequest.php` — HTTP-валидация presign-запроса.
 - `database/migrations/2026_08_06_000050_scope_personal_files_to_organizations.php` — очистка старых personal records и обязательный `organization_id`.
-- `database/migrations/2026_08_06_000100_create_storage_multipart_uploads.php` — таблица multipart-сессий.
 - `database/migrations/2026_08_06_000200_reset_legacy_file_storage_records.php` — удаление старых файловых записей и S3 `VersionId` полей.
 - `tests/Unit/Config/TimewebS3ConfigurationTest.php` — точный контракт одного диска.
 - `tests/Unit/Storage/StorageRuntimeConfigurationTest.php` — обязательность production-параметров.
 - `tests/Unit/Storage/StorageArchitectureTest.php` — запрет обхода `FileService`.
 - `tests/Unit/Storage/FileServiceCurrentObjectTest.php` — запись/чтение/удаление без VersionId.
-- `tests/Unit/Storage/FileServicePresignedMultipartTest.php` — presigned multipart-контракт.
-- `tests/Feature/Storage/StorageMultipartUploadWorkflowTest.php` — состояния и авторизация multipart.
 - `docs/runbooks/timeweb-s3.md` — безопасный production runbook без секретов.
 
 ### Удаляемые файлы
@@ -387,7 +380,9 @@ AI-отчёты сохраняются бессрочно по ключу `org-{
 - [x] убрать последний прикладной вызов `FileService->disk()`;
 - [x] читать приватный org-объект через `readCurrent()` с прежним лимитом размера;
 - [x] проверить закрытие stream и отказ для пути вне benchmark namespace;
-- [ ] commit, PR, merge и deploy.
+- [x] commit, PR, merge и deploy.
+
+Реализовано в PR #250 (`2a1cbe775d91abf0c3b2bb4f275fdf4f347fc4b6`), штатный deploy `31064219649` завершён успешно. Production SHA совпал, профильных ошибок в последних 500 строках журнала нет.
 
 - [ ] **Step 1: Написать failing архитектурные и доменные тесты**
 - [ ] **Step 2: Проверить RED**
@@ -397,104 +392,41 @@ AI-отчёты сохраняются бессрочно по ключу `org-{
 
 ---
 
-### Task 4: Прямой presigned multipart для крупных файлов
+### Task 4: Multipart дизайн-моделей через единый FileService
 
-**PR:** `feat/timeweb-s3-presigned-multipart`
-
-**Frontend PR:** `feat/timeweb-s3-direct-multipart` в репозитории `kamilgaraev/prohelper_admin`
+**PR:** `refactor/timeweb-s3-design-multipart`
 
 **Files:**
-- Create: `app/Services/Storage/DTO/PresignedMultipartPart.php`
-- Create: `app/Models/StorageMultipartUpload.php`
-- Create: `app/Jobs/Storage/VerifyMultipartUpload.php`
-- Create: `database/migrations/2026_08_06_000100_create_storage_multipart_uploads.php`
+- Create: `app/Services/Storage/DTO/CurrentMultipartCompletion.php`
+- Create: `app/BusinessModules/Features/DesignManagement/Services/Contracts/DesignModelRegistrationService.php`
 - Modify: `app/Services/Storage/FileService.php`
+- Modify: `app/BusinessModules/Features/DesignManagement/Services/DesignManagementService.php`
 - Modify: `app/BusinessModules/Features/DesignManagement/Services/DesignModelMultipartUploadService.php`
 - Modify: `app/BusinessModules/Features/DesignManagement/DesignManagementServiceProvider.php`
-- Create: `app/BusinessModules/Features/DesignManagement/Http/Requests/PresignDesignModelPartRequest.php`
-- Modify: `app/BusinessModules/Features/DesignManagement/routes.php`
-- Create: `tests/Unit/Storage/FileServicePresignedMultipartTest.php`
-- Create: `tests/Feature/Storage/StorageMultipartUploadWorkflowTest.php`
 - Modify: `tests/Unit/DesignManagement/DesignModelMultipartUploadServiceTest.php`
-- Modify (`prohelper_admin`): `src/services/apiConstants.ts`
-- Modify (`prohelper_admin`): `src/types/designManagement.ts`
-- Modify (`prohelper_admin`): `src/services/designManagementService.ts`
-- Modify (`prohelper_admin`): `src/services/designManagementService.test.ts`
-- Modify (`prohelper_admin`): `src/pages/DesignManagement/components/DesignModelUploadDialog.tsx`
-- Modify (`prohelper_admin`): `src/pages/DesignManagement/components/DesignModelUploadDialog.test.tsx`
+- Modify: `tests/Unit/Storage/FileServiceCurrentObjectTest.php`
+- Modify: `tests/Unit/DesignManagement/DesignStoragePathServiceTest.php`
 
 **Interfaces:**
-- Consumes: один S3 client и `OrganizationStoragePath`.
-- Produces: `FileService::startPresignedMultipart(...)`, `presignMultipartPart(...)`, `completePresignedMultipart(...)`, `abortPresignedMultipart(...)`; устойчивые сессии и очередь SHA-256 verify; админка отправляет байты части напрямую на Timeweb URL и возвращает backend только `part_number` и `ETag`.
+- Consumes: существующий HTTP-контракт multipart-загрузки и единый `FileService`.
+- Produces: org/user-scoped ключи, `FileService::startMultipart(...)`, `uploadPart(...)`, `completeCurrentMultipart(...)`, `verifyCurrentMultipart(...)`, `abortMultipart(...)`; повторяемую потоковую проверку готового объекта и SHA-256 без `VersionId`. Receipt завершения хранится в существующей cache-сессии, receipts частей объединяются под cache-lock, а явный abort удаляет уже завершённый объект. При невозможности подтвердить компенсационное удаление сессия сохраняется для повторной очистки.
 
-- [ ] **Step 1: Написать failing unit-тест presign**
-
-Проверить, что SDK получает точные `Bucket`, `Key`, `UploadId`, `PartNumber`, TTL 900 секунд и не получает ACL/public headers; результат содержит URL, номер части и expiry.
-
-- [ ] **Step 2: Проверить RED и реализовать SDK-методы**
-
-Run: `php artisan test tests/Unit/Storage/FileServicePresignedMultipartTest.php --stop-on-failure`
-
-Expected сначала FAIL, затем PASS.
-
-- [ ] **Step 3: Написать failing feature-тест состояний**
-
-Проверить переходы initiated/uploading/verifying/completed, идемпотентный complete, запрет чужой организации/пользователя, истечение сессии и dispatch `VerifyMultipartUpload`.
-
-- [ ] **Step 4: Реализовать модель, миграцию, job и design workflow**
-
-Миграция создаёт UUID/ULID primary key, organization/user foreign keys, purpose, storage_key unique, upload_id encrypted cast, expected/actual metadata, status, expires_at и timestamps. Job читает поток частями, вычисляет SHA-256, сверяет размер/MIME и только после этого регистрирует IFC-версию.
-
-- [ ] **Step 5: Проверить GREEN**
+- [x] **Step 1: Написать failing тесты шлюза и design upload**
+- [x] **Step 2: Проверить RED**
+- [x] **Step 3: Удалить прямой S3Client из DesignManagement**
+- [x] **Step 4: Добавить org/user namespace, SHA-256 и компенсационное удаление**
+- [x] **Step 5: Проверить GREEN и Larastan**
 
 Run:
 
 ```bash
-php artisan test tests/Unit/Storage/FileServicePresignedMultipartTest.php tests/Feature/Storage/StorageMultipartUploadWorkflowTest.php tests/Unit/DesignManagement/DesignModelMultipartUploadServiceTest.php --stop-on-failure
-vendor/bin/phpstan analyse app/Services/Storage app/Models/StorageMultipartUpload.php app/Jobs/Storage app/BusinessModules/Features/DesignManagement --memory-limit=1G
-php -l database/migrations/2026_08_06_000100_create_storage_multipart_uploads.php
+php vendor/bin/phpunit tests/Unit/Storage/FileServiceCurrentObjectTest.php
+php vendor/bin/phpunit tests/Unit/DesignManagement/DesignModelMultipartUploadServiceTest.php
+php vendor/bin/phpunit tests/Unit/DesignManagement/DesignStoragePathServiceTest.php
+vendor/bin/phpstan analyse app/Services/Storage/FileService.php app/BusinessModules/Features/DesignManagement --memory-limit=1G
 ```
 
-- [ ] **Step 6: Написать failing frontend-тест прямой загрузки**
-
-В чистом worktree `prohelper_admin` проверить, что `uploadModelMultipart`:
-
-1. получает presigned URL части от backend;
-2. выполняет `PUT` Blob напрямую на этот URL без JWT/cookie;
-3. читает `ETag` response header;
-4. сообщает ETag backend;
-5. отменяет multipart-сессию при необратимой ошибке;
-6. сохраняет текущий progress callback.
-
-Run: `npx vitest run src/services/designManagementService.test.ts src/pages/DesignManagement/components/DesignModelUploadDialog.test.tsx`
-
-Expected: FAIL, текущая реализация отправляет Blob части в Laravel API.
-
-- [ ] **Step 7: Реализовать frontend direct multipart и проверить GREEN**
-
-Обновить типы start/presign/complete, API constants и сервис. Не передавать application auth headers на Timeweb URL. Разрешить только HTTPS URL с host `s3.twcstorage.ru` или его bucket subdomain; пустой/неразрешённый ETag считать ошибкой и выполнять abort.
-
-Run:
-
-```bash
-npx vitest run src/services/designManagementService.test.ts src/pages/DesignManagement/components/DesignModelUploadDialog.test.tsx
-npx tsc --noEmit
-npx eslint src/services/apiConstants.ts src/types/designManagement.ts src/services/designManagementService.ts src/services/designManagementService.test.ts src/pages/DesignManagement/components/DesignModelUploadDialog.tsx src/pages/DesignManagement/components/DesignModelUploadDialog.test.tsx
-```
-
-Expected: PASS. `npm run build` не запускать согласно правилам workspace.
-
-- [ ] **Step 8: Commit backend, PR, merge и deploy**
-
-Commit: `feat[backend]: добавлена прямая multipart-загрузка в Timeweb S3`.
-
-После deploy backend проверить создание сессии, presign одной части и abort.
-
-- [ ] **Step 9: Commit frontend, PR, merge и deploy**
-
-Commit в `prohelper_admin`: `feat[admin]: крупные файлы загружаются напрямую в Timeweb S3`.
-
-После штатного deploy админки проверить полный multipart upload и отсутствие тела части в Laravel access log.
+- [ ] **Step 6: Независимое review, commit, PR, merge и deploy**
 
 ---
 
@@ -652,7 +584,7 @@ Run:
 ```bash
 php artisan test tests/Unit/Config/TimewebS3ConfigurationTest.php tests/Unit/Storage tests/Unit/Services/Storage tests/Unit/DesignManagement/DesignModelMultipartUploadServiceTest.php --stop-on-failure
 vendor/bin/phpstan analyse app/Services/Storage app/BusinessModules/Core/Reporting app/BusinessModules/Features/DesignManagement --memory-limit=1G
-vendor/bin/pint --test app/Services/Storage app/BusinessModules/Core/Reporting app/BusinessModules/Features/DesignManagement config/filesystems.php database/migrations/2026_08_06_000100_create_storage_multipart_uploads.php database/migrations/2026_08_06_000200_reset_legacy_file_storage_records.php
+vendor/bin/pint --test app/Services/Storage app/BusinessModules/Core/Reporting app/BusinessModules/Features/DesignManagement config/filesystems.php database/migrations/2026_08_06_000200_reset_legacy_file_storage_records.php
 rg -n "storage\.yandexcloud\.net|REPORTS_BUCKET|AWS_PERSONALS_BUCKET|OrgBucketService|reports:cleanup|personals:cleanup" app config routes .env.example
 ```
 
