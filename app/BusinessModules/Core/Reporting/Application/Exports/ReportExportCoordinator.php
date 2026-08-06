@@ -8,7 +8,6 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFen
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
@@ -38,7 +37,6 @@ final readonly class ReportExportCoordinator
         private CurrentReportScopeAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
         private ReportExportRendererRegistry $renderers,
-        private ReportExecutionClock $clock,
         private ReportAuthorizationSubjectReader $subjects,
     ) {}
 
@@ -67,7 +65,7 @@ final readonly class ReportExportCoordinator
 
     private function assertReady(ReportRunExportSource $source): void
     {
-        if ($source->run->status === ReportRunStatus::EXPIRED || $source->run->expiresAt <= $this->clock->now()) {
+        if ($source->run->status === ReportRunStatus::EXPIRED) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
         }
         if ($source->run->status !== ReportRunStatus::READY) {

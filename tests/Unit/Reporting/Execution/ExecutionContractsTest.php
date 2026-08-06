@@ -4,24 +4,24 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Execution;
 
+use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportExecutionContextRehydrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportMaterializationDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunExecutionContextRehydrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
-use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
-use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportAuditIntentStore;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportAuditIntentStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportDispatchIntentStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
+use Carbon\CarbonImmutable;
 use DateInterval;
 use DateTimeImmutable;
-use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -53,18 +53,6 @@ final class ExecutionContractsTest extends TestCase
             self::assertSame('2026-07-28T13:00:00.123456+03:00', $converted->format('Y-m-d\TH:i:s.uP'));
             self::assertSame('2026-07-28T10:00:00.123456+00:00', $converted->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.uP'));
         }
-    }
-
-    public function test_export_expiry_boundary_is_fail_closed_at_exact_microsecond(): void
-    {
-        $reflection = new ReflectionClass(EloquentReportRunStore::class);
-        $store = $reflection->newInstanceWithoutConstructor();
-        $method = $reflection->getMethod('isExpiredForExport');
-        $expiresAt = CarbonImmutable::parse('2026-07-28T10:00:00.900000Z');
-
-        self::assertFalse($method->invoke($store, $expiresAt, new DateTimeImmutable('2026-07-28T10:00:00.899999Z')));
-        self::assertTrue($method->invoke($store, $expiresAt, new DateTimeImmutable('2026-07-28T10:00:00.900000Z')));
-        self::assertTrue($method->invoke($store, $expiresAt, new DateTimeImmutable('2026-07-28T10:00:00.900001Z')));
     }
 
     public function test_execution_ports_keep_the_exact_native_signatures(): void
@@ -218,7 +206,7 @@ final class ExecutionContractsTest extends TestCase
     public function test_system_clock_returns_current_utc_time(): void
     {
         $before = microtime(true);
-        $actual = (new SystemReportExecutionClock())->now();
+        $actual = (new SystemReportExecutionClock)->now();
         $after = microtime(true);
 
         $this->assertSame('UTC', $actual->getTimezone()->getName());
@@ -228,8 +216,8 @@ final class ExecutionContractsTest extends TestCase
 
     public function test_dispatcher_fakes_retain_only_ordered_raw_ids(): void
     {
-        $runs = new FakeReportMaterializationDispatcher();
-        $exports = new FakeReportExportDispatcher();
+        $runs = new FakeReportMaterializationDispatcher;
+        $exports = new FakeReportExportDispatcher;
 
         $runs->dispatch('run-2');
         $runs->dispatch('run-2');
@@ -272,8 +260,8 @@ final class ExecutionContractsTest extends TestCase
 
     public function test_audit_fake_records_ordered_envelopes_without_later_subject_mutation(): void
     {
-        $context = (new ReportExecutionContextBuilder())->build();
-        $audit = new FakeReportTransitionAudit();
+        $context = (new ReportExecutionContextBuilder)->build();
+        $audit = new FakeReportTransitionAudit;
         $subject = ['run_id' => 'run-1', 'identity' => ['snapshot_id' => 'snapshot-1']];
         $first = new DateTimeImmutable('2026-07-26T12:00:00+00:00');
         $second = new DateTimeImmutable('2026-07-26T12:01:00+00:00');
@@ -346,7 +334,7 @@ final class ExecutionContractsTest extends TestCase
             $audit->append(
                 'evt-run-ready-1',
                 'report.run.ready',
-                (new ReportExecutionContextBuilder())->build(),
+                (new ReportExecutionContextBuilder)->build(),
                 ['run_id' => 'run-1'],
                 new DateTimeImmutable('2026-07-26T12:00:00+00:00'),
             );
@@ -361,13 +349,13 @@ final class ExecutionContractsTest extends TestCase
     #[DataProvider('blankAuditIdentity')]
     public function test_audit_fake_rejects_blank_event_identity_before_recording(string $eventId, string $eventType): void
     {
-        $audit = new FakeReportTransitionAudit();
+        $audit = new FakeReportTransitionAudit;
 
         try {
             $audit->append(
                 $eventId,
                 $eventType,
-                (new ReportExecutionContextBuilder())->build(),
+                (new ReportExecutionContextBuilder)->build(),
                 ['run_id' => 'run-1'],
                 new DateTimeImmutable('2026-07-26T12:00:00+00:00'),
             );
@@ -397,7 +385,7 @@ final class ExecutionContractsTest extends TestCase
         try {
             $invalidSubjects = [
                 ['value' => $resource],
-                ['value' => new \stdClass()],
+                ['value' => new \stdClass],
                 ['value' => static fn (): bool => true],
                 ['value' => NAN],
                 ['value' => INF],
@@ -405,13 +393,13 @@ final class ExecutionContractsTest extends TestCase
             ];
 
             foreach ($invalidSubjects as $index => $subject) {
-                $audit = new FakeReportTransitionAudit();
+                $audit = new FakeReportTransitionAudit;
 
                 try {
                     $audit->append(
                         'evt-'.(string) $index,
                         'report.run.ready',
-                        (new ReportExecutionContextBuilder())->build(),
+                        (new ReportExecutionContextBuilder)->build(),
                         $subject,
                         new DateTimeImmutable('2026-07-26T12:00:00+00:00'),
                     );
@@ -589,7 +577,7 @@ final class ExecutionContractsTest extends TestCase
                     continue;
                 }
 
-                if (!$expectName || !is_array($token) || $token[0] !== T_STRING) {
+                if (! $expectName || ! is_array($token) || $token[0] !== T_STRING) {
                     continue;
                 }
 
@@ -615,7 +603,7 @@ final class ExecutionContractsTest extends TestCase
         $declarations = [];
 
         foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
+            if (! $file->isFile() || $file->getExtension() !== 'php') {
                 continue;
             }
 
@@ -629,7 +617,7 @@ final class ExecutionContractsTest extends TestCase
 
                     continue;
                 }
-                if (!$expectName || !is_array($token) || $token[0] !== T_STRING) {
+                if (! $expectName || ! is_array($token) || $token[0] !== T_STRING) {
                     continue;
                 }
 

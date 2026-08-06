@@ -1,6 +1,6 @@
 # AI Assistant Module
 
-Модуль умного ассистента на базе YandexGPT / GPT-4o-mini для анализа проектов, генерации отчетов и автоматизации задач.
+Модуль умного ассистента на базе Timeweb Cloud AI для анализа проектов, генерации отчетов и автоматизации задач.
 
 ## Возможности
 
@@ -10,32 +10,15 @@
 - Лимиты на уровне организации
 - История диалогов
 - Трекинг использования и расходов
-- **Поддержка YandexGPT и OpenAI** - легкое переключение через конфигурацию
+- Timeweb Cloud AI используется как основной LLM- и embedding-провайдер
 
 ## Поддерживаемые LLM провайдеры
 
-### YandexGPT / Alice AI (рекомендуется для России) ✅
-- ✅ Работает без VPN из России
-- ✅ Отличное понимание русского языка
-- ✅ Удобная оплата через Yandex Cloud (карты РФ)
-- ✅ Доступны разные модели с разными ценами
+### Timeweb Cloud AI
 
-**Доступные модели:**
-
-1. **Alice AI LLM** (рекомендуется) 🆕
-   - Оптимизирована для диалогов и креативных задач
-   - Синхронный режим: 0.50₽ за 1K input, 2.00₽ за 1K output
-   - Асинхронный режим: 0.25₽ за 1K input, 1.00₽ за 1K output (дешевле!)
-   - Model URI: `gpt://b1gbp06r4m40cduru9dg/aliceai-llm/latest`
-
-2. **YandexGPT 5.1 Pro**
-   - Последняя версия YandexGPT
-   - Цена: ~₽400 за 1M токенов
-   - Model URI: `gpt://b1gbp06r4m40cduru9dg/yandexgpt/latest`
-
-3. **YandexGPT 4/5 Lite**
-   - Облегченная версия (дешевле)
-   - Model URI: `gpt://b1gbp06r4m40cduru9dg/yandexgpt-4-lite/latest`
+- OpenAI-совместимый API
+- Отдельные профили моделей для обычных, быстрых, JSON- и сложных запросов
+- Единый ключ для LLM и возможность отдельного ключа для RAG embeddings
 
 ### DeepSeek (самый дешевый) 💰
 - ✅ Очень дешево: ~₽28-42 за 1M токенов
@@ -52,77 +35,18 @@
 
 ### 1. Выбор провайдера
 
-#### Вариант A: YandexGPT (рекомендуется)
-
-**Получение API ключа:**
-
-1. Перейдите в [Yandex Cloud Console](https://console.cloud.yandex.ru/)
-2. Создайте **сервисный аккаунт** (Сервисные аккаунты → Создать)
-3. Назначьте роль **`ai.languageModels.user`**
-4. Создайте **API-ключ** (Ключи API → Создать новый ключ → API-ключ)
-5. Скопируйте API-ключ (показывается один раз!)
-6. Найдите **Folder ID** в URL консоли: `https://console.cloud.yandex.ru/folders/YOUR_FOLDER_ID`
-
-**Настройка `.env`:**
+#### Timeweb Cloud AI
 
 ```env
-# LLM Provider
-LLM_PROVIDER=yandex
-
-# YandexGPT Configuration
-YANDEX_API_KEY=AQVN...ваш-ключ
-YANDEX_FOLDER_ID=b1gbp06r4m40cduru9dg
-YANDEX_MODEL_URI=gpt://b1gbp06r4m40cduru9dg/yandexgpt/latest
-YANDEX_MAX_TOKENS=2000
-YANDEX_TEMPERATURE=0.7
-
-# AI Assistant
 AI_ASSISTANT_ENABLED=true
-AI_ASSISTANT_DEFAULT_LIMIT=5000
-AI_ASSISTANT_CACHE_TTL=3600
-```
-
-**Доступные модели YandexGPT:**
-
-1. **Alice AI LLM** (рекомендуется) 🆕
-   ```env
-   YANDEX_MODEL_URI=gpt://b1gbp06r4m40cduru9dg/aliceai-llm/latest
-   YANDEX_USE_ASYNC=false  # true для асинхронного режима (дешевле)
-   ```
-   - Синхронный: 0.50₽/1K input, 2.00₽/1K output
-   - Асинхронный: 0.25₽/1K input, 1.00₽/1K output
-
-2. **YandexGPT 5.1 Pro**
-   ```env
-   YANDEX_MODEL_URI=gpt://b1gbp06r4m40cduru9dg/yandexgpt/latest
-   ```
-   - Цена: ~₽400 за 1M токенов
-
-3. **YandexGPT 4/5 Lite** (дешевле)
-   ```env
-   YANDEX_MODEL_URI=gpt://b1gbp06r4m40cduru9dg/yandexgpt-4-lite/latest
-   # или
-   YANDEX_MODEL_URI=gpt://b1gbp06r4m40cduru9dg/yandexgpt-5-lite/latest
-   ```
-
-#### Вариант B: OpenAI
-
-**Настройка `.env`:**
-
-```env
-# LLM Provider
-LLM_PROVIDER=openai
-
-# OpenAI Configuration
-OPENAI_API_KEY=sk-your-api-key-here
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_MAX_TOKENS=2000
-OPENAI_TEMPERATURE=0.7
-
-# AI Assistant
-AI_ASSISTANT_ENABLED=true
-AI_ASSISTANT_DEFAULT_LIMIT=5000
-AI_ASSISTANT_CACHE_TTL=3600
+LLM_PROVIDER=timeweb
+TIMEWEB_AI_API_KEY=
+TIMEWEB_AI_BASE_URI=https://api.timeweb.ai/v1
+TIMEWEB_AI_MODEL=gemini/gemini-3.1-flash-lite
+AI_RAG_EMBEDDING_PROVIDER=timeweb
+AI_RAG_EMBEDDING_MODEL=openai/text-embedding-3-large
+AI_RAG_EMBEDDING_BASE_URI=https://api.timeweb.ai/v1
+AI_RAG_EMBEDDING_API_KEY=
 ```
 
 ### 2. Запуск миграций

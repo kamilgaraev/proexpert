@@ -79,9 +79,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Audit\CoreReportAuditInten
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LaravelReportAuditDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\OutboxReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
-use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeleteExpiredReportArtifactsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\DeliverReportAuditIntentsCommand;
-use App\BusinessModules\Core\Reporting\Infrastructure\Console\ExpireReportsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\PublishReportDispatchIntentsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportDispatchIntentsCommand;
 use App\BusinessModules\Core\Reporting\Infrastructure\Console\ReconcileReportExportExecutionLeasesCommand;
@@ -145,8 +143,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 DeliverReportAuditIntentsCommand::class,
                 ReconcileReportRunExecutionLeasesCommand::class,
                 ReconcileReportExportExecutionLeasesCommand::class,
-                ExpireReportsCommand::class,
-                DeleteExpiredReportArtifactsCommand::class,
             ]);
         }
 

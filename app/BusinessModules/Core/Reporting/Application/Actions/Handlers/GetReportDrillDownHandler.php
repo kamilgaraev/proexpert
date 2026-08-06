@@ -6,7 +6,6 @@ namespace App\BusinessModules\Core\Reporting\Application\Actions\Handlers;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportDrillDownAction;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
@@ -36,7 +35,6 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
         private CurrentReportScopeAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
         private SignedReportCursorCodec $tokens,
-        private ReportExecutionClock $clock,
     ) {}
 
     public function handle(
@@ -75,7 +73,7 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
 
     private function readySnapshot(ReportRun $run): ReportSnapshotRef
     {
-        if ($run->status === ReportRunStatus::EXPIRED || $run->expiresAt <= $this->clock->now()) {
+        if ($run->status === ReportRunStatus::EXPIRED) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
         }
         if ($run->status !== ReportRunStatus::READY || $run->resultMetadata === null) {

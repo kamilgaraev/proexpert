@@ -86,7 +86,7 @@
                   size: 2048576
                   created_at: "2024-01-15T09:30:00Z"
                   expires_at: "2025-01-15T09:30:00Z"
-                  download_url: "https://storage.yandexcloud.net/bucket/reports/report.xlsx?X-Amz-Algorithm=..."
+                  download_url: "https://s3.twcstorage.ru/prohelper-storage/org-42/reports/report.xlsx?X-Amz-Algorithm=..."
                 - id: "Y29udHJhY3Rvci9zdW1tYXJ5LzIwMjQvMDEvMTAvcmVwb3J0LnBkZg"
                   path: "contractor/summary/2024/01/10/report.pdf"
                   filename: "contractor_summary_20240110.pdf"
@@ -95,7 +95,7 @@
                   size: 1024000
                   created_at: "2024-01-10T14:20:00Z"
                   expires_at: "2025-01-10T14:20:00Z"
-                  download_url: "https://storage.yandexcloud.net/bucket/contractor/report.pdf?X-Amz-Algorithm=..."
+                  download_url: "https://s3.twcstorage.ru/prohelper-storage/org-42/reports/contractor/report.pdf?X-Amz-Algorithm=..."
               links:
                 first: "http://localhost/api/v1/admin/report-files?page=1"
                 last: "http://localhost/api/v1/admin/report-files?page=3"

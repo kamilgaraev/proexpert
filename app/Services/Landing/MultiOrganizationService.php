@@ -105,8 +105,6 @@ class MultiOrganizationService
             $parentOrg = $group->parentOrganization;
 
             // Получаем имя основного бакета для всех организаций
-            $mainBucket = config('filesystems.disks.s3.bucket', 'prohelper-storage');
-
             $childOrg = Organization::create([
                 'name' => $organizationData['name'],
                 'description' => $organizationData['description'] ?? null,
@@ -120,8 +118,6 @@ class MultiOrganizationService
                 'address' => $organizationData['address'] ?? null,
                 'phone' => $organizationData['phone'] ?? null,
                 'email' => $organizationData['email'] ?? null,
-                's3_bucket' => $mainBucket,
-                'bucket_region' => 'ru-central1',
             ]);
 
             $childOrg->forceFill([
@@ -130,8 +126,6 @@ class MultiOrganizationService
 
             // Папка org-{id}/ в бакете создастся автоматически при первой загрузке файла
             // Но вызовем createBucket на случай если понадобится дополнительная логика
-            app(\App\Services\Storage\OrgBucketService::class)->createBucket($childOrg);
-
             $this->createDefaultAccessPermissions($parentOrg, $childOrg, $creator);
 
             // Привязываем владельца

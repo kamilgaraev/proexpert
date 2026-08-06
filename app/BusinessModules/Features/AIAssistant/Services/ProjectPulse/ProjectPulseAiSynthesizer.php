@@ -26,7 +26,7 @@ class ProjectPulseAiSynthesizer
         array $nextActions = [],
         ?ProjectPulseContext $context = null,
     ): array {
-        $provider = config('ai-assistant.llm.provider', 'yandex');
+        $provider = config('ai-assistant.llm.provider', 'timeweb');
 
         if (! $useAi || ! config('ai-assistant.project_pulse.ai_enabled', true)) {
             return $this->rulesOnly($facts, $ruleRecommendations);

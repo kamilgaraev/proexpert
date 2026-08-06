@@ -97,11 +97,11 @@ final readonly class ReportExportExecutionService
             $context = $this->contexts->forExport($exportId);
             $export = $this->exports->get($context, $exportId);
             $format = $export->format;
-            $this->assertExecutable($export, $claimedAt);
+            $this->assertExecutable($export);
 
             $source = $this->runs->exportSource($context, $export->runId);
             $reportCode = $source->run->reportCode;
-            $this->assertSourceIdentity($export, $source, $claimedAt);
+            $this->assertSourceIdentity($export, $source);
 
             $published = $this->definitions->published($reportCode);
             $binding = $this->bindings->get($reportCode);
@@ -348,14 +348,9 @@ final readonly class ReportExportExecutionService
         }
     }
 
-    private function assertExecutable(
-        ReportExport $export,
-        DateTimeImmutable $occurredAt,
-    ): void {
-        if (
-            $export->status === ReportExportStatus::EXPIRED
-            || $export->expiresAt <= $occurredAt
-        ) {
+    private function assertExecutable(ReportExport $export): void
+    {
+        if ($export->status === ReportExportStatus::EXPIRED) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_EXPORT_EXPIRED,
             );
@@ -373,11 +368,9 @@ final readonly class ReportExportExecutionService
     private function assertSourceIdentity(
         ReportExport $export,
         ReportRunExportSource $source,
-        DateTimeImmutable $occurredAt,
     ): void {
         if (
             $source->run->status !== ReportRunStatus::READY
-            || $source->run->expiresAt <= $occurredAt
             || ! hash_equals($source->run->id, $export->runId)
             || ! hash_equals(
                 $source->run->definitionHash->value,

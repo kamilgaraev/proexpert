@@ -80,7 +80,7 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
 
     private function readySnapshot(ReportRun $run): ReportSnapshotRef
     {
-        if ($run->status === ReportRunStatus::EXPIRED || $run->expiresAt <= $this->clock->now()) {
+        if ($run->status === ReportRunStatus::EXPIRED) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
         }
         if ($run->status !== ReportRunStatus::READY || $run->resultMetadata === null) {
@@ -189,7 +189,7 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
             $page->sort,
             $last[$page->sort->field],
             $last['row_key'],
-            $run->expiresAt,
+            $this->clock->now()->modify('+5 minutes'),
         );
 
         return new ReportPage(
@@ -239,7 +239,7 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
                     $run->queryHash,
                     $row['row_key'],
                     $providerColumn,
-                    $run->expiresAt,
+                    $this->clock->now()->modify('+5 minutes'),
                 );
             }
 

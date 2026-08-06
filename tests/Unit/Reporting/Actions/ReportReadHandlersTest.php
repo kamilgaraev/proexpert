@@ -341,7 +341,7 @@ final class ReportReadHandlersTest extends TestCase
         self::assertSame([], $fixture['rowQuery']->pageCalls());
     }
 
-    public function test_drill_down_rejects_time_expired_ready_run_before_provider_call(): void
+    public function test_drill_down_allows_ready_run_after_legacy_retention_timestamp(): void
     {
         $fixture = $this->fixture();
         $fixture['run'] = $this->readyRun(
@@ -350,17 +350,19 @@ final class ReportReadHandlersTest extends TestCase
         );
         $operations = [];
 
-        $this->expectReportError(
-            ReportErrorCode::REPORT_SNAPSHOT_EXPIRED,
-            fn () => $this->drillDownHandler($fixture, $this->authorizer($operations))->handle(
-                $this->context,
-                self::RUN_ID,
-                new ReportDrillDownRequest('drill-token', null, 25),
+        $result = $this->drillDownHandler($fixture, $this->authorizer($operations))->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportDrillDownRequest(
+                $this->cellToken($fixture, 'row-1', 'name'),
+                null,
+                25,
             ),
         );
 
-        self::assertSame([], $operations);
-        self::assertSame([], $fixture['drillDown']->calls());
+        self::assertSame($fixture['drillResult'], $result);
+        self::assertContains(ReportOperation::DRILL_DOWN, $operations);
+        self::assertCount(1, $fixture['drillDown']->calls());
     }
 
     public function test_revocation_prevents_rows_provider_call(): void
@@ -551,7 +553,6 @@ final class ReportReadHandlersTest extends TestCase
             $authorizer,
             new ReportExecutionContextFactory,
             $this->codec(),
-            $this->clock,
         );
     }
 
@@ -571,7 +572,7 @@ final class ReportReadHandlersTest extends TestCase
             queryHash: $queryHash ?? $fixture['run']->queryHash,
             rowKey: $rowKey,
             columnId: $columnId,
-            expiresAt: $fixture['run']->expiresAt,
+            expiresAt: $this->now->modify('+5 minutes'),
         );
     }
 

@@ -12,7 +12,6 @@ use App\Http\Resources\Api\V1\Landing\Organization\OrganizationSummaryResource;
 use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
 use App\Models\User;
-use App\Services\Storage\OrgBucketService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -28,7 +27,7 @@ class OrganizationController extends Controller
             /** @var User|null $user */
             $user = $request->user();
 
-            if (!$user) {
+            if (! $user) {
                 return LandingResponse::error(
                     trans_message('organization.access_denied'),
                     Response::HTTP_FORBIDDEN
@@ -54,7 +53,7 @@ class OrganizationController extends Controller
         }
     }
 
-    public function store(StoreOrganizationRequest $request, OrgBucketService $bucketService): JsonResponse
+    public function store(StoreOrganizationRequest $request): JsonResponse
     {
         try {
             /** @var User $user */
@@ -62,8 +61,6 @@ class OrganizationController extends Controller
             $validated = $request->validated();
 
             $organization = Organization::create($validated);
-            $bucketService->createBucket($organization);
-
             $user->organizations()->syncWithoutDetaching([
                 $organization->id => [
                     'is_owner' => true,
@@ -97,7 +94,7 @@ class OrganizationController extends Controller
         try {
             $organization = $this->currentOrganization($request);
 
-            if (!$organization) {
+            if (! $organization) {
                 return LandingResponse::error(
                     trans_message('organization.not_found'),
                     Response::HTTP_NOT_FOUND
@@ -127,7 +124,7 @@ class OrganizationController extends Controller
         try {
             $organization = $this->currentOrganization($request);
 
-            if (!$organization) {
+            if (! $organization) {
                 return LandingResponse::error(
                     trans_message('organization.not_found'),
                     Response::HTTP_NOT_FOUND

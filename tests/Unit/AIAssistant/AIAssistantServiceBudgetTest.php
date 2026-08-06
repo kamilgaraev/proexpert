@@ -528,7 +528,7 @@ class AIAssistantServiceBudgetTest extends TestCase
     public function test_trusted_report_markdown_link_is_preserved(): void
     {
         $service = $this->makeService(new AIToolRegistry);
-        $url = 'https://storage.yandexcloud.net/prohelper/reports/report.pdf?X-Amz-Signature=test';
+        $url = 'https://s3.twcstorage.ru/prohelper-storage/org-1/reports/report.pdf?X-Amz-Signature=test';
         $content = "Готово! [Скачать отчет]({$url})";
 
         $this->assertSame($content, $service->exposeStripUntrustedMarkdownLinks($content, [$url]));

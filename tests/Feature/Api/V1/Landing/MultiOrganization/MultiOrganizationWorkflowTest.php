@@ -11,7 +11,6 @@ use App\Models\OrganizationGroup;
 use App\Models\User;
 use App\Services\Landing\ChildOrganizationUserService;
 use App\Services\Landing\MultiOrganizationService;
-use App\Services\Storage\OrgBucketService;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -63,10 +62,6 @@ class MultiOrganizationWorkflowTest extends TestCase
     {
         [$parent, $owner] = $this->createHoldingWithOwner();
         $group = OrganizationGroup::query()->where('parent_organization_id', $parent->id)->firstOrFail();
-
-        $this->mock(OrgBucketService::class, function ($mock): void {
-            $mock->shouldReceive('createBucket')->once()->andReturn('test-bucket');
-        });
 
         $result = app(MultiOrganizationService::class)->addChildOrganization($group, [
             'name' => 'Дочерняя компания',
