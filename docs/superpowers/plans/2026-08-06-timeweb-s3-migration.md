@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Использовать один приватный бакет `prohelper-storage` и endpoint `https://s3.twcstorage.ru`.
-- Все актуальные ключи начинаются с `org-{organization_id}/`; персональные — с `org-{organization_id}/personal-files/user-{user_id}/`.
+- Все актуальные ключи начинаются с `org-{organization_id}/` и обязательно содержат `user-{user_id}` либо `user-system`; персональные имеют вид `org-{organization_id}/personal-files/user-{user_id}/`.
 - Не переносить старые объекты; полностью удалить неценные старые файловые записи.
 - Не создавать fallback, dual-read, dual-write, отдельные бакеты, CDN или новую CI/CD-инфраструктуру.
 - Не рефакторить холдинги, сайты холдингов и CMS.
@@ -327,7 +327,7 @@ AI-отчёты сохраняются бессрочно по ключу `org-{
 - [x] **Step 4: Проверить GREEN, потоковую передачу и неизменяемые ключи**
 - [x] **Step 5: Commit, PR, merge и deploy**
 
-Файлы импорта и снимки структуры получают UUID-ключи внутри `org-{organization_id}`; запись и чтение выполняются потоково через единый приватный бакет без выбора диска или бакета доменным кодом.
+Файлы импорта и снимки структуры получают UUID-ключи внутри actor-scoped `org-{organization_id}/.../user-{user_id}/` либо `user-system`; запись и чтение выполняются потоково через единый приватный бакет без выбора диска или бакета доменным кодом.
 
 Выполнено в PR #242 (`52a4276298f05383b0c69fa165646d190849972d`), штатный deploy `31059543494` завершён успешно. Production SHA совпал, профильных ошибок в последних 500 строках лога нет.
 
@@ -598,13 +598,13 @@ Expected: тесты/Larastan/Pint PASS; legacy search не возвращает
 
 Применить `superpowers:requesting-code-review`; исправлять только доказанные замечания, повторяя минимальные затронутые тесты.
 
-Независимое review документационного diff завершено без замечаний после включения runbook в index. До merge не выполняются runtime, DB и deploy-действия.
+Первое task-review выявило три замечания; они исправлены в `a83870e60b77774fd8cac335f0dafd22b82e356d`, а scoped re-review не оставил открытых findings. Это evidence относится только к task-review и не подменяет отдельное final whole-branch review. До merge не выполняются runtime, DB и deploy-действия.
 
 - [ ] **Step 4: Commit, PR, merge и финальный deploy-smoke**
 
 Commit: `docs[backend]: добавлен runbook Timeweb S3`.
 
-После merge дождаться штатного deploy. Read-only подтвердить release SHA, health, отсутствие S3/queue/scheduler ошибок и успешный прикладной Put/Head/Get/Delete smoke в `org-{id}/temporary/smoke/`.
+После merge дождаться штатного deploy. Read-only подтвердить release SHA, health, отсутствие S3/queue/scheduler ошибок и успешный прикладной Put/Head/Get/Delete smoke в `org-{id}/temporary/smoke/user-system/{object_uuid}`.
 
 - [ ] **Step 5: Завершить цель**
 
