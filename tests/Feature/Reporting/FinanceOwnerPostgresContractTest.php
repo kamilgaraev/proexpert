@@ -21,7 +21,9 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use DateTimeImmutable;
+use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Test;
 use ReflectionMethod;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
@@ -238,6 +240,135 @@ WHERE checkpoint.source_hash IS DISTINCT FROM encode(sha256(convert_to(jsonb_bui
     'unprojectable_legacy_set_hash', checkpoint.unprojectable_legacy_set_hash
 )::text, 'UTF8')), 'hex')
 SQL));
+    }
+
+    #[Test]
+    public function change_claim_checkpoint_counts_inverse_coverage_gaps_with_a_stable_set_hash(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $user = User::factory()->create();
+        $recordedAt = new DateTimeImmutable('2026-08-06T18:15:30+00:00');
+        $contractorId = (int) DB::table('contractors')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'PG inverse coverage contractor',
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+        $contractId = (int) DB::table('contracts')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractorId,
+            'number' => 'PG-INVERSE-'.bin2hex(random_bytes(4)),
+            'date' => '2026-08-06',
+            'total_amount' => '1000.00',
+            'currency' => 'RUB',
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+        $allocationId = (int) DB::table('contract_project_allocations')->insertGetId([
+            'contract_id' => $contractId,
+            'project_id' => $project->id,
+            'allocation_type' => 'fixed',
+            'allocated_amount' => '1000.00',
+            'is_active' => true,
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+
+        $missingVersionId = $this->insertLegacyChangeRequest(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $allocationId,
+            'missing-version',
+            $recordedAt,
+        );
+        $missingEventId = $this->insertLegacyChangeRequest(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $allocationId,
+            'missing-event',
+            $recordedAt,
+        );
+        $controlId = $this->insertLegacyChangeRequest(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $allocationId,
+            'control',
+            $recordedAt,
+        );
+
+        $missingEventVersionId = $this->insertChangeRequestVersion(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $contractId,
+            $allocationId,
+            $missingEventId,
+            $recordedAt,
+        );
+        $controlVersionId = $this->insertChangeRequestVersion(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $contractId,
+            $allocationId,
+            $controlId,
+            $recordedAt,
+        );
+        $this->insertChangeWorkflowEvent(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $controlId,
+            $recordedAt,
+        );
+        $missingLinkClaimId = $this->insertChangeClaim(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $missingEventId,
+            'missing-link',
+            $recordedAt,
+        );
+        $controlClaimId = $this->insertChangeClaim(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $user->id,
+            $controlId,
+            'control',
+            $recordedAt,
+        );
+        $this->insertChangeClaimLink(
+            (int) $organization->id,
+            $controlVersionId,
+            $controlClaimId,
+            $recordedAt,
+        );
+
+        self::assertGreaterThan(0, $missingVersionId);
+        self::assertGreaterThan(0, $missingEventVersionId);
+        self::assertGreaterThan(0, $missingLinkClaimId);
+
+        $this->rebuildChangeClaimHistoryCheckpoint();
+        $first = DB::table('change_claim_history_checkpoints')
+            ->where('organization_id', $organization->id)
+            ->sole();
+        self::assertSame(3, (int) $first->unprojectable_legacy_count);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', trim((string) $first->unprojectable_legacy_set_hash));
+
+        $this->rebuildChangeClaimHistoryCheckpoint();
+        $second = DB::table('change_claim_history_checkpoints')
+            ->where('organization_id', $organization->id)
+            ->sole();
+        self::assertSame(3, (int) $second->unprojectable_legacy_count);
+        self::assertSame(
+            trim((string) $first->unprojectable_legacy_set_hash),
+            trim((string) $second->unprojectable_legacy_set_hash),
+        );
     }
 
     #[Test]
@@ -869,6 +1000,164 @@ SQL));
         } finally {
             DB::rollBack();
         }
+    }
+
+    private function insertLegacyChangeRequest(
+        int $organizationId,
+        int $projectId,
+        int $userId,
+        int $allocationId,
+        string $suffix,
+        DateTimeImmutable $recordedAt,
+    ): int {
+        $changeRequestId = (int) DB::table('change_management_change_requests')->insertGetId([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'created_by_user_id' => $userId,
+            'change_number' => 'PG-INVERSE-'.strtoupper($suffix).'-'.bin2hex(random_bytes(4)),
+            'title' => 'Inverse coverage '.$suffix,
+            'reason' => 'postgres_contract',
+            'description' => 'Inverse coverage contract fixture',
+            'initiator_type' => 'internal',
+            'status' => 'draft',
+            'reporting_currency' => 'RUB',
+            'reporting_contract_project_allocation_id' => $allocationId,
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+        DB::table('change_management_impacts')->insert([
+            'organization_id' => $organizationId,
+            'change_request_id' => $changeRequestId,
+            'cost_delta' => '100.00',
+            'schedule_delta_days' => 2,
+            'requires_contract_change' => false,
+            'requires_estimate_revision' => false,
+            'requires_procurement_update' => false,
+            'requires_customer_approval' => false,
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+
+        return $changeRequestId;
+    }
+
+    private function insertChangeRequestVersion(
+        int $organizationId,
+        int $projectId,
+        int $userId,
+        int $contractId,
+        int $allocationId,
+        int $changeRequestId,
+        DateTimeImmutable $recordedAt,
+    ): int {
+        $payload = [
+            'approved_cost_minor' => null,
+            'approved_schedule_days' => null,
+            'change_request_id' => $changeRequestId,
+            'contract_id' => $contractId,
+            'contract_project_allocation_id' => $allocationId,
+            'currency' => 'RUB',
+            'currency_source' => 'change_request_monetary_context',
+            'effective_at' => $recordedAt->format(DATE_ATOM),
+            'initiator_type' => 'internal',
+            'initiator_user_id' => $userId,
+            'organization_id' => $organizationId,
+            'owner_user_id' => null,
+            'project_id' => $projectId,
+            'proposed_cost_minor' => 10_000,
+            'proposed_schedule_days' => 2,
+            'reason' => 'postgres_contract',
+            'status' => 'draft',
+            'version' => 1,
+        ];
+
+        return (int) DB::table('change_request_versions')->insertGetId([
+            ...$payload,
+            'source_hash' => hash('sha256', CanonicalJson::encode($payload)),
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+    }
+
+    private function insertChangeWorkflowEvent(
+        int $organizationId,
+        int $projectId,
+        int $userId,
+        int $changeRequestId,
+        DateTimeImmutable $recordedAt,
+    ): void {
+        $payload = [
+            'actor_id' => $userId,
+            'change_request_id' => $changeRequestId,
+            'current_status' => 'draft',
+            'event_type' => 'create',
+            'occurred_at' => $recordedAt->format(DATE_ATOM),
+            'organization_id' => $organizationId,
+            'prior_status' => null,
+            'project_id' => $projectId,
+            'version' => 1,
+        ];
+        DB::table('change_workflow_events')->insert([
+            ...$payload,
+            'event_hash' => hash('sha256', CanonicalJson::encode($payload)),
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+    }
+
+    private function insertChangeClaim(
+        int $organizationId,
+        int $projectId,
+        int $userId,
+        int $changeRequestId,
+        string $suffix,
+        DateTimeImmutable $recordedAt,
+    ): int {
+        return (int) DB::table('change_management_claims')->insertGetId([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'change_request_id' => $changeRequestId,
+            'created_by_user_id' => $userId,
+            'claim_number' => 'PG-CLAIM-'.strtoupper($suffix).'-'.bin2hex(random_bytes(4)),
+            'title' => 'Inverse coverage '.$suffix,
+            'description' => 'Inverse coverage claim fixture',
+            'amount' => '125.00',
+            'status' => 'submitted',
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+    }
+
+    private function insertChangeClaimLink(
+        int $organizationId,
+        int $versionId,
+        int $claimId,
+        DateTimeImmutable $recordedAt,
+    ): void {
+        $payload = [
+            'change_claim_id' => $claimId,
+            'change_request_version_id' => $versionId,
+            'claim_amount_minor' => 12_500,
+            'claim_version' => 1,
+            'currency' => 'RUB',
+            'organization_id' => $organizationId,
+            'relationship_type' => 'claim',
+        ];
+        DB::table('change_claim_links')->insert([
+            ...$payload,
+            'source_hash' => hash('sha256', CanonicalJson::encode($payload)),
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ]);
+    }
+
+    private function rebuildChangeClaimHistoryCheckpoint(): void
+    {
+        Schema::drop('change_claim_history_checkpoints');
+        $migration = require dirname(__DIR__, 3)
+            .'/database/migrations/2026_08_06_000210_create_change_claim_history_checkpoints.php';
+        self::assertInstanceOf(Migration::class, $migration);
+        $migration->up();
     }
 
     private function createContractSettlementFoundationSchema(): void
