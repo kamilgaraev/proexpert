@@ -28,7 +28,7 @@ final readonly class RasterPreprocessResult
         public array $warnings,
     ) {
         $allowedWarnings = ['perspective_confirmation_required', 'image_blurred', 'low_contrast', 'mostly_blank'];
-        if (preg_match('#^org-[1-9][0-9]*/estimate-generation/[1-9][0-9]*/vision/v1/[a-f0-9]{64}\.png$#', $derivativeStorageKey) !== 1
+        if (preg_match('#^org-[1-9][0-9]*/estimate-generation/[1-9][0-9]*/vision/v1/system/[a-f0-9]{64}\.png$#', $derivativeStorageKey) !== 1
             || preg_match('/^sha256:[a-f0-9]{64}$/', $derivativeHash) !== 1
             || ! str_ends_with($derivativeStorageKey, substr($derivativeHash, 7).'.png')
             || $derivativeVersion !== 'raster-preprocessor:v1' || $derivativeBytes < 1

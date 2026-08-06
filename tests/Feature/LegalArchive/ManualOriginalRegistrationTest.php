@@ -172,7 +172,7 @@ final class ManualOriginalRegistrationTest extends TestCase
         $request = $this->service->createRequest($document, $version, $actor, 'paper', $this->signerSet('Иван'), 'paper-artifact-request');
         $content = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9ZQAAAABJRU5ErkJggg==', true);
         self::assertIsString($content);
-        $path = "org-10/legal-archive/paper-originals/requests/{$request->id}/".hash('sha256', $content).'.png';
+        $path = "org-10/legal-archive/paper-originals/requests/{$request->id}/user-7/".hash('sha256', $content).'.png';
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::once())->method('putImmutable')->willReturnCallback(function (string $storedPath, string $body, string $mime): array {
             $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
@@ -229,7 +229,7 @@ final class ManualOriginalRegistrationTest extends TestCase
         $request = $this->service->createRequest($document, $version, $actor, 'paper', $this->signerSet('Иван'), 'paper-lock-request');
         $content = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9ZQAAAABJRU5ErkJggg==', true);
         self::assertIsString($content);
-        $path = "org-10/legal-archive/paper-originals/requests/{$request->id}/".hash('sha256', $content).'.png';
+        $path = "org-10/legal-archive/paper-originals/requests/{$request->id}/user-7/".hash('sha256', $content).'.png';
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::once())->method('putImmutable')->willReturnCallback(function (string $storedPath, string $body, string $mime) use ($document): array {
             $this->database->getConnection()->table('legal_archive_documents')->where('id', $document->id)->increment('lock_version');
@@ -305,7 +305,7 @@ final class ManualOriginalRegistrationTest extends TestCase
 
         self::assertSame($version->content_hash, $signature->signed_content_hash);
         self::assertSame(hash('sha256', $container), $signature->signature_content_hash);
-        self::assertStringStartsWith('org-10/', (string) $signature->signature_path);
+        self::assertStringContainsString('/user-7/', (string) $signature->signature_path);
         self::assertSame('pending_verification', $signature->verification_status);
         self::assertNull($signature->verified_at);
         self::assertSame('completed', $request->refresh()->status);
@@ -880,7 +880,7 @@ final class ManualOriginalRegistrationTest extends TestCase
         );
         $reserve = new \ReflectionMethod($service, 'reserveSignatureArtifact');
         $heartbeat = new \ReflectionMethod($service, 'heartbeatSignatureArtifact');
-        $recover = new \ReflectionMethod($service, 'recoverLateArtifact');
+        $recover = new \ReflectionMethod($service, 'recoverStaleCurrentArtifact');
         $reservation = $reserve->invoke(
             $service, 10, (int) $document->id, (int) $version->id, 99,
             $path, $contentHash, 'application/pkcs7-signature',
@@ -915,66 +915,59 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertNotNull($this->database->getConnection()->table('legal_archive_file_cleanup_debts')->value('resolved_at'));
     }
 
-    public function test_nonmatching_late_versions_have_independent_cleanup_ownership_without_mutating_canonical_artifact(): void
+    public function test_stale_uploader_observes_the_same_current_key_without_replacing_active_ownership(): void
     {
         [$document, $version] = $this->fixture();
-        $deleted = [];
+        $path = 'org-10/legal-archive/signatures/requests/99/system/current.p7s';
+        $artifactKey = hash('sha256', 'canonical-current-key');
+        $leaseToken = str_repeat('1', 64);
+        $artifactId = $this->database->getConnection()->table('legal_signature_artifacts')->insertGetId([
+            'organization_id' => 10,
+            'document_id' => $document->id,
+            'document_version_id' => $version->id,
+            'signature_request_id' => 99,
+            'artifact_key' => $artifactKey,
+            'storage_path' => $path,
+            'storage_etag' => 'old-etag',
+            'content_hash' => str_repeat('a', 64),
+            'state' => 'uploading',
+            'claim_count' => 1,
+            'cleanup_owned' => false,
+            'upload_lease_token_hash' => $leaseToken,
+            'upload_lease_expires_at' => now()->addMinutes(5),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $storage = $this->createMock(FileService::class);
-        $storage->method('removeImmutable')->willReturnCallback(static function (string $path) use (&$deleted): void {
-            $deleted[] = $path;
-        });
+        $storage->expects(self::never())->method('removeImmutable');
         $service = new LegalDocumentSignatureService(
-            new DisabledElectronicSignatureProvider, $this->access, $this->audit, $storage, $this->database->getConnection(),
+            new DisabledElectronicSignatureProvider,
+            $this->access,
+            $this->audit,
+            $storage,
+            $this->database->getConnection(),
         );
-        $recover = new \ReflectionMethod($service, 'recoverLateArtifact');
-        $cases = [
-            ['state' => 'uploading', 'version' => null, 'claim' => 1, 'cleanup' => false, 'token' => str_repeat('1', 64), 'expires' => now()->addMinutes(5), 'reference' => null],
-            ['state' => 'uploaded', 'version' => 'canonical-uploaded', 'claim' => 0, 'cleanup' => false, 'token' => null, 'expires' => null, 'reference' => null],
-            ['state' => 'deleting', 'version' => 'canonical-deleting', 'claim' => 0, 'cleanup' => true, 'token' => null, 'expires' => null, 'reference' => null],
-            ['state' => 'referenced', 'version' => 'canonical-referenced', 'claim' => 0, 'cleanup' => false, 'token' => null, 'expires' => null, 'reference' => 777],
-            ['state' => 'deleted', 'version' => 'canonical-deleted', 'claim' => 0, 'cleanup' => true, 'token' => null, 'expires' => null, 'reference' => null],
-        ];
-        foreach ($cases as $index => $case) {
-            $path = "org-10/multi-version-{$index}.p7s";
-            $canonicalKey = hash('sha256', "canonical-{$index}");
-            $canonicalId = $this->database->getConnection()->table('legal_signature_artifacts')->insertGetId([
-                'organization_id' => 10, 'document_id' => $document->id, 'document_version_id' => $version->id,
-                'signature_request_id' => 99, 'artifact_key' => $canonicalKey,
-                'storage_path' => $path,
-                'content_hash' => str_repeat('a', 64), 'state' => $case['state'], 'claim_count' => $case['claim'],
-                'cleanup_owned' => $case['cleanup'], 'upload_lease_token_hash' => $case['token'],
-                'upload_lease_expires_at' => $case['expires'], 'referenced_signature_id' => $case['reference'],
-                'created_at' => now(), 'updated_at' => now(),
-            ]);
-            $before = (array) $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $canonicalId)->sole();
-            $lateVersion = "late-version-{$index}";
-            $recover->invoke(
-                $service, 10, (int) $document->id, (int) $version->id, $canonicalKey,
-                $path, "late-etag-{$index}", str_repeat('a', 64),
-            );
-            $after = (array) $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $canonicalId)->sole();
-            self::assertSame($before, $after);
-            $lateArtifact = $this->database->getConnection()->table('legal_signature_artifacts')
-                ->where('storage_path', $path)->where('storage_etag', "late-etag-{$index}")->sole();
-            self::assertSame('deleting', $lateArtifact->state);
-            self::assertSame(1, (new LegalSignatureCleanupDebtService(
-                $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
-            ))->processDue());
-            self::assertSame('deleted', $this->database->getConnection()->table('legal_signature_artifacts')
-                ->where('id', $lateArtifact->id)->value('state'));
-            self::assertNull($this->database->getConnection()->table('legal_archive_file_cleanup_debts')
-                ->where('storage_path', $path)->value('dead_lettered_at'));
-        }
-        self::assertSame([
-            'org-10/multi-version-0.p7s',
-            'org-10/multi-version-1.p7s',
-            'org-10/multi-version-2.p7s',
-            'org-10/multi-version-3.p7s',
-            'org-10/multi-version-4.p7s',
-        ], $deleted);
+
+        (new \ReflectionMethod($service, 'recoverStaleCurrentArtifact'))->invoke(
+            $service,
+            10,
+            (int) $document->id,
+            (int) $version->id,
+            $artifactKey,
+            $path,
+            'observed-current-etag',
+            str_repeat('a', 64),
+        );
+
+        $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifactId)->sole();
+        self::assertSame('uploading', $artifact->state);
+        self::assertSame(1, (int) $artifact->claim_count);
+        self::assertSame($leaseToken, $artifact->upload_lease_token_hash);
+        self::assertSame('observed-current-etag', $artifact->storage_etag);
+        self::assertSame(0, $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->count());
     }
 
-    public function test_late_version_referenced_by_signature_is_retained_while_referenced_canonical_version_stays_unchanged(): void
+    public function test_current_key_referenced_by_signature_is_retained_and_refreshes_canonical_etag(): void
     {
         [$document, $version, $actor] = $this->fixture();
         $signers = $this->signerSet('Signer');
@@ -1000,24 +993,19 @@ final class ManualOriginalRegistrationTest extends TestCase
             'cleanup_owned' => false, 'referenced_signature_id' => $signature->id,
             'created_at' => now(), 'updated_at' => now(),
         ]);
-        $before = (array) $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $canonicalId)->sole();
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::never())->method('removeImmutable');
         $service = new LegalDocumentSignatureService(
             new DisabledElectronicSignatureProvider, $this->access, $this->audit, $storage, $this->database->getConnection(),
         );
-        (new \ReflectionMethod($service, 'recoverLateArtifact'))->invoke(
+        (new \ReflectionMethod($service, 'recoverStaleCurrentArtifact'))->invoke(
             $service, 10, (int) $document->id, (int) $version->id, $canonicalKey,
             $path, 'late-reference-etag', $lateHash,
         );
-        self::assertSame($before, (array) $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $canonicalId)->sole());
-        self::assertSame(1, (new LegalSignatureCleanupDebtService(
-            $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
-        ))->processDue());
-        $debt = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')
-            ->where('storage_path', $path)->sole();
-        self::assertNotNull($debt->resolved_at);
-        self::assertNull($debt->dead_lettered_at);
+        $canonical = $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $canonicalId)->sole();
+        self::assertSame('referenced', $canonical->state);
+        self::assertSame('late-reference-etag', $canonical->storage_etag);
+        self::assertSame(0, $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->count());
     }
 
     public function test_artifact_reconciler_repairs_deleting_state_without_cleanup_debt(): void
@@ -1783,6 +1771,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->unsignedBigInteger('signature_request_id');
             $table->string('artifact_key', 64);
             $table->text('storage_path');
+            $table->string('storage_etag')->nullable();
             $table->string('content_hash', 64);
             $table->string('put_request_hash', 64)->default('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
             $table->string('state');

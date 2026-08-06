@@ -18,11 +18,12 @@ use App\Services\LegalArchive\Signatures\SignerIdentitySet;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\LegalDocumentWorkflowService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
-use DomainException;
+use App\Services\Storage\OrganizationStoragePath;
 use DateTimeImmutable;
+use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Collection;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 
 final readonly class MobileLegalArchiveService
 {
@@ -63,7 +64,7 @@ final readonly class MobileLegalArchiveService
     }
 
     /** @param Collection<int, LegalArchiveDocument> $documents
-     *  @return array<int, array<string, mixed>>
+     * @return array<int, array<string, mixed>>
      */
     public function summaries(User $actor, Collection $documents): array
     {
@@ -160,7 +161,14 @@ final readonly class MobileLegalArchiveService
         if ($extension === null || ! is_string($content)) {
             throw new DomainException('legal_signature_paper_original_invalid');
         }
-        $path = "org-{$organizationId}/legal-archive/paper-originals/requests/{$request->id}/".hash('sha256', $content).".{$extension}";
+        $path = OrganizationStoragePath::forActor(
+            $organizationId,
+            'legal-archive',
+            "paper-originals/requests/{$request->id}",
+            (int) $actor->id,
+            hash('sha256', $content),
+            $extension,
+        );
         $original = new PaperOriginalData(
             signedAt: $signedAt,
             signers: SignerIdentitySet::fromSnapshot([[

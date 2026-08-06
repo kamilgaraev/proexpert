@@ -187,7 +187,7 @@ final class ReportingExecutionBindingsTest extends TestCase
         ], config('reporting_execution.dispatch'));
         self::assertSame(960, config('reporting_execution.execution.lease_seconds'));
         self::assertSame(100, config('reporting_execution.execution.watchdog_batch_size'));
-        self::assertSame(3600, config('reporting_execution.artifacts.reconciliation_grace_seconds'));
+        self::assertNull(config('reporting_execution.artifacts'));
         self::assertSame(900, config('queue.connections.redis_reports.job_timeout'));
         self::assertSame(1200, config('queue.connections.redis_reports.retry_after'));
         self::assertSame(960, config('horizon.environments.production.supervisor-reports.timeout'));
@@ -307,12 +307,9 @@ final class ReportingExecutionBindingsTest extends TestCase
             "\$this->configArray('execution')['lease_seconds']",
             $provider,
         );
-        self::assertStringContainsString(
-            "\$this->configArray('artifacts')['reconciliation_grace_seconds']",
-            $provider,
-        );
         self::assertStringContainsString('private int $leaseSeconds', $service);
-        self::assertStringContainsString('private int $deleteGraceSeconds', $service);
+        self::assertStringNotContainsString('deleteGraceSeconds', $service);
+        self::assertStringNotContainsString('deleteCurrent(', $service);
         self::assertStringNotContainsString('private const LEASE_SECONDS', $service);
         self::assertStringNotContainsString('private const DELETE_GRACE_SECONDS', $service);
     }

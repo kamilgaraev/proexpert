@@ -16,8 +16,10 @@ use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggreg
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportExecutionService;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportDownloadLinkData;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
@@ -29,14 +31,23 @@ use App\Services\Storage\FileService;
 use DateTimeImmutable;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
+use ReflectionMethod;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportDownloadLinkHandlerTest extends TestCase
 {
-    public function test_ready_export_signs_the_current_unique_storage_key(): void
+    public function test_created_artifact_key_is_the_same_current_key_signed_for_download(): void
     {
-        $context = (new ReportExecutionContextBuilder)->build();
+        $baseContext = (new ReportExecutionContextBuilder)->build();
+        $context = (new ReportExecutionContextBuilder)
+            ->actor(new ReportActor(
+                7,
+                $baseContext->actor->status,
+                $baseContext->actor->permissionSlugs,
+            ))
+            ->build();
         $export = new ReportExport(
             '01J00000000000000000000001',
             '01J00000000000000000000000',
@@ -60,6 +71,10 @@ final class ReportDownloadLinkHandlerTest extends TestCase
             'reused',
             null,
         );
+        $writer = (new ReflectionClass(ReportExportExecutionService::class))->newInstanceWithoutConstructor();
+        $createdKey = (new ReflectionMethod(ReportExportExecutionService::class, 'artifactPath'))
+            ->invoke($writer, $context, $export);
+        self::assertSame($export->artifactPath, $createdKey);
         $exports = $this->createStub(ReportExportStore::class);
         $exports->method('get')->willReturn($export);
         $downloads = $this->createStub(ReportReadyDownloadStore::class);

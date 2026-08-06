@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Dispatch;
 
+use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
-use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntent;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportAuditIntentLease;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
@@ -184,9 +184,9 @@ final class ReportAuditIntentContractTest extends TestCase
     #[DataProvider('validSubjects')]
     public function test_accepts_every_closed_audit_subject(string $eventType, array $subject): void
     {
-        $store = new RecordingAuditIntentStore();
+        $store = new RecordingAuditIntentStore;
         $audit = new OutboxReportTransitionAudit($store);
-        $context = (new ReportExecutionContextBuilder())->build();
+        $context = (new ReportExecutionContextBuilder)->build();
         $occurredAt = new DateTimeImmutable('2026-07-28T12:00:00.123456Z');
 
         $audit->append("event:{$eventType}", $eventType, $context, $subject, $occurredAt);
@@ -309,11 +309,11 @@ final class ReportAuditIntentContractTest extends TestCase
             'renderer_version' => '1',
             'row_count' => 10,
             'artifact' => [
-                'version_id' => 'version_one',
+                'storage_key' => 'org-1/reports/exports/01J00000000000000000000002/user-1/artifact.csv',
                 'etag' => '"7f83b1657ff1fc53b92dc18148a1d65dfa13514a2096"-3',
-                'checksum' => str_repeat('f', 64),
-                'size' => 100,
-                'mime' => 'text/csv',
+                'sha256' => str_repeat('f', 64),
+                'size_bytes' => 100,
+                'mime_type' => 'text/csv',
             ],
         ]];
         yield 'export failed' => ['report.export.failed', [
@@ -337,17 +337,16 @@ final class ReportAuditIntentContractTest extends TestCase
             'report_code' => $export['report_code'],
             'status' => 'expired',
             'format' => 'csv',
-            'version_id' => 'version_one',
+            'storage_key' => 'org-1/reports/exports/01J00000000000000000000002/user-1/artifact.csv',
             'occurred_at' => '2026-07-28T12:00:00.000000Z',
         ];
         yield 'export expired' => ['report.export.expired', $expired];
-        yield 'export artifact deleted' => ['report.export.artifact_deleted', $expired];
     }
 
     public function test_rejects_unknown_missing_extra_and_recursively_forbidden_subject_members(): void
     {
         $valid = iterator_to_array(self::validSubjects())['run queued'][1];
-        $context = (new ReportExecutionContextBuilder())->build();
+        $context = (new ReportExecutionContextBuilder)->build();
         $occurredAt = new DateTimeImmutable('2026-07-28T12:00:00Z');
 
         $mutations = [
@@ -357,7 +356,7 @@ final class ReportAuditIntentContractTest extends TestCase
             ['report.run.queued', [...$valid, 'saved_view' => ['id' => '01J00000000000000000000003', 'revision' => 1, 'hash' => str_repeat('a', 64), 'token' => 'secret']]],
         ];
         foreach ($mutations as [$eventType, $subject]) {
-            $store = new RecordingAuditIntentStore();
+            $store = new RecordingAuditIntentStore;
             try {
                 (new OutboxReportTransitionAudit($store))->append('event:key', $eventType, $context, $subject, $occurredAt);
                 self::fail("Invalid subject accepted for {$eventType}.");
@@ -381,15 +380,15 @@ final class ReportAuditIntentContractTest extends TestCase
             $missing = $subject;
             unset($missing[$key]);
             $mutations[] = $missing;
-            $mutations[] = [...$subject, $key => new \stdClass()];
+            $mutations[] = [...$subject, $key => new \stdClass];
         }
         foreach ($mutations as $index => $mutation) {
-            $store = new RecordingAuditIntentStore();
+            $store = new RecordingAuditIntentStore;
             try {
                 (new OutboxReportTransitionAudit($store))->append(
                     "event:{$eventType}:{$index}",
                     $eventType,
-                    (new ReportExecutionContextBuilder())->build(),
+                    (new ReportExecutionContextBuilder)->build(),
                     $mutation,
                     new DateTimeImmutable('2026-07-28T12:00:00Z'),
                 );
@@ -406,7 +405,7 @@ final class ReportAuditIntentContractTest extends TestCase
         $queued = $subjects['export queued'][1];
         $expired = $subjects['export expired'][1];
         $runQueued = $subjects['run queued'][1];
-        $context = (new ReportExecutionContextBuilder())->build();
+        $context = (new ReportExecutionContextBuilder)->build();
         $occurredAt = new DateTimeImmutable('2026-07-28T12:00:00Z');
         $mutations = [
             ['report.export.queued', [...$queued, 'snapshot_classification' => 'trusted']],
@@ -418,7 +417,7 @@ final class ReportAuditIntentContractTest extends TestCase
         ];
 
         foreach ($mutations as [$eventType, $subject]) {
-            $store = new RecordingAuditIntentStore();
+            $store = new RecordingAuditIntentStore;
             try {
                 (new OutboxReportTransitionAudit($store))->append('event:key', $eventType, $context, $subject, $occurredAt);
                 self::fail("Semantic mutation accepted for {$eventType}.");
@@ -431,10 +430,10 @@ final class ReportAuditIntentContractTest extends TestCase
     public function test_export_ready_keeps_etag_opaque_and_validates_checksum_separately(): void
     {
         $ready = iterator_to_array(self::validSubjects())['export ready'][1];
-        $context = (new ReportExecutionContextBuilder())->build();
+        $context = (new ReportExecutionContextBuilder)->build();
         $occurredAt = new DateTimeImmutable('2026-07-28T12:00:00Z');
 
-        $store = new RecordingAuditIntentStore();
+        $store = new RecordingAuditIntentStore;
         (new OutboxReportTransitionAudit($store))->append(
             'event:export-ready:opaque-etag',
             'report.export.ready',
@@ -448,9 +447,9 @@ final class ReportAuditIntentContractTest extends TestCase
             [...$ready, 'artifact' => [...$ready['artifact'], 'etag' => '']],
             [...$ready, 'artifact' => [...$ready['artifact'], 'etag' => "part\x1Ftwo"]],
             [...$ready, 'artifact' => [...$ready['artifact'], 'etag' => str_repeat('x', 256)]],
-            [...$ready, 'artifact' => [...$ready['artifact'], 'checksum' => strtoupper(str_repeat('f', 64))]],
+            [...$ready, 'artifact' => [...$ready['artifact'], 'sha256' => strtoupper(str_repeat('f', 64))]],
         ] as $mutation) {
-            $invalidStore = new RecordingAuditIntentStore();
+            $invalidStore = new RecordingAuditIntentStore;
             try {
                 (new OutboxReportTransitionAudit($invalidStore))->append(
                     'event:export-ready:invalid-artifact',
@@ -469,8 +468,8 @@ final class ReportAuditIntentContractTest extends TestCase
     public function test_created_services_keep_locked_constructor_and_public_method_shapes(): void
     {
         $contracts = [
-            \App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchBackoffPolicy::class => [[], ['nextAttemptAt']],
-            \App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentPublisher::class => [['store', 'transport', 'backoff', 'leaseSeconds'], ['__construct', 'publishBatch']],
+            \App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchBackoffPolicy::class => [['runtime'], ['__construct', 'nextAttemptAt']],
+            \App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentPublisher::class => [['store', 'transport', 'backoff', 'telemetry', 'runtime'], ['__construct', 'publishBatch']],
             \App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentReconciler::class => [['store', 'publisher'], ['__construct', 'reconcile']],
             \App\BusinessModules\Core\Reporting\Infrastructure\Dispatch\LaravelReportDispatchIntentPublisher::class => [['runs', 'exports'], ['__construct', 'publish']],
             \App\BusinessModules\Core\Reporting\Infrastructure\Audit\OutboxReportTransitionAudit::class => [['store'], ['__construct', 'append']],

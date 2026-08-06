@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInp
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\RasterPreprocessingException;
 use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use Intervention\Image\Drivers\Gd\Driver as GdDriver;
 use Intervention\Image\ImageManager;
 use Throwable;
@@ -95,9 +96,14 @@ final readonly class RasterPreprocessor
         $output = $manager->read($normalized)->greyscale()->contrast(12)->scaleDown($input->maxDimension, $input->maxDimension);
         $outputBytes = (string) $output->toPng(indexed: false, interlaced: false);
         $hash = hash('sha256', $outputBytes);
-        $directory = "estimate-generation/{$input->sessionId}/vision/v1";
-        $filename = "{$hash}.png";
-        $key = "org-{$input->organizationId}/{$directory}/{$filename}";
+        $key = OrganizationStoragePath::forActor(
+            $input->organizationId,
+            'estimate-generation',
+            "{$input->sessionId}/vision/v1",
+            null,
+            $hash,
+            'png',
+        );
         try {
             $stored = $this->files->putImmutable($key, $outputBytes, 'image/png');
         } catch (Throwable $exception) {

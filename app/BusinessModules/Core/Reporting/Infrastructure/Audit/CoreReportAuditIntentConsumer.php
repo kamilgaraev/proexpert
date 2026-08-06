@@ -29,7 +29,6 @@ final readonly class CoreReportAuditIntentConsumer
         'report.export.failed' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'error_code'],
         'report.export.cancelled' => ['export_id', 'run_id', 'report_code', 'status', 'format'],
         'report.export.expired' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
-        'report.export.artifact_deleted' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
     ];
 
     private const FORBIDDEN_KEYS = [
@@ -122,9 +121,7 @@ final readonly class CoreReportAuditIntentConsumer
         if (array_key_exists('columns', $intent->subject)) {
             $this->assertColumns($intent->subject['columns']);
         }
-        $expectedStatus = $intent->eventType === 'report.export.artifact_deleted'
-            ? 'expired'
-            : substr($intent->eventType, (int) strrpos($intent->eventType, '.') + 1);
+        $expectedStatus = substr($intent->eventType, (int) strrpos($intent->eventType, '.') + 1);
         if (($intent->subject['status'] ?? null) !== $expectedStatus) {
             throw new InvalidArgumentException('report_core_audit_subject_status_invalid');
         }

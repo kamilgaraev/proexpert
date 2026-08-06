@@ -54,6 +54,19 @@ final class LegacyStorageRuntimeRemovalTest extends TestCase
 
         self::assertStringNotContainsString('ExpireReportsCommand', $provider);
         self::assertStringNotContainsString('DeleteExpiredReportArtifactsCommand', $provider);
+
+        $reconciliation = $this->source(
+            'app/BusinessModules/Core/Reporting/Application/Exports/ReconcileCompletedReportArtifacts.php',
+        );
+        self::assertStringNotContainsString('deleteCurrent(', $reconciliation);
+        self::assertStringNotContainsString('deleteGraceSeconds', $reconciliation);
+
+        foreach ([
+            'app/BusinessModules/Core/Reporting/Infrastructure/Audit/OutboxReportTransitionAudit.php',
+            'app/BusinessModules/Core/Reporting/Infrastructure/Audit/CoreReportAuditIntentConsumer.php',
+        ] as $relativePath) {
+            self::assertStringNotContainsString('report.export.artifact_deleted', $this->source($relativePath));
+        }
     }
 
     public function test_report_access_is_not_limited_by_storage_retention_timestamps(): void

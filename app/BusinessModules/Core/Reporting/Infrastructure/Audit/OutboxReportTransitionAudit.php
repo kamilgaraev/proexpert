@@ -27,7 +27,6 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
         'report.export.failed' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'error_code'],
         'report.export.cancelled' => ['export_id', 'run_id', 'report_code', 'status', 'format'],
         'report.export.expired' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
-        'report.export.artifact_deleted' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
     ];
 
     private const FORBIDDEN_KEYS = [
@@ -55,10 +54,7 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
 
     private function assertSubjectValues(string $eventType, array $subject): void
     {
-        $expectedStatus = match ($eventType) {
-            'report.export.artifact_deleted' => 'expired',
-            default => substr($eventType, strrpos($eventType, '.') + 1),
-        };
+        $expectedStatus = substr($eventType, strrpos($eventType, '.') + 1);
         if (($subject['status'] ?? null) !== $expectedStatus) {
             throw new InvalidArgumentException('report_audit_subject_status_invalid');
         }

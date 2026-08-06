@@ -38,6 +38,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactSt
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -487,8 +488,14 @@ final readonly class ReportExportExecutionService
         ReportExecutionContext $context,
         ReportExport $export,
     ): string {
-        return "org-{$context->scope->organizationId}/reports/exports/"
-            ."{$export->id}/artifact.{$export->format}";
+        return OrganizationStoragePath::forActor(
+            $context->scope->organizationId,
+            'reports',
+            "exports/{$export->id}",
+            $context->actor->id,
+            'artifact',
+            $export->format,
+        );
     }
 
     private function mime(string $format): string

@@ -125,6 +125,7 @@ SQL);
         });
         Schema::table('legal_signature_artifacts', static function (Blueprint $table): void {
             $table->dropColumn('storage_version_id');
+            $table->string('storage_etag', 255)->nullable();
         });
         Schema::table('legal_archive_file_cleanup_debts', static function (Blueprint $table): void {
             $table->dropColumn('storage_version_id');
@@ -241,7 +242,8 @@ SQL);
         Schema::table('report_exports', static function (Blueprint $table): void {
             $table->text('artifact_version_id')->nullable();
         });
-        DB::statement("ALTER TABLE report_exports ADD CONSTRAINT report_exports_artifact_check CHECK ((status IN ('ready','expired') AND artifact_path IS NOT NULL AND artifact_version_id IS NOT NULL AND length(artifact_version_id) BETWEEN 1 AND 255 AND artifact_etag IS NOT NULL AND artifact_mime IS NOT NULL AND artifact_checksum IS NOT NULL AND artifact_size_bytes > 0 AND row_count IS NOT NULL AND ready_at IS NOT NULL) OR (status NOT IN ('ready','expired') AND artifact_path IS NULL AND artifact_version_id IS NULL AND artifact_etag IS NULL AND artifact_mime IS NULL AND artifact_checksum IS NULL AND artifact_size_bytes IS NULL AND row_count IS NULL AND ready_at IS NULL)) NOT VALID");
+        DB::statement("ALTER TABLE report_exports ADD CONSTRAINT report_exports_artifact_check CHECK ((status IN ('ready','expired') AND artifact_path IS NOT NULL AND artifact_version_id IS NOT NULL AND length(artifact_version_id) BETWEEN 1 AND 255 AND artifact_etag IS NOT NULL AND length(artifact_etag) BETWEEN 1 AND 255 AND artifact_etag !~ '[[:cntrl:]]' AND artifact_mime IS NOT NULL AND length(artifact_mime) BETWEEN 1 AND 255 AND artifact_checksum IS NOT NULL AND artifact_size_bytes > 0 AND row_count IS NOT NULL AND ready_at IS NOT NULL) OR (status NOT IN ('ready','expired') AND artifact_path IS NULL AND artifact_version_id IS NULL AND artifact_etag IS NULL AND artifact_mime IS NULL AND artifact_checksum IS NULL AND artifact_size_bytes IS NULL AND row_count IS NULL AND ready_at IS NULL))");
+        DB::statement('ALTER TABLE report_exports VALIDATE CONSTRAINT report_exports_artifact_check');
     }
 
     private function restoreQualityVersionStructure(): void
@@ -253,7 +255,8 @@ SQL);
         Schema::table('quality_defect_photos', static function (Blueprint $table): void {
             $table->string('storage_version_id', 255)->nullable();
         });
-        DB::statement("ALTER TABLE quality_defect_photos ADD CONSTRAINT quality_defect_photo_storage_identity_check CHECK ((NOT storage_identity_verified AND storage_version_id IS NULL AND storage_etag IS NULL AND storage_sha256 IS NULL AND size_bytes IS NULL AND mime_type IS NULL) OR (storage_identity_verified AND url LIKE 'org-%/%' AND url NOT LIKE '%://%' AND storage_version_id IS NOT NULL AND storage_etag IS NOT NULL AND storage_sha256 ~ '^[a-f0-9]{64}$' AND size_bytes > 0 AND mime_type IS NOT NULL)) NOT VALID");
+        DB::statement("ALTER TABLE quality_defect_photos ADD CONSTRAINT quality_defect_photo_storage_identity_check CHECK ((NOT storage_identity_verified AND storage_version_id IS NULL AND storage_etag IS NULL AND storage_sha256 IS NULL AND size_bytes IS NULL AND mime_type IS NULL) OR (storage_identity_verified AND url LIKE 'org-%/%' AND url NOT LIKE '%://%' AND storage_version_id IS NOT NULL AND storage_etag IS NOT NULL AND storage_sha256 ~ '^[a-f0-9]{64}$' AND size_bytes > 0 AND mime_type IS NOT NULL))");
+        DB::statement('ALTER TABLE quality_defect_photos VALIDATE CONSTRAINT quality_defect_photo_storage_identity_check');
     }
 
     private function restoreLegalVersionStructure(): void
@@ -269,6 +272,7 @@ SQL);
             $table->text('storage_version_id')->nullable();
         });
         Schema::table('legal_signature_artifacts', static function (Blueprint $table): void {
+            $table->dropColumn('storage_etag');
             $table->text('storage_version_id')->nullable();
         });
         Schema::table('legal_archive_file_cleanup_debts', static function (Blueprint $table): void {

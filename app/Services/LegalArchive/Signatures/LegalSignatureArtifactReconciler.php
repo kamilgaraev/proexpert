@@ -79,6 +79,7 @@ final readonly class LegalSignatureArtifactReconciler
             if ($signature !== null) {
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'state' => 'referenced', 'referenced_signature_id' => $signature->id, 'claim_count' => 0,
+                    'storage_etag' => $signature->storage_etag,
                     'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
                     'deletion_lease_token_hash' => null, 'deletion_lease_expires_at' => null, 'updated_at' => now(),
                 ]);
@@ -123,7 +124,7 @@ final readonly class LegalSignatureArtifactReconciler
             return false;
         }
 
-        $finalized = $this->connection->transaction(function () use ($claim, $token): ?object {
+        $finalized = $this->connection->transaction(function () use ($claim, $token, $description): ?object {
             $this->lockArtifactMutex((int) $claim->organization_id, (string) $claim->storage_path);
             $artifact = $this->connection->table('legal_signature_artifacts')->where('id', $claim->id)
                 ->where('upload_lease_token_hash', hash('sha256', $token))->lockForUpdate()->first();
@@ -133,17 +134,20 @@ final readonly class LegalSignatureArtifactReconciler
             if (in_array((string) $artifact->state, ['uploading', 'ambiguous'], true)) {
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'state' => 'uploaded',
-                    'cleanup_owned' => true, 'updated_at' => now(),
+                    'cleanup_owned' => true,
+                    'storage_etag' => $description['etag'],
+                    'updated_at' => now(),
                 ]);
             }
             $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                 'state' => 'deleting', 'claim_count' => 0, 'cleanup_owned' => true,
+                'storage_etag' => $description['etag'],
                 'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
                 'next_reconcile_at' => null,
                 'last_error_code' => null, 'updated_at' => now(),
             ]);
 
-            return $artifact;
+            return $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->first();
         }, 3);
         if ($finalized === null) {
             return false;
@@ -184,6 +188,7 @@ final readonly class LegalSignatureArtifactReconciler
             if ($signature !== null) {
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'state' => 'referenced', 'referenced_signature_id' => $signature->id,
+                    'storage_etag' => $signature->storage_etag,
                     'deletion_lease_token_hash' => null, 'deletion_lease_expires_at' => null,
                     'updated_at' => now(),
                 ]);
@@ -260,6 +265,7 @@ final readonly class LegalSignatureArtifactReconciler
             'document_version_id' => (int) $artifact->document_version_id,
             'storage_path' => (string) $artifact->storage_path,
             'debt_key' => LegalCleanupDebtKey::for((int) $artifact->organization_id, (string) $artifact->storage_path),
+            'storage_etag' => $artifact->storage_etag,
             'content_hash' => (string) $artifact->content_hash,
             'reason' => 'signature_registration_failed', 'attempts' => 0, 'next_attempt_at' => $now,
             'resolved_at' => null, 'created_at' => $now, 'updated_at' => $now,

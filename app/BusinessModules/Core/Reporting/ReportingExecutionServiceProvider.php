@@ -440,9 +440,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $this->app->when(ReconcileCompletedReportArtifacts::class)
             ->needs('$leaseSeconds')
             ->give(fn (): int => $this->configArray('execution')['lease_seconds']);
-        $this->app->when(ReconcileCompletedReportArtifacts::class)
-            ->needs('$deleteGraceSeconds')
-            ->give(fn (): int => $this->configArray('artifacts')['reconciliation_grace_seconds']);
         $this->app->singleton(ReconcileCompletedReportArtifacts::class);
     }
 
@@ -453,7 +450,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $dispatch = $this->closedIntegerMap('dispatch', ['batch_size', 'lease_seconds', 'max_attempts']);
         $audit = $this->closedIntegerMap('audit', ['batch_size', 'lease_seconds', 'max_attempts']);
         $execution = $this->closedIntegerMap('execution', ['lease_seconds', 'watchdog_batch_size']);
-        $artifacts = $this->closedIntegerMap('artifacts', ['reconciliation_grace_seconds']);
 
         if (
             $runs['ttl_seconds'] < 3600 || $runs['ttl_seconds'] > 2_592_000
@@ -464,7 +460,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
             || $dispatch !== ['batch_size' => 100, 'lease_seconds' => 60, 'max_attempts' => 12]
             || $audit !== ['batch_size' => 100, 'lease_seconds' => 300, 'max_attempts' => 12]
             || $execution !== ['lease_seconds' => 960, 'watchdog_batch_size' => 100]
-            || $artifacts !== ['reconciliation_grace_seconds' => 3600]
             || config('queue.connections.redis_reports.queue') !== 'reports'
             || config('queue.connections.redis_reports.job_timeout') !== 900
             || config('queue.connections.redis_reports.execution_lease_seconds') !== 960
