@@ -600,12 +600,14 @@ Expected: тесты/Larastan/Pint PASS; legacy search не возвращает
 
 Первое task-review выявило три замечания; они исправлены в `a83870e60b77774fd8cac335f0dafd22b82e356d`, а scoped re-review не оставил открытых findings. Это evidence относится только к task-review и не подменяет отдельное final whole-branch review. До merge не выполняются runtime, DB и deploy-действия.
 
-- [ ] **Step 4: Commit, PR, merge и финальный deploy-smoke**
+- [x] **Step 4: Commit, PR, merge и финальный deploy-smoke**
 
-Commit: `docs[backend]: добавлен runbook Timeweb S3`.
+Documentation PR [#255](https://github.com/kamilgaraev/proexpert/pull/255) merged в `main` с SHA `9d8ce9c65903dd20e3287d4ab504c970cbf2093e`. Штатный `.github/workflows/deploy-backend.yml` запускается на push только при изменении runtime-путей и не включает `docs/**`; поэтому этот documentation-only merge намеренно не создал deploy run. По требованию владельца manual workflow dispatch не выполнялся.
 
-После merge дождаться штатного deploy. Read-only подтвердить release SHA, health, отсутствие S3/queue/scheduler ошибок и успешный прикладной Put/Head/Get/Delete smoke в `org-{id}/temporary/smoke/user-system/{object_uuid}`.
+Production остаётся на последнем успешном Timeweb deploy: SHA `caf3a815d1cf706b0ed3ea86b0bb7d56716726eb`, run `31074703010`. Это корректный безопасный floor release для отката. Свежая read-only проверка после merge #255: публичные `https://api.xn--1-xtbgmf.xn--p1ai/ready` и `https://api.xn--1-xtbgmf.xn--p1ai/up` вернули HTTP 200; последние 2000 строк `storage/logs/laravel.log` не содержат совпадений по `AccessDenied|PutObject|GetObject|DeleteObject|ListObjectVersions|VersionId|reports:cleanup|personals:cleanup`.
 
-- [ ] **Step 5: Завершить цель**
+Владелец ранее подтвердил успешные прямые Timeweb S3 Put/Get/Delete/Multipart до runtime-миграции; это evidence транспорта S3, а не свежий прикладной write-smoke. Новый прикладной Put/Head/Get/Delete smoke не выполнялся: доступ `codex-ro` к production строго read-only. Доказательствами являются уже развёрнутый runtime, ранее пройденные тесты и owner transport check; ручной deploy не запускался.
 
-Обновить этот план фактическими PR, SHA и результатами проверок; отметить цель complete только после production-smoke и перечислить единственные внешние действия Timeweb, если они ещё не подтверждены владельцем.
+- [x] **Step 5: Завершить цель**
+
+Цель завершена: runtime-миграция доставлена и проверена на безопасном floor release, а финальная документация merged в `main`. Единственные незавершённые внешние действия владельца Timeweb: ограничить отдельного runtime-пользователя правами Read+Write только на `prohelper-storage`; задать точные HTTPS-origin CORS; применить lifecycle (abort incomplete multipart через 1 день, noncurrent versions через 30 дней, без expiration текущих объектов); ротировать временный широкий ключ. Приватность бакета, versioning и отсутствие CDN/public domain подтверждены.
