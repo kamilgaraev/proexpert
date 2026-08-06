@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Se
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ChangeClaimSourceInstant;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ContingencyMovement;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ContingencyLedgerEntry;
 use Carbon\CarbonInterface;
@@ -34,7 +35,7 @@ final readonly class ContingencyLedgerService
                 throw new DomainException('contingency_consumption_requires_approved_change');
             }
         }
-        $occurredAt = $effectiveAt ?? now();
+        $sourceInstant = ChangeClaimSourceInstant::from($effectiveAt ?? now());
         $payload = [
             'organization_id' => (int) $change->organization_id,
             'project_id' => $movement->projectId,
@@ -43,8 +44,8 @@ final readonly class ContingencyLedgerService
             'currency_source' => 'change_request_version',
             'movement_type' => $movement->type,
             'signed_amount_minor' => $movement->signedMinor(),
-            'effective_on' => $occurredAt->toDateString(),
-            'effective_at' => $occurredAt->toAtomString(),
+            'effective_on' => $sourceInstant->effectiveOn,
+            'effective_at' => $sourceInstant->occurredAt->format(DATE_ATOM),
             'source_type' => $movement->sourceType,
             'source_id' => $movement->sourceId,
             'source_version' => $movement->sourceVersion,

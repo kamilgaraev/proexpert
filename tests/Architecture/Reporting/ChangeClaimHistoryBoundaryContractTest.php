@@ -22,6 +22,7 @@ final class ChangeClaimHistoryBoundaryContractTest extends TestCase
         self::assertStringContainsString(
             'LOCK TABLE organizations, change_management_change_requests, '
             .'change_management_impacts, change_management_approvals, change_management_claims, '
+            .'projects, contracts, contract_project_allocations, '
             .'change_request_versions, change_workflow_events, change_claim_links, '
             .'contingency_ledger_entries',
             $migration,
@@ -49,7 +50,50 @@ final class ChangeClaimHistoryBoundaryContractTest extends TestCase
             self::assertStringContainsString($field, $migration);
         }
         self::assertStringContainsString('change_claim_history_checkpoints_append_only', $migration);
+        foreach ([
+            'request_source_incomplete',
+            'version_scope_drift',
+            'workflow_event_scope_drift',
+            'claim_link_scope_drift',
+            'ledger_scope_drift',
+        ] as $gapKind) {
+            self::assertStringContainsString($gapKind, $migration);
+        }
         self::assertStringContainsString('most_seed_change_claim_history_checkpoint_v1', $migration);
+        self::assertStringContainsString('most_change_claim_canonical_json_v1', $migration);
+        self::assertStringContainsString('most_change_claim_canonical_hash_v1', $migration);
+        self::assertLessThan(
+            strpos($migration, 'WITH boundary AS MATERIALIZED'),
+            strpos($migration, 'CREATE OR REPLACE FUNCTION most_change_claim_canonical_hash_v1'),
+        );
+        self::assertStringContainsString('most_change_claim_source_insert_guard_v1', $migration);
+        foreach ([
+            'change_request_versions_scope_hash_guard',
+            'change_workflow_events_scope_hash_guard',
+            'change_claim_links_scope_hash_guard',
+            'contingency_ledger_entries_scope_hash_guard',
+        ] as $trigger) {
+            self::assertStringContainsString($trigger, $migration);
+        }
+        self::assertSame(4, substr_count($migration, 'BEFORE INSERT ON'));
+        foreach ([
+            'request_project.organization_id IS DISTINCT FROM request.organization_id',
+            'request_allocation.project_id IS DISTINCT FROM request.project_id',
+            'request_contract.organization_id IS DISTINCT FROM request.organization_id',
+            'version_project.organization_id IS DISTINCT FROM version.organization_id',
+            'claim.project_id IS DISTINCT FROM version.project_id',
+            'ledger_project.organization_id IS DISTINCT FROM ledger.organization_id',
+        ] as $scopeGuard) {
+            self::assertStringContainsString($scopeGuard, $migration);
+        }
+        foreach ([
+            'version.source_hash IS DISTINCT FROM most_change_claim_canonical_hash_v1',
+            'event.event_hash IS DISTINCT FROM most_change_claim_canonical_hash_v1',
+            'link.source_hash IS DISTINCT FROM most_change_claim_canonical_hash_v1',
+            'ledger.entry_hash IS DISTINCT FROM most_change_claim_canonical_hash_v1',
+        ] as $legacyHashGuard) {
+            self::assertStringContainsString($legacyHashGuard, $migration);
+        }
         self::assertStringContainsString('report_change_claim_history_boundary_completed', $migration);
         self::assertStringContainsString('$evidence = DB::transaction', $migration);
         self::assertStringContainsString('DB::afterCommit', $migration);
@@ -81,5 +125,29 @@ final class ChangeClaimHistoryBoundaryContractTest extends TestCase
         self::assertStringContainsString('public $timestamps = false;', $model);
         self::assertStringContainsString("'completed_at' => 'immutable_datetime'", $model);
         self::assertStringContainsString('change_claim_history_checkpoint_immutable', $model);
+    }
+
+    #[Test]
+    public function source_writers_normalize_instants_to_utc_before_hashing(): void
+    {
+        $root = dirname(__DIR__, 3)
+            .'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/';
+
+        foreach ([
+            'ChangeWorkflowEventRecorder.php',
+            'ContingencyLedgerService.php',
+        ] as $service) {
+            $source = file_get_contents($root.$service);
+
+            self::assertIsString($source);
+            self::assertStringContainsString('ChangeClaimSourceInstant::from(', $source, $service);
+        }
+
+        $recorder = file_get_contents($root.'ChangeWorkflowEventRecorder.php');
+        self::assertIsString($recorder);
+        self::assertStringContainsString(
+            '$this->recordContingency($change, $versionRecord, $eventType, $occurredAt);',
+            $recorder,
+        );
     }
 }

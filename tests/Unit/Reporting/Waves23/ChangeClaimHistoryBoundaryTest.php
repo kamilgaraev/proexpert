@@ -10,7 +10,7 @@ use PHPUnit\Framework\TestCase;
 
 final class ChangeClaimHistoryBoundaryTest extends TestCase
 {
-    public function test_only_complete_post_checkpoint_history_is_covered(): void
+    public function test_only_post_checkpoint_instants_are_covered_and_legacy_gaps_are_explicit(): void
     {
         $boundary = new ChangeClaimHistoryBoundary(
             new DateTimeImmutable('2026-08-06T18:15:30.123456Z'),
@@ -25,7 +25,7 @@ final class ChangeClaimHistoryBoundaryTest extends TestCase
 
         self::assertFalse($boundary->covers(new DateTimeImmutable('2026-08-06T18:15:30.123455Z')));
         self::assertTrue($boundary->covers(new DateTimeImmutable('2026-08-06T18:15:30.123456Z')));
-        self::assertTrue($boundary->complete());
+        self::assertFalse($boundary->hasLegacyGaps());
 
         $incomplete = new ChangeClaimHistoryBoundary(
             new DateTimeImmutable('2026-08-06T18:15:30.123456Z'),
@@ -38,8 +38,8 @@ final class ChangeClaimHistoryBoundaryTest extends TestCase
             str_repeat('b', 64),
         );
 
-        self::assertFalse($incomplete->complete());
-        self::assertFalse($incomplete->covers(new DateTimeImmutable('2026-08-07T00:00:00Z')));
+        self::assertTrue($incomplete->hasLegacyGaps());
+        self::assertTrue($incomplete->covers(new DateTimeImmutable('2026-08-07T00:00:00Z')));
     }
 
     public function test_boundary_identity_contains_every_frozen_source_watermark(): void
