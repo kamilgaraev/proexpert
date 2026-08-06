@@ -11,6 +11,7 @@ final class OrganizationStoragePath
         'design-models',
         'estimates',
         'legal-archive',
+        'procurement',
         'quality-control',
         'reports',
         'temporary',

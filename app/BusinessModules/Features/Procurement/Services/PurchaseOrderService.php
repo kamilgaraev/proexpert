@@ -22,6 +22,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 use function trans_message;
 
@@ -132,30 +133,119 @@ class PurchaseOrderService
 
     public function sendToSupplier(PurchaseOrder $order): PurchaseOrder
     {
-        return $this->ownerWorkflowRuntime->within(fn (): PurchaseOrder => $this->sendToSupplierOwnerWorkflow(
-            $order,
-            function (
-                PurchaseOrder $sentOrder,
-                ?int $actorId,
-                DateTimeImmutable $occurredAt,
-            ): void {
-                $this->recordOrderSentCycleEvent($sentOrder, $actorId, $occurredAt);
-            },
-        ));
+        $previousMetadata = $order->metadata;
+        $previousPdfPath = $this->metadataPdfPath($previousMetadata);
+        $transactionOrder = null;
+
+        try {
+            return $this->ownerWorkflowRuntime->within(function () use ($order, &$transactionOrder): PurchaseOrder {
+                return $this->sendToSupplierOwnerWorkflow(
+                    $order,
+                    function (
+                        PurchaseOrder $sentOrder,
+                        ?int $actorId,
+                        DateTimeImmutable $occurredAt,
+                    ) use (&$transactionOrder): void {
+                        $transactionOrder = $sentOrder;
+                        $this->recordOrderSentCycleEvent($sentOrder, $actorId, $occurredAt);
+                    },
+                );
+            });
+        } catch (Throwable $exception) {
+            $failedOrder = $transactionOrder instanceof PurchaseOrder ? $transactionOrder : $order;
+            $failedPdfPath = $this->metadataPdfPath($failedOrder->metadata);
+
+            if ($failedPdfPath !== null && $failedPdfPath !== $previousPdfPath) {
+                try {
+                    $persistedPdfPath = $this->persistedPurchaseOrderPdfPath($failedOrder);
+                } catch (Throwable $verificationException) {
+                    Log::error('purchase_order_pdf_compensation_verification_failed', [
+                        'organization_id' => (int) $failedOrder->organization_id,
+                        'purchase_order_id' => (int) $failedOrder->getKey(),
+                        'storage_key' => $failedPdfPath,
+                        'exception_class' => $verificationException::class,
+                    ]);
+
+                    throw $exception;
+                }
+
+                if ($persistedPdfPath !== $failedPdfPath) {
+                    $this->compensateFailedPdf($failedOrder, $previousMetadata, $previousPdfPath);
+                }
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function metadataPdfPath(mixed $metadata): ?string
+    {
+        if (! is_array($metadata)) {
+            return null;
+        }
+
+        $path = $metadata['pdf_path'] ?? null;
+
+        return is_string($path) && $path !== '' ? $path : null;
+    }
+
+    protected function persistedPurchaseOrderPdfPath(PurchaseOrder $order): ?string
+    {
+        $metadata = PurchaseOrder::query()
+            ->whereKey($order->getKey())
+            ->value('metadata');
+
+        if (is_string($metadata)) {
+            $metadata = json_decode($metadata, true);
+        }
+
+        return $this->metadataPdfPath($metadata);
     }
 
     protected function sendToSupplierOwnerWorkflow(PurchaseOrder $order, callable $onSent): PurchaseOrder
     {
         $order = $this->lockPurchaseOrderForSend($order);
-        $this->assertPurchaseOrderCanBeSent($order);
-        $sentAt = $this->ownerWorkflowRuntime->occurredAt();
-        $actorId = $this->currentPurchaseOrderActorId();
+        $previousMetadata = $order->metadata;
+        $previousPdfPath = $this->metadataPdfPath($previousMetadata);
 
-        $this->persistPurchaseOrderSent($order, $actorId, $sentAt);
-        $onSent($order, $actorId, $sentAt);
-        $this->dispatchPurchaseOrderSentAfterCommit($order);
+        try {
+            $this->assertPurchaseOrderCanBeSent($order);
+            $sentAt = $this->ownerWorkflowRuntime->occurredAt();
+            $actorId = $this->currentPurchaseOrderActorId();
 
-        return $this->freshSentPurchaseOrder($order);
+            $this->persistPurchaseOrderSent($order, $actorId, $sentAt);
+            $onSent($order, $actorId, $sentAt);
+            $this->dispatchPurchaseOrderSentAfterCommit($order);
+
+            return $this->freshSentPurchaseOrder($order);
+        } catch (Throwable $exception) {
+            $this->compensateFailedPdf($order, $previousMetadata, $previousPdfPath);
+
+            throw $exception;
+        }
+    }
+
+    private function compensateFailedPdf(
+        PurchaseOrder $order,
+        mixed $previousMetadata,
+        ?string $previousPdfPath,
+    ): void {
+        $failedPdfPath = $this->metadataPdfPath($order->metadata);
+
+        if ($failedPdfPath !== null && $failedPdfPath !== $previousPdfPath) {
+            try {
+                $this->pdfService->remove($order, $failedPdfPath);
+            } catch (Throwable $cleanupException) {
+                Log::error('purchase_order_pdf_compensation_failed', [
+                    'organization_id' => (int) $order->organization_id,
+                    'purchase_order_id' => (int) $order->getKey(),
+                    'storage_key' => $failedPdfPath,
+                    'exception_class' => $cleanupException::class,
+                ]);
+            }
+        }
+
+        $order->metadata = $previousMetadata;
     }
 
     protected function lockPurchaseOrderForSend(PurchaseOrder $order): PurchaseOrder
@@ -188,12 +278,21 @@ class PurchaseOrderService
         ?int $actorId,
         DateTimeImmutable $sentAt,
     ): void {
-        $pdfPath = $this->pdfService->store($order);
-        $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
+        $pdf = $this->pdfService->store($order, $actorId);
+        $metadata = array_merge($order->metadata ?? [], [
+            'pdf_path' => $pdf->key,
+            'pdf_sha256' => $pdf->sha256,
+            'pdf_etag' => $pdf->etag,
+            'pdf_size_bytes' => $pdf->sizeBytes,
+            'pdf_mime' => $pdf->mime,
+            'email_sent_to' => $order->supplier->email,
+            'sent_by_user_id' => $actorId,
+        ]);
+        $order->metadata = $metadata;
 
         \Illuminate\Support\Facades\Mail::to($order->supplier->email)
             ->queue(
-                (new \App\BusinessModules\Features\Procurement\Mail\PurchaseOrderSentMail($order, $temporaryUrl))
+                (new \App\BusinessModules\Features\Procurement\Mail\PurchaseOrderSentMail($order, $pdf->key))
                     ->afterCommit(),
             );
 
@@ -201,12 +300,7 @@ class PurchaseOrderService
             'status' => PurchaseOrderStatusEnum::SENT,
             'sent_at' => $sentAt,
             'sent_at_exact' => $sentAt,
-            'metadata' => array_merge($order->metadata ?? [], [
-                'pdf_path' => $pdfPath,
-                'pdf_temporary_url' => $temporaryUrl,
-                'email_sent_to' => $order->supplier->email,
-                'sent_by_user_id' => $actorId,
-            ]),
+            'metadata' => $metadata,
         ]);
     }
 
