@@ -28,7 +28,7 @@ class StoreActFromWizardRequest extends FormRequest
             'description' => ['nullable', 'string'],
             'selected_works' => ['nullable', 'array'],
             'selected_works.*.completed_work_id' => ['required', 'integer'],
-            'selected_works.*.quantity' => ['nullable', 'numeric', 'min:0.0001'],
+            'selected_works.*.quantity' => ['nullable', 'numeric', 'decimal:0,4', 'min:0.0001'],
             'manual_lines' => ['nullable', 'array'],
             'manual_lines.*.title' => ['required', 'string', 'max:255'],
             'manual_lines.*.unit' => ['nullable', 'string', 'max:64'],

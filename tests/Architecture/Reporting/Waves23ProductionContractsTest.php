@@ -381,7 +381,7 @@ final class Waves23ProductionContractsTest extends TestCase
         self::assertStringContainsString("'transition_lineage_as_of'", $materializer);
         self::assertStringNotContainsString('transitionLineage', $materializer);
         self::assertStringContainsString('WorkConstraintTransitionEvent::query()', $drilldownSource);
-        self::assertStringContainsString('DrillDownPageCursor::decode($request->cursor)', $drilldown);
+        self::assertStringContainsString('DrillDownPageCursor::decode($input->cursor)', $drilldown);
         self::assertStringContainsString("'lineage_projection_version' => 2", $materializer);
         self::assertStringContainsString('"lineage_projection_version":2', $materializer);
         self::assertStringContainsString("'lineage_projection' => 'v2'", $materializer);

@@ -94,4 +94,76 @@ final class AcceptedProductionHistoryBoundaryContractTest extends TestCase
             $model,
         );
     }
+
+    #[Test]
+    public function every_production_act_workflow_records_acceptance_boundaries(): void
+    {
+        $adminWorkflow = file_get_contents(
+            dirname(__DIR__, 3).'/app/Services/ActReport/ActReportWorkflowService.php',
+        );
+        $contractWorkflow = file_get_contents(
+            dirname(__DIR__, 3).'/app/Services/Contract/ContractPerformanceActService.php',
+        );
+
+        self::assertIsString($adminWorkflow);
+        self::assertIsString($contractWorkflow);
+        self::assertSame(3, substr_count($adminWorkflow, 'recordTransitionIfApplicable('));
+        self::assertGreaterThanOrEqual(5, substr_count($adminWorkflow, '->lockForUpdate()'));
+        self::assertSame(2, substr_count($contractWorkflow, 'recordTransitionIfApplicable('));
+        self::assertStringContainsString('->lockForUpdate()', $contractWorkflow);
+        self::assertStringContainsString('public readonly bool $partialUpdate = false', $this->dtoSource());
+        self::assertStringContainsString('array_intersect_key($data, $provided)', $this->dtoSource());
+
+        $controller = file_get_contents(
+            dirname(__DIR__, 3)
+            .'/app/Http/Controllers/Api/V1/Admin/Contract/ContractPerformanceActController.php',
+        );
+        self::assertIsString($controller);
+        self::assertStringContainsString("attributes->get('current_organization_id')", $controller);
+        self::assertStringNotContainsString('user()?->organization_id', $controller);
+
+        $race = file_get_contents(
+            dirname(__DIR__, 3)
+            .'/tests/Feature/Reporting/Waves23/AcceptedProductionWorkflowConcurrencyPostgresTest.php',
+        );
+        self::assertIsString($race);
+        self::assertStringContainsString("'CREATE SCHEMA '.\$this->schema", $race);
+        self::assertStringContainsString("'DROP SCHEMA '.\$this->schema.' CASCADE'", $race);
+        self::assertStringContainsString("'.search_path' => \$this->schema", $race);
+        self::assertStringNotContainsString('Organization::factory()', $race);
+    }
+
+    #[Test]
+    public function unprojectable_runtime_transitions_are_recorded_as_explicit_coverage_gaps(): void
+    {
+        $recorder = file_get_contents(
+            dirname(__DIR__, 3)
+            .'/app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'ProductionAcceptanceEventRecorder.php',
+        );
+        $gapRecorder = file_get_contents(
+            dirname(__DIR__, 3)
+            .'/app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'ProductionAcceptanceCoverageGapRecorder.php',
+        );
+
+        self::assertIsString($recorder);
+        self::assertIsString($gapRecorder);
+        self::assertStringContainsString('production_acceptance_reversal_without_acceptance', $recorder);
+        self::assertStringContainsString('legacy_history_unavailable', $recorder);
+        self::assertStringContainsString("'production_acceptance_scope_mismatch' => 'scope_unavailable'", $recorder);
+        self::assertStringContainsString('source_identity_unavailable', $recorder);
+        self::assertStringContainsString("'status' => 'unprovable'", $gapRecorder);
+        self::assertStringContainsString('ProductionAcceptanceBackfillLedger::query()->firstOrCreate', $gapRecorder);
+    }
+
+    private function dtoSource(): string
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 3).'/app/DTOs/Contract/ContractPerformanceActDTO.php',
+        );
+        self::assertIsString($source);
+
+        return $source;
+    }
 }

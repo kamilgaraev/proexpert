@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\CompletedWork\Reporting\AcceptedProduction\DTO;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\Enums\CurrencyCode;
 use App\Support\Reporting\DeterministicObjectSpool;
 use Generator;
 use stdClass;
@@ -15,6 +17,8 @@ final readonly class AcceptedProductionUniverseStream
         private DeterministicObjectSpool $gaps,
         public int $eventWatermark,
         public int $ownerWatermark,
+        public int $ownerMemberWatermark,
+        public AcceptedProductionHistoryBoundary $historyBoundary,
     ) {}
 
     public function entries(): Generator
@@ -48,7 +52,7 @@ final readonly class AcceptedProductionUniverseStream
             if ($event === null
                 || (string) $event->event_type !== (string) $entry->candidate['event_type']
                 || $event->approved_rate_minor === null
-                || preg_match('/^[A-Z]{3}$/D', (string) $event->currency) !== 1
+                || CurrencyCode::tryFrom((string) $event->currency) === null
                 || trim((string) $event->currency_source) === ''
             ) {
                 $count++;
@@ -64,6 +68,8 @@ final readonly class AcceptedProductionUniverseStream
         $this->entries->updateCanonicalArrayHash($context);
         hash_update($context, ',"gaps":');
         $this->gaps->updateCanonicalArrayHash($context);
+        hash_update($context, ',"history_boundary":');
+        hash_update($context, CanonicalJson::encode($this->historyBoundary->canonicalIdentity()));
         hash_update($context, '}');
     }
 }

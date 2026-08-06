@@ -13,7 +13,7 @@ final readonly class ProductionAcceptanceReversalSource
     public function fromAccepted(ProductionAcceptanceEvent $event): array
     {
         if ($event->event_type !== 'accepted'
-            || preg_match('/^\+?\d+(?:\.\d{1,3})?$/D', (string) $event->accepted_quantity_delta) !== 1
+            || preg_match('/^\+?\d+(?:\.\d{1,4})?$/D', (string) $event->accepted_quantity_delta) !== 1
             || $event->approved_rate_minor === null
             || $event->currency === null
             || $event->currency_source === null

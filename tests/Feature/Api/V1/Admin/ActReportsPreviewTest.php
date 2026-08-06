@@ -215,6 +215,64 @@ class ActReportsPreviewTest extends TestCase
         ]);
     }
 
+    public function test_create_from_wizard_derives_project_from_the_selected_contract_work(): void
+    {
+        [$organization, $user, $contract, $contractProject] = $this->createContractFixture('WIZARD-MULTI-PROJECT');
+        $workProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $contract->forceFill(['is_multi_project' => true])->save();
+        $contract->projects()->attach([$contractProject->id, $workProject->id]);
+        $work = $this->createJournalWork($organization->id, $workProject->id, $contract->id, 202, 5);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-MULTI-PROJECT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                ['completed_work_id' => $work->id, 'quantity' => 2],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.project_name', $workProject->name);
+        $this->assertDatabaseHas('contract_performance_acts', [
+            'contract_id' => $contract->id,
+            'project_id' => $workProject->id,
+            'act_document_number' => 'KS-2-MULTI-PROJECT',
+        ]);
+    }
+
+    public function test_create_from_wizard_rejects_work_from_project_not_linked_to_contract(): void
+    {
+        [$organization, $user, $contract] = $this->createContractFixture('WIZARD-CROSS-PROJECT');
+        $otherProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $secondWork = $this->createJournalWork($organization->id, $otherProject->id, $contract->id, 204, 5);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-CROSS-PROJECT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                ['completed_work_id' => $secondWork->id, 'quantity' => 1],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('success', false);
+        $this->assertDatabaseMissing('contract_performance_acts', [
+            'act_document_number' => 'KS-2-CROSS-PROJECT',
+        ]);
+    }
+
     public function test_create_from_wizard_uses_estimate_contract_price_when_completed_work_amount_is_empty(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('WIZARD-PRICE');

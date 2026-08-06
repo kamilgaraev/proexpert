@@ -18,7 +18,9 @@ final class ReportingPermissionTranslationTest extends TestCase
     private const ROLE_REPORT_PERMISSIONS = [
         'config/RoleDefinitions/lk/organization_owner.json' => [
             'reports.view', 'reports.run', 'reports.export', 'reports.download', 'reports.manage',
-            'reports.sensitive', 'reports.audit',
+            'reports.sensitive', 'reports.audit', 'reports.project_control.view',
+            'reports.project_control.export', 'reports.production_progress.view',
+            'reports.production_progress.export',
         ],
         'config/RoleDefinitions/lk/organization_admin.json' => [
             'reports.view', 'reports.run', 'reports.export', 'reports.download', 'reports.manage',

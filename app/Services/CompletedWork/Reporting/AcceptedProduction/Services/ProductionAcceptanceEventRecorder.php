@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
 use App\Models\ContractPerformanceAct;
 use App\Models\PerformanceActCompletedWork;
 use App\Models\PerformanceActLine;
+use App\Services\Acting\ActingQuantityReservationService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ApprovedAcceptanceRate;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Events\ProductionAcceptanceTransitioned;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
@@ -21,11 +23,32 @@ final readonly class ProductionAcceptanceEventRecorder
 {
     private const ACCEPTED_STATES = ['approved', 'signed'];
 
+    private const PROJECTION_GAP_REASONS = [
+        'approved_acceptance_currency_missing' => 'currency_unavailable',
+        'approved_acceptance_money_invalid' => 'rate_unavailable',
+        'approved_acceptance_quantity_invalid' => 'quantity_unavailable',
+        'approved_acceptance_rate_not_exact' => 'rate_unavailable',
+        'production_acceptance_line_identity_unavailable' => 'source_identity_unavailable',
+        'production_acceptance_active_quantity_invalid' => 'source_identity_unavailable',
+        'production_acceptance_owner_member_invalid' => 'source_identity_unavailable',
+        'production_acceptance_owner_membership_empty' => 'source_identity_unavailable',
+        'production_acceptance_pivot_unavailable' => 'source_identity_unavailable',
+        'production_acceptance_quantity_zero' => 'quantity_unavailable',
+        'production_acceptance_rate_unavailable' => 'rate_unavailable',
+        'production_acceptance_reversal_without_acceptance' => 'legacy_history_unavailable',
+        'production_acceptance_scope_mismatch' => 'scope_unavailable',
+        'production_acceptance_source_unavailable' => 'source_identity_unavailable',
+        'production_acceptance_unit_mismatch' => 'unit_unavailable',
+        'production_acceptance_unit_unavailable' => 'unit_unavailable',
+    ];
+
     public function __construct(
         private ProductionAcceptanceEventIdentity $identity,
         private ApprovedAcceptanceRateResolver $rates,
         private ProductionAcceptanceReversalSource $reversals,
         private ProductionAcceptanceOwnerVersionWriter $ownerVersions,
+        private ProductionAcceptanceCoverageGapRecorder $coverageGaps,
+        private ActingQuantityReservationService $quantityReservations,
     ) {}
 
     public function recordTransition(
@@ -63,21 +86,82 @@ final readonly class ProductionAcceptanceEventRecorder
             'completedWorks.workType.measurementUnit',
             'completedWorks.scheduleTask',
         ]);
-        if ($act->contract === null || ($act->lines->isEmpty() && $act->completedWorks->isEmpty())) {
+        $completedWorkLines = $act->lines->filter(
+            static fn (PerformanceActLine $line): bool => $line->line_type === PerformanceActLine::TYPE_COMPLETED_WORK,
+        )->sortBy('id')->values();
+        $canonicalWorkIds = array_fill_keys(
+            $completedWorkLines
+                ->pluck('completed_work_id')
+                ->filter(static fn ($id): bool => $id !== null)
+                ->map(static fn ($id): int => (int) $id)
+                ->all(),
+            true,
+        );
+        $pivotOnlyWorks = $act->completedWorks->filter(
+            static fn (CompletedWork $work): bool => ! isset($canonicalWorkIds[(int) $work->id]),
+        )->sortBy('id')->values();
+        if ($act->contract === null || ($completedWorkLines->isEmpty() && $pivotOnlyWorks->isEmpty())) {
             throw new InvalidArgumentException('production_acceptance_source_unavailable');
         }
 
-        return DB::transaction(function () use ($act, $eventType, $occurredAt, $actorId): ProductionAcceptanceTransitioned {
+        return DB::transaction(function () use (
+            $act,
+            $completedWorkLines,
+            $pivotOnlyWorks,
+            $eventType,
+            $occurredAt,
+            $actorId,
+        ): ProductionAcceptanceTransitioned {
+            $workIds = $completedWorkLines->pluck('completed_work_id')
+                ->merge($pivotOnlyWorks->pluck('id'))
+                ->filter(static fn ($id): bool => $id !== null)
+                ->map(static fn ($id): int => (int) $id)
+                ->unique()
+                ->sort()
+                ->values();
+            $lockedWorks = CompletedWork::query()
+                ->whereIn('id', $workIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id']);
+            $acceptedSourceQuantities = [];
+            if ($eventType === 'accepted') {
+                $organizationId = (int) $act->contract->organization_id;
+                $acceptedSourceQuantities = $this->quantityReservations->approvedQuantities(
+                    $lockedWorks,
+                    $organizationId,
+                    (int) $act->id,
+                );
+                foreach ($this->activeAcceptedQuantities(
+                    $organizationId,
+                    $workIds->all(),
+                    (int) $act->id,
+                ) as $workId => $quantity) {
+                    $acceptedSourceQuantities[$workId] = ($acceptedSourceQuantities[$workId] ?? 0) + $quantity;
+                }
+            }
+
             $this->ownerVersions->record($act, $eventType, $occurredAt);
             $eventIds = [];
-            if ($act->lines->isNotEmpty()) {
-                foreach ($act->lines as $line) {
-                    $eventIds[] = (int) $this->recordLine($act, $line, $eventType, $occurredAt, $actorId)->id;
-                }
-            } else {
-                foreach ($act->completedWorks as $work) {
-                    $eventIds[] = (int) $this->recordWork($act, $work, $eventType, $occurredAt, $actorId)->id;
-                }
+            foreach ($completedWorkLines as $line) {
+                $eventIds[] = (int) $this->recordLine(
+                    $act,
+                    $line,
+                    $eventType,
+                    $occurredAt,
+                    $actorId,
+                    $acceptedSourceQuantities,
+                )->id;
+            }
+            foreach ($pivotOnlyWorks as $work) {
+                $eventIds[] = (int) $this->recordWork(
+                    $act,
+                    $work,
+                    $eventType,
+                    $occurredAt,
+                    $actorId,
+                    $acceptedSourceQuantities,
+                )->id;
             }
             sort($eventIds, SORT_NUMERIC);
 
@@ -90,12 +174,46 @@ final readonly class ProductionAcceptanceEventRecorder
         });
     }
 
+    public function recordTransitionIfApplicable(
+        ContractPerformanceAct $act,
+        string $previousStatus,
+        string $currentStatus,
+        CarbonImmutable $occurredAt,
+        ?int $actorId,
+    ): ?ProductionAcceptanceTransitioned {
+        $wasAccepted = in_array($previousStatus, self::ACCEPTED_STATES, true);
+        $isAccepted = in_array($currentStatus, self::ACCEPTED_STATES, true);
+        if ($wasAccepted === $isAccepted) {
+            return null;
+        }
+
+        try {
+            return $this->recordTransition($act, $previousStatus, $currentStatus, $occurredAt, $actorId);
+        } catch (InvalidArgumentException $exception) {
+            $reason = self::PROJECTION_GAP_REASONS[$exception->getMessage()] ?? null;
+            if ($reason === null) {
+                throw $exception;
+            }
+
+            $act->loadMissing('contract');
+            $this->coverageGaps->record(
+                $act,
+                $isAccepted ? 'acceptance' : 'reversal',
+                $reason,
+                $occurredAt,
+            );
+
+            return null;
+        }
+    }
+
     private function recordWork(
         ContractPerformanceAct $act,
         CompletedWork $work,
         string $eventType,
         CarbonImmutable $occurredAt,
         ?int $actorId,
+        array &$acceptedSourceQuantities,
     ): ProductionAcceptanceEvent {
         $unit = $work->workType?->measurementUnit;
         if ($unit === null || trim((string) $unit->short_name) === '') {
@@ -112,6 +230,8 @@ final readonly class ProductionAcceptanceEventRecorder
         if (! $pivot instanceof PerformanceActCompletedWork) {
             throw new InvalidArgumentException('production_acceptance_pivot_unavailable');
         }
+        $workId = (int) $work->id;
+        $acceptedSourceQuantities[$workId] ??= 0;
 
         return $this->recordSource(
             act: $act,
@@ -128,6 +248,7 @@ final readonly class ProductionAcceptanceEventRecorder
             eventType: $eventType,
             occurredAt: $occurredAt,
             actorId: $actorId,
+            acceptedQuantityBefore: $acceptedSourceQuantities[$workId],
         );
     }
 
@@ -137,6 +258,7 @@ final readonly class ProductionAcceptanceEventRecorder
         string $eventType,
         CarbonImmutable $occurredAt,
         ?int $actorId,
+        array &$acceptedSourceQuantities,
     ): ProductionAcceptanceEvent {
         $work = $line->completedWork;
         $unit = $work?->workType?->measurementUnit;
@@ -146,6 +268,8 @@ final readonly class ProductionAcceptanceEventRecorder
         if (trim((string) $line->unit) !== '' && (string) $line->unit !== (string) $unit->short_name) {
             throw new InvalidArgumentException('production_acceptance_unit_mismatch');
         }
+        $workId = (int) $work->id;
+        $acceptedSourceQuantities[$workId] ??= 0;
 
         return $this->recordSource(
             act: $act,
@@ -162,6 +286,7 @@ final readonly class ProductionAcceptanceEventRecorder
             eventType: $eventType,
             occurredAt: $occurredAt,
             actorId: $actorId,
+            acceptedQuantityBefore: $acceptedSourceQuantities[$workId],
         );
     }
 
@@ -178,6 +303,7 @@ final readonly class ProductionAcceptanceEventRecorder
         string $eventType,
         CarbonImmutable $occurredAt,
         ?int $actorId,
+        int &$acceptedQuantityBefore,
     ): ProductionAcceptanceEvent {
         $organizationId = (int) $act->contract->organization_id;
         if ($organizationId < 1
@@ -187,12 +313,18 @@ final readonly class ProductionAcceptanceEventRecorder
             throw new InvalidArgumentException('production_acceptance_scope_mismatch');
         }
         $acceptedQuantity = $this->decimal($acceptedQuantity);
-        if ($acceptedQuantity === '0.000') {
+        $acceptedQuantityScaled = AcceptedProductionQuantity::scaled(
+            $acceptedQuantity,
+            'production_acceptance_quantity_invalid',
+        );
+        if ($acceptedQuantityScaled <= 0) {
             throw new InvalidArgumentException('production_acceptance_quantity_zero');
         }
         $delta = $eventType === 'reversed' ? '-'.$acceptedQuantity : $acceptedQuantity;
-        $plannedQuantity = $this->decimal((string) ($work->quantity ?? '0'));
-        $reportedQuantity = $this->decimal((string) ($work->completed_quantity ?? $work->quantity ?? '0'));
+        $sourcePlannedQuantity = $this->decimal((string) ($work->quantity ?? '0'));
+        $sourceReportedQuantity = $this->decimal((string) ($work->completed_quantity ?? $work->quantity ?? '0'));
+        $plannedQuantity = $sourcePlannedQuantity;
+        $reportedQuantity = $sourceReportedQuantity;
         $workId = (int) $work->id;
         $taskId = $work->schedule_task_id === null ? null : (int) $work->schedule_task_id;
         $wbsCode = $work->scheduleTask?->wbs_code;
@@ -230,6 +362,28 @@ final readonly class ProductionAcceptanceEventRecorder
 
             return $latestEvent;
         }
+        if ($eventType === 'accepted') {
+            $activeAcceptedQuantity = $this->activeAcceptedQuantity($organizationId, $workId);
+            if ($activeAcceptedQuantity < 0) {
+                throw new InvalidArgumentException('production_acceptance_active_quantity_invalid');
+            }
+            $reportedQuantityScaled = AcceptedProductionQuantity::scaled(
+                $sourceReportedQuantity,
+                'production_acceptance_quantity_invalid',
+            );
+            if ($acceptedQuantityBefore < 0
+                || $acceptedQuantityScaled > $reportedQuantityScaled - $acceptedQuantityBefore
+            ) {
+                throw new BusinessLogicException(
+                    trans_message('act_reports.accepted_quantity_exceeded'),
+                    422,
+                );
+            }
+            if ($activeAcceptedQuantity > 0) {
+                $plannedQuantity = '0.000';
+                $reportedQuantity = '0.000';
+            }
+        }
         $acceptedEvent = null;
         if ($eventType === 'reversed') {
             $acceptedEvent = $latestEvent?->event_type === 'reversed'
@@ -242,8 +396,6 @@ final readonly class ProductionAcceptanceEventRecorder
         if ($eventType === 'reversed') {
             $reversal = $this->reversals->fromAccepted($acceptedEvent);
             $delta = $reversal['accepted_quantity_delta'];
-            $plannedQuantity = $reversal['planned_quantity'];
-            $reportedQuantity = $reversal['reported_quantity'];
             $unitDimension = $reversal['unit_dimension'];
             $unitCode = $reversal['unit_code'];
             $conversionVersion = $reversal['conversion_version'];
@@ -253,6 +405,29 @@ final readonly class ProductionAcceptanceEventRecorder
             $wbsCode = $reversal['wbs_code'];
             $zone = $reversal['zone'];
             $contractorId = $reversal['contractor_id'];
+            $remainingAcceptedQuantity = $this->activeAcceptedQuantity($organizationId, $workId)
+                + AcceptedProductionQuantity::scaled(
+                    $delta,
+                    'production_acceptance_quantity_invalid',
+                );
+            if ($remainingAcceptedQuantity < 0) {
+                throw new InvalidArgumentException('production_acceptance_active_quantity_invalid');
+            }
+            if ($remainingAcceptedQuantity === 0) {
+                $activeBasis = $this->activeBasis($organizationId, $workId);
+                if ($activeBasis['planned'] < 0 || $activeBasis['reported'] < 0) {
+                    throw new InvalidArgumentException('production_acceptance_active_quantity_invalid');
+                }
+                $plannedQuantity = AcceptedProductionQuantity::decimal(
+                    -$activeBasis['planned'],
+                );
+                $reportedQuantity = AcceptedProductionQuantity::decimal(
+                    -$activeBasis['reported'],
+                );
+            } else {
+                $plannedQuantity = '0.000';
+                $reportedQuantity = '0.000';
+            }
         }
         if (! $approvedRate instanceof ApprovedAcceptanceRate) {
             throw new InvalidArgumentException('production_acceptance_rate_unavailable');
@@ -298,7 +473,7 @@ final readonly class ProductionAcceptanceEventRecorder
         }
 
         try {
-            return DB::transaction(fn (): ProductionAcceptanceEvent => ProductionAcceptanceEvent::query()->create([
+            $created = DB::transaction(fn (): ProductionAcceptanceEvent => ProductionAcceptanceEvent::query()->create([
                 'organization_id' => $organizationId,
                 'project_id' => (int) $act->project_id,
                 'contract_id' => (int) $act->contract_id,
@@ -336,6 +511,11 @@ final readonly class ProductionAcceptanceEventRecorder
                     ]]),
                 ],
             ]));
+            if ($eventType === 'accepted') {
+                $acceptedQuantityBefore += $acceptedQuantityScaled;
+            }
+
+            return $created;
         } catch (QueryException $exception) {
             $concurrent = ProductionAcceptanceEvent::query()
                 ->where('organization_id', $organizationId)
@@ -350,6 +530,9 @@ final readonly class ProductionAcceptanceEventRecorder
             }
             if (! hash_equals((string) $concurrent->source_hash, $sourceHash)) {
                 throw new InvalidArgumentException('production_acceptance_event_immutable');
+            }
+            if ($eventType === 'accepted') {
+                $acceptedQuantityBefore += $acceptedQuantityScaled;
             }
 
             return $concurrent;
@@ -373,9 +556,9 @@ final readonly class ProductionAcceptanceEventRecorder
             'approved_rate_minor' => $approvedRate->minor,
             'contract_id' => (int) $act->contract_id,
             'performance_act_id' => (int) $act->id,
-            'planned_quantity' => $this->decimal((string) ($work->quantity ?? '0')),
+            'planned_quantity' => $this->decimal((string) $event->planned_quantity),
             'project_id' => (int) $act->project_id,
-            'reported_quantity' => $this->decimal((string) ($work->completed_quantity ?? $work->quantity ?? '0')),
+            'reported_quantity' => $this->decimal((string) $event->reported_quantity),
             'source_line_id' => $sourceLineId,
             'source_line_type' => $sourceLineType,
             'unit_code' => $unitCode,
@@ -389,17 +572,77 @@ final readonly class ProductionAcceptanceEventRecorder
 
     private function decimal(string $value): string
     {
-        if (preg_match('/^\+?(\d+)(?:\.(\d{1,4}))?$/D', trim($value), $matches) !== 1) {
-            throw new InvalidArgumentException('production_acceptance_quantity_invalid');
+        return AcceptedProductionQuantity::normalize(
+            $value,
+            'production_acceptance_quantity_invalid',
+        );
+    }
+
+    private function activeAcceptedQuantity(int $organizationId, int $workId): int
+    {
+        $quantity = 0;
+        $deltas = ProductionAcceptanceEvent::query()
+            ->where('organization_id', $organizationId)
+            ->where('work_id', $workId)
+            ->orderBy('id')
+            ->pluck('accepted_quantity_delta');
+        foreach ($deltas as $delta) {
+            $quantity += AcceptedProductionQuantity::scaled(
+                (string) $delta,
+                'production_acceptance_quantity_invalid',
+            );
         }
 
-        $fraction = $matches[2] ?? '';
-        if (strlen($fraction) === 4 && $fraction[3] !== '0') {
-            throw new InvalidArgumentException('production_acceptance_quantity_precision_unsupported');
+        return $quantity;
+    }
+
+    /**
+     * @param list<int> $workIds
+     * @return array<int, int>
+     */
+    private function activeAcceptedQuantities(
+        int $organizationId,
+        array $workIds,
+        int $performanceActId,
+    ): array {
+        $quantities = [];
+        $events = ProductionAcceptanceEvent::query()
+            ->where('organization_id', $organizationId)
+            ->where('performance_act_id', $performanceActId)
+            ->whereIn('work_id', $workIds)
+            ->orderBy('id')
+            ->get(['work_id', 'accepted_quantity_delta']);
+        foreach ($events as $event) {
+            $workId = (int) $event->work_id;
+            $quantities[$workId] = ($quantities[$workId] ?? 0) + AcceptedProductionQuantity::scaled(
+                (string) $event->accepted_quantity_delta,
+                'production_acceptance_quantity_invalid',
+            );
         }
 
-        return ltrim($matches[1], '0') === ''
-            ? '0.'.str_pad(substr($fraction, 0, 3), 3, '0')
-            : ltrim($matches[1], '0').'.'.str_pad(substr($fraction, 0, 3), 3, '0');
+        return $quantities;
+    }
+
+    /** @return array{planned: int, reported: int} */
+    private function activeBasis(int $organizationId, int $workId): array
+    {
+        $basis = ['planned' => 0, 'reported' => 0];
+        $events = ProductionAcceptanceEvent::query()
+            ->where('organization_id', $organizationId)
+            ->where('work_id', $workId)
+            ->orderBy('id')
+            ->get(['planned_quantity', 'reported_quantity']);
+        foreach ($events as $event) {
+            $basis['planned'] += AcceptedProductionQuantity::scaled(
+                (string) $event->planned_quantity,
+                'production_acceptance_quantity_invalid',
+            );
+            $basis['reported'] += AcceptedProductionQuantity::scaled(
+                (string) $event->reported_quantity,
+                'production_acceptance_quantity_invalid',
+            );
+        }
+
+        return $basis;
     }
 }

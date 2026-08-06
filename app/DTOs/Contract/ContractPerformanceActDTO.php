@@ -17,6 +17,8 @@ class ContractPerformanceActDTO
         public readonly mixed $pdf_file = null, // PDF файл акта (UploadedFile или null)
         public readonly ?string $currency = null,
         public readonly bool $completedWorksProvided = false,
+        public readonly bool $partialUpdate = false,
+        public readonly array $providedFields = [],
     ) {}
 
     public function toArray(): array
@@ -32,6 +34,18 @@ class ContractPerformanceActDTO
         ];
         if ($this->currency !== null) {
             $data['currency'] = strtoupper($this->currency);
+        }
+
+        if ($this->partialUpdate) {
+            $providedFields = $this->providedFields;
+            if (in_array('approval_date', $providedFields, true)) {
+                $data['approval_date'] = $this->approval_date;
+            }
+            if (in_array('is_approved', $providedFields, true)) {
+                $providedFields[] = 'approval_date';
+            }
+            $provided = array_fill_keys($providedFields, true);
+            $data = array_intersect_key($data, $provided);
         }
 
         return $data;

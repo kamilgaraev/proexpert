@@ -9,24 +9,36 @@ use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAccept
 
 final readonly class AcceptedProductionFormula
 {
-    private const SCALE = 3;
-
     public function row(ProductionAcceptanceFact $fact): AcceptedProductionMetric
     {
-        $planned = $this->scaled($fact->plannedQuantity);
-        $reported = $this->scaled($fact->reportedQuantity);
-        $accepted = $this->scaled($fact->acceptedQuantityDelta);
+        $planned = AcceptedProductionQuantity::scaled(
+            $fact->plannedQuantity,
+            'production_acceptance_quantity_invalid',
+        );
+        $reported = AcceptedProductionQuantity::scaled(
+            $fact->reportedQuantity,
+            'production_acceptance_quantity_invalid',
+        );
+        $accepted = AcceptedProductionQuantity::scaled(
+            $fact->acceptedQuantityDelta,
+            'production_acceptance_quantity_invalid',
+        );
 
         return new AcceptedProductionMetric(
-            plannedQuantity: $this->decimal($planned),
-            reportedQuantity: $this->decimal($reported),
-            acceptedQuantity: $this->decimal($accepted),
-            acceptedPlanVariance: $this->decimal($accepted - $planned),
-            reportedAcceptedVariance: $this->decimal($reported - $accepted),
+            plannedQuantity: AcceptedProductionQuantity::decimal($planned),
+            reportedQuantity: AcceptedProductionQuantity::decimal($reported),
+            acceptedQuantity: AcceptedProductionQuantity::decimal($accepted),
+            acceptedPlanVariance: AcceptedProductionQuantity::decimal($accepted - $planned),
+            reportedAcceptedVariance: AcceptedProductionQuantity::decimal($reported - $accepted),
             completionRatio: $planned === 0 ? null : $this->ratio($accepted, $planned),
-            acceptedAmountMinor: $fact->approvedRateMinor === null
-                ? null
-                : $this->roundedDivide($accepted * $fact->approvedRateMinor, 10 ** self::SCALE),
+            acceptedAmountMinor: $fact->acceptedAmountMinor
+                ?? ($fact->approvedRateMinor === null
+                    ? null
+                    : AcceptedProductionQuantity::multiplyRateMinor(
+                        $accepted,
+                        $fact->approvedRateMinor,
+                        'production_acceptance_money_invalid',
+                    )),
             unitDimension: $fact->unitDimension,
             unitCode: $fact->unitCode,
             conversionVersion: $fact->conversionVersion,
@@ -34,43 +46,22 @@ final readonly class AcceptedProductionFormula
         );
     }
 
-    private function scaled(string $value): int
-    {
-        $negative = str_starts_with($value, '-');
-        $unsigned = $negative ? substr($value, 1) : $value;
-        [$whole, $fraction] = array_pad(explode('.', $unsigned, 2), 2, '');
-        $scaled = ((int) $whole * (10 ** self::SCALE))
-            + (int) str_pad($fraction, self::SCALE, '0');
-
-        return $negative ? -$scaled : $scaled;
-    }
-
-    private function decimal(int $scaled): string
-    {
-        $negative = $scaled < 0;
-        $absolute = abs($scaled);
-        $value = intdiv($absolute, 10 ** self::SCALE)
-            .'.'
-            .str_pad((string) ($absolute % (10 ** self::SCALE)), self::SCALE, '0', STR_PAD_LEFT);
-
-        return $negative ? '-'.$value : $value;
-    }
-
     private function ratio(int $numerator, int $denominator): string
     {
         $negative = ($numerator < 0) !== ($denominator < 0);
-        $scaled = intdiv(abs($numerator) * 100_000_000, abs($denominator));
-        $value = intdiv($scaled, 100_000_000)
-            .'.'
-            .str_pad((string) ($scaled % 100_000_000), 8, '0', STR_PAD_LEFT);
+        $absoluteNumerator = abs($numerator);
+        $absoluteDenominator = abs($denominator);
+        $whole = intdiv($absoluteNumerator, $absoluteDenominator);
+        $remainder = $absoluteNumerator % $absoluteDenominator;
+        $fraction = '';
+        for ($position = 0; $position < 8; $position++) {
+            $remainder *= 10;
+            $fraction .= (string) intdiv($remainder, $absoluteDenominator);
+            $remainder %= $absoluteDenominator;
+        }
+        $value = $whole.'.'.$fraction;
 
         return $negative ? '-'.$value : $value;
     }
 
-    private function roundedDivide(int $numerator, int $denominator): int
-    {
-        $rounded = intdiv(abs($numerator) + intdiv($denominator, 2), $denominator);
-
-        return $numerator < 0 ? -$rounded : $rounded;
-    }
 }

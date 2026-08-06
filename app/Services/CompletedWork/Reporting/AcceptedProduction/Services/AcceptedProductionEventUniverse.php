@@ -7,6 +7,7 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\Models\ContractPerformanceAct;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionHistoryBoundary;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseEntry;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseStream;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceBackfillLedger;
@@ -22,16 +23,28 @@ use InvalidArgumentException;
 final readonly class AcceptedProductionEventUniverse
 {
     private StableReportingSourceView $stableView;
+    private AcceptedProductionHistoryBoundaryResolver $boundaries;
+    private ProductionAcceptanceRecognitionGrain $grain;
+    private AcceptedProductionFilterValidator $filterValidator;
 
-    public function __construct(?StableReportingSourceView $stableView = null)
-    {
+    public function __construct(
+        ?AcceptedProductionHistoryBoundaryResolver $boundaries = null,
+        ?StableReportingSourceView $stableView = null,
+        ?ProductionAcceptanceRecognitionGrain $grain = null,
+        ?AcceptedProductionFilterValidator $filterValidator = null,
+    ) {
+        $this->boundaries = $boundaries ?? new AcceptedProductionHistoryBoundaryResolver;
         $this->stableView = $stableView ?? new StableReportingSourceView;
+        $this->grain = $grain ?? new ProductionAcceptanceRecognitionGrain;
+        $this->filterValidator = $filterValidator ?? new AcceptedProductionFilterValidator;
     }
 
     public function stream(ReportScope $scope, ReportQuery $query): AcceptedProductionUniverseStream
     {
+        $projectId = $this->filterValidator->validate($query);
+
         return $this->stableView->capture(
-            fn (): AcceptedProductionUniverseStream => $this->captureStream($scope, $query),
+            fn (): AcceptedProductionUniverseStream => $this->captureStream($scope, $query, $projectId),
             3,
         );
     }
@@ -39,31 +52,53 @@ final readonly class AcceptedProductionEventUniverse
     private function captureStream(
         ReportScope $scope,
         ReportQuery $query,
+        int $projectId,
     ): AcceptedProductionUniverseStream {
-        [$projectIds, $workIds, $actIds, $actLineIds] = $this->filters($scope, $query);
+        $boundary = $this->boundaries->resolve($scope, $query);
+        [$projectIds, $workIds, $actIds, $actLineIds] = $this->filters($scope, $query, $projectId);
         $entries = new DeterministicObjectSpool;
         $gaps = new DeterministicObjectSpool;
-        $eventWatermark = 0;
-        $ownerWatermark = 0;
+        $eventWatermark = $boundary->eventWatermarkId;
+        $ownerWatermark = $boundary->ownerVersionWatermarkId;
+        $ownerMemberWatermark = $boundary->ownerMemberWatermarkId;
 
-        $ownerQuery = $this->ownerQuery($scope, $query, $projectIds, $actIds);
-        foreach ($ownerQuery->lazyById(100) as $owner) {
+        $dailyReducers = [];
+        $currentPerformanceActId = null;
+        $ownerQuery = $this->ownerQuery($scope, $query, $boundary, $projectIds, $actIds)
+            ->orderBy('performance_act_id')
+            ->orderBy('effective_at')
+            ->orderBy('version')
+            ->orderBy('id');
+        foreach ($ownerQuery->cursor() as $owner) {
+            if ($currentPerformanceActId !== null
+                && $currentPerformanceActId !== (int) $owner->performance_act_id
+            ) {
+                $this->flushDailyReducers($entries, $dailyReducers);
+            }
+            $currentPerformanceActId = (int) $owner->performance_act_id;
             $ownerWatermark = max($ownerWatermark, (int) $owner->id);
             ProductionAcceptanceOwnerMember::query()
                 ->where('owner_version_id', (int) $owner->id)
+                ->where('id', '>', $boundary->ownerMemberWatermarkId)
+                ->where('organization_id', $scope->organizationId)
+                ->where('project_id', (int) $owner->project_id)
+                ->where('performance_act_id', (int) $owner->performance_act_id)
                 ->chunkById(500, function ($memberPage) use (
+                    $boundary,
                     $owner,
                     $scope,
                     $query,
                     $workIds,
                     $actIds,
                     $actLineIds,
-                    $entries,
                     $gaps,
+                    &$dailyReducers,
                     &$eventWatermark,
+                    &$ownerMemberWatermark,
                 ): void {
                     $candidates = [];
                     foreach ($memberPage as $memberRow) {
+                        $ownerMemberWatermark = max($ownerMemberWatermark, (int) $memberRow->id);
                         $member = [
                             'contractor_id' => $memberRow->contractor_id,
                             'source_line_id' => (int) $memberRow->source_line_id,
@@ -87,7 +122,7 @@ final readonly class AcceptedProductionEventUniverse
                             'work_id' => (int) $member['work_id'],
                         ];
                         $key = $this->key($candidate);
-                        if ($this->candidateMatchesState($candidate, $query)) {
+                        if ($this->candidateMatchesState($candidate, $scope, $query)) {
                             $candidates[$key] = $candidate;
                         }
                     }
@@ -104,20 +139,28 @@ final readonly class AcceptedProductionEventUniverse
                             $workIds,
                             $actIds,
                             $actLineIds,
-                            $entries,
                             $gaps,
+                            $boundary,
+                            $dailyReducers,
                         ),
                     );
                 });
             $orphanQuery = ProductionAcceptanceEvent::query()
                 ->where('organization_id', $scope->organizationId)
+                ->where('project_id', (int) $owner->project_id)
                 ->where('performance_act_id', (int) $owner->performance_act_id)
+                ->where('event_type', (string) $owner->event_type)
+                ->where('recognized_at', $owner->effective_at)
+                ->where('id', '>', $boundary->eventWatermarkId)
+                ->where('recognized_at', '>=', $boundary->completedAt)
                 ->where('recognized_at', '<=', $query->asOf)
-                ->whereNotExists(static function ($builder) use ($owner): void {
+                ->whereNotExists(static function ($builder) use ($boundary, $owner, $scope): void {
                     $builder
                         ->selectRaw('1')
                         ->from('production_acceptance_owner_members as owner_member')
                         ->where('owner_member.owner_version_id', (int) $owner->id)
+                        ->where('owner_member.id', '>', $boundary->ownerMemberWatermarkId)
+                        ->where('owner_member.organization_id', $scope->organizationId)
                         ->whereColumn(
                             'owner_member.source_line_type',
                             'production_acceptance_events.source_line_type',
@@ -130,12 +173,7 @@ final readonly class AcceptedProductionEventUniverse
             $this->applyEventScalarFilters($orphanQuery, $query, $workIds, $actIds, $actLineIds);
             foreach ($orphanQuery->lazyById(500) as $event) {
                 $eventWatermark = max($eventWatermark, (int) $event->id);
-                $key = $this->key([
-                    'performance_act_id' => (int) $event->performance_act_id,
-                    'source_line_id' => (int) $event->source_line_id,
-                    'source_line_type' => (string) $event->source_line_type,
-                ]);
-                if ($this->eventMatchesState($event, $query)) {
+                if ($this->eventMatchesState($event, $scope, $query)) {
                     $this->appendGap($gaps, [
                         'event_id' => (int) $event->id,
                         'kind' => 'owner_version_missing',
@@ -146,11 +184,14 @@ final readonly class AcceptedProductionEventUniverse
                 }
             }
         }
+        $this->flushDailyReducers($entries, $dailyReducers);
         $ownerlessEvents = ProductionAcceptanceEvent::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
+            ->where('id', '>', $boundary->eventWatermarkId)
+            ->where('recognized_at', '>=', $boundary->completedAt)
             ->where('recognized_at', '<=', $query->asOf)
-            ->whereNotExists(static function ($builder) use ($scope, $query): void {
+            ->whereNotExists(static function ($builder) use ($boundary, $scope, $query): void {
                 $builder
                     ->selectRaw('1')
                     ->from('production_acceptance_owner_versions as owner_coverage')
@@ -159,7 +200,12 @@ final readonly class AcceptedProductionEventUniverse
                         'production_acceptance_events.performance_act_id',
                     )
                     ->where('owner_coverage.organization_id', $scope->organizationId)
-                    ->where('owner_coverage.effective_at', '<=', $query->asOf);
+                    ->where('owner_coverage.id', '>', $boundary->ownerVersionWatermarkId)
+                    ->where('owner_coverage.effective_at', '>=', $boundary->completedAt)
+                    ->where('owner_coverage.effective_at', '<=', $query->asOf)
+                    ->whereColumn('owner_coverage.event_type', 'production_acceptance_events.event_type')
+                    ->whereColumn('owner_coverage.project_id', 'production_acceptance_events.project_id')
+                    ->whereColumn('owner_coverage.effective_at', 'production_acceptance_events.recognized_at');
             });
         $this->applyEventScalarFilters(
             $ownerlessEvents,
@@ -169,7 +215,7 @@ final readonly class AcceptedProductionEventUniverse
             $actLineIds,
         );
         foreach ($ownerlessEvents->lazyById(500) as $event) {
-            if (! $this->eventMatchesState($event, $query)) {
+            if (! $this->eventMatchesState($event, $scope, $query)) {
                 continue;
             }
             $eventWatermark = max($eventWatermark, (int) $event->id);
@@ -179,10 +225,11 @@ final readonly class AcceptedProductionEventUniverse
                 'performance_act_id' => (int) $event->performance_act_id,
                 'source_line_id' => (int) $event->source_line_id,
                 'source_line_type' => (string) $event->source_line_type,
+                'work_id' => (int) $event->work_id,
             ]);
         }
 
-        foreach ($this->legacyGapRows($scope, $query, $projectIds, $actIds) as $gap) {
+        foreach ($this->coverageGapRows($scope, $query, $boundary, $projectIds, $actIds) as $gap) {
             $this->appendGap($gaps, $gap);
         }
 
@@ -191,6 +238,8 @@ final readonly class AcceptedProductionEventUniverse
             $gaps,
             $eventWatermark,
             $ownerWatermark,
+            $ownerMemberWatermark,
+            $boundary,
         );
     }
 
@@ -202,8 +251,9 @@ final readonly class AcceptedProductionEventUniverse
         ?array $workIds,
         ?array $actIds,
         ?array $actLineIds,
-        DeterministicObjectSpool $entries,
         DeterministicObjectSpool $gaps,
+        AcceptedProductionHistoryBoundary $boundary,
+        array &$dailyReducers,
     ): int {
         uasort(
             $candidates,
@@ -215,9 +265,22 @@ final readonly class AcceptedProductionEventUniverse
                 $right['source_line_id'],
             ],
         );
+        $owner = reset($candidates);
+        if (! is_array($owner)
+            || ! is_string($owner['event_type'] ?? null)
+            || ! is_string($owner['effective_at'] ?? null)
+            || (int) ($owner['project_id'] ?? 0) < 1
+        ) {
+            throw new InvalidArgumentException('accepted_production_candidate_invalid');
+        }
         $eventQuery = ProductionAcceptanceEvent::query()
             ->where('organization_id', $scope->organizationId)
+            ->where('project_id', (int) $owner['project_id'])
             ->where('performance_act_id', $performanceActId)
+            ->where('event_type', $owner['event_type'])
+            ->where('recognized_at', $owner['effective_at'])
+            ->where('id', '>', $boundary->eventWatermarkId)
+            ->where('recognized_at', '>=', $boundary->completedAt)
             ->where('recognized_at', '<=', $query->asOf)
             ->whereIn(
                 'source_line_id',
@@ -234,42 +297,26 @@ final readonly class AcceptedProductionEventUniverse
             ->orderBy('transition_version')
             ->orderBy('id');
 
-        $currentKey = null;
-        $currentReducer = null;
         $watermark = 0;
         foreach ($eventQuery->cursor() as $event) {
             $watermark = max($watermark, (int) $event->id);
-            if (! $this->eventMatchesState($event, $query)) {
+            if (! $this->eventMatchesState($event, $scope, $query)) {
                 continue;
             }
             $key = $this->key([
                 'performance_act_id' => (int) $event->performance_act_id,
                 'source_line_id' => (int) $event->source_line_id,
                 'source_line_type' => (string) $event->source_line_type,
+                'work_id' => (int) $event->work_id,
             ]);
             if (! isset($candidates[$key])) {
                 continue;
             }
-            if ($currentKey !== null && $currentKey !== $key) {
-                $this->appendEntry(
-                    $entries,
-                    $currentReducer?->finish()
-                        ?? throw new InvalidArgumentException('accepted_production_event_group_invalid'),
-                );
-                unset($candidates[$currentKey]);
-                $currentReducer = null;
-            }
-            $currentKey = $key;
-            $currentReducer ??= new AcceptedProductionEventReducer($candidates[$key]);
-            $currentReducer->append($event);
-        }
-        if ($currentKey !== null) {
-            $this->appendEntry(
-                $entries,
-                $currentReducer?->finish()
-                    ?? throw new InvalidArgumentException('accepted_production_event_group_invalid'),
-            );
-            unset($candidates[$currentKey]);
+            $candidate = $candidates[$key];
+            $dailyKey = $this->grain->key($event, $scope->timezone);
+            $dailyReducers[$dailyKey] ??= new AcceptedProductionEventReducer($candidate);
+            $dailyReducers[$dailyKey]->append($event, $candidate);
+            unset($candidates[$key]);
         }
         foreach ($candidates as $candidate) {
             $this->appendGap($gaps, [
@@ -284,6 +331,20 @@ final readonly class AcceptedProductionEventUniverse
         return $watermark;
     }
 
+    private function flushDailyReducers(
+        DeterministicObjectSpool $entries,
+        array &$dailyReducers,
+    ): void {
+        ksort($dailyReducers, SORT_STRING);
+        foreach ($dailyReducers as $reducer) {
+            if (! $reducer instanceof AcceptedProductionEventReducer) {
+                throw new InvalidArgumentException('accepted_production_event_group_invalid');
+            }
+            $this->appendEntry($entries, $reducer->finish());
+        }
+        $dailyReducers = [];
+    }
+
     private function appendEntry(
         DeterministicObjectSpool $entries,
         AcceptedProductionUniverseEntry $entry,
@@ -294,83 +355,129 @@ final readonly class AcceptedProductionEventUniverse
         );
     }
 
-    private function filters(ReportScope $scope, ReportQuery $query): array
+    private function filters(ReportScope $scope, ReportQuery $query, int $projectId): array
     {
         $resources = new ReportScopedResourceFilter;
         $workIds = $this->intersect(
-            $resources->ids($scope, ['work', 'completed_work'], $scope->projectIds),
+            $resources->ids($scope, ['work', 'completed_work'], [$projectId]),
             $this->positiveIntegerFilter($query, 'work_ids'),
         );
         $actIds = $this->intersect(
-            $resources->ids($scope, ['act', 'performance_act', 'contract_performance_act'], $scope->projectIds),
-            $this->positiveIntegerFilter($query, 'act_ids', 'performance_act_ids'),
+            $resources->ids($scope, ['act', 'performance_act', 'contract_performance_act'], [$projectId]),
+            $this->positiveIntegerFilter($query, 'act_ids'),
         );
 
         return [
-            array_values(array_intersect(
-                $scope->projectIds,
-                $this->positiveIntegerFilter($query, 'project_ids') ?? $scope->projectIds,
-            )),
+            [$projectId],
             $workIds,
             $actIds,
-            $resources->ids($scope, ['act_line', 'performance_act_line'], $scope->projectIds),
+            $resources->ids($scope, ['act_line', 'performance_act_line'], [$projectId]),
         ];
     }
 
     private function ownerQuery(
         ReportScope $scope,
         ReportQuery $query,
+        AcceptedProductionHistoryBoundary $boundary,
         array $projectIds,
         ?array $actIds,
     ): Builder {
         return ProductionAcceptanceOwnerVersion::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
+            ->where('id', '>', $boundary->ownerVersionWatermarkId)
+            ->where('effective_at', '>=', $boundary->completedAt)
             ->where('effective_at', '<=', $query->asOf)
-            ->whereRaw(
-                'NOT EXISTS (
-                    SELECT 1 FROM production_acceptance_owner_versions owner_later
-                    WHERE owner_later.organization_id = production_acceptance_owner_versions.organization_id
-                      AND owner_later.performance_act_id = production_acceptance_owner_versions.performance_act_id
-                      AND owner_later.effective_at <= ?
-                      AND (owner_later.effective_at > production_acceptance_owner_versions.effective_at
-                        OR (owner_later.effective_at = production_acceptance_owner_versions.effective_at
-                          AND owner_later.version > production_acceptance_owner_versions.version))
-                )',
-                [$query->asOf->format(DATE_ATOM)],
-            )
+            ->whereNotExists(static function ($builder) use ($boundary): void {
+                $builder
+                    ->selectRaw('1')
+                    ->from('production_acceptance_owner_versions as owner_same_transition')
+                    ->whereColumn(
+                        'owner_same_transition.organization_id',
+                        'production_acceptance_owner_versions.organization_id',
+                    )
+                    ->whereColumn(
+                        'owner_same_transition.performance_act_id',
+                        'production_acceptance_owner_versions.performance_act_id',
+                    )
+                    ->whereColumn(
+                        'owner_same_transition.event_type',
+                        'production_acceptance_owner_versions.event_type',
+                    )
+                    ->whereColumn(
+                        'owner_same_transition.effective_at',
+                        'production_acceptance_owner_versions.effective_at',
+                    )
+                    ->whereColumn(
+                        'owner_same_transition.version',
+                        '>',
+                        'production_acceptance_owner_versions.version',
+                    )
+                    ->where('owner_same_transition.id', '>', $boundary->ownerVersionWatermarkId);
+            })
             ->when(
                 $actIds !== null,
                 static fn (Builder $builder) => $builder->whereIn('performance_act_id', $actIds),
             );
     }
 
-    private function legacyGapRows(
+    private function coverageGapRows(
         ReportScope $scope,
         ReportQuery $query,
+        AcceptedProductionHistoryBoundary $boundary,
         array $projectIds,
         ?array $actIds,
     ): \Generator {
+        [$from, $to] = $this->period($query->filters->values);
+        $coverageStart = $boundary->coverageStartDay($scope->timezone);
+        $asOfDay = $query->asOf->setTimezone($scope->timezone)->format('Y-m-d');
+        $timezone = $scope->timezone->getName();
+        $effectiveRecognitionDate = <<<'SQL'
+CASE
+    WHEN signed_at IS NOT NULL AND signed_at <= ?
+        THEN (signed_at AT TIME ZONE ?)::date
+    ELSE approval_date
+END
+SQL;
         $acts = ContractPerformanceAct::query()
             ->whereIn('project_id', $projectIds)
             ->whereHas('contract', static fn (Builder $builder) => $builder
                 ->where('organization_id', $scope->organizationId))
-            ->where(static function (Builder $builder) use ($query): void {
-                $builder
-                    ->where(static fn (Builder $signed) => $signed
-                        ->whereNotNull('signed_at')
-                        ->where('signed_at', '<=', $query->asOf))
-                    ->orWhere(static fn (Builder $approved) => $approved
-                        ->whereNotNull('approval_date')
-                        ->where('approval_date', '<=', $query->asOf));
-            })
-            ->whereNotExists(static function ($builder) use ($scope, $query): void {
+            ->whereRaw(
+                "({$effectiveRecognitionDate}) BETWEEN ? AND ?",
+                [$query->asOf, $timezone, $coverageStart, $asOfDay],
+            )
+            ->whereNotExists(static function ($builder) use ($boundary, $scope, $query): void {
                 $builder
                     ->selectRaw('1')
                     ->from('production_acceptance_owner_versions as owner_coverage')
                     ->whereColumn('owner_coverage.performance_act_id', 'contract_performance_acts.id')
                     ->where('owner_coverage.organization_id', $scope->organizationId)
+                    ->where('owner_coverage.id', '>', $boundary->ownerVersionWatermarkId)
+                    ->where('owner_coverage.effective_at', '>=', $boundary->completedAt)
                     ->where('owner_coverage.effective_at', '<=', $query->asOf);
+            })
+            ->when($from !== null, static function (Builder $builder) use (
+                $effectiveRecognitionDate,
+                $from,
+                $query,
+                $timezone,
+            ): void {
+                $builder->whereRaw(
+                    "({$effectiveRecognitionDate}) >= ?",
+                    [$query->asOf, $timezone, $from],
+                );
+            })
+            ->when($to !== null, static function (Builder $builder) use (
+                $effectiveRecognitionDate,
+                $query,
+                $timezone,
+                $to,
+            ): void {
+                $builder->whereRaw(
+                    "({$effectiveRecognitionDate}) <= ?",
+                    [$query->asOf, $timezone, $to],
+                );
             })
             ->when($actIds !== null, static fn (Builder $builder) => $builder->whereIn('id', $actIds));
         foreach ($acts->lazyById(500) as $act) {
@@ -385,8 +492,14 @@ final readonly class AcceptedProductionEventUniverse
         $queryBuilder = ProductionAcceptanceBackfillLedger::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
+            ->where('id', '>', $boundary->backfillLedgerWatermarkId)
+            ->where('recorded_at', '>=', $boundary->completedAt)
             ->where('recognized_at', '<=', $query->asOf)
             ->where('status', 'unprovable')
+            ->when($from !== null, static fn (Builder $builder) => $builder
+                ->whereRaw('(recognized_at AT TIME ZONE ?)::date >= ?', [$timezone, $from]))
+            ->when($to !== null, static fn (Builder $builder) => $builder
+                ->whereRaw('(recognized_at AT TIME ZONE ?)::date <= ?', [$timezone, $to]))
             ->when($actIds !== null, static fn (Builder $builder) => $builder
                 ->whereIn('performance_act_id', $actIds));
         foreach ($queryBuilder->lazyById(500) as $ledger) {
@@ -404,20 +517,29 @@ final readonly class AcceptedProductionEventUniverse
         $spool->append((object) $gap, $gap);
     }
 
-    private function candidateMatchesState(array $candidate, ReportQuery $query): bool
-    {
+    private function candidateMatchesState(
+        array $candidate,
+        ReportScope $scope,
+        ReportQuery $query,
+    ): bool {
         [$from, $to] = $this->period($query->filters->values);
-        $date = substr((string) $candidate['effective_at'], 0, 10);
+        $date = (new \DateTimeImmutable((string) $candidate['effective_at']))
+            ->setTimezone($scope->timezone)
+            ->format('Y-m-d');
 
         return $this->matches($query->filters->values['statuses'] ?? [], $candidate['event_type'])
             && ($from === null || $date >= $from)
             && ($to === null || $date <= $to);
     }
 
-    private function eventMatchesState(ProductionAcceptanceEvent $event, ReportQuery $query): bool
+    private function eventMatchesState(
+        ProductionAcceptanceEvent $event,
+        ReportScope $scope,
+        ReportQuery $query,
+    ): bool
     {
         [$from, $to] = $this->period($query->filters->values);
-        $date = $event->recognized_at->format('Y-m-d');
+        $date = $event->recognized_at->setTimezone($scope->timezone)->format('Y-m-d');
 
         return $this->matches($query->filters->values['statuses'] ?? [], (string) $event->event_type)
             && ($from === null || $date >= $from)
@@ -498,12 +620,13 @@ final readonly class AcceptedProductionEventUniverse
 
     private function period(array $values): array
     {
-        $period = $values['period'] ?? [];
-        $from = $values['period_from'] ?? (is_array($period) ? ($period['from'] ?? null) : null);
-        $to = $values['period_to'] ?? (is_array($period) ? ($period['to'] ?? null) : null);
+        $from = $values['period_from'] ?? null;
+        $to = $values['period_to'] ?? null;
         foreach ([$from, $to] as $date) {
             if ($date !== null
-                && (! is_string($date) || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date) !== 1)
+                && (! is_string($date)
+                    || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date) !== 1
+                    || \DateTimeImmutable::createFromFormat('!Y-m-d', $date)?->format('Y-m-d') !== $date)
             ) {
                 throw new InvalidArgumentException('accepted_production_period_filter_invalid');
             }
@@ -518,10 +641,8 @@ final readonly class AcceptedProductionEventUniverse
     private function positiveIntegerFilter(
         ReportQuery $query,
         string $key,
-        ?string $alias = null,
     ): ?array {
-        $value = $query->filters->values[$key]
-            ?? ($alias === null ? null : ($query->filters->values[$alias] ?? null));
+        $value = $query->filters->values[$key] ?? null;
         if ($value === null || $value === []) {
             return null;
         }
@@ -566,6 +687,7 @@ final readonly class AcceptedProductionEventUniverse
             (int) $source['performance_act_id'],
             (string) $source['source_line_type'],
             (int) $source['source_line_id'],
+            (int) $source['work_id'],
         ]);
     }
 }

@@ -4,22 +4,37 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reporting\Waves23;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\Exceptions\BusinessLogicException;
+use App\Models\CompletedWork;
+use App\Models\ContractPerformanceAct;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
+use App\Services\Acting\ActingPriceService;
+use App\Services\ActReport\ActReportNotificationService;
+use App\Services\ActReport\ActReportWorkflowService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFormula;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventUniverse;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionHistoryBoundaryResolver;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLineageFilter;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLifecycleCompleteness;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionSnapshotMaterializer;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceRecognitionGrain;
+use App\Services\Contract\ContractPerformanceActService;
+use Carbon\CarbonImmutable;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
+use ReflectionMethod;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\TestCase;
 
@@ -37,59 +52,101 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         );
     }
 
-    public function test_period_filter_keeps_reversal_on_its_transition_day_and_isolates_tenant(): void
+    public function test_period_filter_keeps_acceptance_and_reversal_on_their_own_days_and_isolates_tenant(): void
     {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $otherAccessibleProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $foreignOrganization = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')
+            ->where('organization_id', $organization->id)
+            ->firstOrFail();
+        $coverageStart = (new DateTimeImmutable((string) $checkpoint->completed_at))
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->setTime(0, 0)
+            ->modify('+1 day');
+        $acceptedAt = $coverageStart->setTime(8, 0);
+        $reversedAt = $coverageStart->modify('+1 day')->setTime(6, 15);
+        $foreignAt = $coverageStart->modify('+1 day')->setTime(7, 0);
+        $otherProjectAt = $coverageStart->setTime(9, 0);
         $acceptedId = $this->insertEvent(
-            organizationId: 3,
-            projectId: 7,
+            organizationId: (int) $organization->id,
+            projectId: (int) $project->id,
             eventType: 'accepted',
             quantity: '2.500',
-            recognizedAt: '2026-07-28T08:00:00Z',
+            recognizedAt: $acceptedAt->format(DATE_ATOM),
         );
         $this->insertEvent(
-            organizationId: 3,
-            projectId: 7,
+            organizationId: (int) $organization->id,
+            projectId: (int) $project->id,
             eventType: 'reversed',
             quantity: '-2.500',
-            recognizedAt: '2026-07-30T06:15:00Z',
+            recognizedAt: $reversedAt->format(DATE_ATOM),
             reversesEventId: $acceptedId,
             transitionVersion: 2,
         );
+        $this->insertEvent(
+            organizationId: (int) $organization->id,
+            projectId: (int) $otherAccessibleProject->id,
+            eventType: 'accepted',
+            quantity: '7.000',
+            recognizedAt: $otherProjectAt->format(DATE_ATOM),
+            performanceActId: 52,
+            sourceLineId: 92,
+        );
         $foreignAccepted = $this->insertEvent(
-            organizationId: 4,
-            projectId: 8,
+            organizationId: (int) $foreignOrganization->id,
+            projectId: (int) $foreignProject->id,
             eventType: 'accepted',
             quantity: '9.000',
-            recognizedAt: '2026-07-30T07:00:00Z',
+            recognizedAt: $foreignAt->format(DATE_ATOM),
         );
         $this->insertEvent(
-            organizationId: 4,
-            projectId: 8,
+            organizationId: (int) $foreignOrganization->id,
+            projectId: (int) $foreignProject->id,
             eventType: 'reversed',
             quantity: '-9.000',
-            recognizedAt: '2026-07-30T07:01:00Z',
+            recognizedAt: $foreignAt->modify('+1 minute')->format(DATE_ATOM),
             reversesEventId: $foreignAccepted,
             transitionVersion: 2,
         );
-        $this->insertOwnerVersion(3, 7, 'accepted', '2026-07-28T08:00:00Z', 1);
-        $this->insertOwnerVersion(3, 7, 'reversed', '2026-07-30T06:15:00Z', 2);
-        $this->insertOwnerVersion(4, 8, 'accepted', '2026-07-30T07:00:00Z', 1);
-        $this->insertOwnerVersion(4, 8, 'reversed', '2026-07-30T07:01:00Z', 2);
-        $scope = new ReportScope(3, [3], [7], [], new DateTimeZone('UTC'));
+        $this->insertOwnerVersion((int) $organization->id, (int) $project->id, 'accepted', $acceptedAt->format(DATE_ATOM), 1);
+        $this->insertOwnerVersion((int) $organization->id, (int) $project->id, 'reversed', $reversedAt->format(DATE_ATOM), 2);
+        $this->insertOwnerVersion(
+            (int) $organization->id,
+            (int) $otherAccessibleProject->id,
+            'accepted',
+            $otherProjectAt->format(DATE_ATOM),
+            1,
+            52,
+            92,
+        );
+        $this->insertOwnerVersion((int) $foreignOrganization->id, (int) $foreignProject->id, 'accepted', $foreignAt->format(DATE_ATOM), 1);
+        $this->insertOwnerVersion((int) $foreignOrganization->id, (int) $foreignProject->id, 'reversed', $foreignAt->modify('+1 minute')->format(DATE_ATOM), 2);
+        $scope = new ReportScope(
+            (int) $organization->id,
+            [(int) $organization->id],
+            [(int) $project->id, (int) $otherAccessibleProject->id],
+            [],
+            new DateTimeZone('UTC'),
+        );
         $definition = (new ReportDefinitionBuilder)
             ->code('accepted_production_progress')
             ->formulaVersion('accepted_production.v1')
-            ->sourceSchemaVersion('production_acceptance_events_v1')
+            ->sourceSchemaVersion('production_acceptance_events_v2')
             ->payload();
         $query = new ReportQuery(
             $definition,
             $scope,
             new ReportFilterSet([
-                'period' => ['from' => '2026-07-30', 'to' => '2026-07-30'],
-                'statuses' => ['reversed'],
+                'organization_id' => (string) $organization->id,
+                'project_id' => (string) $project->id,
+                'period_from' => $acceptedAt->format('Y-m-d'),
+                'period_to' => $reversedAt->format('Y-m-d'),
             ]),
             [],
-            new DateTimeImmutable('2026-07-30T23:59:59Z'),
+            $reversedAt->setTime(23, 59, 59),
             'ru-RU',
         );
 
@@ -99,14 +156,31 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         ))->materialize($scope, $query);
 
         $rows = DB::table('accepted_production_rows')
-            ->where('organization_id', 3)
+            ->where('organization_id', $organization->id)
             ->where('snapshot_id', $snapshot->id)
             ->get();
-        self::assertCount(1, $rows);
-        self::assertSame('2026-07-30', (string) $rows->first()->recognized_on);
-        self::assertSame('-2.500', (string) $rows->first()->accepted_quantity);
-        self::assertSame('reversed', (string) $rows->first()->event_status);
-        self::assertSame(0, DB::table('accepted_production_rows')->where('organization_id', 4)->count());
+        self::assertCount(2, $rows);
+        self::assertSame(
+            [
+                [$acceptedAt->format('Y-m-d'), '2.500', 'accepted'],
+                [$reversedAt->format('Y-m-d'), '-2.500', 'reversed'],
+            ],
+            $rows
+                ->sortBy('recognized_on')
+                ->map(static fn ($row): array => [
+                    (string) $row->recognized_on,
+                    (string) $row->accepted_quantity,
+                    (string) $row->event_status,
+                ])
+                ->values()
+                ->all(),
+        );
+        self::assertSame(
+            0,
+            DB::table('accepted_production_rows')
+                ->where('organization_id', $foreignOrganization->id)
+                ->count(),
+        );
     }
 
     public function test_keyset_index_covers_daily_recognition_order(): void
@@ -121,6 +195,129 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             '(organization_id, snapshot_id, project_id, recognized_on, unit_dimension, unit_code, work_id, row_key)',
             $definition,
         );
+    }
+
+    public function test_missing_checkpoint_returns_the_standard_source_unavailable_error(): void
+    {
+        $scope = new ReportScope(999_999_999, [999_999_999], [999_999_999], [], new DateTimeZone('UTC'));
+        $definition = (new ReportDefinitionBuilder)
+            ->code('accepted_production_progress')
+            ->formulaVersion('accepted_production.v1')
+            ->sourceSchemaVersion('production_acceptance_events_v2')
+            ->payload();
+        $query = new ReportQuery(
+            $definition,
+            $scope,
+            new ReportFilterSet([
+                'period_from' => '2099-01-01',
+                'period_to' => '2099-01-01',
+            ]),
+            [],
+            new DateTimeImmutable('2099-01-01T23:59:59Z'),
+            'ru-RU',
+        );
+
+        try {
+            (new AcceptedProductionHistoryBoundaryResolver)->resolve($scope, $query);
+            self::fail('Missing checkpoint must fail closed.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE, $exception->errorCode);
+            self::assertSame([], $exception->safeFields);
+        }
+    }
+
+    public function test_malformed_filter_is_rejected_before_checkpoint_lookup(): void
+    {
+        $scope = new ReportScope(999_999_999, [999_999_999], [999_999_999], [], new DateTimeZone('UTC'));
+        $query = new ReportQuery(
+            (new ReportDefinitionBuilder)
+                ->code('accepted_production_progress')
+                ->formulaVersion('accepted_production.v1')
+                ->sourceSchemaVersion('production_acceptance_events_v2')
+                ->payload(),
+            $scope,
+            new ReportFilterSet([
+                'organization_id' => '999999999',
+                'project_id' => '999999999',
+                'period_from' => '2099-01-01',
+                'period_to' => '2099-01-01',
+                'contractor_ids' => 'broken',
+            ]),
+            [],
+            new DateTimeImmutable('2099-01-01T23:59:59Z'),
+            'ru-RU',
+        );
+
+        try {
+            (new AcceptedProductionEventUniverse)->stream($scope, $query);
+            self::fail('Malformed public filter must fail before the source lookup.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+            self::assertSame([], $exception->safeFields);
+        }
+    }
+
+    public function test_invalid_calendar_period_returns_the_standard_range_error_before_sql(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $scope = new ReportScope(
+            (int) $organization->id,
+            [(int) $organization->id],
+            [(int) $project->id],
+            [],
+            new DateTimeZone('UTC'),
+        );
+        $definition = (new ReportDefinitionBuilder)
+            ->code('accepted_production_progress')
+            ->formulaVersion('accepted_production.v1')
+            ->sourceSchemaVersion('production_acceptance_events_v2')
+            ->payload();
+        $query = new ReportQuery(
+            $definition,
+            $scope,
+            new ReportFilterSet([
+                'period_from' => '2099-02-31',
+                'period_to' => '2099-02-31',
+            ]),
+            [],
+            new DateTimeImmutable('2099-03-01T23:59:59Z'),
+            'ru-RU',
+        );
+
+        try {
+            (new AcceptedProductionHistoryBoundaryResolver)->resolve($scope, $query);
+            self::fail('Invalid calendar date must be rejected before source queries.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_FILTER_RANGE_INVALID, $exception->errorCode);
+            self::assertSame([], $exception->safeFields);
+        }
+    }
+
+    public function test_drill_lineage_period_uses_the_snapshot_timezone_near_midnight(): void
+    {
+        $eventId = $this->insertEvent(
+            organizationId: 3,
+            projectId: 7,
+            eventType: 'accepted',
+            quantity: '2.500',
+            recognizedAt: '2026-08-01T21:30:00Z',
+        );
+        $filter = AcceptedProductionLineageFilter::fromArray([
+            'as_of' => '2026-08-02T23:59:59.000000+03:00',
+            'contractor_ids' => [],
+            'period_from' => '2026-08-02',
+            'period_to' => '2026-08-02',
+            'statuses' => [],
+            'timezone' => 'Europe/Moscow',
+            'unit_codes' => [],
+            'zones' => [],
+        ]);
+        $query = ProductionAcceptanceEvent::query()->whereKey($eventId);
+
+        $filter->applyTo($query);
+
+        self::assertSame([$eventId], $query->pluck('id')->map(static fn ($id): int => (int) $id)->all());
     }
 
     public function test_acceptance_events_are_append_only_in_postgresql(): void
@@ -200,9 +397,305 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         );
     }
 
-    public function test_history_checkpoint_captures_existing_source_sets_and_separates_late_backdated_rows(): void
+    public function test_real_act_approval_records_acceptance_without_invalidating_the_checkpoint(): void
+    {
+        [$scope, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null,
+            rejectedAt: null,
+            currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id);
+
+        $this->rerunHistoryCheckpointMigration();
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        self::assertSame(0, (int) $checkpoint->excluded_legacy_act_count);
+        self::assertGreaterThanOrEqual($actId, (int) $checkpoint->performance_act_watermark_id);
+
+        $this->mock(ActingPriceService::class)
+            ->shouldReceive('resolveLineUnitPrice')
+            ->once()
+            ->andReturn(1000.0);
+        $this->mock(ActReportNotificationService::class)
+            ->shouldReceive('notifyStatusChanged')
+            ->once();
+        CarbonImmutable::setTestNow(new DateTimeImmutable((string) $checkpoint->completed_at));
+        try {
+            $approved = app(ActReportWorkflowService::class)->approve(
+                ContractPerformanceAct::query()->findOrFail($actId),
+                (int) $user->id,
+            );
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+
+        self::assertSame(ContractPerformanceAct::STATUS_APPROVED, (string) $approved->status);
+        self::assertSame(1, ProductionAcceptanceEvent::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('performance_act_id', $actId)
+            ->where('event_type', 'accepted')
+            ->count());
+        self::assertSame(1, DB::table('production_acceptance_owner_versions')
+            ->where('organization_id', $organizationId)
+            ->where('performance_act_id', $actId)
+            ->where('event_type', 'accepted')
+            ->count());
+
+        $coverageDay = (new DateTimeImmutable((string) $checkpoint->completed_at))
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->setTime(0, 0)
+            ->modify('+1 day');
+        $query = new ReportQuery(
+            (new ReportDefinitionBuilder)
+                ->code('accepted_production_progress')
+                ->formulaVersion('accepted_production.v1')
+                ->sourceSchemaVersion('production_acceptance_events_v2')
+                ->payload(),
+            $scope,
+            new ReportFilterSet([
+                'organization_id' => (string) $organizationId,
+                'project_id' => (string) $projectId,
+                'period_from' => $coverageDay->format('Y-m-d'),
+                'period_to' => $coverageDay->format('Y-m-d'),
+            ]),
+            [],
+            $coverageDay->setTime(23, 59, 59),
+            'ru-RU',
+        );
+
+        $resolved = (new AcceptedProductionHistoryBoundaryResolver)->resolve($scope, $query);
+
+        self::assertSame((string) $checkpoint->source_hash, $resolved->sourceHash);
+    }
+
+    public function test_manual_act_approval_records_a_runtime_gap_without_blocking_the_workflow(): void
+    {
+        [, $actId, , , $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null,
+            rejectedAt: null,
+            currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $this->rerunHistoryCheckpointMigration();
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+
+        $this->mock(ActingPriceService::class)
+            ->shouldReceive('resolveLineUnitPrice')
+            ->once()
+            ->andReturn(1000.0);
+        $this->mock(ActReportNotificationService::class)
+            ->shouldReceive('notifyStatusChanged')
+            ->once();
+        CarbonImmutable::setTestNow(
+            (new DateTimeImmutable((string) $checkpoint->completed_at))->modify('+1 day'),
+        );
+        try {
+            $approved = app(ActReportWorkflowService::class)->approve(
+                ContractPerformanceAct::query()->findOrFail($actId),
+                (int) $user->id,
+            );
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+
+        self::assertSame(ContractPerformanceAct::STATUS_APPROVED, (string) $approved->status);
+        self::assertSame(0, ProductionAcceptanceEvent::query()
+            ->where('performance_act_id', $actId)
+            ->count());
+        self::assertSame(0, DB::table('production_acceptance_owner_versions')
+            ->where('performance_act_id', $actId)
+            ->count());
+        self::assertSame('runtime_acceptance_source_identity_unavailable', DB::table(
+            'production_acceptance_backfill_ledger',
+        )->where('performance_act_id', $actId)->value('reason'));
+    }
+
+    public function test_legacy_cross_project_act_scope_gap_does_not_block_approval(): void
     {
         [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null,
+            rejectedAt: null,
+            currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id);
+        $otherProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $workId = (int) DB::table('performance_act_lines')->where('id', $lineId)->value('completed_work_id');
+        DB::table('completed_works')->where('id', $workId)->update([
+            'project_id' => (int) $otherProject->id,
+        ]);
+
+        $this->mock(ActingPriceService::class)
+            ->shouldReceive('resolveLineUnitPrice')
+            ->once()
+            ->andReturn(1000.0);
+        $this->mock(ActReportNotificationService::class)
+            ->shouldReceive('notifyStatusChanged')
+            ->once();
+
+        $approved = app(ActReportWorkflowService::class)->approve(
+            ContractPerformanceAct::query()->findOrFail($actId),
+            (int) $user->id,
+        );
+
+        self::assertSame(ContractPerformanceAct::STATUS_APPROVED, (string) $approved->status);
+        self::assertSame(0, ProductionAcceptanceEvent::query()
+            ->where('performance_act_id', $actId)
+            ->count());
+        self::assertSame(0, DB::table('production_acceptance_owner_versions')
+            ->where('performance_act_id', $actId)
+            ->count());
+        self::assertSame('runtime_acceptance_scope_unavailable', DB::table(
+            'production_acceptance_backfill_ledger',
+        )->where('performance_act_id', $actId)->value('reason'));
+    }
+
+    public function test_act_service_rejects_completed_work_from_another_project(): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null,
+            rejectedAt: null,
+            currentStatus: ContractPerformanceAct::STATUS_DRAFT,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id);
+        $otherProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $workId = (int) DB::table('performance_act_lines')->where('id', $lineId)->value('completed_work_id');
+        DB::table('completed_works')->where('id', $workId)->update([
+            'project_id' => (int) $otherProject->id,
+        ]);
+
+        $act = ContractPerformanceAct::query()->findOrFail($actId);
+        $service = app(ContractPerformanceActService::class);
+        $availableWorkIds = array_column(
+            $service->getAvailableWorksForAct(
+                (int) $act->contract_id,
+                $organizationId,
+                $projectId,
+            ),
+            'id',
+        );
+
+        self::assertNotContains($workId, $availableWorkIds);
+
+        $sync = new ReflectionMethod($service, 'syncCompletedWorks');
+        $sync->setAccessible(true);
+        try {
+            $sync->invoke($service, $act, [
+                $workId => [
+                    'included_quantity' => '1.0000',
+                    'included_amount' => '1000.00',
+                    'currency' => 'RUB',
+                ],
+            ]);
+            self::fail('Cross-project completed work must be rejected.');
+        } catch (BusinessLogicException $exception) {
+            self::assertSame(422, $exception->getCode());
+        }
+
+        self::assertSame(0, DB::table('performance_act_completed_works')
+            ->where('performance_act_id', $actId)
+            ->count());
+    }
+
+    public function test_approval_preserves_four_decimal_source_quantity(): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null,
+            rejectedAt: null,
+            currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id);
+        $workId = (int) DB::table('performance_act_lines')->where('id', $lineId)->value('completed_work_id');
+        DB::table('completed_works')->where('id', $workId)->update([
+            'quantity' => '1.2345',
+            'completed_quantity' => '1.2345',
+        ]);
+        DB::table('performance_act_lines')->where('id', $lineId)->update([
+            'quantity' => '1.2345',
+            'unit_price' => '200.00',
+            'amount' => '246.90',
+        ]);
+        DB::table('contract_performance_acts')->where('id', $actId)->update([
+            'amount' => '246.90',
+        ]);
+
+        $this->mock(ActingPriceService::class)
+            ->shouldReceive('resolveLineUnitPrice')
+            ->once()
+            ->andReturn(200.0);
+        $this->mock(ActReportNotificationService::class)
+            ->shouldReceive('notifyStatusChanged')
+            ->once();
+
+        app(ActReportWorkflowService::class)->approve(
+            ContractPerformanceAct::query()->findOrFail($actId),
+            (int) $user->id,
+        );
+
+        $event = ProductionAcceptanceEvent::query()
+            ->where('performance_act_id', $actId)
+            ->firstOrFail();
+        self::assertSame('1.2345', (string) $event->accepted_quantity_delta);
+        self::assertSame(20_000, (int) $event->approved_rate_minor);
+        self::assertSame(0, DB::table('production_acceptance_backfill_ledger')
+            ->where('performance_act_id', $actId)
+            ->count());
+    }
+
+    public function test_legacy_approval_rejection_records_an_unprovable_reversal_without_blocking_the_workflow(): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: '2026-07-20',
+            rejectedAt: null,
+            currentStatus: 'draft',
+            isApproved: true,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id);
+        $this->rerunHistoryCheckpointMigration();
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+
+        $this->mock(ActReportNotificationService::class)
+            ->shouldReceive('notifyStatusChanged')
+            ->once();
+        CarbonImmutable::setTestNow(
+            (new DateTimeImmutable((string) $checkpoint->completed_at))->modify('+1 day'),
+        );
+        try {
+            $rejected = app(ActReportWorkflowService::class)->reject(
+                ContractPerformanceAct::query()->findOrFail($actId),
+                (int) $user->id,
+                'Не принято',
+            );
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+
+        self::assertSame(ContractPerformanceAct::STATUS_REJECTED, (string) $rejected->status);
+        self::assertFalse((bool) $rejected->is_approved);
+        self::assertSame(0, ProductionAcceptanceEvent::query()
+            ->where('performance_act_id', $actId)
+            ->count());
+        self::assertSame(0, DB::table('production_acceptance_owner_versions')
+            ->where('performance_act_id', $actId)
+            ->count());
+        self::assertSame('runtime_reversal_legacy_history_unavailable', DB::table(
+            'production_acceptance_backfill_ledger',
+        )->where('performance_act_id', $actId)->value('reason'));
+    }
+
+    public function test_history_checkpoint_captures_existing_source_sets_and_separates_late_backdated_rows(): void
+    {
+        [$scope, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
             approvalDate: '2026-07-20',
             rejectedAt: null,
             signedAt: '2099-08-02T12:00:00Z',
@@ -324,6 +817,32 @@ SQL)
             (string) $checkpoint->owner_member_set_hash,
             $this->acceptanceOwnerMemberSetHash($organizationId),
         );
+        $coverageDay = (new DateTimeImmutable((string) $checkpoint->completed_at))
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->setTime(0, 0)
+            ->modify('+1 day');
+        $definition = (new ReportDefinitionBuilder)
+            ->code('accepted_production_progress')
+            ->formulaVersion('accepted_production.v1')
+            ->sourceSchemaVersion('production_acceptance_events_v2')
+            ->payload();
+        $query = new ReportQuery(
+            $definition,
+            $scope,
+            new ReportFilterSet([
+                'organization_id' => (string) $organizationId,
+                'project_id' => (string) $projectId,
+                'period_from' => $coverageDay->format('Y-m-d'),
+                'period_to' => $coverageDay->format('Y-m-d'),
+            ]),
+            [],
+            $coverageDay->setTime(23, 59, 59),
+            'ru-RU',
+        );
+        $stream = (new AcceptedProductionEventUniverse)->stream($scope, $query);
+
+        self::assertSame(0, $stream->eligibleCount());
+        self::assertSame(0, $stream->gapCount());
         $foreignOrganization = Organization::factory()->create();
         $this->assertQueryRejected(
             static fn (): int => DB::table('production_acceptance_owner_members')->insertGetId([
@@ -345,6 +864,50 @@ SQL)
                 ->where('organization_id', $organizationId)
                 ->delete(),
         );
+    }
+
+    public function test_signature_after_as_of_keeps_the_earlier_approval_in_runtime_gap_detection(): void
+    {
+        [$scope, $actId, , $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: '2099-01-01',
+            rejectedAt: null,
+            signedAt: '2099-01-02T12:00:00Z',
+        );
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        $approvalDay = (new DateTimeImmutable((string) $checkpoint->completed_at))
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->setTime(0, 0)
+            ->modify('+1 day');
+        $asOf = $approvalDay->setTime(23, 59, 59);
+        DB::table('contract_performance_acts')->where('id', $actId)->update([
+            'approval_date' => $approvalDay->format('Y-m-d'),
+            'signed_at' => $approvalDay->modify('+1 day')->setTime(12, 0),
+        ]);
+        $query = new ReportQuery(
+            (new ReportDefinitionBuilder)
+                ->code('accepted_production_progress')
+                ->formulaVersion('accepted_production.v1')
+                ->sourceSchemaVersion('production_acceptance_events_v2')
+                ->payload(),
+            $scope,
+            new ReportFilterSet([
+                'organization_id' => (string) $organizationId,
+                'project_id' => (string) $projectId,
+                'period_from' => $approvalDay->format('Y-m-d'),
+                'period_to' => $approvalDay->format('Y-m-d'),
+            ]),
+            [],
+            $asOf,
+            'ru-RU',
+        );
+
+        $gaps = iterator_to_array((new AcceptedProductionEventUniverse)->stream($scope, $query)->gaps());
+
+        self::assertCount(1, $gaps);
+        self::assertSame('legacy_owner_unprovable', $gaps[0]['kind']);
+        self::assertSame($actId, $gaps[0]['performance_act_id']);
     }
 
     public function test_history_checkpoint_rejects_preexisting_owner_member_scope_drift(): void
@@ -397,6 +960,7 @@ SQL)
             $scope,
             new DateTimeImmutable('2026-07-30T23:59:59Z'),
             collect(),
+            ['candidates' => [], 'orphan_events' => [], 'legacy_gaps' => []],
         );
 
         self::assertSame([], $gaps);
@@ -422,6 +986,7 @@ SQL)
             $scope,
             new DateTimeImmutable('2026-07-30T23:59:59Z'),
             ProductionAcceptanceEvent::query()->orderBy('transition_version')->get(),
+            $this->ownerUniverse($actId, $lineId, 'reversed'),
         );
 
         self::assertCount(1, $gaps);
@@ -430,7 +995,7 @@ SQL)
 
     public function test_mutable_current_status_does_not_remove_legacy_candidate_from_gap_detection(): void
     {
-        [$scope, $actId] = $this->insertLifecycleOwner(
+        [$scope, $actId, $lineId] = $this->insertLifecycleOwner(
             approvalDate: '2026-07-20',
             rejectedAt: null,
             currentStatus: 'draft',
@@ -440,6 +1005,7 @@ SQL)
             $scope,
             new DateTimeImmutable('2026-07-30T23:59:59Z'),
             collect(),
+            $this->ownerUniverse($actId, $lineId, 'accepted'),
         );
 
         self::assertCount(1, $gaps);
@@ -449,7 +1015,7 @@ SQL)
 
     public function test_signature_after_as_of_does_not_remove_the_earlier_approval_candidate(): void
     {
-        [$scope, $actId] = $this->insertLifecycleOwner(
+        [$scope, $actId, $lineId] = $this->insertLifecycleOwner(
             approvalDate: '2026-07-20',
             rejectedAt: null,
             signedAt: '2026-08-02T12:00:00Z',
@@ -459,6 +1025,7 @@ SQL)
             $scope,
             new DateTimeImmutable('2026-07-30T23:59:59Z'),
             collect(),
+            $this->ownerUniverse($actId, $lineId, 'accepted'),
         );
 
         self::assertCount(1, $gaps);
@@ -518,10 +1085,11 @@ SQL)
     }
 
     private function insertLifecycleOwner(
-        string $approvalDate,
+        ?string $approvalDate,
         ?string $rejectedAt,
         ?string $currentStatus = null,
         ?string $signedAt = null,
+        ?bool $isApproved = null,
     ): array {
         $organization = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
@@ -549,7 +1117,7 @@ SQL)
             'act_date' => '2026-07-20',
             'amount' => 1000,
             'status' => $currentStatus ?? ($rejectedAt === null ? 'approved' : 'rejected'),
-            'is_approved' => $currentStatus === null && $rejectedAt === null,
+            'is_approved' => $isApproved ?? ($currentStatus === null && $rejectedAt === null),
             'approval_date' => $approvalDate,
             'rejected_at' => $rejectedAt,
             'signed_at' => $signedAt,
@@ -579,6 +1147,72 @@ SQL)
             $lineId,
             (int) $project->id,
             (int) $organization->id,
+        ];
+    }
+
+    private function makeLifecycleLineProjectable(
+        int $actId,
+        int $lineId,
+        int $projectId,
+        int $organizationId,
+        int $userId,
+    ): void {
+        $unitId = (int) DB::table('measurement_units')->insertGetId([
+            'organization_id' => $organizationId,
+            'name' => 'Cubic meter',
+            'short_name' => 'm3',
+            'type' => 'work',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $workTypeId = (int) DB::table('work_types')->insertGetId([
+            'organization_id' => $organizationId,
+            'name' => 'Concrete',
+            'code' => 'CONCRETE-'.$projectId,
+            'measurement_unit_id' => $unitId,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $work = CompletedWork::query()->create([
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'contract_id' => DB::table('contract_performance_acts')->where('id', $actId)->value('contract_id'),
+            'work_type_id' => $workTypeId,
+            'user_id' => $userId,
+            'quantity' => '1.000',
+            'completed_quantity' => '1.000',
+            'price' => '1000.00',
+            'total_amount' => '1000.00',
+            'completion_date' => '2026-08-01',
+            'status' => 'confirmed',
+        ]);
+        DB::table('performance_act_lines')->where('id', $lineId)->update([
+            'completed_work_id' => (int) $work->id,
+            'line_type' => 'completed_work',
+            'unit' => 'm3',
+            'unit_price' => '1000.00',
+            'amount' => '1000.00',
+            'currency' => 'RUB',
+        ]);
+        DB::table('contract_performance_acts')->where('id', $actId)->update([
+            'amount' => '1000.00',
+            'currency' => 'RUB',
+        ]);
+    }
+
+    private function ownerUniverse(int $actId, int $lineId, string $eventType): array
+    {
+        return [
+            'candidates' => [[
+                'event_type' => $eventType,
+                'owner_version_id' => 1,
+                'performance_act_id' => $actId,
+                'source_line_id' => $lineId,
+                'source_line_type' => 'performance_act_line',
+            ]],
+            'legacy_gaps' => [],
+            'orphan_events' => [],
         ];
     }
 

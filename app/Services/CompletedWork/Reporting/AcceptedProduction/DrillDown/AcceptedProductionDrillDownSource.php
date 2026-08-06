@@ -16,7 +16,7 @@ interface AcceptedProductionDrillDownSource
     public function findRow(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        string $token,
+        string $rowKey,
     ): ?array;
 
     public function eventPage(

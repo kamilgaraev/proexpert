@@ -33,6 +33,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVa
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionBuiltinPublishedReport;
 
 final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportDefinitionRegistry
 {
@@ -47,6 +48,7 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
         ContractSettlementExposureBuiltinPublishedReport $contractSettlementExposure,
         BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
+        AcceptedProductionBuiltinPublishedReport $acceptedProduction,
         ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         PayrollReadinessBuiltinPublishedReport $payrollReadiness,
         WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
@@ -65,7 +67,7 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
     ) {
         $byCode = [];
-        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $portfolioLiquidity->definition(), $projectEvmControl->definition(), $wipCompletionForecast->definition(), $contractSettlementExposure->definition(), $baselineScheduleVariance->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $contractorScorecard->definition(), $customerSla->definition(), $holdingPerformance->definition(), $intercompanyContractFlow->definition()] as $definition) {
+        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $portfolioLiquidity->definition(), $projectEvmControl->definition(), $wipCompletionForecast->definition(), $contractSettlementExposure->definition(), $baselineScheduleVariance->definition(), $acceptedProduction->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $contractorScorecard->definition(), $customerSla->definition(), $holdingPerformance->definition(), $intercompanyContractFlow->definition()] as $definition) {
             $byCode[$definition->code] = $definition;
         }
         ksort($byCode, SORT_STRING);

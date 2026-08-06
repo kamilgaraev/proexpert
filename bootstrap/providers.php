@@ -4,6 +4,7 @@ return [
     App\Providers\StorageServiceProvider::class,
     App\Providers\EstimateGenerationIntegrationServiceProvider::class,
     App\Providers\CustomerReportingServiceProvider::class,
+    App\Providers\CompletedWorkReportingServiceProvider::class,
     App\BusinessModules\Addons\EstimateGeneration\EstimateGenerationServiceProvider::class,
     App\BusinessModules\Core\Mdm\MdmServiceProvider::class,
     App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,

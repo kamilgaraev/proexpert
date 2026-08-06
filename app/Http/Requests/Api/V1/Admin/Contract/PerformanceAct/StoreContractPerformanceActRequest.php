@@ -4,16 +4,20 @@ namespace App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct;
 
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\DTOs\Contract\ContractPerformanceActDTO;
+use App\Enums\CurrencyCode;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreContractPerformanceActRequest extends FormRequest
 {
     public function authorize(): bool
     {
         $user = $this->user();
+        $organization = $this->attributes->get('current_organization');
         $context = [
             'organization_id' => (int) (
-                $this->attributes->get('current_organization_id')
+                $organization?->id
+                ?? $this->attributes->get('current_organization_id')
                 ?? $user?->current_organization_id
             ),
         ];
@@ -28,12 +32,15 @@ class StoreContractPerformanceActRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'organization_id' => ['prohibited'],
+            'organization_id_for_show' => ['prohibited'],
+            'project_id' => ['prohibited'],
             'act_document_number' => ['nullable', 'string', 'max:100'],
             'act_date' => ['required', 'date'],
             'description' => ['nullable', 'string', 'max:1000'],
             'is_approved' => ['sometimes', 'boolean'],
             'approval_date' => ['nullable', 'date', 'after_or_equal:act_date'],
-            'currency' => ['required', 'string', 'size:3', 'regex:/^[A-Z]{3}$/'],
+            'currency' => ['required', Rule::enum(CurrencyCode::class)],
 
             // Сумма акта (если нет работ - обязательна)
             'amount' => ['nullable', 'numeric', 'min:0'],
@@ -44,7 +51,7 @@ class StoreContractPerformanceActRequest extends FormRequest
             // Выполненные работы - можно вместо PDF файла
             'completed_works' => ['required_without:pdf_file', 'array', 'min:1'],
             'completed_works.*.completed_work_id' => ['required', 'integer', 'exists:completed_works,id'],
-            'completed_works.*.included_quantity' => ['required', 'numeric', 'min:0'],
+            'completed_works.*.included_quantity' => ['required', 'numeric', 'decimal:0,3', 'min:0.001'],
             'completed_works.*.included_amount' => ['required', 'numeric', 'min:0'],
             'completed_works.*.notes' => ['nullable', 'string', 'max:500'],
         ];

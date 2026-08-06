@@ -14,6 +14,7 @@ use App\Models\Organization;
 use App\Models\PersonalFile;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\ActReport\ActReportNotificationService;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -198,6 +199,52 @@ class ActFileControllerWorkflowTest extends TestCase
 
         $response->assertForbidden();
         $this->assertDatabaseCount('files', 0);
+    }
+
+    public function test_second_signed_file_is_rejected_and_uploaded_object_is_removed(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+        [$organization, , $act] = $this->createActFixture($context->organization, $context->user);
+        $act->forceFill([
+            'status' => ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+            'approval_date' => '2026-06-10',
+        ])->save();
+        $this->mock(ActReportNotificationService::class)->shouldIgnoreMissing();
+
+        $first = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/act-reports/{$act->id}/signed-file", [
+                'file' => UploadedFile::fake()->create('signed-first.pdf', 10, 'application/pdf'),
+            ]);
+        $first->assertOk();
+        $first->assertJsonPath('success', true);
+        $act->refresh();
+        self::assertNotNull($act->signed_file_id);
+
+        $second = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/act-reports/{$act->id}/signed-file", [
+                'file' => UploadedFile::fake()->create('signed-second.pdf', 10, 'application/pdf'),
+            ]);
+        $second->assertStatus(409);
+        $second->assertJsonPath('success', false);
+
+        self::assertSame(1, File::query()
+            ->where('organization_id', $organization->id)
+            ->where('fileable_id', $act->id)
+            ->where('fileable_type', ContractPerformanceAct::class)
+            ->where('category', 'signed_act')
+            ->count());
+        self::assertCount(1, Storage::disk('s3')->allFiles());
+
+        $signedFile = File::query()->findOrFail($act->signed_file_id);
+        $delete = $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/act-reports/{$act->id}/files/{$signedFile->id}");
+        $delete->assertStatus(409);
+        $delete->assertJsonPath('success', false);
+        self::assertTrue(File::query()->whereKey($signedFile->id)->exists());
+        Storage::disk('s3')->assertExists($signedFile->path);
     }
 
     public function test_contractor_organization_can_list_files_for_owner_contract_act(): void

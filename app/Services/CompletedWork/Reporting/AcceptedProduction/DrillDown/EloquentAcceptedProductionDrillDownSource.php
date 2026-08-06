@@ -33,12 +33,12 @@ final readonly class EloquentAcceptedProductionDrillDownSource implements Accept
     public function findRow(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        string $token,
+        string $rowKey,
     ): ?array {
         return $this->reader->findRow(
             $context,
             $snapshot,
-            $this->reader->rowKeyFromToken($token),
+            $rowKey,
         );
     }
 

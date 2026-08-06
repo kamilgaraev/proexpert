@@ -8,7 +8,9 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\W
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadConstraintHistoryReducer;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventReducer;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFormula;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLineageFilter;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionQuantity;
 use App\Support\Reporting\CanonicalLineageAccumulator;
 use App\Support\Reporting\CanonicalLineageSummary;
 use App\Support\Reporting\LineageCursorPosition;
@@ -191,19 +193,152 @@ final class LineageReducerBoundednessTest extends TestCase
     public function accepted_production_reducer_rejects_identity_changes_inside_one_lineage(): void
     {
         $candidate = [
+            'event_type' => 'accepted',
+            'effective_at' => '2026-07-30T08:00:00+00:00',
+            'owner_source_hash' => str_repeat('c', 64),
+            'owner_version_id' => 19,
             'performance_act_id' => 23,
+            'project_id' => 29,
             'source_line_id' => 31,
             'source_line_type' => 'performance_act_line',
+            'work_id' => 37,
         ];
         $reducer = new AcceptedProductionEventReducer($candidate);
         $first = $this->acceptanceEvent(1, 37);
-        $changed = $this->acceptanceEvent(2, 41);
+        $changed = $this->acceptanceEvent(2, 37);
+        $changed->setAttribute('task_id', 41);
 
         $reducer->append($first);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('accepted_production_event_identity_changed');
         $reducer->append($changed);
+    }
+
+    #[Test]
+    public function same_day_transitions_are_reduced_to_one_net_grain_with_all_owner_versions(): void
+    {
+        $acceptedCandidate = [
+            'event_type' => 'accepted',
+            'effective_at' => '2026-07-30T08:00:00+00:00',
+            'owner_source_hash' => str_repeat('c', 64),
+            'owner_version_id' => 19,
+            'performance_act_id' => 23,
+            'project_id' => 29,
+            'source_line_id' => 31,
+            'source_line_type' => 'performance_act_line',
+            'work_id' => 37,
+        ];
+        $reversedCandidate = [
+            ...$acceptedCandidate,
+            'event_type' => 'reversed',
+            'effective_at' => '2026-07-30T10:00:00+00:00',
+            'owner_source_hash' => str_repeat('d', 64),
+            'owner_version_id' => 20,
+        ];
+        $reacceptedCandidate = [
+            ...$acceptedCandidate,
+            'effective_at' => '2026-07-30T12:00:00+00:00',
+            'owner_source_hash' => str_repeat('e', 64),
+            'owner_version_id' => 21,
+        ];
+        $accepted = $this->acceptanceEvent(1, 37);
+        $reversed = $this->acceptanceEvent(2, 37);
+        $reversed->forceFill([
+            'accepted_quantity_delta' => '-0.001',
+            'event_type' => 'reversed',
+            'planned_quantity' => '-100.000',
+            'reported_quantity' => '-80.000',
+            'recognized_at' => new CarbonImmutable('2026-07-30T10:00:00+00:00'),
+        ]);
+        $reaccepted = $this->acceptanceEvent(3, 37);
+        $reaccepted->forceFill([
+            'approved_rate_minor' => 200_000,
+            'currency_source' => 'performance_act_line.reapproved_rate',
+            'recognized_at' => new CarbonImmutable('2026-07-30T12:00:00+00:00'),
+        ]);
+        $reducer = new AcceptedProductionEventReducer($acceptedCandidate);
+
+        $reducer->append($accepted, $acceptedCandidate);
+        $reducer->append($reversed, $reversedCandidate);
+        $reducer->append($reaccepted, $reacceptedCandidate);
+        $entry = $reducer->finish();
+
+        self::assertSame('0.001', $entry->fact->acceptedQuantityDelta);
+        self::assertSame('100.000', $entry->fact->plannedQuantity);
+        self::assertSame('80.000', $entry->fact->reportedQuantity);
+        self::assertNull($entry->fact->approvedRateMinor);
+        self::assertSame(200, $entry->fact->acceptedAmountMinor);
+        self::assertSame(200, (new AcceptedProductionFormula)->row($entry->fact)->acceptedAmountMinor);
+        self::assertSame('accepted', $entry->candidate['event_type']);
+        self::assertSame([19, 20, 21], array_column($entry->candidate['owner_versions'], 'id'));
+        self::assertSame(3, $entry->lineage->count);
+    }
+
+    #[Test]
+    public function materialization_reducer_preserves_work_basis_when_its_first_lineage_is_reversed(): void
+    {
+        $firstCandidate = [
+            'event_type' => 'accepted',
+            'effective_at' => '2026-07-30T08:00:00+00:00',
+            'owner_source_hash' => str_repeat('c', 64),
+            'owner_version_id' => 19,
+            'performance_act_id' => 23,
+            'project_id' => 29,
+            'source_line_id' => 31,
+            'source_line_type' => 'performance_act_line',
+            'work_id' => 37,
+        ];
+        $firstAccepted = $this->acceptanceEvent(1, 37);
+        $firstAccepted->forceFill([
+            'accepted_quantity_delta' => '0.400',
+            'planned_quantity' => '1.000',
+            'reported_quantity' => '1.000',
+        ]);
+        $firstReversed = $this->acceptanceEvent(2, 37);
+        $firstReversed->forceFill([
+            'accepted_quantity_delta' => '-0.400',
+            'event_type' => 'reversed',
+            'planned_quantity' => '0.000',
+            'reported_quantity' => '0.000',
+        ]);
+        $first = new AcceptedProductionEventReducer($firstCandidate);
+        $first->append($firstAccepted, $firstCandidate);
+        $first->append($firstReversed, [
+            ...$firstCandidate,
+            'event_type' => 'reversed',
+            'owner_source_hash' => str_repeat('d', 64),
+            'owner_version_id' => 20,
+        ]);
+
+        $secondCandidate = [
+            ...$firstCandidate,
+            'owner_source_hash' => str_repeat('e', 64),
+            'owner_version_id' => 21,
+            'performance_act_id' => 24,
+            'source_line_id' => 32,
+        ];
+        $secondAccepted = $this->acceptanceEvent(1, 37);
+        $secondAccepted->forceFill([
+            'id' => 3,
+            'accepted_quantity_delta' => '0.600',
+            'performance_act_id' => 24,
+            'planned_quantity' => '0.000',
+            'reported_quantity' => '0.000',
+            'source_line_id' => 32,
+            'source_hash' => hash('sha256', 'second-acceptance'),
+        ]);
+        $second = new AcceptedProductionEventReducer($secondCandidate);
+        $second->append($secondAccepted, $secondCandidate);
+
+        $firstEntry = $first->finish();
+        $secondEntry = $second->finish();
+        self::assertSame(10_000, array_sum([
+            AcceptedProductionQuantity::scaled($firstEntry->fact->plannedQuantity, 'test'),
+            AcceptedProductionQuantity::scaled($secondEntry->fact->plannedQuantity, 'test'),
+        ]));
+        self::assertSame('0.000', $firstEntry->fact->acceptedQuantityDelta);
+        self::assertSame('0.600', $secondEntry->fact->acceptedQuantityDelta);
     }
 
     #[Test]
@@ -221,6 +356,7 @@ final class LineageReducerBoundednessTest extends TestCase
             'zones' => ['north'],
             'unit_codes' => ['m3'],
             'statuses' => ['reversed', 'accepted'],
+            'timezone' => 'Europe/Moscow',
             'period_to' => '2026-07-30',
             'period_from' => '2026-07-01',
             'contractor_ids' => [41],
@@ -236,6 +372,7 @@ final class LineageReducerBoundednessTest extends TestCase
             '2026-07-30T08:00:00.000000+00:00',
             $filter->canonicalIdentity()['as_of'],
         );
+        self::assertSame('Europe/Moscow', $filter->canonicalIdentity()['timezone']);
     }
 
     private function acceptanceEvent(int $version, int $workId): ProductionAcceptanceEvent

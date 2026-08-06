@@ -149,6 +149,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'project_evm_control')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-evm-control.options');
+        Route::post('/projects/{project}/accepted-production-progress/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'accepted_production_progress')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('accepted-production-progress.runs.store');
         Route::post('/projects/{project}/wip-completion-forecast/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'wip_completion_forecast')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])

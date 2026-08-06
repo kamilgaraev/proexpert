@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin\Contract;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\DTOs\Contract\ContractPerformanceActDTO;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\StoreContractPerformanceActRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\UpdateContractPerformanceActRequest;
@@ -82,6 +83,8 @@ class ContractPerformanceActController extends Controller
                 trans_message('contract.act_created'),
                 Response::HTTP_CREATED
             );
+        } catch (BusinessLogicException $e) {
+            return $this->businessError($e);
         } catch (Exception $e) {
             Log::error('contract.performance_acts.store_failed', [
                 'contract_id' => $contractId,
@@ -142,6 +145,8 @@ class ContractPerformanceActController extends Controller
                 new ContractPerformanceActResource($updatedAct),
                 trans_message('contract.act_updated')
             );
+        } catch (BusinessLogicException $e) {
+            return $this->businessError($e);
         } catch (Exception $e) {
             Log::error('contract.performance_acts.update_failed', [
                 'act_id' => $actId,
@@ -179,6 +184,8 @@ class ContractPerformanceActController extends Controller
             }
 
             return AdminResponse::success(null, trans_message('contract.act_deleted'));
+        } catch (BusinessLogicException $e) {
+            return $this->businessError($e);
         } catch (Exception $e) {
             Log::error('contract.performance_acts.destroy_failed', [
                 'act_id' => $actId,
@@ -360,7 +367,9 @@ class ContractPerformanceActController extends Controller
     protected function getOrganizationId(Request $request): int
     {
         $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->organization_id ?? $request->user()?->current_organization_id;
+        $organizationId = $organization?->id
+            ?? $request->attributes->get('current_organization_id')
+            ?? $request->user()?->current_organization_id;
 
         if (!$organizationId) {
             throw new Exception(trans_message('contract.organization_context_missing'));
@@ -403,17 +412,36 @@ class ContractPerformanceActController extends Controller
 
         return new ContractPerformanceActDTO(
             project_id: $this->getRouteInt($request, 'project') ?? (int) $act->project_id,
-            act_document_number: $validated['act_document_number'] ?? $act->act_document_number,
+            act_document_number: array_key_exists('act_document_number', $validated)
+                ? $validated['act_document_number']
+                : $act->act_document_number,
             act_date: $validated['act_date'] ?? $act->act_date,
-            description: $validated['description'] ?? $act->description,
+            description: array_key_exists('description', $validated)
+                ? $validated['description']
+                : $act->description,
             is_approved: array_key_exists('is_approved', $validated)
                 ? (bool) $validated['is_approved']
                 : (bool) $act->is_approved,
-            approval_date: $validated['approval_date'] ?? $act->approval_date,
+            approval_date: array_key_exists('approval_date', $validated)
+                ? $validated['approval_date']
+                : $act->approval_date,
             completed_works: $validated['completed_works'] ?? [],
-            amount: isset($validated['amount']) ? (float) $validated['amount'] : (float) $act->amount,
+            amount: array_key_exists('amount', $validated)
+                ? (float) $validated['amount']
+                : (float) $act->amount,
             currency: $validated['currency'] ?? $act->currency,
             completedWorksProvided: array_key_exists('completed_works', $validated),
+            partialUpdate: true,
+            providedFields: array_keys($validated),
         );
+    }
+
+    private function businessError(BusinessLogicException $exception): JsonResponse
+    {
+        $status = in_array($exception->getCode(), [400, 403, 404, 409, 422], true)
+            ? $exception->getCode()
+            : Response::HTTP_UNPROCESSABLE_ENTITY;
+
+        return AdminResponse::error($exception->getMessage(), $status);
     }
 }

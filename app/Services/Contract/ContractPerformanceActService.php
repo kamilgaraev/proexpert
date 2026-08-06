@@ -6,8 +6,10 @@ use App\DTOs\Contract\ContractPerformanceActDTO;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
+use App\Models\CompletedWork;
 use App\Models\File;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
+use App\Services\Acting\ActingQuantityReservationService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use App\Services\Logging\LoggingService;
 use App\Services\Storage\FileService;
@@ -29,18 +31,22 @@ class ContractPerformanceActService
 
     protected ProductionAcceptanceEventRecorder $productionAcceptanceEvents;
 
+    protected ActingQuantityReservationService $quantityReservations;
+
     public function __construct(
         ContractPerformanceActRepositoryInterface $actRepository,
         ContractAccessService $contractAccessService,
         LoggingService $logging,
         FileService $fileService,
         ProductionAcceptanceEventRecorder $productionAcceptanceEvents,
+        ActingQuantityReservationService $quantityReservations,
     ) {
         $this->actRepository = $actRepository;
         $this->contractAccessService = $contractAccessService;
         $this->logging = $logging;
         $this->fileService = $fileService;
         $this->productionAcceptanceEvents = $productionAcceptanceEvents;
+        $this->quantityReservations = $quantityReservations;
     }
 
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
@@ -146,7 +152,7 @@ class ContractPerformanceActService
                 ContractPerformanceAct::STATUS_SIGNED,
             ], true)) {
                 $act->refresh();
-                $this->productionAcceptanceEvents->recordTransition(
+                $this->productionAcceptanceEvents->recordTransitionIfApplicable(
                     $act,
                     'pending',
                     'approved',
@@ -253,18 +259,34 @@ class ContractPerformanceActService
             throw new Exception('Performance act not found or does not belong to the specified contract or project.');
         }
 
-        $oldData = [
-            'amount' => $act->amount,
-            'document_number' => $act->act_document_number,
-            'is_approved' => $act->is_approved,
-        ];
+        $oldData = [];
 
         $updateData = $actDTO->toArray();
-        $updated = DB::transaction(function () use ($act, $actDTO, $actId, $updateData): bool {
+        $updated = DB::transaction(function () use (&$oldData, $actDTO, $actId, $updateData): bool {
+            $act = ContractPerformanceAct::query()
+                ->whereKey($actId)
+                ->lockForUpdate()
+                ->first();
+            if ($act === null) {
+                return false;
+            }
+            $oldData = [
+                'amount' => $act->amount,
+                'document_number' => $act->act_document_number,
+                'is_approved' => $act->is_approved,
+            ];
             $wasAccepted = (bool) $act->is_approved || in_array($act->status, [
                 ContractPerformanceAct::STATUS_APPROVED,
                 ContractPerformanceAct::STATUS_SIGNED,
             ], true);
+            $isExplicitLegacyReversal = (bool) $act->is_approved
+                && ! in_array($act->status, [
+                    ContractPerformanceAct::STATUS_APPROVED,
+                    ContractPerformanceAct::STATUS_SIGNED,
+                ], true)
+                && array_key_exists('is_approved', $updateData)
+                && $updateData['is_approved'] === false
+                && array_diff(array_keys($updateData), ['is_approved', 'approval_date']) === [];
             if ($wasAccepted && $actDTO->completedWorksProvided) {
                 throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
             }
@@ -274,15 +296,18 @@ class ContractPerformanceActService
             ) {
                 throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
             }
+            if ($wasAccepted && ! $isExplicitLegacyReversal) {
+                throw new BusinessLogicException(trans_message('act_reports.act_already_approved'), 400);
+            }
 
-            if ($actDTO->completedWorksProvided && ! empty($actDTO->completed_works)) {
+            if ($actDTO->completedWorksProvided) {
                 $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
                 $act->recalculateAmount();
             } elseif ($act->completedWorks()->count() > 0) {
                 $act->recalculateAmount();
             }
 
-            $updated = $this->actRepository->update($actId, $updateData);
+            $updated = $updateData === [] || $this->actRepository->update($actId, $updateData);
             if (!$updated) {
                 return false;
             }
@@ -296,7 +321,7 @@ class ContractPerformanceActService
                 ContractPerformanceAct::STATUS_SIGNED,
             ], true);
             if ($wasAccepted !== $isAccepted) {
-                $this->productionAcceptanceEvents->recordTransition(
+                $this->productionAcceptanceEvents->recordTransitionIfApplicable(
                     $current,
                     $wasAccepted ? 'approved' : 'pending',
                     $isAccepted ? 'approved' : 'reopened',
@@ -358,6 +383,9 @@ class ContractPerformanceActService
      */
     protected function syncCompletedWorks(ContractPerformanceAct $act, array $completedWorksData): void
     {
+        $act->loadMissing('contract');
+        $organizationId = (int) $act->contract?->organization_id;
+        $projectId = (int) $act->project_id;
         // TECHNICAL: Начало синхронизации работ с актом
         $this->logging->technical('performance_act.works.sync.started', [
             'act_id' => $act->id,
@@ -367,12 +395,19 @@ class ContractPerformanceActService
         ]);
 
         // Проверяем что все работы принадлежат тому же контракту
-        $workIds = array_keys($completedWorksData);
-        $validWorks = \App\Models\CompletedWork::whereIn('id', $workIds)
+        $workIds = array_map('intval', array_keys($completedWorksData));
+        sort($workIds, SORT_NUMERIC);
+        $works = CompletedWork::query()
+            ->whereIn('id', $workIds)
             ->where('contract_id', $act->contract_id)
-            ->where('status', 'confirmed') // Только подтвержденные работы можно включать в акты
-            ->pluck('id')
-            ->toArray();
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('status', 'confirmed')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+        $validWorks = $works->keys()->map(static fn ($id): int => (int) $id)->all();
 
         $invalidWorks = array_diff($workIds, $validWorks);
 
@@ -385,10 +420,26 @@ class ContractPerformanceActService
                 'invalid_count' => count($invalidWorks),
                 'valid_count' => count($validWorks),
             ], 'warning');
+
+            throw new BusinessLogicException(
+                trans_message('act_reports.work_not_available_for_acting'),
+                422,
+            );
         }
 
         // Фильтруем только валидные работы
         $filteredData = array_intersect_key($completedWorksData, array_flip($validWorks));
+        $availableQuantities = $this->quantityReservations->availableQuantities(
+            $works->values(),
+            (int) $act->id,
+        );
+        $this->quantityReservations->assertAvailable(
+            array_map(
+                static fn (array $work): mixed => $work['included_quantity'] ?? null,
+                $filteredData,
+            ),
+            $availableQuantities,
+        );
 
         // Получаем текущие работы для сравнения
         $currentWorkIds = $act->completedWorks()->pluck('completed_work_id')->toArray();
@@ -433,10 +484,16 @@ class ContractPerformanceActService
      */
     public function getAvailableWorksForAct(int $contractId, int $organizationId, ?int $projectId = null): array
     {
-        $this->getContractOrFail($contractId, $organizationId, $projectId);
+        $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
+        $effectiveProjectId = $projectId ?? $contract->project_id;
 
         // Получаем подтвержденные работы которые еще не включены в утвержденные акты
         $works = \App\Models\CompletedWork::where('contract_id', $contractId)
+            ->where('organization_id', $organizationId)
+            ->when(
+                $effectiveProjectId !== null,
+                static fn ($query) => $query->where('project_id', $effectiveProjectId),
+            )
             ->where('status', 'confirmed')
             ->with(['workType:id,name', 'user:id,name'])
             ->get();
@@ -507,9 +564,35 @@ class ContractPerformanceActService
             'user_id' => request()->user()?->id,
         ], 'warning');
 
-        $result = DB::transaction(
-            fn (): bool => $this->actRepository->delete($actId),
-        );
+        $result = DB::transaction(function () use ($actId, $contractId, $organizationId, $projectId): bool {
+            $lockedAct = ContractPerformanceAct::query()
+                ->whereKey($actId)
+                ->where('contract_id', $contractId)
+                ->when(
+                    $projectId !== null,
+                    static fn ($query) => $query->where('project_id', $projectId),
+                )
+                ->whereHas(
+                    'contract',
+                    static fn ($query) => $query->where('organization_id', $organizationId),
+                )
+                ->lockForUpdate()
+                ->first();
+            if ($lockedAct === null) {
+                return false;
+            }
+            if ((bool) $lockedAct->is_approved || in_array($lockedAct->status, [
+                ContractPerformanceAct::STATUS_APPROVED,
+                ContractPerformanceAct::STATUS_SIGNED,
+            ], true)) {
+                throw new BusinessLogicException(
+                    trans_message('act_reports.accepted_act_delete_forbidden'),
+                    409,
+                );
+            }
+
+            return $this->actRepository->delete($actId);
+        });
 
         if ($result) {
             // BUSINESS: Акт успешно удален

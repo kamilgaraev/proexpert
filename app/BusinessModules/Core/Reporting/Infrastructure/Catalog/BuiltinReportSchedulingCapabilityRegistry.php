@@ -31,6 +31,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVa
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionBuiltinPublishedReport;
 
 final readonly class BuiltinReportSchedulingCapabilityRegistry implements ReportSchedulingCapabilityRegistry
 {
@@ -42,6 +43,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
         private ContractSettlementExposureBuiltinPublishedReport $contractSettlementExposure,
         private BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
+        private AcceptedProductionBuiltinPublishedReport $acceptedProduction,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
         private WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
@@ -70,6 +72,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->wipCompletionForecast->scheduling()->code => $this->wipCompletionForecast->scheduling(),
             $this->contractSettlementExposure->scheduling()->code => $this->contractSettlementExposure->scheduling(),
             $this->baselineScheduleVariance->scheduling()->code => $this->baselineScheduleVariance->scheduling(),
+            $this->acceptedProduction->scheduling()->code => $this->acceptedProduction->scheduling(),
             $this->projectLaborCost->scheduling()->code => $this->projectLaborCost->scheduling(),
             $this->payrollReadiness->scheduling()->code => $this->payrollReadiness->scheduling(),
             $this->workforceCapacity->scheduling()->code => $this->workforceCapacity->scheduling(),

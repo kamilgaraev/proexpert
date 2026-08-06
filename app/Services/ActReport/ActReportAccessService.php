@@ -35,9 +35,10 @@ class ActReportAccessService
     public function currentOrganizationId(Request $request): int
     {
         $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id
-            ?? $request->user()?->organization_id
-            ?? $request->user()?->current_organization_id;
+        $organizationId = $request->attributes->get('current_organization_id')
+            ?? $organization?->id
+            ?? $request->user()?->current_organization_id
+            ?? $request->user()?->organization_id;
 
         if (!$organizationId) {
             throw new BusinessLogicException(trans_message('act_reports.organization_not_found'), 400);
