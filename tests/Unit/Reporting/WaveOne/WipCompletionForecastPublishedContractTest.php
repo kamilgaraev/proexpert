@@ -38,6 +38,16 @@ final class WipCompletionForecastPublishedContractTest extends TestCase
         self::assertSame(['budgeting.wip_forecast.export'], $definition->permissionPolicy->exportPermissions);
         self::assertSame(['budgeting.wip_forecast.view_sensitive_costs'], $definition->permissionPolicy->sensitivePermissions);
         self::assertSame(['budgeting.wip_forecast.view_audit'], $definition->permissionPolicy->auditPermissions);
+        self::assertSame([
+            'ac',
+            'bac',
+            'cpi',
+            'ctc',
+            'eac',
+            'ev',
+            'forecast_variance',
+            'pv',
+        ], $definition->outputClassification->sensitiveColumnIds);
         self::assertSame(['csv', 'xlsx'], $definition->formats);
     }
 

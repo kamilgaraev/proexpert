@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\ProjectControl;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlAmounts;
@@ -98,7 +99,21 @@ final readonly class ProjectEvmControlCandidateContract
             || $definition->permissionPolicy->viewPermissions !== ['reports.project_control.view']
             || $definition->permissionPolicy->exportPermissions !== ['reports.project_control.export']
             || $definition->permissionPolicy->sensitivePermissions !== ['budgeting.wip_forecast.view_sensitive_costs']
-            || $definition->permissionPolicy->auditPermissions !== []) {
+            || $definition->permissionPolicy->auditPermissions !== []
+            || $definition->outputClassification->defaultClassification !== ReportDataClassification::STANDARD
+            || $definition->outputClassification->sensitiveColumnIds !== [
+                'ac_minor',
+                'approved_etc_minor',
+                'cpi',
+                'cv_minor',
+                'eac_minor',
+                'tcpi',
+                'vac_minor',
+            ]
+            || $definition->outputClassification->auditColumnIds !== []
+            || $definition->outputClassification->totalsSensitive
+            || $definition->outputClassification->totalsAudit
+            || $definition->outputClassification->provenanceAudit) {
             throw new InvalidArgumentException('project_evm_control_candidate_definition_invalid');
         }
     }

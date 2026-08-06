@@ -425,6 +425,43 @@ final class ReportAccessServiceTest extends TestCase
         self::assertFalse($visibility->canViewAudit);
     }
 
+    public function test_source_module_report_uses_exact_sensitive_and_audit_permissions_for_redaction_visibility(): void
+    {
+        $definition = $this->sourceModuleDefinition(
+            sensitivePermissions: ['act_reports.costs.view'],
+            auditPermissions: ['act_reports.audit.view'],
+        );
+        $service = $this->service([
+            'act_reports.view',
+            'act_reports.costs.view',
+            'act_reports.audit.view',
+        ]);
+
+        $visibility = $service->assertOperation(
+            $this->context([
+                'act_reports.view',
+                'act_reports.costs.view',
+                'act_reports.audit.view',
+            ]),
+            $definition,
+            ReportOperation::VIEW,
+            null,
+        );
+
+        self::assertTrue($visibility->canViewSensitive);
+        self::assertTrue($visibility->canViewAudit);
+
+        $redacted = $this->service(['act_reports.view'])->assertOperation(
+            $this->context(['act_reports.view']),
+            $definition,
+            ReportOperation::VIEW,
+            null,
+        );
+
+        self::assertFalse($redacted->canViewSensitive);
+        self::assertFalse($redacted->canViewAudit);
+    }
+
     public function test_source_module_report_authorizes_only_the_requested_export_format(): void
     {
         $permissions = ['act_reports.view', 'act_reports.export.excel'];
@@ -442,6 +479,66 @@ final class ReportAccessServiceTest extends TestCase
 
         $this->expectScopeForbidden();
         $service->assertOperation($context, $definition, ReportOperation::EXPORT, null, 'pdf');
+    }
+
+    public function test_canonical_source_module_export_uses_declared_permission_for_each_declared_format(): void
+    {
+        $definition = $this->sourceModuleDefinition(
+            ['csv', 'xlsx'],
+            exportPermissions: ['reports.project_control.export'],
+        );
+        $permissions = ['act_reports.view', 'reports.project_control.export'];
+        $service = $this->service($permissions);
+        $context = $this->context($permissions);
+
+        foreach (['csv', 'xlsx'] as $format) {
+            self::assertTrue($service->assertOperation(
+                $context,
+                $definition,
+                ReportOperation::EXPORT,
+                null,
+                $format,
+            )->canExport);
+        }
+
+        $this->expectScopeForbidden();
+        $this->service(['act_reports.view'])->assertOperation(
+            $this->context(['act_reports.view']),
+            $definition,
+            ReportOperation::EXPORT,
+            null,
+            'csv',
+        );
+    }
+
+    public function test_canonical_source_module_catalog_requires_every_declared_export_permission(): void
+    {
+        $definition = $this->sourceModuleDefinition(
+            ['csv', 'xlsx'],
+            exportPermissions: ['reports.project_control.export', 'reports.project_control.export_sensitive'],
+        );
+        $partialPermissions = ['act_reports.view', 'reports.project_control.export'];
+        $completePermissions = [
+            'act_reports.view',
+            'reports.project_control.export',
+            'reports.project_control.export_sensitive',
+        ];
+
+        $partial = $this->service($partialPermissions)->assertOperation(
+            $this->context($partialPermissions),
+            $definition,
+            ReportOperation::VIEW,
+            null,
+        );
+        $complete = $this->service($completePermissions)->assertOperation(
+            $this->context($completePermissions),
+            $definition,
+            ReportOperation::VIEW,
+            null,
+        );
+
+        self::assertFalse($partial->canExport);
+        self::assertTrue($complete->canExport);
     }
 
     public function test_generic_permissions_never_authorize_source_module_report(): void
@@ -551,9 +648,14 @@ final class ReportAccessServiceTest extends TestCase
             ->payload();
     }
 
-    private function sourceModuleDefinition(array $formats = ['xlsx']): ReportDefinition
+    private function sourceModuleDefinition(
+        array $formats = ['xlsx'],
+        array $sensitivePermissions = [],
+        array $auditPermissions = [],
+        ?array $exportPermissions = null,
+    ): ReportDefinition
     {
-        $exportPermissions = array_map(
+        $exportPermissions ??= array_map(
             static fn (string $format): string => match ($format) {
                 'xlsx' => 'act_reports.export.excel',
                 'pdf' => 'act_reports.export.pdf',
@@ -569,8 +671,8 @@ final class ReportAccessServiceTest extends TestCase
             ->permissionPolicy(new ReportPermissionPolicy(
                 ['act_reports.view'],
                 $exportPermissions,
-                [],
-                [],
+                $sensitivePermissions,
+                $auditPermissions,
             ))
             ->payload();
     }

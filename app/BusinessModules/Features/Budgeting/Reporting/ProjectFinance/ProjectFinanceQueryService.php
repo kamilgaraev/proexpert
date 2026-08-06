@@ -39,6 +39,7 @@ final readonly class ProjectFinanceQueryService implements ReportDrillDownProvid
     public function __construct(
         private FinanceSourceAccessPolicy $sourceAccess,
         private OwnerSnapshotIdentityGuard $identityGuard,
+        private ProjectFinanceOutputRedactor $outputRedactor,
     ) {}
 
     private const SORTS = [
@@ -140,7 +141,7 @@ final readonly class ProjectFinanceQueryService implements ReportDrillDownProvid
                 generatedAt: $snapshot->generatedAt,
                 staleAt: $snapshot->staleAt,
             ),
-            totals: is_array($record->totals) ? $record->totals : [],
+            totals: $this->visibleTotals($record, $context),
             freshness: $this->freshness($snapshot),
             quality: $quality,
             provenance: new ReportProvenance(
@@ -194,7 +195,7 @@ final readonly class ProjectFinanceQueryService implements ReportDrillDownProvid
 
         return new ReportPage(
             rows: $rows,
-            totals: is_array($record->totals) ? $record->totals : [],
+            totals: $this->visibleTotals($record, $context),
             freshness: $this->freshness($snapshot),
             quality: $this->quality($record),
             nextCursor: null,
@@ -338,6 +339,15 @@ final readonly class ProjectFinanceQueryService implements ReportDrillDownProvid
             ],
             default => throw new DomainException('report_code_invalid'),
         };
+    }
+
+    private function visibleTotals(ProjectFinanceSnapshot $snapshot, ReportExecutionContext $context): array
+    {
+        return $this->outputRedactor->totals(
+            (string) $snapshot->report_code,
+            is_array($snapshot->totals) ? $snapshot->totals : [],
+            $context->visibility->canViewSensitive,
+        );
     }
 
     private function quality(ProjectFinanceSnapshot $snapshot): ReportQuality

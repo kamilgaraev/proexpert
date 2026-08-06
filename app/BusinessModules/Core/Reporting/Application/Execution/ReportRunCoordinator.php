@@ -24,6 +24,7 @@ final readonly class ReportRunCoordinator
         private ReportAccessService $access,
         private ReportRunStore $runs,
         private ReportExecutionClock $clock,
+        private ReportRunResponseRedactor $responseRedactor,
     ) {
     }
 
@@ -41,7 +42,12 @@ final readonly class ReportRunCoordinator
     {
         $run = $this->runs->get($context, $runId);
         $query = $this->runs->queryForRun($context, $runId);
-        $this->access->assertOperation($context, $query->definition, ReportOperation::VIEW, null);
+        $visibility = $this->access->assertOperation(
+            $context,
+            $query->definition,
+            ReportOperation::VIEW,
+            null,
+        );
         if ($query->definition->outputClassification->requiresSensitiveForSummary()) {
             $this->access->assertOperation($context, $query->definition, ReportOperation::VIEW_SENSITIVE, null);
         }
@@ -49,7 +55,11 @@ final readonly class ReportRunCoordinator
             $this->access->assertOperation($context, $query->definition, ReportOperation::VIEW_AUDIT, null);
         }
 
-        return $run;
+        return $this->responseRedactor->redact(
+            $run,
+            $query->definition->outputClassification,
+            $visibility,
+        );
     }
 
     public function retry(ReportExecutionContext $context, string $runId, IdempotencyKey $key): ReportRun

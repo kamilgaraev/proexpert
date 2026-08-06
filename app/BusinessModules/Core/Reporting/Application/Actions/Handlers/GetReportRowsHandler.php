@@ -49,7 +49,7 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
         $query = $this->runs->queryForRun($context, $runId);
         $this->assertIdentity($context, $runId, $run, $query, $snapshot);
         $binding = $this->binding($run, $query);
-        $current = $this->authorizeRows($context, $query, $snapshot);
+        $current = $this->authorizeRows($context, $query, $snapshot, $window);
         $providerContext = $this->contexts->fromCurrentAuthorization($current);
         $cursor = $window->cursor === null ? null : $this->cursors->decode(
             $window->cursor,
@@ -131,13 +131,16 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
         ReportExecutionContext $context,
         ReportQuery $query,
         ReportSnapshotRef $snapshot,
+        ReportRowsWindow $window,
     ): CurrentReportAuthorization {
         $authorization = $this->authorize($context, $query, $snapshot, ReportOperation::VIEW);
         $classification = $query->definition->outputClassification;
-        if ($classification->requiresSensitiveForRows()) {
+        if ($classification->requiresSensitiveForRows()
+            || $classification->requiresSensitiveForColumns([$window->sort->field])) {
             $authorization = $this->authorize($context, $query, $snapshot, ReportOperation::VIEW_SENSITIVE);
         }
-        if ($classification->requiresAuditForRows()) {
+        if ($classification->requiresAuditForRows()
+            || $classification->requiresAuditForColumns([$window->sort->field])) {
             $authorization = $this->authorize($context, $query, $snapshot, ReportOperation::VIEW_AUDIT);
         }
 
