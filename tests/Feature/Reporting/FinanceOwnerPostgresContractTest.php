@@ -70,6 +70,177 @@ final class FinanceOwnerPostgresContractTest extends TestCase
     }
 
     #[Test]
+    public function change_claim_sources_have_executable_scope_and_hash_guards(): void
+    {
+        foreach ([
+            'change_request_versions' => 'change_request_versions_scope_hash_guard',
+            'change_workflow_events' => 'change_workflow_events_scope_hash_guard',
+            'change_claim_links' => 'change_claim_links_scope_hash_guard',
+            'contingency_ledger_entries' => 'contingency_ledger_entries_scope_hash_guard',
+        ] as $table => $trigger) {
+            $definition = DB::scalar(<<<'SQL'
+SELECT pg_get_triggerdef(trigger.oid)
+FROM pg_trigger AS trigger
+JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+WHERE relation.relname = ?
+  AND trigger.tgname = ?
+  AND NOT trigger.tgisinternal
+SQL, [$table, $trigger]);
+
+            self::assertIsString($definition, $table);
+            self::assertStringContainsString('BEFORE INSERT', $definition, $table);
+        }
+
+        $payload = [
+            'approved_cost_minor' => null,
+            'change_request_id' => 17,
+            'contract_id' => null,
+            'contract_project_allocation_id' => null,
+            'currency' => null,
+            'currency_source' => null,
+            'effective_at' => '2026-08-06T18:15:30+00:00',
+            'initiator_type' => 'internal',
+            'initiator_user_id' => 23,
+            'organization_id' => 11,
+            'owner_user_id' => null,
+            'project_id' => 13,
+            'proposed_cost_minor' => 100,
+            'proposed_schedule_days' => 2,
+            'reason' => 'postgres_contract',
+            'status' => 'draft',
+            'version' => 1,
+            'approved_schedule_days' => null,
+        ];
+        $canonical = CanonicalJson::encode($payload);
+        $expectedHash = hash('sha256', $canonical);
+
+        self::assertSame(
+            $expectedHash,
+            DB::scalar('SELECT most_change_claim_canonical_hash_v1(?::jsonb)', [$canonical]),
+        );
+        self::assertSame(
+            $expectedHash,
+            DB::scalar('SELECT most_change_claim_canonical_hash_v1(?::jsonb)', [$canonical]),
+        );
+
+        $foreignId = 9_000_000_001;
+        $now = now();
+        $this->assertChangeClaimInsertRejected(
+            'change_request_versions',
+            [
+                'organization_id' => $foreignId,
+                'change_request_id' => $foreignId,
+                'version' => 1,
+                'project_id' => $foreignId + 1,
+                'contract_id' => null,
+                'contract_project_allocation_id' => null,
+                'initiator_user_id' => null,
+                'initiator_type' => 'internal',
+                'reason' => 'cross_scope_probe',
+                'owner_user_id' => null,
+                'status' => 'draft',
+                'proposed_cost_minor' => 0,
+                'proposed_schedule_days' => 0,
+                'approved_cost_minor' => null,
+                'approved_schedule_days' => null,
+                'currency' => null,
+                'currency_source' => null,
+                'effective_at' => $now,
+                'source_hash' => str_repeat('a', 64),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            'change_claim_version_scope_mismatch',
+        );
+        $this->assertChangeClaimInsertRejected(
+            'change_workflow_events',
+            [
+                'organization_id' => $foreignId,
+                'change_request_id' => $foreignId,
+                'version' => 1,
+                'project_id' => $foreignId + 1,
+                'event_type' => 'create',
+                'prior_status' => null,
+                'current_status' => 'draft',
+                'actor_id' => null,
+                'occurred_at' => $now,
+                'event_hash' => str_repeat('b', 64),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            'change_claim_event_scope_mismatch',
+        );
+        $this->assertChangeClaimInsertRejected(
+            'change_claim_links',
+            [
+                'organization_id' => $foreignId,
+                'change_request_version_id' => $foreignId,
+                'change_claim_id' => $foreignId,
+                'claim_version' => 1,
+                'claim_amount_minor' => 0,
+                'currency' => 'RUB',
+                'relationship_type' => 'claim',
+                'source_hash' => str_repeat('c', 64),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            'change_claim_link_scope_mismatch',
+        );
+        $this->assertChangeClaimInsertRejected(
+            'contingency_ledger_entries',
+            [
+                'organization_id' => $foreignId,
+                'project_id' => $foreignId + 1,
+                'contract_project_allocation_id' => $foreignId,
+                'currency' => 'RUB',
+                'currency_source' => 'change_request_version',
+                'movement_type' => 'opening',
+                'signed_amount_minor' => 0,
+                'effective_on' => $now->toDateString(),
+                'effective_at' => $now,
+                'source_type' => 'change_request',
+                'source_id' => (string) $foreignId,
+                'source_version' => 0,
+                'idempotency_key' => 'cross-scope-probe-'.$foreignId,
+                'entry_hash' => str_repeat('d', 64),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            'change_claim_ledger_scope_mismatch',
+        );
+    }
+
+    #[Test]
+    public function change_claim_checkpoint_hashes_recompute_exactly(): void
+    {
+        self::assertSame(0, (int) DB::scalar(<<<'SQL'
+SELECT COUNT(*)
+FROM change_claim_history_checkpoints AS checkpoint
+WHERE checkpoint.source_hash IS DISTINCT FROM encode(sha256(convert_to(jsonb_build_object(
+    'organization_id', checkpoint.organization_id,
+    'completed_at', to_char(checkpoint.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+    'change_request_count', checkpoint.change_request_count,
+    'change_request_watermark_id', checkpoint.change_request_watermark_id,
+    'change_request_set_hash', checkpoint.change_request_set_hash,
+    'version_count', checkpoint.version_count,
+    'version_watermark_id', checkpoint.version_watermark_id,
+    'version_set_hash', checkpoint.version_set_hash,
+    'workflow_event_count', checkpoint.workflow_event_count,
+    'workflow_event_watermark_id', checkpoint.workflow_event_watermark_id,
+    'workflow_event_set_hash', checkpoint.workflow_event_set_hash,
+    'claim_link_count', checkpoint.claim_link_count,
+    'claim_link_watermark_id', checkpoint.claim_link_watermark_id,
+    'claim_link_set_hash', checkpoint.claim_link_set_hash,
+    'ledger_count', checkpoint.ledger_count,
+    'ledger_watermark_id', checkpoint.ledger_watermark_id,
+    'ledger_set_hash', checkpoint.ledger_set_hash,
+    'unprojectable_legacy_count', checkpoint.unprojectable_legacy_count,
+    'unprojectable_legacy_set_hash', checkpoint.unprojectable_legacy_set_hash
+)::text, 'UTF8')), 'hex')
+SQL));
+    }
+
+    #[Test]
     public function contract_settlement_checkpoints_match_exact_owner_versions(): void
     {
         $mismatchCount = DB::scalar(<<<'SQL'
@@ -684,6 +855,19 @@ SQL));
             } finally {
                 DB::rollBack();
             }
+        }
+    }
+
+    private function assertChangeClaimInsertRejected(string $table, array $payload, string $error): void
+    {
+        DB::beginTransaction();
+        try {
+            DB::table($table)->insert($payload);
+            self::fail($table.' accepted an invalid reporting source row');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString($error, $exception->getMessage(), $table);
+        } finally {
+            DB::rollBack();
         }
     }
 

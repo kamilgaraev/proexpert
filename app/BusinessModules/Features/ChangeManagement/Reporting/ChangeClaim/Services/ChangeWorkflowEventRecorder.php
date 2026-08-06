@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\ExactDecimal;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeClaim;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ChangeClaimSourceInstant;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ContingencyMovement;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimLink;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeRequestVersion;
@@ -27,7 +28,15 @@ final readonly class ChangeWorkflowEventRecorder
         CarbonImmutable $occurredAt,
         ?int $actorId,
     ): ChangeWorkflowEvent {
-        return DB::transaction(function () use ($change, $eventType, $occurredAt, $actorId): ChangeWorkflowEvent {
+        $sourceInstant = ChangeClaimSourceInstant::from($occurredAt);
+
+        return DB::transaction(function () use (
+            $change,
+            $eventType,
+            $occurredAt,
+            $sourceInstant,
+            $actorId,
+        ): ChangeWorkflowEvent {
             $lockedChange = ChangeRequest::query()
                 ->where('organization_id', $change->organization_id)
                 ->whereKey($change->id)
@@ -79,7 +88,7 @@ final readonly class ChangeWorkflowEventRecorder
                     : (int) $links['approved_schedule_days'],
                 'currency' => $currency,
                 'currency_source' => $currency === null ? null : 'change_request_monetary_context',
-                'effective_at' => $occurredAt->format(DATE_ATOM),
+                'effective_at' => $sourceInstant->occurredAt->format(DATE_ATOM),
             ];
             $versionRecord = ChangeRequestVersion::query()->create([
                 ...$payload,
@@ -95,7 +104,7 @@ final readonly class ChangeWorkflowEventRecorder
                 'prior_status' => $priorStatus,
                 'current_status' => (string) $change->status,
                 'actor_id' => $actorId,
-                'occurred_at' => $occurredAt->format(DATE_ATOM),
+                'occurred_at' => $sourceInstant->occurredAt->format(DATE_ATOM),
             ];
 
             $event = ChangeWorkflowEvent::query()->create([
