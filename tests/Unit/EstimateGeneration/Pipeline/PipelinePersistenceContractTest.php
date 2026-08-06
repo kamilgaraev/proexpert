@@ -42,7 +42,8 @@ final class PipelinePersistenceContractTest extends TestCase
         );
 
         self::assertIsString($migration);
-        self::assertStringContainsString("output_payload #- '{artifact,version_id}'", $migration);
+        self::assertStringContainsString("output_payload = output_payload - 'artifact'", $migration);
+        self::assertStringNotContainsString("output_payload #- '{artifact,version_id}'", $migration);
         self::assertStringContainsString("status = 'completed'", $migration);
         self::assertStringContainsString("'invalidated'", $migration);
         self::assertStringContainsString('eg_checkpoint_immutable_update', $migration);

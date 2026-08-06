@@ -1808,6 +1808,11 @@ final class LegalDocumentSignatureService
                     ]);
                 }
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                    'state' => 'uploaded',
+                    'storage_etag' => $etag,
+                    'updated_at' => now(),
+                ]);
+                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'state' => 'deleting', 'cleanup_owned' => true, 'claim_count' => 0,
                     'storage_etag' => $etag,
                     'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,

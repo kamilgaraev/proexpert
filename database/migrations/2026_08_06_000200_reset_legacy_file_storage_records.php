@@ -73,13 +73,7 @@ SQL);
         }
 
         DB::statement('ALTER TABLE quality_defect_photos DROP CONSTRAINT IF EXISTS quality_defect_photo_storage_identity_check');
-        DB::table('quality_defect_photos')->update([
-            'storage_etag' => null,
-            'storage_sha256' => null,
-            'size_bytes' => null,
-            'mime_type' => null,
-            'storage_identity_verified' => false,
-        ]);
+        DB::table('quality_defect_photos')->delete();
         Schema::table('quality_defect_photos', static function (Blueprint $table): void {
             $table->dropColumn('storage_version_id');
         });
@@ -106,12 +100,20 @@ SQL);
     {
         DB::statement('DROP TRIGGER IF EXISTS legal_signature_artifact_guard ON legal_signature_artifacts');
         DB::statement('DROP FUNCTION IF EXISTS legal_signature_artifact_guard()');
+        DB::statement('DROP TRIGGER IF EXISTS legal_document_signatures_immutable_guard ON legal_document_signatures');
+        DB::statement('DROP TRIGGER IF EXISTS legal_signature_verifications_immutable_guard ON legal_signature_verifications');
 
         if (Schema::hasTable('legal_signature_artifacts')) {
             DB::table('legal_signature_artifacts')->delete();
         }
         if (Schema::hasTable('legal_archive_file_cleanup_debts')) {
             DB::table('legal_archive_file_cleanup_debts')->delete();
+        }
+        if (Schema::hasTable('legal_signature_verifications')) {
+            DB::table('legal_signature_verifications')->delete();
+        }
+        if (Schema::hasTable('legal_document_signatures')) {
+            DB::table('legal_document_signatures')->delete();
         }
 
         DB::statement('DROP INDEX IF EXISTS legal_signature_cleanup_debts_due_idx');
@@ -158,6 +160,8 @@ ALTER TABLE legal_signature_artifacts ADD CONSTRAINT legal_signature_artifacts_r
 )
 SQL);
         $this->createCurrentLegalSignatureArtifactGuard();
+        DB::statement('CREATE TRIGGER legal_document_signatures_immutable_guard BEFORE UPDATE OR DELETE ON legal_document_signatures FOR EACH ROW EXECUTE FUNCTION legal_signature_append_only_guard()');
+        DB::statement('CREATE TRIGGER legal_signature_verifications_immutable_guard BEFORE UPDATE OR DELETE ON legal_signature_verifications FOR EACH ROW EXECUTE FUNCTION legal_signature_append_only_guard()');
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION legal_signature_cleanup_debt_key_fill() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -182,7 +186,23 @@ SQL);
 
         if (Schema::hasTable('estimate_generation_processing_units')) {
             DB::statement('ALTER TABLE estimate_generation_processing_units DROP CONSTRAINT IF EXISTS eg_units_locator_provenance_ck');
-            DB::statement("UPDATE estimate_generation_processing_units SET locator = locator - 'artifact_version_id' - 'geometry_artifact_version_id'");
+            if (Schema::hasTable('estimate_generation_document_pages')) {
+                DB::table('estimate_generation_document_pages')->update([
+                    'processing_unit_id' => null,
+                    'source_version' => null,
+                    'output_version' => null,
+                    'raw_payload_path' => null,
+                ]);
+            }
+            if (Schema::hasTable('estimate_generation_documents')) {
+                DB::table('estimate_generation_documents')->update([
+                    'units_finalized_source_version' => null,
+                    'units_reconciled_source_version' => null,
+                    'units_reconcile_claim_token' => null,
+                    'units_reconcile_lease_expires_at' => null,
+                ]);
+            }
+            DB::table('estimate_generation_processing_units')->delete();
             DB::statement(<<<'SQL'
 ALTER TABLE estimate_generation_processing_units ADD CONSTRAINT eg_units_locator_provenance_ck CHECK (
     locator ?& ARRAY['source_kind', 'source_version', 'coordinate_space', 'artifact_path', 'artifact_sha256']
@@ -205,6 +225,9 @@ SQL);
 
         if (Schema::hasTable('estimate_generation_benchmark_runs')) {
             DB::statement('ALTER TABLE estimate_generation_benchmark_runs DROP CONSTRAINT IF EXISTS eg_benchmark_closed_state_chk');
+            DB::statement('DROP TRIGGER IF EXISTS eg_benchmark_run_immutable ON estimate_generation_benchmark_runs');
+            DB::statement('DELETE FROM estimate_generation_benchmark_runs WHERE case_results_storage_path IS NOT NULL');
+            DB::statement('CREATE TRIGGER eg_benchmark_run_immutable BEFORE UPDATE OR DELETE ON estimate_generation_benchmark_runs FOR EACH ROW EXECUTE FUNCTION eg_guard_benchmark_run_immutable()');
             Schema::table('estimate_generation_benchmark_runs', static function (Blueprint $table): void {
                 $table->dropColumn(['case_results_version', 'case_results_version_scheme']);
             });
@@ -221,14 +244,13 @@ SQL);
         DB::statement('DROP TRIGGER IF EXISTS eg_checkpoint_immutable_update ON estimate_generation_pipeline_checkpoints');
         DB::statement(<<<'SQL'
 UPDATE estimate_generation_pipeline_checkpoints
-SET output_payload = output_payload #- '{artifact,version_id}',
+SET output_payload = output_payload - 'artifact',
     status = CASE WHEN status = 'completed' THEN 'invalidated' ELSE status END,
     invalidated_at = CASE WHEN status = 'completed' THEN CURRENT_TIMESTAMP ELSE invalidated_at END,
     invalidation_reason = CASE WHEN status = 'completed' THEN 'dependency_changed' ELSE invalidation_reason END,
     updated_at = CURRENT_TIMESTAMP
 WHERE status IN ('completed','invalidated')
     AND jsonb_typeof(output_payload->'artifact') = 'object'
-    AND (output_payload->'artifact') ? 'version_id'
 SQL);
         DB::statement('CREATE TRIGGER eg_checkpoint_immutable_update BEFORE UPDATE ON estimate_generation_pipeline_checkpoints FOR EACH ROW EXECUTE FUNCTION eg_checkpoint_immutable_guard()');
     }

@@ -899,11 +899,22 @@ final class ManualOriginalRegistrationTest extends TestCase
         } catch (DomainException $exception) {
             self::assertSame('legal_signature_artifact_attempt_stale', $exception->getMessage());
         }
+        $transitions = [];
+        $this->database->getConnection()->listen(static function ($query) use (&$transitions): void {
+            foreach ($query->bindings as $binding) {
+                if (is_string($binding) && in_array($binding, ['uploaded', 'deleting'], true)) {
+                    $transitions[] = $binding;
+
+                    break;
+                }
+            }
+        });
         $recover->invoke(
             $service, 10, (int) $document->id, (int) $version->id, $reservation['artifact_key'],
             $path, 'late-etag', $contentHash,
         );
         $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
+        self::assertSame(['uploaded', 'deleting'], $transitions);
         self::assertSame('deleting', $artifact->state);
         self::assertSame('late-etag', $artifact->storage_etag);
         self::assertSame(1, $this->database->getConnection()->table('legal_archive_file_cleanup_debts')
@@ -1129,7 +1140,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             'upload_lease_expires_at' => now()->addMinutes(5),
         ]);
         try {
-            $bind->invoke($service, 10, $key, $staleToken, true);
+            $bind->invoke($service, 10, $key, $staleToken, true, 'etag');
             self::fail('A stale uploader bound its storage object.');
         } catch (\ReflectionException $exception) {
             throw $exception;
@@ -1146,7 +1157,7 @@ final class ManualOriginalRegistrationTest extends TestCase
         } catch (DomainException $exception) {
             self::assertSame('legal_signature_artifact_attempt_stale', $exception->getMessage());
         }
-        $bind->invoke($service, 10, $key, $activeToken, true);
+        $bind->invoke($service, 10, $key, $activeToken, true, 'etag');
         $release->invoke(
             $service, 10, (int) $document->id, (int) $version->id, 'org-10/shared.p7s',
             'etag', str_repeat('a', 64), $failure, $key, $activeToken,
