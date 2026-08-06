@@ -75,7 +75,7 @@ final class OrganizationStoragePath
             throw new \InvalidArgumentException('organization_storage_path_invalid');
         }
 
-        $actorScope = $actorId === null ? 'system' : "user-{$actorId}";
+        $actorScope = $actorId === null ? 'user-system' : "user-{$actorId}";
 
         return self::forDomain(
             $organizationId,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Storage;
 
+use App\Services\Storage\OrganizationStoragePath;
 use PHPUnit\Framework\TestCase;
 
 final class ProductionStorageWriterPathContractTest extends TestCase
@@ -29,6 +30,24 @@ final class ProductionStorageWriterPathContractTest extends TestCase
         self::assertStringContainsString('OrganizationStoragePath::forActor(', $raster);
         self::assertStringNotContainsString('"org-{$request->organization_id}/legal-archive/', $legal);
         self::assertStringNotContainsString('"org-{$organizationId}/legal-archive/', $mobile);
+    }
+
+    public function test_system_writer_uses_the_user_system_actor_segment(): void
+    {
+        $path = OrganizationStoragePath::forActor(
+            42,
+            'legal-archive',
+            'signatures/requests/99',
+            null,
+            'artifact',
+            'p7s',
+        );
+
+        self::assertSame(
+            'org-42/legal-archive/signatures/requests/99/user-system/artifact.p7s',
+            $path,
+        );
+        self::assertStringNotContainsString('/system/', $path);
     }
 
     private function source(string $relativePath): string

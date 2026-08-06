@@ -68,7 +68,7 @@ final class OrganizationStoragePathTest extends TestCase
             ),
         );
         self::assertSame(
-            'org-42/estimate-generation/01J4SESSION/vision/v1/system/01J4OBJECT.png',
+            'org-42/estimate-generation/01J4SESSION/vision/v1/user-system/01J4OBJECT.png',
             OrganizationStoragePath::forActor(
                 42,
                 'estimate-generation',

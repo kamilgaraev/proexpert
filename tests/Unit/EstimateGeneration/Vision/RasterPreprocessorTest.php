@@ -36,7 +36,7 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         self::assertSame(640, $result->sourceWidth);
         self::assertSame(320, $result->sourceHeight);
         self::assertLessThanOrEqual(256, max($result->outputWidth, $result->outputHeight));
-        self::assertMatchesRegularExpression('#^org-7/estimate-generation/11/vision/v1/system/[a-f0-9]{64}\.png$#', $result->derivativeStorageKey);
+        self::assertMatchesRegularExpression('#^org-7/estimate-generation/11/vision/v1/user-system/[a-f0-9]{64}\.png$#', $result->derivativeStorageKey);
         self::assertSame('sha256:'.hash('sha256', Storage::disk('s3')->get($result->derivativeStorageKey)), $result->derivativeHash);
         self::assertSame('not_required', $result->perspectiveStatus);
         self::assertEqualsWithDelta([0.25, 0.75], $result->transform->toSource($result->transform->toDerivative([0.25, 0.75])), 0.000001);

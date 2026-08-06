@@ -918,7 +918,7 @@ final class ManualOriginalRegistrationTest extends TestCase
     public function test_stale_uploader_observes_the_same_current_key_without_replacing_active_ownership(): void
     {
         [$document, $version] = $this->fixture();
-        $path = 'org-10/legal-archive/signatures/requests/99/system/current.p7s';
+        $path = 'org-10/legal-archive/signatures/requests/99/user-system/current.p7s';
         $artifactKey = hash('sha256', 'canonical-current-key');
         $leaseToken = str_repeat('1', 64);
         $artifactId = $this->database->getConnection()->table('legal_signature_artifacts')->insertGetId([

@@ -13,6 +13,21 @@ use PHPUnit\Framework\TestCase;
 final class RasterPreprocessResultTest extends TestCase
 {
     #[Test]
+    public function result_accepts_the_user_system_derivative_actor_segment(): void
+    {
+        try {
+            $result = $this->makeResult([]);
+        } catch (RasterPreprocessingException) {
+            self::fail('The user-system derivative actor segment was rejected.');
+        }
+
+        self::assertSame(
+            'org-7/estimate-generation/11/vision/v1/user-system/'.str_repeat('a', 64).'.png',
+            $result->derivativeStorageKey,
+        );
+    }
+
+    #[Test]
     public function result_rejects_unknown_status_warning_nonfinite_metrics_and_bad_hash_dimensions(): void
     {
         foreach ([
@@ -36,7 +51,7 @@ final class RasterPreprocessResultTest extends TestCase
     private function makeResult(array $override): RasterPreprocessResult
     {
         $data = array_replace([
-            'derivativeStorageKey' => 'org-7/estimate-generation/11/vision/v1/system/'.str_repeat('a', 64).'.png',
+            'derivativeStorageKey' => 'org-7/estimate-generation/11/vision/v1/user-system/'.str_repeat('a', 64).'.png',
             'derivativeHash' => 'sha256:'.str_repeat('a', 64), 'derivativeVersion' => 'raster-preprocessor:v1',
             'derivativeBytes' => 100,
             'sourceWidth' => 100, 'sourceHeight' => 80, 'outputWidth' => 100, 'outputHeight' => 80,
