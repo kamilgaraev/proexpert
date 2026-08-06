@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ContractSettlementExposureReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\HoldingPerformanceReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContractFlowReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
@@ -117,6 +118,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'contract_settlement_exposure')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('contract-settlement-exposure.runs.store');
+        Route::get('/contract-settlement-exposure/options', ContractSettlementExposureReportOptionsController::class)
+            ->defaults('reportCode', 'contract_settlement_exposure')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('contract-settlement-exposure.options');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');
