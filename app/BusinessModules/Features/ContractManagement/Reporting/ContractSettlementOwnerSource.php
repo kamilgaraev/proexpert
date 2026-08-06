@@ -599,14 +599,10 @@ final readonly class ContractSettlementOwnerSource
         if (! $checkpoint instanceof ContractSettlementOwnerHistoryCheckpoint) {
             throw new DomainException('contract_settlement_owner_history_checkpoint_missing');
         }
-        $versions = ContractSettlementOwnerVersion::query()
-            ->where('organization_id', $scope->organizationId)
-            ->where('occurred_at', '<=', $asOf)
-            ->orderBy('owner_type')
-            ->orderBy('owner_id')
-            ->orderByDesc('version')
-            ->get()
-            ->unique(static fn (ContractSettlementOwnerVersion $version): string => $version->owner_type.':'.$version->owner_id);
+        $versions = $this->latestOwnerVersions(
+            $scope->organizationId,
+            $asOf,
+        );
         if ($versions->isEmpty()) {
             throw new DomainException('contract_settlement_owner_history_missing');
         }
@@ -637,6 +633,23 @@ final readonly class ContractSettlementOwnerSource
         }
 
         return $owners;
+    }
+
+    private function latestOwnerVersions(int $organizationId, string $asOf): Collection
+    {
+        $latestIds = ContractSettlementOwnerVersion::query()
+            ->selectRaw('DISTINCT ON (owner_type, owner_id) id')
+            ->where('organization_id', $organizationId)
+            ->where('occurred_at', '<=', $asOf)
+            ->orderBy('owner_type')
+            ->orderBy('owner_id')
+            ->orderByDesc('version');
+
+        return ContractSettlementOwnerVersion::query()
+            ->whereIn('id', $latestIds)
+            ->orderBy('owner_type')
+            ->orderBy('owner_id')
+            ->get();
     }
 
     private static function minor(string $amount): int

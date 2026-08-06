@@ -6,6 +6,8 @@ namespace Tests\Feature\Reporting;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerHistoryBackfillService;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementAllocationConserver;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerSource;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerTimestamp;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerVersionRecorder;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerHistoryCheckpoint;
@@ -21,6 +23,7 @@ use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Test;
+use ReflectionMethod;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
 use Tests\TestCase;
 
@@ -176,6 +179,70 @@ SQL));
         self::assertSame($versionCount, DB::table('contract_settlement_owner_versions')
             ->where('organization_id', $organization->id)
             ->count());
+    }
+
+    #[Test]
+    public function contract_settlement_owner_query_returns_only_latest_version_available_at_as_of(): void
+    {
+        $organization = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        $ownerId = (string) random_int(1_000_000, 2_000_000);
+        $deletedOwnerId = (string) random_int(2_000_001, 3_000_000);
+        $firstAt = new DateTimeImmutable('2026-08-06T00:00:00.100000+00:00');
+        $secondAt = new DateTimeImmutable('2026-08-06T00:00:00.200000+00:00');
+        $futureAt = new DateTimeImmutable('2026-08-06T00:00:00.300000+00:00');
+        $insertVersion = static function (
+            int $organizationId,
+            string $identity,
+            int $version,
+            DateTimeImmutable $occurredAt,
+            string $operation,
+            string $marker,
+        ): void {
+            DB::table('contract_settlement_owner_versions')->insert([
+                'organization_id' => $organizationId,
+                'owner_type' => 'contract',
+                'owner_id' => $identity,
+                'version' => $version,
+                'operation' => $operation,
+                'occurred_at' => ContractSettlementOwnerTimestamp::database($occurredAt),
+                'payload' => json_encode(['marker' => $marker], JSON_THROW_ON_ERROR),
+                'owner_hash' => hash('sha256', $marker),
+                'created_at' => $occurredAt,
+                'updated_at' => $occurredAt,
+            ]);
+        };
+        foreach ([
+            [1, $firstAt, 'v1'],
+            [2, $secondAt, 'v2'],
+            [3, $futureAt, 'v3'],
+        ] as [$version, $occurredAt, $marker]) {
+            $insertVersion((int) $organization->id, $ownerId, $version, $occurredAt, 'upsert', $marker);
+        }
+        $insertVersion((int) $otherOrganization->id, $ownerId, 9, $secondAt, 'upsert', 'other-tenant');
+        $insertVersion((int) $organization->id, $deletedOwnerId, 1, $firstAt, 'upsert', 'before-delete');
+        $insertVersion((int) $organization->id, $deletedOwnerId, 2, $secondAt, 'delete', 'deleted');
+        $insertVersion((int) $organization->id, $deletedOwnerId, 3, $futureAt, 'upsert', 'future-recreated');
+
+        $source = new ContractSettlementOwnerSource(new ContractSettlementAllocationConserver);
+        $method = new ReflectionMethod($source, 'latestOwnerVersions');
+        $versions = $method->invoke(
+            $source,
+            (int) $organization->id,
+            ContractSettlementOwnerTimestamp::database($secondAt),
+        );
+
+        self::assertCount(2, $versions);
+        self::assertTrue($versions->every(
+            static fn (ContractSettlementOwnerVersion $version): bool => (int) $version->organization_id
+                === (int) $organization->id,
+        ));
+        $selected = $versions->keyBy('owner_id');
+        self::assertSame(2, (int) $selected->get($ownerId)?->version);
+        self::assertSame('v2', $selected->get($ownerId)?->payload['marker'] ?? null);
+        self::assertSame(2, (int) $selected->get($deletedOwnerId)?->version);
+        self::assertSame('delete', (string) $selected->get($deletedOwnerId)?->operation);
+        self::assertSame('deleted', $selected->get($deletedOwnerId)?->payload['marker'] ?? null);
     }
 
     #[Test]

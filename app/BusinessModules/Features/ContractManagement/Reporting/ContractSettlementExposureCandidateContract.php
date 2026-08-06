@@ -24,9 +24,9 @@ final readonly class ContractSettlementExposureCandidateContract
 {
     public const CODE = 'contract_settlement_exposure';
     public const FORMULA_VERSION = ContractSettlementCalculator::FORMULA_VERSION;
-    public const SOURCE_SCHEMA_VERSION = 'contract_settlement_owner_history_party_v2';
+    public const SOURCE_SCHEMA_VERSION = 'contract_settlement_owner_history_latest_v3';
     public const FORMULA_HASH = 'b0c715bcda2e44886ac32fd37e8dc3e30edc333adb01801e5f7f21481d65b9f2';
-    public const SOURCE_HASH = '10180b068e2b5697ab76c96bcbd597331b7d53e4147226250fa135f7d6c4d33c';
+    public const SOURCE_HASH = 'a9003f712e1a298d546cada5dda0232d476157a6e10ae8d418116608d680ba1c';
 
     public function filters(): array
     {
