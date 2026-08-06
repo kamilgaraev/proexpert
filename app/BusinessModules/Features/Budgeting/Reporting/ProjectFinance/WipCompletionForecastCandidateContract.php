@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
@@ -77,7 +78,22 @@ final readonly class WipCompletionForecastCandidateContract
             || $definition->permissionPolicy->viewPermissions !== ['budgeting.wip_forecast.view']
             || $definition->permissionPolicy->exportPermissions !== ['budgeting.wip_forecast.export']
             || $definition->permissionPolicy->sensitivePermissions !== ['budgeting.wip_forecast.view_sensitive_costs']
-            || $definition->permissionPolicy->auditPermissions !== ['budgeting.wip_forecast.view_audit']) {
+            || $definition->permissionPolicy->auditPermissions !== ['budgeting.wip_forecast.view_audit']
+            || $definition->outputClassification->defaultClassification !== ReportDataClassification::STANDARD
+            || $definition->outputClassification->sensitiveColumnIds !== [
+                'ac',
+                'bac',
+                'cpi',
+                'ctc',
+                'eac',
+                'ev',
+                'forecast_variance',
+                'pv',
+            ]
+            || $definition->outputClassification->auditColumnIds !== []
+            || $definition->outputClassification->totalsSensitive
+            || $definition->outputClassification->totalsAudit
+            || $definition->outputClassification->provenanceAudit) {
             throw new InvalidArgumentException('wip_completion_forecast_candidate_definition_invalid');
         }
     }

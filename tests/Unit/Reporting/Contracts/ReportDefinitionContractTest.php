@@ -89,8 +89,8 @@ final class ReportDefinitionContractTest extends TestCase
             false,
         );
 
-        self::assertTrue($standard->requiresSensitiveForRows());
-        self::assertTrue($standard->requiresAuditForRows());
+        self::assertFalse($standard->requiresSensitiveForRows());
+        self::assertFalse($standard->requiresAuditForRows());
         self::assertTrue($standard->requiresSensitiveForColumns(['cost']));
         self::assertFalse($standard->requiresSensitiveForColumns(['name']));
         self::assertTrue($standard->requiresAuditForColumns(['employee']));

@@ -76,6 +76,22 @@ final readonly class ProjectEvmControlBuiltinPublishedReport
                 'sensitive' => ['budgeting.wip_forecast.view_sensitive_costs'],
                 'audit' => [],
             ],
+            'output_classification' => [
+                'default_classification' => 'standard',
+                'sensitive_column_ids' => [
+                    'ac_minor',
+                    'approved_etc_minor',
+                    'cv_minor',
+                    'cpi',
+                    'eac_minor',
+                    'vac_minor',
+                    'tcpi',
+                ],
+                'audit_column_ids' => [],
+                'totals_sensitive' => false,
+                'totals_audit' => false,
+                'provenance_audit' => false,
+            ],
             'readiness' => [
                 'source' => 'ready',
                 'formula' => 'ready',

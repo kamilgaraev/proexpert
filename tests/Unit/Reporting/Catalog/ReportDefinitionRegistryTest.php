@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\LoadedReportManifest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ManifestReportSchedulingCapabilityRegistry;
@@ -22,6 +23,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportManifestSema
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlCandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\YamlReportManifestLoader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Validation\Draft202012SchemaValidator;
+use InvalidArgumentException;
 use LogicException;
 use Opis\JsonSchema\CompliantValidator;
 use PHPUnit\Framework\TestCase;
@@ -108,6 +110,9 @@ final class ReportDefinitionRegistryTest extends TestCase
         self::assertTrue($first->supportsSubscriptions);
         self::assertSame('reports', $first->sourceModule);
         self::assertSame(ReportCoreAccessMode::REPORTING_WORKSPACE, $first->coreAccessMode);
+        self::assertSame(ReportDataClassification::STANDARD, $first->outputClassification->defaultClassification);
+        self::assertSame([], $first->outputClassification->sensitiveColumnIds);
+        self::assertSame([], $first->outputClassification->auditColumnIds);
 
         $sourceRow = $row;
         $sourceRow['source_module'] = 'act-reporting';
@@ -123,6 +128,49 @@ final class ReportDefinitionRegistryTest extends TestCase
         self::assertSame('act-reporting', $source->sourceModule);
         self::assertSame(ReportCoreAccessMode::SOURCE_MODULE_REPORT, $source->coreAccessMode);
         self::assertNotSame($first->definitionHash->value, $source->definitionHash->value);
+    }
+
+    public function test_definition_factory_preserves_explicit_closed_output_classification(): void
+    {
+        $row = $this->manifest()->definitions[1];
+        $row['output_classification'] = [
+            'default_classification' => 'standard',
+            'sensitive_column_ids' => ['amount'],
+            'audit_column_ids' => ['evidence'],
+            'totals_sensitive' => true,
+            'totals_audit' => false,
+            'provenance_audit' => true,
+        ];
+        $row['columns'][] = ['id' => 'amount'];
+        $row['columns'][] = ['id' => 'evidence'];
+
+        $classification = $this->factory()->fromManifest($row)->outputClassification;
+
+        self::assertSame(ReportDataClassification::STANDARD, $classification->defaultClassification);
+        self::assertSame(['amount'], $classification->sensitiveColumnIds);
+        self::assertSame(['evidence'], $classification->auditColumnIds);
+        self::assertTrue($classification->totalsSensitive);
+        self::assertFalse($classification->totalsAudit);
+        self::assertTrue($classification->provenanceAudit);
+    }
+
+    public function test_definition_factory_rejects_open_output_classification_shape(): void
+    {
+        $row = $this->manifest()->definitions[1];
+        $row['output_classification'] = [
+            'default_classification' => 'standard',
+            'sensitive_column_ids' => [],
+            'audit_column_ids' => [],
+            'totals_sensitive' => false,
+            'totals_audit' => false,
+            'provenance_audit' => false,
+            'unexpected' => true,
+        ];
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_manifest_definition_invalid');
+
+        $this->factory()->fromManifest($row);
     }
 
     public function test_manifest_semantics_reject_reports_as_source_module(): void

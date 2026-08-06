@@ -98,6 +98,18 @@ final readonly class ReportDefinitionVisibilityResolver
             $exportFormat,
             $permissionGranted,
         );
+        $canViewSensitive = $canView
+            && $definition->permissionPolicy->sensitivePermissions !== []
+            && $this->allGranted(
+                $definition->permissionPolicy->sensitivePermissions,
+                $permissionGranted,
+            );
+        $canViewAudit = $canView
+            && $definition->permissionPolicy->auditPermissions !== []
+            && $this->allGranted(
+                $definition->permissionPolicy->auditPermissions,
+                $permissionGranted,
+            );
 
         return new ReportVisibility(
             $canView,
@@ -105,8 +117,8 @@ final readonly class ReportDefinitionVisibilityResolver
             $canExport,
             $canExport,
             false,
-            false,
-            false,
+            $canViewSensitive,
+            $canViewAudit,
         );
     }
 
@@ -128,22 +140,49 @@ final readonly class ReportDefinitionVisibilityResolver
                 default => null,
             };
 
-            return $permission !== null
-                && in_array($permission, $definition->permissionPolicy->exportPermissions, true)
-                && $permissionGranted($permission);
+            if ($permission !== null
+                && in_array($permission, $definition->permissionPolicy->exportPermissions, true)) {
+                return $permissionGranted($permission);
+            }
+
+            return $definition->permissionPolicy->exportPermissions !== []
+                && $this->allGranted(
+                    $definition->permissionPolicy->exportPermissions,
+                    $permissionGranted,
+                );
         }
 
         if (in_array($operation, [ReportOperation::EXPORT, ReportOperation::DOWNLOAD], true)) {
             return false;
         }
 
-        foreach ($definition->permissionPolicy->exportPermissions as $permission) {
-            if ($permissionGranted($permission)) {
-                return true;
+        $exportPermissions = $definition->permissionPolicy->exportPermissions;
+        if ($exportPermissions === []) {
+            return false;
+        }
+
+        if ($this->usesFormatSpecificExportPermissions($exportPermissions)) {
+            foreach ($exportPermissions as $permission) {
+                if ($permissionGranted($permission)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return $this->allGranted($exportPermissions, $permissionGranted);
+    }
+
+    private function usesFormatSpecificExportPermissions(array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if (! in_array($permission, ['act_reports.export.excel', 'act_reports.export.pdf'], true)) {
+                return false;
             }
         }
 
-        return false;
+        return true;
     }
 
     /** @param Closure(string): bool $permissionGranted */

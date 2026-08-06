@@ -48,6 +48,15 @@ final class ProjectEvmControlPublishedContractTest extends TestCase
             $definition->permissionPolicy->sensitivePermissions,
         );
         self::assertSame([], $definition->permissionPolicy->auditPermissions);
+        self::assertSame([
+            'ac_minor',
+            'approved_etc_minor',
+            'cpi',
+            'cv_minor',
+            'eac_minor',
+            'tcpi',
+            'vac_minor',
+        ], $definition->outputClassification->sensitiveColumnIds);
         self::assertSame(['csv', 'xlsx'], $definition->formats);
         self::assertSame(5, $builtin->metadata()->manifestOrdinal);
         self::assertFalse($builtin->scheduling()->supportsSubscriptions);

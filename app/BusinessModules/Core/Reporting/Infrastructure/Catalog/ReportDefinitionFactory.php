@@ -32,6 +32,7 @@ final class ReportDefinitionFactory
         );
         $sourceModule = $this->optionalString($row, 'source_module')
             ?? ($coreAccessMode === ReportCoreAccessMode::REPORTING_WORKSPACE ? 'reports' : '');
+        $outputClassification = $this->outputClassification($row);
 
         return new ReportDefinition(
             code: $this->string($row, 'code'),
@@ -51,14 +52,7 @@ final class ReportDefinitionFactory
                 $this->list($permissions, 'audit'),
             ),
             snapshotClassification: ReportSnapshotClassification::OPERATIONAL,
-            outputClassification: new ReportOutputClassification(
-                ReportDataClassification::STANDARD,
-                [],
-                [],
-                false,
-                false,
-                false,
-            ),
+            outputClassification: $outputClassification,
             publicationReadiness: ReportPublicationReadiness::from($this->string($readiness, 'publication')),
             supportsSubscriptions: $this->boolean($capabilities, 'supports_subscriptions'),
             sourceModule: $sourceModule,
@@ -98,6 +92,44 @@ final class ReportDefinitionFactory
         }
 
         return $value;
+    }
+
+    private function outputClassification(array $row): ReportOutputClassification
+    {
+        if (! array_key_exists('output_classification', $row)) {
+            return new ReportOutputClassification(
+                ReportDataClassification::STANDARD,
+                [],
+                [],
+                false,
+                false,
+                false,
+            );
+        }
+
+        $classification = $this->map($row, 'output_classification');
+        $expectedKeys = [
+            'audit_column_ids',
+            'default_classification',
+            'provenance_audit',
+            'sensitive_column_ids',
+            'totals_audit',
+            'totals_sensitive',
+        ];
+        $actualKeys = array_keys($classification);
+        sort($actualKeys, SORT_STRING);
+        if ($actualKeys !== $expectedKeys) {
+            throw new InvalidArgumentException('report_manifest_definition_invalid');
+        }
+
+        return new ReportOutputClassification(
+            ReportDataClassification::from($this->string($classification, 'default_classification')),
+            $this->list($classification, 'sensitive_column_ids'),
+            $this->list($classification, 'audit_column_ids'),
+            $this->boolean($classification, 'totals_sensitive'),
+            $this->boolean($classification, 'totals_audit'),
+            $this->boolean($classification, 'provenance_audit'),
+        );
     }
 
     private function list(array $source, string $key): array

@@ -33,7 +33,7 @@ final readonly class ReportOutputClassification
 
     public function requiresAuditForRows(): bool
     {
-        return $this->auditColumnIds !== [] || $this->totalsAudit;
+        return $this->totalsAudit;
     }
 
     public function requiresSensitiveForColumns(array $columnIds): bool

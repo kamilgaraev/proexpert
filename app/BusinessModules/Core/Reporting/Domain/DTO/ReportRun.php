@@ -71,6 +71,36 @@ final readonly class ReportRun
         return [];
     }
 
+    public function withTotals(array $totals): self
+    {
+        return new self(
+            id: $this->id,
+            reportCode: $this->reportCode,
+            status: $this->status,
+            definitionHash: $this->definitionHash,
+            contractVersion: $this->contractVersion,
+            formulaVersion: $this->formulaVersion,
+            sourceSchemaVersion: $this->sourceSchemaVersion,
+            rendererVersion: $this->rendererVersion,
+            queryHash: $this->queryHash,
+            sourceHash: $this->sourceHash,
+            progress: $this->progress,
+            rowCount: $this->rowCount,
+            resultMetadata: $this->resultMetadata,
+            totals: $totals,
+            freshness: $this->freshness,
+            quality: $this->quality,
+            provenance: $this->provenance,
+            createdAt: $this->createdAt,
+            updatedAt: $this->updatedAt,
+            readyAt: $this->readyAt,
+            expiresAt: $this->expiresAt,
+            cancelRequestedAt: $this->cancelRequestedAt,
+            httpDisposition: $this->httpDisposition,
+            pollAfterMs: $this->pollAfterMs,
+        );
+    }
+
     private function assertReadyIdentity(): void
     {
         if ($this->sourceHash === null || $this->rowCount === null || $this->resultMetadata === null || $this->freshness === null || $this->quality === null || $this->provenance === null || $this->readyAt === null || $this->rowCount < 0 || $this->resultMetadata->rowCount !== $this->rowCount || $this->resultMetadata->snapshot->sourceHash->value !== $this->sourceHash->value || $this->provenance->sourceHash->value !== $this->sourceHash->value) {

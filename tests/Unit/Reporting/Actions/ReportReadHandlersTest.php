@@ -91,11 +91,7 @@ final class ReportReadHandlersTest extends TestCase
         );
 
         self::assertSame($fixture['page'], $result);
-        self::assertSame([
-            ReportOperation::VIEW,
-            ReportOperation::VIEW_SENSITIVE,
-            ReportOperation::VIEW_AUDIT,
-        ], $operations);
+        self::assertSame([ReportOperation::VIEW], $operations);
         self::assertCount(1, $fixture['rowQuery']->pageCalls());
         self::assertSame($fixture['run']->resultMetadata->snapshot, $fixture['rowQuery']->pageCalls()[0][1]);
         self::assertSame($this->sort, $fixture['rowQuery']->pageCalls()[0][2]);
@@ -133,6 +129,138 @@ final class ReportReadHandlersTest extends TestCase
         self::assertSame('Первая строка', $decoded->keyset->lastSortValue);
         self::assertSame('row-1', $decoded->keyset->lastStableRowKey);
         self::assertSame($this->sort, $decoded->sort);
+    }
+
+    public function test_sensitive_sort_is_authorized_before_provider_and_supports_cursor_pagination(): void
+    {
+        $sort = new ReportWindowSort('secret_amount', ReportSortDirection::DESC);
+        $classification = new ReportOutputClassification(
+            ReportDataClassification::STANDARD,
+            ['secret_amount'],
+            [],
+            false,
+            false,
+            false,
+        );
+        $fixture = $this->fixture(
+            $classification,
+            columns: [['id' => 'name'], ['id' => 'secret_amount']],
+            rows: [['row_key' => 'row-1', 'name' => 'Первая строка', 'secret_amount' => 500]],
+            hasMore: true,
+            limit: 1,
+            sort: $sort,
+        );
+        $operations = [];
+        $handler = $this->rowsHandler($fixture, $this->authorizer($operations));
+
+        $first = $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow(null, 1, $sort),
+        );
+
+        self::assertSame([ReportOperation::VIEW, ReportOperation::VIEW_SENSITIVE], $operations);
+        self::assertNotNull($first->nextCursor);
+
+        $handler->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow($first->nextCursor, 1, $sort),
+        );
+
+        $decoded = $fixture['rowQuery']->pageCalls()[1][3];
+        self::assertNotNull($decoded);
+        self::assertSame(500, $decoded->keyset->lastSortValue);
+        self::assertSame('row-1', $decoded->keyset->lastStableRowKey);
+    }
+
+    public function test_sensitive_sort_denial_happens_before_provider_call(): void
+    {
+        $sort = new ReportWindowSort('secret_amount', ReportSortDirection::DESC);
+        $fixture = $this->fixture(
+            new ReportOutputClassification(
+                ReportDataClassification::STANDARD,
+                ['secret_amount'],
+                [],
+                false,
+                false,
+                false,
+            ),
+            columns: [['id' => 'name'], ['id' => 'secret_amount']],
+            sort: $sort,
+        );
+        $operations = [];
+
+        $this->expectReportError(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+
+        try {
+            $this->rowsHandler($fixture, $this->authorizer($operations, false))->handle(
+                $this->context,
+                self::RUN_ID,
+                new ReportRowsWindow(null, 50, $sort),
+            );
+        } finally {
+            self::assertSame([ReportOperation::VIEW, ReportOperation::VIEW_SENSITIVE], $operations);
+            self::assertCount(0, $fixture['rowQuery']->pageCalls());
+        }
+    }
+
+    public function test_audit_sort_is_authorized_before_provider_call(): void
+    {
+        $sort = new ReportWindowSort('audit_event', ReportSortDirection::DESC);
+        $fixture = $this->fixture(
+            new ReportOutputClassification(
+                ReportDataClassification::STANDARD,
+                [],
+                ['audit_event'],
+                false,
+                false,
+                false,
+            ),
+            columns: [['id' => 'name'], ['id' => 'audit_event']],
+            sort: $sort,
+        );
+        $operations = [];
+
+        $this->rowsHandler($fixture, $this->authorizer($operations))->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow(null, 50, $sort),
+        );
+
+        self::assertSame([ReportOperation::VIEW, ReportOperation::VIEW_AUDIT], $operations);
+        self::assertCount(1, $fixture['rowQuery']->pageCalls());
+    }
+
+    public function test_audit_sort_denial_happens_before_provider_call(): void
+    {
+        $sort = new ReportWindowSort('audit_event', ReportSortDirection::DESC);
+        $fixture = $this->fixture(
+            new ReportOutputClassification(
+                ReportDataClassification::STANDARD,
+                [],
+                ['audit_event'],
+                false,
+                false,
+                false,
+            ),
+            columns: [['id' => 'name'], ['id' => 'audit_event']],
+            sort: $sort,
+        );
+        $operations = [];
+
+        $this->expectReportError(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+
+        try {
+            $this->rowsHandler($fixture, $this->authorizer($operations, auditAllowed: false))->handle(
+                $this->context,
+                self::RUN_ID,
+                new ReportRowsWindow(null, 50, $sort),
+            );
+        } finally {
+            self::assertSame([ReportOperation::VIEW, ReportOperation::VIEW_AUDIT], $operations);
+            self::assertCount(0, $fixture['rowQuery']->pageCalls());
+        }
     }
 
     public function test_rows_include_signed_drill_down_tokens_declared_by_the_provider(): void
@@ -414,7 +542,9 @@ final class ReportReadHandlersTest extends TestCase
         bool $hasMore = false,
         int $limit = 50,
         array $drillTokenColumns = [],
+        ?ReportWindowSort $sort = null,
     ): array {
+        $sort ??= $this->sort;
         $definition = (new ReportDefinitionBuilder)
             ->columns($columns)
             ->permissionPolicy($permissions ?? new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []))
@@ -452,7 +582,7 @@ final class ReportReadHandlersTest extends TestCase
             null,
             $limit,
             $hasMore,
-            $this->sort,
+            $sort,
         );
         $rowQuery = new FakeReportRowQuery($page, []);
         $drillResult ??= new ReportDrillDownResult($rows, null, []);
@@ -502,12 +632,23 @@ final class ReportReadHandlersTest extends TestCase
             ->ready();
     }
 
-    private function authorizer(array &$operations): CurrentReportScopeAuthorizer&MockObject
+    private function authorizer(
+        array &$operations,
+        bool $sensitiveAllowed = true,
+        bool $auditAllowed = true,
+    ): CurrentReportScopeAuthorizer&MockObject
     {
         $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
         $authorizer->method('authorizeExact')->willReturnCallback(
-            function (int $actorId, $scope, CurrentReportAuthorizationTarget $target) use (&$operations): CurrentReportAuthorization {
+            function (int $actorId, $scope, CurrentReportAuthorizationTarget $target) use (&$operations, $sensitiveAllowed, $auditAllowed): CurrentReportAuthorization {
                 $operations[] = $target->operation;
+
+                if ($target->operation === ReportOperation::VIEW_SENSITIVE && ! $sensitiveAllowed) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+                }
+                if ($target->operation === ReportOperation::VIEW_AUDIT && ! $auditAllowed) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+                }
 
                 return new CurrentReportAuthorization(
                     $this->context->actor,

@@ -24,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunCoordinator;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunResponseRedactor;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
@@ -82,6 +83,7 @@ final class ReportRunHandlersTest extends TestCase
                 ['access', ReportAccessService::class],
                 ['runs', ReportRunStore::class],
                 ['clock', ReportExecutionClock::class],
+                ['responseRedactor', ReportRunResponseRedactor::class],
             ],
         );
         $this->assertMethod(ReportRunCoordinator::class, 'create', [
@@ -402,6 +404,7 @@ final class ReportRunHandlersTest extends TestCase
             ),
             $store,
             new FixedClock(new DateTimeImmutable('2026-07-29T09:30:00Z')),
+            new ReportRunResponseRedactor,
         );
 
         (new RetryReportRunHandler($coordinator))->handle($context, $store->run->id, new IdempotencyKey('retry-original-definition'));
@@ -425,6 +428,45 @@ final class ReportRunHandlersTest extends TestCase
         } catch (ReportContractException) {
             self::assertSame(3, $actorLoader->loads);
         }
+    }
+
+    public function test_get_redacts_persisted_sensitive_totals_after_permission_revocation(): void
+    {
+        $output = new ReportOutputClassification(
+            ReportDataClassification::STANDARD,
+            ['bac', 'approved_etc_minor'],
+            [],
+            false,
+            false,
+            false,
+        );
+        [$coordinator, $store, , $context] = $this->fixture(
+            $output,
+            ['reports.view', 'reports.run'],
+            [['id' => 'bac'], ['id' => 'approved_etc_minor'], ['id' => 'wip_minor']],
+        );
+        $storedTotals = [
+            'RUB' => [
+                'bac_minor' => 1_000,
+                'approved_etc_minor' => 300,
+                'wip_minor' => 700,
+            ],
+        ];
+        $store->run = (new ReportRunBuilder)
+            ->reportCode($store->query->definition->code)
+            ->definitionHash($store->query->definition->definitionHash)
+            ->contractVersion($store->query->definition->contractVersion)
+            ->formulaVersion($store->query->definition->formulaVersion)
+            ->sourceSchemaVersion($store->query->definition->sourceSchemaVersion)
+            ->rendererVersion($store->query->definition->rendererVersion)
+            ->queryHash($store->query->queryHash)
+            ->totals($storedTotals)
+            ->ready();
+
+        $visible = (new GetReportRunHandler($coordinator))->handle($context, $store->run->id);
+
+        self::assertSame(['RUB' => ['wip_minor' => 700]], $visible->totals);
+        self::assertSame($storedTotals, $store->run->totals);
     }
 
     public function test_cancel_uses_store_cas_at_exact_clock_instant_without_local_status_check(): void
@@ -491,9 +533,14 @@ final class ReportRunHandlersTest extends TestCase
         }
     }
 
-    private function fixture(?ReportOutputClassification $output = null, ?array $permissions = null): array
+    private function fixture(
+        ?ReportOutputClassification $output = null,
+        ?array $permissions = null,
+        ?array $columns = null,
+    ): array
     {
         $definition = (new ReportDefinitionBuilder)
+            ->columns($columns ?? [['id' => 'name']])
             ->permissionPolicy(new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []))
             ->outputClassification($output ?? new ReportOutputClassification(ReportDataClassification::STANDARD, [], [], false, false, false))
             ->payload();
@@ -511,7 +558,14 @@ final class ReportRunHandlersTest extends TestCase
             ),
         );
         $clock = new FixedClock(new DateTimeImmutable('2026-07-29T09:30:00.123456Z'));
-        $coordinator = new ReportRunCoordinator(new SingleDefinitionRegistry($published), $savedViews, $access, $store, $clock);
+        $coordinator = new ReportRunCoordinator(
+            new SingleDefinitionRegistry($published),
+            $savedViews,
+            $access,
+            $store,
+            $clock,
+            new ReportRunResponseRedactor,
+        );
 
         return [$coordinator, $store, $savedViews, $context, $actorLoader];
     }
@@ -823,7 +877,7 @@ final class RecordingRunStore implements ReportRunStore
 
     private array $idempotency = [];
 
-    public function __construct(public readonly ReportQuery $query, public readonly ReportRun $run) {}
+    public function __construct(public readonly ReportQuery $query, public ReportRun $run) {}
 
     public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey): ReportRun
     {
