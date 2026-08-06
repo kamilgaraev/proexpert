@@ -9,7 +9,8 @@ use App\BusinessModules\Core\Reporting\Application\Readiness\ReportCandidateRead
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceBackfillCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceReadinessStatus;
-use DateTimeImmutable;
+use Carbon\CarbonImmutable;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -27,7 +28,7 @@ final class ReportSourceReadinessContractTest extends TestCase
             watermark: 'event:81',
             inputHash: str_repeat('a', 64),
             outputHash: str_repeat('b', 64),
-            verifiedAt: new DateTimeImmutable('2026-07-30T10:00:00+03:00'),
+            verifiedAt: new CarbonImmutable('2026-07-30T10:00:00+03:00'),
         );
 
         (new ReportCandidateReadinessGate)->assertReady(
@@ -39,8 +40,10 @@ final class ReportSourceReadinessContractTest extends TestCase
     }
 
     #[Test]
-    public function coverage_gap_blocks_candidate_even_when_status_claims_ready(): void
+    public function coverage_gap_is_rejected_even_when_status_claims_ready(): void
     {
+        $this->expectException(InvalidArgumentException::class);
+
         $readiness = new ReportSourceReadiness(
             status: ReportSourceReadinessStatus::READY,
             eligibleCount: 12,
@@ -50,7 +53,23 @@ final class ReportSourceReadinessContractTest extends TestCase
             watermark: 'event:81',
             inputHash: str_repeat('a', 64),
             outputHash: str_repeat('b', 64),
-            verifiedAt: new DateTimeImmutable('2026-07-30T10:00:00+03:00'),
+            verifiedAt: new CarbonImmutable('2026-07-30T10:00:00+03:00'),
+        );
+    }
+
+    #[Test]
+    public function incomplete_projection_is_blocked_by_candidate_gate(): void
+    {
+        $readiness = new ReportSourceReadiness(
+            status: ReportSourceReadinessStatus::PARTIAL,
+            eligibleCount: 12,
+            projectedCount: 11,
+            gapCount: 1,
+            unknownCount: 0,
+            watermark: 'event:81',
+            inputHash: str_repeat('a', 64),
+            outputHash: str_repeat('b', 64),
+            verifiedAt: null,
         );
 
         $this->expectException(ReportContractException::class);

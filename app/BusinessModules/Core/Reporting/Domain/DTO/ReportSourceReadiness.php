@@ -33,4 +33,13 @@ final readonly class ReportSourceReadiness
             throw new InvalidArgumentException('report_source_readiness_invalid');
         }
     }
+
+    public function isReady(): bool
+    {
+        return $this->status === ReportSourceReadinessStatus::READY
+            && $this->projectedCount === $this->eligibleCount
+            && $this->gapCount === 0
+            && $this->unknownCount === 0
+            && $this->verifiedAt !== null;
+    }
 }
