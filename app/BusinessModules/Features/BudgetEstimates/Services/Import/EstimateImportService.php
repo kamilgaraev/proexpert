@@ -59,183 +59,201 @@ class EstimateImportService
     public function detectEstimateType(string $sessionId): EstimateTypeDetectionDTO
     {
         $session = ImportSession::findOrFail($sessionId);
-        $fullPath = $this->fileStorage->getAbsolutePath($session);
 
-        try {
-            $detection = $this->runtimeDetector->detect($session, $fullPath);
-            if ($detection === null || $detection->confidence <= 0.0) {
-                throw UnsupportedEstimateImportFormatException::create();
-            }
+        return $this->fileStorage->withLocalCopy(
+            $session,
+            function (string $fullPath) use ($session, $sessionId): EstimateTypeDetectionDTO {
+                try {
+                    $detection = $this->runtimeDetector->detect($session, $fullPath);
+                    if ($detection === null || $detection->confidence <= 0.0) {
+                        throw UnsupportedEstimateImportFormatException::create();
+                    }
 
-            $options = $session->options ?? [];
-            $options['format_handler'] = $detection->formatSlug;
-            $options['runtime_detection'] = $detection->toArray();
+                    $options = $session->options ?? [];
+                    $options['format_handler'] = $detection->formatSlug;
+                    $options['runtime_detection'] = $detection->toArray();
 
-            $session->update([
-                'status' => 'detecting',
-                'options' => $options,
-            ]);
+                    $session->update([
+                        'status' => 'detecting',
+                        'options' => $options,
+                    ]);
 
-            return new EstimateTypeDetectionDTO(
-                detectedType: $detection->detectedType,
-                confidence: $detection->confidence,
-                indicators: $detection->indicators,
-                candidates: $detection->candidates,
-                metadata: $detection->metadata + [
-                    'format_slug' => $detection->formatSlug,
-                    'label' => $detection->label,
-                    'requires_confirmation' => $detection->requiresConfirmation,
-                    'warnings' => $detection->warnings,
-                ],
-            );
-        } catch (UnsupportedEstimateImportFormatException $e) {
-            Log::warning('[EstimateImport] Unsupported import format', [
-                'session_id' => $sessionId,
-                'error' => $e->getMessage(),
-            ]);
+                    return new EstimateTypeDetectionDTO(
+                        detectedType: $detection->detectedType,
+                        confidence: $detection->confidence,
+                        indicators: $detection->indicators,
+                        candidates: $detection->candidates,
+                        metadata: $detection->metadata + [
+                            'format_slug' => $detection->formatSlug,
+                            'label' => $detection->label,
+                            'requires_confirmation' => $detection->requiresConfirmation,
+                            'warnings' => $detection->warnings,
+                        ],
+                    );
+                } catch (UnsupportedEstimateImportFormatException $e) {
+                    Log::warning('[EstimateImport] Unsupported import format', [
+                        'session_id' => $sessionId,
+                        'error' => $e->getMessage(),
+                    ]);
 
-            throw $e;
-        } catch (Throwable $e) {
-            Log::error('[EstimateImport] Type detection failed', [
-                'session_id' => $sessionId,
-                'error' => $e->getMessage(),
-            ]);
+                    throw $e;
+                } catch (Throwable $e) {
+                    Log::error('[EstimateImport] Type detection failed', [
+                        'session_id' => $sessionId,
+                        'error' => $e->getMessage(),
+                    ]);
 
-            throw $e;
-        }
+                    throw $e;
+                }
+            },
+        );
     }
 
     public function detectFormat(string $sessionId, ?int $suggestedHeaderRow = null): array
     {
         $session = $this->sessionWithDetectedHandler($sessionId);
-        $fullPath = $this->fileStorage->getAbsolutePath($session);
-        $handlerSlug = (string) ($session->options['format_handler'] ?? '');
 
-        if ($handlerSlug === '') {
-            throw new RuntimeException(trans_message('estimate.import_format_not_detected'));
-        }
+        return $this->fileStorage->withLocalCopy(
+            $session,
+            function (string $fullPath) use ($session, $suggestedHeaderRow): array {
+                $handlerSlug = (string) ($session->options['format_handler'] ?? '');
 
-        $handler = $this->runtimeRegistry->bySlug($handlerSlug);
-        $structure = $suggestedHeaderRow !== null && method_exists($handler, 'detectStructureFromHeaderRow')
-            ? $handler->detectStructureFromHeaderRow($session, $fullPath, $suggestedHeaderRow)
-            : $handler->detectStructure($session, $fullPath);
+                if ($handlerSlug === '') {
+                    throw new RuntimeException(trans_message('estimate.import_format_not_detected'));
+                }
 
-        $options = $session->options ?? [];
-        $options['format_handler'] = $handler->slug();
-        $options['structure'] = $structure->toArray();
+                $handler = $this->runtimeRegistry->bySlug($handlerSlug);
+                $structure = $suggestedHeaderRow !== null && method_exists($handler, 'detectStructureFromHeaderRow')
+                    ? $handler->detectStructureFromHeaderRow($session, $fullPath, $suggestedHeaderRow)
+                    : $handler->detectStructure($session, $fullPath);
 
-        $session->update([
-            'status' => 'detecting',
-            'options' => $options,
-        ]);
+                $options = $session->options ?? [];
+                $options['format_handler'] = $handler->slug();
+                $options['structure'] = $structure->toArray();
 
-        return $structure->toArray();
+                $session->update([
+                    'status' => 'detecting',
+                    'options' => $options,
+                ]);
+
+                return $structure->toArray();
+            },
+        );
     }
 
     public function preview(string $sessionId, ?array $columnMapping = null): EstimateImportDTO
     {
         $session = $this->sessionWithDetectedHandler($sessionId);
-        $fullPath = $this->fileStorage->getAbsolutePath($session);
-        $handler = $this->runtimeRegistry->bySlug((string) $session->options['format_handler']);
-        $options = $session->options ?? [];
 
-        if ($columnMapping !== null) {
-            $columnMapping = $this->normalizeColumnMappingInput($columnMapping);
-        }
+        return $this->fileStorage->withLocalCopy(
+            $session,
+            function (string $fullPath) use ($session, $columnMapping): EstimateImportDTO {
+                $handler = $this->runtimeRegistry->bySlug((string) $session->options['format_handler']);
+                $options = $session->options ?? [];
 
-        if ($columnMapping !== null && $columnMapping !== []) {
-            $structure = $options['structure'] ?? [];
-            $structure['column_mapping'] = $columnMapping;
-            $structure['detected_columns'] = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
-            $options['structure'] = $structure;
-            $session->update(['options' => $options]);
-            $session = $session->fresh();
-        }
+                if ($columnMapping !== null) {
+                    $columnMapping = $this->normalizeColumnMappingInput($columnMapping);
+                }
 
-        $structure = $this->structureFromSession($handler->slug(), $session);
-        if ($structure === null) {
-            $structure = $handler->detectStructure($session, $fullPath);
-            $options = $session->options ?? [];
-            $options['structure'] = $structure->toArray();
-            $session->update(['options' => $options]);
-            $session = $session->fresh();
-        }
+                if ($columnMapping !== null && $columnMapping !== []) {
+                    $structure = $options['structure'] ?? [];
+                    $structure['column_mapping'] = $columnMapping;
+                    $structure['detected_columns'] = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
+                    $options['structure'] = $structure;
+                    $session->update(['options' => $options]);
+                    $session = $session->fresh();
+                }
 
-        $preview = $handler->preview($session, $fullPath, $structure);
-        $options = $session->options ?? [];
-        $options['preview_summary'] = $preview->summary;
-        $options['validation'] = $preview->validation;
-        $session->update([
-            'status' => 'mapped',
-            'options' => $options,
-        ]);
+                $structure = $this->structureFromSession($handler->slug(), $session);
+                if ($structure === null) {
+                    $structure = $handler->detectStructure($session, $fullPath);
+                    $options = $session->options ?? [];
+                    $options['structure'] = $structure->toArray();
+                    $session->update(['options' => $options]);
+                    $session = $session->fresh();
+                }
 
-        return new EstimateImportDTO(
-            fileName: $session->file_name,
-            fileSize: $session->file_size,
-            fileFormat: $session->file_format,
-            sections: $preview->sections,
-            items: $preview->items,
-            totals: $preview->totals,
-            metadata: $preview->metadata + [
-                'handler' => $handler->slug(),
-                'quality' => $preview->quality,
-                'summary' => $preview->summary,
-            ],
-            detectedColumns: $structure->detectedColumns,
-            rawHeaders: $structure->rawHeaders,
-            estimateType: $handler->slug(),
-            validationSummary: $preview->validation,
+                $preview = $handler->preview($session, $fullPath, $structure);
+                $options = $session->options ?? [];
+                $options['preview_summary'] = $preview->summary;
+                $options['validation'] = $preview->validation;
+                $session->update([
+                    'status' => 'mapped',
+                    'options' => $options,
+                ]);
+
+                return new EstimateImportDTO(
+                    fileName: $session->file_name,
+                    fileSize: $session->file_size,
+                    fileFormat: $session->file_format,
+                    sections: $preview->sections,
+                    items: $preview->items,
+                    totals: $preview->totals,
+                    metadata: $preview->metadata + [
+                        'handler' => $handler->slug(),
+                        'quality' => $preview->quality,
+                        'summary' => $preview->summary,
+                    ],
+                    detectedColumns: $structure->detectedColumns,
+                    rawHeaders: $structure->rawHeaders,
+                    estimateType: $handler->slug(),
+                    validationSummary: $preview->validation,
+                );
+            },
         );
     }
 
     public function learnFromSession(ImportSession $session): void
     {
         try {
-            $fullPath = $this->fileStorage->getAbsolutePath($session);
-            $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+            $this->fileStorage->withLocalCopy(
+                $session,
+                function (string $fullPath) use ($session): void {
+                    $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
 
-            if (in_array($extension, ['xml', 'pdf'], true)) {
-                return;
-            }
+                    if (in_array($extension, ['xml', 'pdf'], true)) {
+                        return;
+                    }
 
-            $spreadsheet = IOFactory::load($fullPath);
-            $sheet = $spreadsheet->getActiveSheet();
-            $firstRow = [];
+                    $spreadsheet = IOFactory::load($fullPath);
+                    $sheet = $spreadsheet->getActiveSheet();
+                    $firstRow = [];
 
-            foreach ($sheet->getRowIterator(1, 1) as $row) {
-                foreach ($row->getCellIterator() as $cell) {
-                    $firstRow[] = $cell->getValue();
-                }
-            }
+                    foreach ($sheet->getRowIterator(1, 1) as $row) {
+                        foreach ($row->getCellIterator() as $cell) {
+                            $firstRow[] = $cell->getValue();
+                        }
+                    }
 
-            $spreadsheet->disconnectWorksheets();
+                    $spreadsheet->disconnectWorksheets();
 
-            $signature = $this->signatureGenerator->generate($firstRow);
-            $mapping = $session->options['column_mapping'] ?? [];
-            if ($mapping === []) {
-                $structure = $session->options['structure'] ?? [];
-                $mapping = is_array($structure) ? ImportStructureResult::columnMappingFromArray($structure) : [];
-            }
+                    $signature = $this->signatureGenerator->generate($firstRow);
+                    $mapping = $session->options['column_mapping'] ?? [];
+                    if ($mapping === []) {
+                        $structure = $session->options['structure'] ?? [];
+                        $mapping = is_array($structure) ? ImportStructureResult::columnMappingFromArray($structure) : [];
+                    }
 
-            if ($mapping === []) {
-                return;
-            }
+                    if ($mapping === []) {
+                        return;
+                    }
 
-            ImportMemory::updateOrCreate(
-                [
-                    'organization_id' => $session->organization_id,
-                    'signature' => $signature,
-                ],
-                [
-                    'user_id' => $session->user_id,
-                    'file_format' => $extension,
-                    'original_headers' => $firstRow,
-                    'column_mapping' => $mapping,
-                    'header_row' => $session->options['structure']['header_row'] ?? null,
-                    'last_used_at' => now(),
-                    'usage_count' => DB::raw('usage_count + 1'),
-                ],
+                    ImportMemory::updateOrCreate(
+                        [
+                            'organization_id' => $session->organization_id,
+                            'signature' => $signature,
+                        ],
+                        [
+                            'user_id' => $session->user_id,
+                            'file_format' => $extension,
+                            'original_headers' => $firstRow,
+                            'column_mapping' => $mapping,
+                            'header_row' => $session->options['structure']['header_row'] ?? null,
+                            'last_used_at' => now(),
+                            'usage_count' => DB::raw('usage_count + 1'),
+                        ],
+                    );
+                },
             );
         } catch (Throwable $e) {
             Log::warning('[EstimateImport] Structure learning failed', [
@@ -298,7 +316,7 @@ class EstimateImportService
     {
         $session = ImportSession::find($id);
 
-        if (!$session) {
+        if (! $session) {
             return [
                 'status' => 'failed',
                 'error' => trans_message('estimate.import_status_not_found'),
@@ -337,7 +355,7 @@ class EstimateImportService
     private function sessionWithDetectedHandler(string $sessionId): ImportSession
     {
         $session = ImportSession::findOrFail($sessionId);
-        if (!empty($session->options['format_handler'])) {
+        if (! empty($session->options['format_handler'])) {
             return $session;
         }
 
@@ -349,13 +367,13 @@ class EstimateImportService
     private function structureFromSession(string $formatSlug, ImportSession $session): ?ImportStructureResult
     {
         $structure = $session->options['structure'] ?? null;
-        if (!is_array($structure)) {
+        if (! is_array($structure)) {
             return null;
         }
 
         $columnMapping = ImportStructureResult::columnMappingFromArray($structure);
         $detectedColumns = $structure['detected_columns'] ?? [];
-        if ((!is_array($detectedColumns) || $detectedColumns === []) && $columnMapping !== []) {
+        if ((! is_array($detectedColumns) || $detectedColumns === []) && $columnMapping !== []) {
             $detectedColumns = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
         }
 
@@ -378,7 +396,7 @@ class EstimateImportService
     {
         $normalized = [];
         foreach ($mapping as $field => $column) {
-            if (!is_string($field) || (!is_string($column) && !is_int($column))) {
+            if (! is_string($field) || (! is_string($column) && ! is_int($column))) {
                 continue;
             }
 
@@ -390,11 +408,11 @@ class EstimateImportService
             $normalized[$field] = $column;
         }
 
-        if (isset($normalized['current_total_amount']) && !isset($normalized['total_price'])) {
+        if (isset($normalized['current_total_amount']) && ! isset($normalized['total_price'])) {
             $normalized['total_price'] = $normalized['current_total_amount'];
         }
 
-        if (isset($normalized['section_number']) && !isset($normalized['position_number'])) {
+        if (isset($normalized['section_number']) && ! isset($normalized['position_number'])) {
             $normalized['position_number'] = $normalized['section_number'];
         }
 
@@ -413,7 +431,7 @@ class EstimateImportService
 
     private function translateStoredMessage(mixed $message): ?string
     {
-        if (!is_string($message)) {
+        if (! is_string($message)) {
             return null;
         }
 

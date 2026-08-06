@@ -44,6 +44,7 @@ final class FileServiceCurrentObjectTest extends TestCase
 
         $stored = $files->putPrivate($key, $contents, 'application/pdf', $checksum);
         $link = $files->temporaryDownloadUrl($key, 300);
+        self::assertTrue($files->existsCurrent($key));
         $readStream = $files->readCurrent($key);
         $files->deleteCurrent($key);
 
@@ -192,6 +193,11 @@ final class FileServiceCurrentObjectTest extends TestCase
                 rewind($stream);
 
                 return $stream;
+            }
+
+            public function exists($path): bool
+            {
+                return true;
             }
 
             public function delete($paths): bool

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Jobs;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\Models\Estimate;
+use App\Services\Storage\OrganizationStoragePath;
 use App\Support\EstimatePositionOrder;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -14,6 +15,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class GenerateEstimateSnapshotJob implements ShouldQueue
 {
@@ -32,20 +34,20 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
     {
         try {
             $estimate = Estimate::find($this->estimateId);
-            
-            if (!$estimate) {
+
+            if (! $estimate) {
                 return;
             }
 
             Log::info("Starting snapshot generation for estimate {$this->estimateId}");
 
-            // 1. Извлекаем данные через Query Builder (Raw Arrays). 
+            // 1. Извлекаем данные через Query Builder (Raw Arrays).
             // Отказ от Eloquent Hydration дает ускорение на 1-2 порядка.
             $sections = DB::table('estimate_sections')
                 ->where('estimate_id', $this->estimateId)
                 ->orderBy('sort_order')
                 ->get()
-                ->map(fn($item) => (array) $item)
+                ->map(fn ($item) => (array) $item)
                 ->toArray();
 
             $items = EstimatePositionOrder::apply(
@@ -54,24 +56,24 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             )
                 ->orderBy('id', 'asc')
                 ->get()
-                ->map(fn($item) => (array) $item)
+                ->map(fn ($item) => (array) $item)
                 ->toArray();
 
             $itemIds = array_column($items, 'id');
-            
+
             // Если позиций нет, нет смысла искать связи
             if (empty($itemIds)) {
                 $resourcesByItemId = [];
                 $totalsByItemId = [];
-                $worksByItemId = []; 
+                $worksByItemId = [];
                 $contractLinksByItemId = [];
             } else {
                 // Извлекаем связанные данные оптом
                 $resourcesChunks = DB::table('estimate_item_resources')
                     ->whereIn('estimate_item_id', $itemIds)
                     ->get()
-                    ->map(fn($r) => (array) $r);
-                
+                    ->map(fn ($r) => (array) $r);
+
                 $resourcesByItemId = [];
                 foreach ($resourcesChunks as $res) {
                     $resourcesByItemId[$res['estimate_item_id']][] = $res;
@@ -80,19 +82,19 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 $totalsChunks = DB::table('estimate_item_totals')
                     ->whereIn('estimate_item_id', $itemIds)
                     ->get()
-                    ->map(fn($t) => (array) $t);
-                    
+                    ->map(fn ($t) => (array) $t);
+
                 $totalsByItemId = [];
                 foreach ($totalsChunks as $tot) {
                     $totalsByItemId[$tot['estimate_item_id']][] = $tot;
                 }
-                
+
                 // Works can be loaded similarly if EstimateItem has 'works' relation
                 $worksChunks = DB::table('estimate_item_works')
                     ->whereIn('estimate_item_id', $itemIds)
                     ->get()
-                    ->map(fn($w) => (array) $w);
-                    
+                    ->map(fn ($w) => (array) $w);
+
                 $worksByItemId = [];
                 foreach ($worksChunks as $work) {
                     $worksByItemId[$work['estimate_item_id']][] = $work;
@@ -108,7 +110,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                         'contracts.number as contract_number',
                         'contractors.name as contractor_name',
                     ])
-                    ->map(fn($link) => (array) $link);
+                    ->map(fn ($link) => (array) $link);
 
                 $contractLinksByItemId = [];
                 foreach ($contractLinks as $link) {
@@ -121,7 +123,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             }
 
             $workTypes = DB::table('work_types')->pluck('name', 'id')->toArray();
-            
+
             $units = DB::table('measurement_units')->get(['id', 'short_name', 'name'])->keyBy('id');
 
             // 2. Сборка дерева O(N) в памяти ссылками
@@ -137,19 +139,19 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 $item['works'] = $worksByItemId[$item['id']] ?? [];
                 $item['contract_links'] = $contractLinksByItemId[$item['id']] ?? [];
                 $item['children'] = []; // В EstimateItemResource это 'children'
-                
+
                 // Append simple relations
-                $item['work_type'] = isset($item['work_type_id']) && isset($workTypes[$item['work_type_id']]) 
+                $item['work_type'] = isset($item['work_type_id']) && isset($workTypes[$item['work_type_id']])
                     ? ['id' => $item['work_type_id'], 'name' => $workTypes[$item['work_type_id']]] : null;
-                    
+
                 $unit = isset($item['measurement_unit_id']) ? $units->get($item['measurement_unit_id']) : null;
                 $item['measurement_unit'] = $unit ? [
-                    'id' => $unit->id, 
+                    'id' => $unit->id,
                     'short_name' => $unit->short_name,
-                    'name' => $unit->name
+                    'name' => $unit->name,
                 ] : null;
 
-                $itemsById[$item['id']] =& $item;
+                $itemsById[$item['id']] = &$item;
             }
 
             // Связываем items внутри других items (Sub-items)
@@ -157,15 +159,15 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             $rootItemsWithoutSection = [];
 
             foreach ($items as &$item) {
-                if (!empty($item['parent_item_id'])) {
+                if (! empty($item['parent_item_id'])) {
                     if (isset($itemsById[$item['parent_item_id']])) {
-                        $itemsById[$item['parent_item_id']]['children'][] =& $item;
+                        $itemsById[$item['parent_item_id']]['children'][] = &$item;
                     }
                 } else {
-                    if (!empty($item['estimate_section_id'])) {
-                        $rootItemsWithSection[$item['estimate_section_id']][] =& $item;
+                    if (! empty($item['estimate_section_id'])) {
+                        $rootItemsWithSection[$item['estimate_section_id']][] = &$item;
                     } else {
-                        $rootItemsWithoutSection[] =& $item;
+                        $rootItemsWithoutSection[] = &$item;
                     }
                 }
             }
@@ -175,17 +177,17 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 $section['section_total_amount_with_vat'] = round((float) ($section['section_total_amount'] ?? 0) * $vatMultiplier, 2);
                 $section['items'] = $rootItemsWithSection[$section['id']] ?? [];
                 $section['children'] = [];
-                $sectionsById[$section['id']] =& $section;
+                $sectionsById[$section['id']] = &$section;
             }
 
             $tree = [];
             foreach ($sections as &$section) {
-                if (!empty($section['parent_section_id'])) {
+                if (! empty($section['parent_section_id'])) {
                     if (isset($sectionsById[$section['parent_section_id']])) {
-                        $sectionsById[$section['parent_section_id']]['children'][] =& $section;
+                        $sectionsById[$section['parent_section_id']]['children'][] = &$section;
                     }
                 } else {
-                    $tree[] =& $section;
+                    $tree[] = &$section;
                 }
             }
 
@@ -199,25 +201,18 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             ];
 
             // 3. Сохранение в Storage
-            $versionTimestamp = now()->getTimestamp();
-            
             // Распределяем файлы по папкам организаций, как это делает FileService
-            $orgId = $estimate->organization_id;
-            $orgPrefix = $orgId ? "org-{$orgId}" : 'shared';
-            $fileName = "{$orgPrefix}/estimates/{$this->estimateId}/structure_snapshot_{$versionTimestamp}.json";
-            
-            // Запись огромного JSON
-            $snapshotJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
+            $orgId = (int) $estimate->organization_id;
+            $fileName = OrganizationStoragePath::forOrganization(
+                $orgId,
+                "estimates/{$this->estimateId}/structure_snapshot_".Str::uuid().'.json',
+            );
 
-            if ($snapshotJson === false) {
-                throw new \RuntimeException('Unable to encode estimate structure snapshot.');
-            }
-
-            $structureSnapshotStorage->put($fileName, $snapshotJson);
+            $structureSnapshotStorage->putJson($fileName, $payload);
 
             // Обновляем структуру
             $oldPath = $estimate->structure_cache_path;
-            
+
             $estimate->structure_cache_path = $fileName;
             $estimate->save();
 
@@ -226,11 +221,11 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 $structureSnapshotStorage->delete($oldPath);
             }
 
-            Log::info("Snapshot generated successfully", [
+            Log::info('Snapshot generated successfully', [
                 'estimate_id' => $this->estimateId,
                 'path' => $fileName,
                 'items_count' => count($items),
-                'memory_usage_mb' => round(memory_get_peak_usage() / 1024 / 1024, 2)
+                'memory_usage_mb' => round(memory_get_peak_usage() / 1024 / 1024, 2),
             ]);
 
         } catch (\Throwable $e) {

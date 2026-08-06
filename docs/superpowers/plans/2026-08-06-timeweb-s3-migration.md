@@ -314,13 +314,29 @@ Commit: `refactor[backend]: файлы привязаны к организац�
 - [x] **Step 2: Проверить RED**
 - [x] **Step 3: Перевести AI-отчёты на `PersonalFileService` и текущие-object методы `FileService`**
 - [x] **Step 4: Проверить GREEN и отсутствие прямого доступа к S3**
-- [ ] **Step 5: Commit, PR, merge и deploy**
+- [x] **Step 5: Commit, PR, merge и deploy**
 
 AI-отчёты сохраняются бессрочно по ключу `org-{organization_id}/personal-files/user-{user_id}/{uuid}.pdf`; временной является только download URL. Прямые вызовы `Storage::disk('s3')`, старый каталог `org-{id}/reports` и выбор диска удалены из генераторов.
+
+Выполнено в PR #241 (`2ced1b81ce3502ef1d6b1f50b66ff5180fcc0fa6`), штатный deploy `31057879434` завершён успешно. Production SHA совпал, профильных ошибок в последних 500 строках лога нет.
 
 #### Task 3B.2: Остальные доменные вызовы
 
 **PR:** `refactor/timeweb-s3-domain-callers`
+
+##### Task 3B.2a: Снимки структуры и импорт смет
+
+**PR:** `refactor/timeweb-s3-domain-callers-v2`
+
+- [x] **Step 1: Написать failing архитектурные и доменные тесты**
+- [x] **Step 2: Проверить RED**
+- [x] **Step 3: Перевести снимки структуры и файлы импорта на текущие-object методы `FileService`**
+- [x] **Step 4: Проверить GREEN, потоковую передачу и неизменяемые ключи**
+- [ ] **Step 5: Commit, PR, merge и deploy**
+
+Файлы импорта и снимки структуры получают UUID-ключи внутри `org-{organization_id}`; запись и чтение выполняются потоково через единый приватный бакет без выбора диска или бакета доменным кодом.
+
+##### Task 3B.2b: Оставшиеся доменные вызовы
 
 - [ ] **Step 1: Написать failing архитектурные и доменные тесты**
 - [ ] **Step 2: Проверить RED**

@@ -7,40 +7,41 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatRegistry;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportValidationResult;
 use App\Models\Estimate;
-use App\Models\EstimateSection;
 use App\Models\EstimateItem;
+use App\Models\EstimateSection;
 use App\Models\ImportSession;
 use App\Models\MeasurementUnit;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Cache;
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
 
 class ImportPipelineService
 {
     private const BATCH_SIZE = 100;
+
     private const GRAND_SMETA_HANDLER_SLUG = 'grandsmeta';
 
     private array $unitCache = [];
 
     private array $unitAliases = [
-        'м2'       => 'м²',  'м^2'     => 'м²',  'кв.м'    => 'м²',
-        'кв. м'    => 'м²',  'кв м'    => 'м²',  'м.кв'    => 'м²',
-        'м3'       => 'м³',  'куб.м'   => 'м³',  'куб. м'  => 'м³',
-        'куб м'    => 'м³',  'м.куб'   => 'м³',
-        'чел-час'  => 'чел-ч', 'чел.ч'   => 'чел-ч', 'ч-ч'     => 'чел-ч', 'чел. ч'  => 'чел-ч', 'чел.-ч' => 'чел-ч',
-        'маш-час'  => 'маш-ч', 'маш.ч'   => 'маш-ч', 'маш. ч'  => 'маш-ч', 'маш.-ч' => 'маш-ч',
-        'погон.м'  => 'пог. м', 'пог.м'   => 'пог. м',
-        'кг.'      => 'кг',   'т.'      => 'т',    'шт.'     => 'шт',
-        'м.'       => 'м',
+        'м2' => 'м²',  'м^2' => 'м²',  'кв.м' => 'м²',
+        'кв. м' => 'м²',  'кв м' => 'м²',  'м.кв' => 'м²',
+        'м3' => 'м³',  'куб.м' => 'м³',  'куб. м' => 'м³',
+        'куб м' => 'м³',  'м.куб' => 'м³',
+        'чел-час' => 'чел-ч', 'чел.ч' => 'чел-ч', 'ч-ч' => 'чел-ч', 'чел. ч' => 'чел-ч', 'чел.-ч' => 'чел-ч',
+        'маш-час' => 'маш-ч', 'маш.ч' => 'маш-ч', 'маш. ч' => 'маш-ч', 'маш.-ч' => 'маш-ч',
+        'погон.м' => 'пог. м', 'пог.м' => 'пог. м',
+        'кг.' => 'кг',   'т.' => 'т',    'шт.' => 'шт',
+        'м.' => 'м',
     ];
 
     private array $workUnitKeywords = [
-        'чел-ч', 'маш-ч', 'смн', 'чел-дн', 'маш-смн', 'рейс', 'усл', 'этап', 'час'
+        'чел-ч', 'маш-ч', 'смн', 'чел-дн', 'маш-смн', 'рейс', 'усл', 'этап', 'час',
     ];
 
     public function __construct(
@@ -69,21 +70,30 @@ class ImportPipelineService
         $session->update([
             'stats' => array_merge($fresh->stats ?? [], [
                 'progress' => $progress,
-                'message'  => $message,
-            ])
+                'message' => $message,
+            ]),
         ]);
     }
 
     public function run(ImportSession $session): void
     {
+        $this->fileStorage->withLocalCopy(
+            $session,
+            function (string $filePath) use ($session): void {
+                $this->runWithLocalCopy($session, $filePath);
+            },
+        );
+    }
+
+    private function runWithLocalCopy(ImportSession $session, string $filePath): void
+    {
         Log::info("[ImportPipeline] Started for session {$session->id}");
-        
+
         $session->update([
-            'status' => 'parsing', 
-            'stats' => array_merge($session->fresh()->stats ?? [], ['progress' => 5, 'message' => trans_message('estimate.import_processing_started')])
+            'status' => 'parsing',
+            'stats' => array_merge($session->fresh()->stats ?? [], ['progress' => 5, 'message' => trans_message('estimate.import_processing_started')]),
         ]);
 
-        $filePath = $this->fileStorage->getAbsolutePath($session);
         $handlerSlug = (string) ($session->options['format_handler'] ?? '');
         if ($handlerSlug === '') {
             throw new \RuntimeException(trans_message('estimate.import_format_not_detected'));
@@ -104,14 +114,14 @@ class ImportPipelineService
         $totalRows = (int) ($preview->summary['rows_count'] ?? (count($preview->sections) + count($preview->items)));
 
         // 1. Оцениваем общее количество строк для прогресса
-        
+
         $session->update([
             'stats' => array_merge($session->fresh()->stats ?? [], [
                 'progress' => 10,
                 'total_rows' => $totalRows,
                 'validation' => $validation->toArray(),
                 'message' => trans_message('estimate.import_processing_file'),
-            ])
+            ]),
         ]);
 
         if (($session->options['validate_only'] ?? false) === true) {
@@ -133,7 +143,7 @@ class ImportPipelineService
             return;
         }
 
-        if (!$validation->isValid()) {
+        if (! $validation->isValid()) {
             $message = $this->validationFailureMessage($validation);
             $session->update([
                 'stats' => array_merge($session->fresh()->stats ?? [], [
@@ -145,14 +155,14 @@ class ImportPipelineService
         }
 
         $stream = $handler->streamRows($session, $filePath, $structureResult);
-        
+
         $stats = [
             'processed_rows' => 0,
             'sections_created' => 0,
             'items_created' => 0,
             'total_rows' => $totalRows,
         ];
-        
+
         DB::beginTransaction();
         try {
             $estimate = $this->resolveEstimate($session);
@@ -162,26 +172,26 @@ class ImportPipelineService
                 $stats['sections_created'] = max(0, $stats['sections_created'] - $removedEmptySections);
                 $stats['empty_sections_removed'] = $removedEmptySections;
             }
-            
+
             if (method_exists($handler, 'getFooterData')) {
                 $footerData = $handler->getFooterData();
-                if (!empty($footerData)) {
+                if (! empty($footerData)) {
                     Log::info("[ImportPipeline] Found footer data for session {$session->id}", $footerData);
-                    
+
                     // Update estimate with footer values
                     $meta = $estimate->metadata ?? [];
                     $meta['footer'] = $footerData;
-                    
+
                     // ⭐ КАЛИБРОВКА СТАВОК (CALIBRATION)
-                    // Если в подвале удалось найти ФОТ и НР/СП - доверяем им, 
+                    // Если в подвале удалось найти ФОТ и НР/СП - доверяем им,
                     // так как это единственный способ попасть в математику Гранд-Сметы.
-                    $directCosts = (float)($footerData['direct_costs'] ?? 0);
-                    $laborCostFromFooter = (float)($footerData['labor_cost'] ?? 0); // ФОТ
-                    $overheadFromFooter = (float)($footerData['overhead_cost'] ?? 0);
-                    $profitFromFooter = (float)($footerData['profit_cost'] ?? 0);
-                    
+                    $directCosts = (float) ($footerData['direct_costs'] ?? 0);
+                    $laborCostFromFooter = (float) ($footerData['labor_cost'] ?? 0); // ФОТ
+                    $overheadFromFooter = (float) ($footerData['overhead_cost'] ?? 0);
+                    $profitFromFooter = (float) ($footerData['profit_cost'] ?? 0);
+
                     $baseForCalibration = $laborCostFromFooter > 0 ? $laborCostFromFooter : ($directCosts > 0 ? $directCosts : 0);
-                    
+
                     if ($this->shouldPreserveImportedTotals($session) && $baseForCalibration > 0) {
                         Log::info("[ImportPipeline] Calibrating rates using footer: base={$baseForCalibration}, OH={$overheadFromFooter}, P={$profitFromFooter}");
                         if ($overheadFromFooter > 0) {
@@ -191,8 +201,8 @@ class ImportPipelineService
                             $estimate->profit_rate = round(($profitFromFooter / $baseForCalibration) * 100, 2);
                         }
                     }
-                    
-                    $estimate->metadata = $meta; 
+
+                    $estimate->metadata = $meta;
                     $estimate->save();
                 }
             }
@@ -206,27 +216,27 @@ class ImportPipelineService
             // recalculateAll даёт ~99.99% точность, но накопленное округление per-position
             // даёт расхождение в ~64 руб. Берём точные значения из подвала файла.
             $savedFooter = $estimate->fresh()->metadata['footer'] ?? [];
-            $footerTotal    = (float)($savedFooter['total_estimate_cost'] ?? 0);
-            $footerOverhead = (float)($savedFooter['overhead_cost'] ?? 0);
-            $footerProfit   = (float)($savedFooter['profit_cost'] ?? 0);
+            $footerTotal = (float) ($savedFooter['total_estimate_cost'] ?? 0);
+            $footerOverhead = (float) ($savedFooter['overhead_cost'] ?? 0);
+            $footerProfit = (float) ($savedFooter['profit_cost'] ?? 0);
 
             if ($this->shouldPreserveImportedTotals($session) && $footerTotal > 0 && ($footerOverhead > 0 || $footerProfit > 0)) {
                 $footerDirect = round($footerTotal - $footerOverhead - $footerProfit, 2);
                 $estimate->update([
-                    'total_amount'            => $footerTotal,
-                    'total_overhead_costs'    => $footerOverhead,
-                    'total_estimated_profit'  => $footerProfit,
-                    'total_direct_costs'      => $footerDirect,
-                    'total_amount_with_vat'   => round($footerTotal * (1 + $estimate->vat_rate / 100), 2),
+                    'total_amount' => $footerTotal,
+                    'total_overhead_costs' => $footerOverhead,
+                    'total_estimated_profit' => $footerProfit,
+                    'total_direct_costs' => $footerDirect,
+                    'total_amount_with_vat' => round($footerTotal * (1 + $estimate->vat_rate / 100), 2),
                 ]);
                 Log::info("[ImportPipeline] Footer override applied for estimate #{$estimate->id}", [
-                    'total'    => $footerTotal,
+                    'total' => $footerTotal,
                     'overhead' => $footerOverhead,
-                    'profit'   => $footerProfit,
-                    'direct'   => $footerDirect,
+                    'profit' => $footerProfit,
+                    'direct' => $footerDirect,
                 ]);
             }
-            
+
             DB::commit();
 
             try {
@@ -240,22 +250,22 @@ class ImportPipelineService
                     'error' => $e->getMessage(),
                 ]);
             }
-            
+
             Log::info("[ImportPipeline] Finished for session {$session->id}", $stats);
-            
+
             $session->update([
                 'status' => 'completed',
-                'stats'  => array_merge($session->fresh()->stats ?? [], [
-                    'progress'    => 100,
-                    'result'      => $stats,
+                'stats' => array_merge($session->fresh()->stats ?? [], [
+                    'progress' => 100,
+                    'result' => $stats,
                     'estimate_id' => $estimate->id,
-                    'message'     => trans_message('estimate.import_completed'),
-                ])
+                    'message' => trans_message('estimate.import_completed'),
+                ]),
             ]);
 
         } catch (\Throwable $e) {
             DB::rollBack();
-            Log::error("[ImportPipeline] Error: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            Log::error('[ImportPipeline] Error: '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
             throw $e;
         }
     }
@@ -263,13 +273,13 @@ class ImportPipelineService
     private function structureFromSession(string $formatSlug, ImportSession $session): ?ImportStructureResult
     {
         $structure = $session->options['structure'] ?? null;
-        if (!is_array($structure)) {
+        if (! is_array($structure)) {
             return null;
         }
 
         $columnMapping = ImportStructureResult::columnMappingFromArray($structure);
         $detectedColumns = $structure['detected_columns'] ?? [];
-        if ((!is_array($detectedColumns) || $detectedColumns === []) && $columnMapping !== []) {
+        if ((! is_array($detectedColumns) || $detectedColumns === []) && $columnMapping !== []) {
             $detectedColumns = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
         }
 
@@ -305,7 +315,7 @@ class ImportPipelineService
             $message = $message['message'] ?? $message['key'] ?? reset($message);
         }
 
-        if (!is_string($message)) {
+        if (! is_string($message)) {
             return '';
         }
 
@@ -321,7 +331,7 @@ class ImportPipelineService
     {
         $settings = $session->options['estimate_settings'] ?? [];
         $financialSettings = $this->financialSettingsResolver->resolve($settings);
-        
+
         return $this->estimateService->create([
             'organization_id' => $session->organization_id,
             'project_id' => $settings['project_id'] ?? null,
@@ -353,16 +363,16 @@ class ImportPipelineService
         $batchDTOs = [];
         $sectionMap = []; // path -> section_id (e.g. "1" -> 101, "1.1" -> 102)
         $lastSectionId = null; // For items without explicit section path?
-        
+
         foreach ($stream as $rowDTO) {
-            if (!$rowDTO instanceof EstimateImportRowDTO) {
+            if (! $rowDTO instanceof EstimateImportRowDTO) {
                 $rowDTO = EstimateImportRowDTO::fromArray((array) $rowDTO);
             }
 
             if (is_array($rowDTO->rawData) && $this->rowMapper->isTechnicalRow($rowDTO->rawData)) {
                 continue;
             }
-            
+
             // Skip rows that are identified as footers (totals, summaries, etc.)
             if ($rowDTO->isFooter) {
                 continue;
@@ -370,22 +380,23 @@ class ImportPipelineService
 
             // Skip rows that have no numeric value (Quantity=0 AND Price=0 AND Total=0)
             // This filters out headers that were technically mapped but contain no data.
-            if (!$rowDTO->isSection && 
-                ($rowDTO->quantity === null || $rowDTO->quantity == 0) && 
+            if (! $rowDTO->isSection &&
+                ($rowDTO->quantity === null || $rowDTO->quantity == 0) &&
                 ($rowDTO->unitPrice === null || $rowDTO->unitPrice == 0) &&
                 ($rowDTO->currentTotalAmount === null || $rowDTO->currentTotalAmount == 0)
             ) {
                 Log::info("[ImportPipeline] Skipping empty/garbage item: '{$rowDTO->itemName}'");
+
                 continue;
             }
 
             if ($rowDTO->isSection) {
                 // If we have items in batch, process and save them first to maintain order
-                if (!empty($batchDTOs)) {
+                if (! empty($batchDTOs)) {
                     $this->processAndInsertBatch($batchDTOs, $estimate, $stats, $session);
                     $batchDTOs = [];
                 }
-                
+
                 // Сбрасываем подпункты, так как начался новый раздел
                 $this->subItemState = [];
 
@@ -395,12 +406,12 @@ class ImportPipelineService
                 $stats['sections_created']++;
             } else {
                 // Collect row but assign closest section
-                $rowDTO->sectionPath = $rowDTO->sectionPath ?: null; 
+                $rowDTO->sectionPath = $rowDTO->sectionPath ?: null;
                 $batchDTOs[] = [
                     'dto' => $rowDTO,
-                    'section_id' => $this->resolveSectionId($rowDTO, $sectionMap, $lastSectionId)
+                    'section_id' => $this->resolveSectionId($rowDTO, $sectionMap, $lastSectionId),
                 ];
-                
+
                 if (count($batchDTOs) >= self::BATCH_SIZE) {
                     $this->processAndInsertBatch($batchDTOs, $estimate, $stats, $session);
                     $batchDTOs = [];
@@ -408,7 +419,7 @@ class ImportPipelineService
             }
 
             $stats['processed_rows']++;
-            
+
             // Обновляем прогресс каждые 10 строк
             if ($stats['processed_rows'] % 10 === 0) {
                 $totalRows = $stats['total_rows'] ?? 0;
@@ -428,9 +439,9 @@ class ImportPipelineService
                 $session->stats = array_merge($session->fresh()->stats ?? [], ['processed_rows' => $stats['processed_rows']]);
             }
         }
-        
+
         // Final batch
-        if (!empty($batchDTOs)) {
+        if (! empty($batchDTOs)) {
             $this->processAndInsertBatch($batchDTOs, $estimate, $stats, $session);
         }
     }
@@ -443,7 +454,7 @@ class ImportPipelineService
         foreach ($batch as $index => $item) {
             $dto = $item['dto'];
             $itemData = $this->prepareWorkData($dto, $estimate, $item['section_id']);
-            
+
             $matched = false;
             // ... (keeping existing matcher logic) ...
             if ($dto->code) {
@@ -454,7 +465,7 @@ class ImportPipelineService
                 }
             }
 
-            if (!$matched && !empty($dto->itemName)) {
+            if (! $matched && ! empty($dto->itemName)) {
                 $semanticHit = $this->semanticMatcher->getBestNormativeMatch($dto->itemName, $dto->unit);
                 if ($semanticHit && $semanticHit['similarity'] >= 0.5) {
                     $norm = \App\Models\NormativeRate::find($semanticHit['id']);
@@ -471,31 +482,31 @@ class ImportPipelineService
                     }
                 }
             }
-            
-            if (!$matched) {
-                $isGesnCode = !empty($dto->code) && stripos($dto->code, 'ГЭСН') === 0;
+
+            if (! $matched) {
+                $isGesnCode = ! empty($dto->code) && stripos($dto->code, 'ГЭСН') === 0;
 
                 if ($isGesnCode) {
                     $itemData['item_type'] = 'work';
                 } else {
                     $aiBatch[$index] = [
-                        'code'  => $dto->code ?? '',
-                        'name'  => $dto->itemName,
-                        'unit'  => $dto->unit,
-                        'price' => (float)$dto->unitPrice
+                        'code' => $dto->code ?? '',
+                        'name' => $dto->itemName,
+                        'unit' => $dto->unit,
+                        'price' => (float) $dto->unitPrice,
                     ];
                 }
             }
-            
+
             $batch[$index]['prepared_data'] = $itemData;
         }
 
         // Step 2: AI Classification
-        if (!empty($aiBatch)) {
+        if (! empty($aiBatch)) {
             try {
                 $aiResults = $this->classifier->classifyBatch(array_values($aiBatch));
                 $aiKeys = array_keys($aiBatch);
-                
+
                 foreach ($aiResults as $subIndex => $result) {
                     $origIndex = $aiKeys[$subIndex];
                     if (isset($batch[$origIndex])) {
@@ -503,13 +514,13 @@ class ImportPipelineService
                     }
                 }
             } catch (\Throwable $e) {
-                Log::warning("[ImportPipeline] AI Batch Classification failed: " . $e->getMessage());
+                Log::warning('[ImportPipeline] AI Batch Classification failed: '.$e->getMessage());
             }
         }
 
         // Step 3: Sub-item Grouping (XML Parity)
         $preparedRows = array_column($batch, 'prepared_data');
-        $groupedRows  = $this->subItemGrouper->groupItems($preparedRows, $this->subItemState);
+        $groupedRows = $this->subItemGrouper->groupItems($preparedRows, $this->subItemState);
 
         // Step 4: Formula Validation
         $this->formulaAwareness->annotate($groupedRows);
@@ -522,28 +533,28 @@ class ImportPipelineService
             if (isset($data['metadata']) && is_array($data['metadata'])) {
                 $data['metadata'] = json_encode($data['metadata']);
             }
-            
-            $isSubItem = !empty($data['is_sub_item']);
+
+            $isSubItem = ! empty($data['is_sub_item']);
             $parentIndex = $data['_parent_index'] ?? null;
-            
+
             // 🔧 ИСПРАВЛЕНИЕ: Удаляем технические поля, которых нет в БД
             unset(
-                $data['is_sub_item'], 
-                $data['_parent_index'], 
-                $data['warnings'], 
+                $data['is_sub_item'],
+                $data['_parent_index'],
+                $data['warnings'],
                 $data['has_math_mismatch'],
                 $data['anomaly'],
                 $data['disable_sub_item_grouping']
             );
-            
-            if (!$isSubItem) {
+
+            if (! $isSubItem) {
                 // Если накопились дочерние элементы, вставляем их перед родителем, чтобы сохранить относительный порядок БД
-                if (!empty($childrenBatch)) {
+                if (! empty($childrenBatch)) {
                     EstimateItem::insert($childrenBatch);
                     $stats['items_created'] += count($childrenBatch);
                     $childrenBatch = [];
                 }
-                
+
                 // Вставляем родителя отдельно, чтобы получить его ID для связей
                 $id = DB::table('estimate_items')->insertGetId($data);
                 $insertedParents[$idx] = $id;
@@ -557,12 +568,12 @@ class ImportPipelineService
                     // Родитель был в предыдущем батче
                     $data['parent_work_id'] = $this->subItemState['last_parent_id'];
                 }
-                
+
                 $childrenBatch[] = $data;
             }
         }
 
-        if (!empty($childrenBatch)) {
+        if (! empty($childrenBatch)) {
             EstimateItem::insert($childrenBatch);
             $stats['items_created'] += count($childrenBatch);
         }
@@ -571,21 +582,21 @@ class ImportPipelineService
     private function saveSection($dto, int $estimateId, array &$sectionMap): EstimateSection
     {
         // Resolve Parent
-        $currentPath = $dto->sectionPath ?: $dto->sectionNumber; 
-        
+        $currentPath = $dto->sectionPath ?: $dto->sectionNumber;
+
         $parentId = $this->resolveParentSectionId((string) $currentPath, $sectionMap);
 
         $section = EstimateSection::create([
             'estimate_id' => $estimateId,
             'parent_section_id' => $parentId,
-            'section_number' => (string)$dto->sectionNumber,
-            'full_section_number' => (string)$currentPath,
+            'section_number' => (string) $dto->sectionNumber,
+            'full_section_number' => (string) $currentPath,
             'name' => $dto->itemName,
-            'sort_order' => $dto->rowNumber, 
+            'sort_order' => $dto->rowNumber,
         ]);
-        
+
         $sectionMap[$currentPath] = $section->id;
-        
+
         return $section;
     }
 
@@ -595,6 +606,7 @@ class ImportPipelineService
         if ($path && isset($sectionMap[$path])) {
             return $sectionMap[$path];
         }
+
         return $lastSectionId;
     }
 
@@ -641,30 +653,29 @@ class ImportPipelineService
         $laborCost = $this->detectLaborCost($dto);
         $isInformative = $this->isInformativeGrandSmetaRow($dto);
         $isSubItem = $dto->isSubItem ?? false;
-        $totalAmount = (float)($dto->currentTotalAmount ?? ($dto->quantity * ($dto->unitPrice ?? 0)));
-        
+        $totalAmount = (float) ($dto->currentTotalAmount ?? ($dto->quantity * ($dto->unitPrice ?? 0)));
+
         // 1. Берем точные рублевые значения НР и СП напрямую от парсера ГрандСметы
-        $overheadAmount = isset($dto->overheadAmount) ? (float)$dto->overheadAmount : 0;
-        $profitAmount = isset($dto->profitAmount) ? (float)$dto->profitAmount : 0;
-        
+        $overheadAmount = isset($dto->overheadAmount) ? (float) $dto->overheadAmount : 0;
+        $profitAmount = isset($dto->profitAmount) ? (float) $dto->profitAmount : 0;
+
         // 2. Fallback: если парсер не нашел суммы, но есть ФОТ и настройки сметы
-        if ($overheadAmount == 0 && $profitAmount == 0 && !$isInformative && $laborCost > 0) {
+        if ($overheadAmount == 0 && $profitAmount == 0 && ! $isInformative && $laborCost > 0) {
             $overheadAmount = round($laborCost * ($estimate->overhead_rate / 100), 2);
             $profitAmount = round($laborCost * ($estimate->profit_rate / 100), 2);
         }
 
         // 3. В Гранд-Смете сумма позиции из колонки "Всего" - это Прямые Затраты!
-        $directCosts = (!$isInformative && !$isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
+        $directCosts = (! $isInformative && ! $isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
             ? max(0, $totalAmount - $overheadAmount - $profitAmount)
             : $totalAmount;
-        
+
         // Значит Итог с учетом налогов (полная стоимость) - это ПЗ + НР + СП
         // Для подпунктов математика налогов не применяется (их сумма заложена в ПЗ родителя)
-        $actualTotalAmount = (!$isInformative && !$isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
+        $actualTotalAmount = (! $isInformative && ! $isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
             ? $totalAmount
             : $directCosts + $overheadAmount + $profitAmount;
 
-        
         // 4. Все подпункты делают задвоение, поэтому их исключаем из учета итоговых сумм
         $isNotAccounted = $isInformative || $isSubItem;
 
@@ -680,21 +691,21 @@ class ImportPipelineService
         // Если это материал или оборудование, сохраняем в Каталог Активов (materials)
         $materialId = null;
         $itemType = $this->mapItemType($dto->itemType);
-        
+
         // Не создаём активы для информационных строк
-        if (!$isInformative && in_array($itemType, ['material', 'equipment', 'machinery']) && !empty($dto->itemName)) {
+        if (! $isInformative && in_array($itemType, ['material', 'equipment', 'machinery']) && ! empty($dto->itemName)) {
             try {
                 $material = $this->materialMatcher->findOrCreate(
-                    $dto->code ?? ('MAT-' . uniqid()), // Fallback код, если пусто
+                    $dto->code ?? ('MAT-'.uniqid()), // Fallback код, если пусто
                     $dto->itemName,
                     $dto->unit,
-                    isset($dto->unitPrice) && $dto->unitPrice > 0 ? (float)$dto->unitPrice : null,
+                    isset($dto->unitPrice) && $dto->unitPrice > 0 ? (float) $dto->unitPrice : null,
                     $estimate->organization_id,
                     $itemType === 'equipment' ? 'equipment' : 'material'
                 );
                 $materialId = $material->id;
             } catch (\Exception $e) {
-                Log::warning("[ImportPipeline] Failed to auto-register material '{$dto->itemName}': " . $e->getMessage());
+                Log::warning("[ImportPipeline] Failed to auto-register material '{$dto->itemName}': ".$e->getMessage());
             }
         }
 
@@ -707,11 +718,11 @@ class ImportPipelineService
             'material_id' => $materialId,
             'quantity' => $dto->quantity ?? 0,
             'unit_price' => $dto->unitPrice ?? 0,
-            
+
             'base_unit_price' => $dto->baseUnitPrice ?? 0,
             'price_index' => $dto->priceIndex ?? 1,
             'current_unit_price' => $dto->currentUnitPrice ?? ($dto->unitPrice ?? 0),
-            
+
             'labor_cost' => $laborCost,
             'overhead_amount' => $overheadAmount,
             'profit_amount' => $profitAmount,
@@ -724,18 +735,18 @@ class ImportPipelineService
             'equipment_cost' => $dto->itemType === 'equipment' ? $actualTotalAmount : 0,
             'labor_hours' => $this->detectLaborHours($dto),
             'machinery_hours' => $this->detectMachineryHours($dto),
-            
+
             'normative_rate_code' => $dto->code,
-            'position_number' => (string)($dto->sectionNumber ?: ''),
+            'position_number' => (string) ($dto->sectionNumber ?: ''),
             'item_type' => $itemType,
-            'is_manual' => true, 
+            'is_manual' => true,
             'is_sub_item' => $isSubItem,
             'created_at' => now(),
             'updated_at' => now(),
             'metadata' => json_encode($metadata),
             'is_not_accounted' => $isNotAccounted,
             'disable_sub_item_grouping' => is_array($dto->rawData)
-                && (($dto->rawData['disable_sub_item_grouping'] ?? false) === true)
+                && (($dto->rawData['disable_sub_item_grouping'] ?? false) === true),
         ];
     }
 
@@ -774,14 +785,14 @@ class ImportPipelineService
     }
 
     /**
-     * Помощник для определения "информационных" строк GrandSmeta, 
+     * Помощник для определения "информационных" строк GrandSmeta,
      * которые не должны участвовать в суммировании Прямых Затрат
      */
     private function isInformativeGrandSmetaRow($dto): bool
     {
         $name = mb_strtolower($dto->itemName ?? '');
         $code = mb_strtolower($dto->code ?? '');
-        
+
         // 1. Агрегирующие заголовки (ОТ, ЭМ, М, ОТм) - они несут ФОТ/ПЗ заголовка,
         // но ниже идут детали с теми же деньгами. Чтобы не двоить - помечаем как инфо.
         $aggregates = ['от(зт)', 'эм', 'отм(зтм)', 'м', 'зтм', 'зт', 'от', 'отм', 'мат'];
@@ -808,8 +819,8 @@ class ImportPipelineService
      */
     private function detectLaborCost($dto): float
     {
-        if (isset($dto->laborCost) && (float)$dto->laborCost > 0) {
-            return (float)$dto->laborCost;
+        if (isset($dto->laborCost) && (float) $dto->laborCost > 0) {
+            return (float) $dto->laborCost;
         }
 
         $name = mb_strtolower($dto->itemName ?? '');
@@ -819,7 +830,7 @@ class ImportPipelineService
         // Нам нужно ловить всё, что похоже на зарплату (ОТ, ЗТ, ОТм, ЗТм, ОТ(...)).
         $laborPrefixes = ['от(', 'зт(', 'отм(', 'зтм(', 'от ', 'отм ', 'зт ', 'зтм '];
         $isLaborName = false;
-        
+
         if (in_array($name, ['от', 'отм', 'зт', 'зтм', 'от(зт)', 'отм(зтм)'])) {
             $isLaborName = true;
         } else {
@@ -832,42 +843,42 @@ class ImportPipelineService
         }
 
         if ($isLaborName) {
-            return (float)($dto->currentTotalAmount ?? 0);
+            return (float) ($dto->currentTotalAmount ?? 0);
         }
 
         return 0;
     }
-    
+
     private function detectLaborHours($dto): float
     {
         if ($dto->itemType !== 'labor') {
             return 0;
         }
 
-        $unit = mb_strtolower(trim((string)($dto->unit ?? '')));
+        $unit = mb_strtolower(trim((string) ($dto->unit ?? '')));
         $laborUnits = ['чел.-ч', 'чел-ч', 'чел.ч', 'чел/ч'];
 
         foreach ($laborUnits as $lu) {
             if (str_starts_with($unit, $lu)) {
-                return (float)($dto->quantity ?? 0);
+                return (float) ($dto->quantity ?? 0);
             }
         }
 
-        return (float)($dto->quantity ?? 0);
+        return (float) ($dto->quantity ?? 0);
     }
 
     private function detectMachineryHours($dto): float
     {
-        if (!in_array($dto->itemType, ['machinery', 'equipment'], true)) {
+        if (! in_array($dto->itemType, ['machinery', 'equipment'], true)) {
             return 0;
         }
 
-        $unit = mb_strtolower(trim((string)($dto->unit ?? '')));
+        $unit = mb_strtolower(trim((string) ($dto->unit ?? '')));
         $machineUnits = ['маш.-ч', 'маш-ч', 'маш.ч', 'маш/ч'];
 
         foreach ($machineUnits as $mu) {
             if (str_starts_with($unit, $mu)) {
-                return (float)($dto->quantity ?? 0);
+                return (float) ($dto->quantity ?? 0);
             }
         }
 
@@ -876,21 +887,20 @@ class ImportPipelineService
 
     private function mapItemType(?string $type): string
     {
-        return match($type) {
+        return match ($type) {
             'material' => 'material',
             'machinery' => 'machinery',
-            'labor' => 'labor', 
+            'labor' => 'labor',
             'equipment' => 'equipment',
             'summary' => 'summary',
             default => 'work'
         };
     }
-    
-
 
     private function normalizeUnitName(string $unitName): string
     {
         $normalized = mb_strtolower(trim($unitName));
+
         return $this->unitAliases[$normalized] ?? $normalized;
     }
 
@@ -921,13 +931,13 @@ class ImportPipelineService
             }
         }
 
-        if (!$unit) {
+        if (! $unit) {
             $unit = MeasurementUnit::create([
                 'organization_id' => $organizationId,
-                'name'            => mb_strlen($normalized) > 5 ? $unitName : $normalized, // Сохраняем оригинальное для длинных (если это не просто "м2")
-                'short_name'      => $normalized,
-                'type'            => $unitType,
-                'is_system'       => false,
+                'name' => mb_strlen($normalized) > 5 ? $unitName : $normalized, // Сохраняем оригинальное для длинных (если это не просто "м2")
+                'short_name' => $normalized,
+                'type' => $unitType,
+                'is_system' => false,
             ]);
         }
 
