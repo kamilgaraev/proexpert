@@ -62,11 +62,10 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                 $preview = $page->preview;
                 $artifactPath = $preview['artifact_path'] ?? null;
                 $artifactSha256 = $preview['artifact_sha256'] ?? null;
-                $artifactVersionId = $preview['artifact_version_id'] ?? null;
                 $artifactBytes = $preview['artifact_bytes'] ?? null;
 
                 if (! is_string($artifactPath) || ! is_string($artifactSha256)
-                    || ! is_string($artifactVersionId) || ! is_int($artifactBytes)
+                    || ! is_int($artifactBytes)
                     || ($preview['content_type'] ?? null) !== 'image/png') {
                     throw new DocumentManifestNeedsReview('pdf_raster_vision_artifact_required');
                 }
@@ -107,14 +106,12 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                         'artifact_path' => $artifactPath,
                         'artifact_bytes' => $artifactBytes,
                         'artifact_sha256' => $artifactSha256,
-                        'artifact_version_id' => $artifactVersionId,
                         'artifact_source_version' => $artifactSha256,
                         'content_type' => 'image/png',
                         'page' => $page->pageNumber,
                         'geometry_artifact_path' => $geometryArtifact->path,
                         'geometry_artifact_bytes' => $geometryArtifact->bytes,
                         'geometry_artifact_sha256' => $geometryArtifact->sha256,
-                        'geometry_artifact_version_id' => $geometryArtifact->versionId,
                     ],
                 );
             }

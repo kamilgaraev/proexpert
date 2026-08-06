@@ -14,7 +14,7 @@ final class LegalDocumentSignature extends Model
     protected $fillable = [
         'organization_id', 'document_id', 'document_version_id', 'signature_request_id', 'party_id',
         'method', 'provider', 'signer_name', 'signers', 'signed_content_hash', 'signature_path',
-        'signature_content_hash', 'storage_version_id', 'storage_etag', 'detected_mime_type',
+        'signature_content_hash', 'storage_etag', 'detected_mime_type',
         'certificate_metadata', 'provider_metadata', 'storage_location',
         'signed_at', 'verified_at', 'verification_status', 'revocation_reason', 'registered_by_user_id',
         'signature_kind', 'container_format', 'signer_snapshot_hash', 'signer_user_id',

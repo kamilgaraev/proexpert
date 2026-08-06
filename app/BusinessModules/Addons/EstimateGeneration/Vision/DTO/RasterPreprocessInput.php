@@ -19,7 +19,6 @@ final readonly class RasterPreprocessInput
         public string $contentType,
         public int $sourceBytes,
         public string $sourceSha256,
-        public string $sourceVersionId,
         public ?array $perspectiveQuadrilateral = null,
         public bool $perspectiveRequired = false,
         public int $maxBytes = 20_000_000,
@@ -30,7 +29,6 @@ final readonly class RasterPreprocessInput
             || $maxBytes < 1 || $maxBytes > 50_000_000 || $maxPixels < 1 || $maxPixels > 50_000_000 || $maxDimension < 64 || $maxDimension > 8192
             || $sourceBytes < 1 || $sourceBytes > $maxBytes
             || preg_match('/^sha256:[a-f0-9]{64}$/', $sourceVersion) !== 1 || $sourceSha256 !== $sourceVersion
-            || trim($sourceVersionId) === ''
             || ! in_array($contentType, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], true)) {
             throw new InvalidArgumentException('Invalid raster preprocessing input.');
         }

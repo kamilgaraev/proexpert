@@ -93,7 +93,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRen
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\DompdfReportPdfDocumentRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\ReportExportRendererRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactVersionInventory;
+use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactInventory;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Listeners\FinalizeFailedReportExportAttempt;
 use App\BusinessModules\Core\Reporting\Infrastructure\Listeners\FinalizeFailedReportRunAttempt;
@@ -348,7 +348,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
 
     private function registerArtifactInventory(): void
     {
-        $this->app->singleton(ReportArtifactVersionInventory::class, function (Container $app): S3ReportArtifactVersionInventory {
+        $this->app->singleton(ReportArtifactVersionInventory::class, function (Container $app): S3ReportArtifactInventory {
             $disk = config('filesystems.disks.s3');
             if (! is_array($disk) || ! is_string($disk['bucket'] ?? null) || $disk['bucket'] === '') {
                 throw new InvalidArgumentException('report_s3_inventory_configuration_invalid');
@@ -364,7 +364,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 ],
             ]);
 
-            return new S3ReportArtifactVersionInventory(
+            return new S3ReportArtifactInventory(
                 $client,
                 $app->make(FileService::class),
                 $disk['bucket'],

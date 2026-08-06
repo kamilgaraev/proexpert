@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
@@ -34,7 +34,7 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
     }
 
     #[Test]
-    public function reads_the_pinned_version_and_verified_hash(): void
+    public function reads_the_current_object_with_verified_hash(): void
     {
         config()->set('estimate-generation.ocr.max_sync_file_bytes', 4096);
         $content = str_repeat('a', 2048);
@@ -67,7 +67,7 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
     }
 
     #[Test]
-    public function rejects_a_pinned_source_when_its_hash_does_not_match(): void
+    public function rejects_a_current_source_when_its_hash_does_not_match(): void
     {
         config()->set('estimate-generation.ocr.max_sync_file_bytes', 4096);
         $document = $this->document(5);
@@ -75,7 +75,7 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
 
         try {
             $this->storage($files)->open($document, $this->sourceVersion('right'));
-            self::fail('Expected pinned source integrity rejection.');
+            self::fail('Expected current source integrity rejection.');
         } catch (TypedFailureException $exception) {
             self::assertSame('document_source_integrity_failed', $exception->safeCode);
         }
@@ -99,7 +99,6 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
             'size' => strlen($content),
             'sha256' => hash('sha256', $content),
             'etag' => null,
-            'version_id' => 'artifact-v1',
             'content_type' => 'application/json',
             'created' => true,
         ]);
@@ -125,9 +124,8 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
     private function filesFor(EstimateGenerationDocument $document, string $content): FileService
     {
         $files = Mockery::mock(FileService::class);
-        $files->shouldReceive('describeVersion')->once()->with(
+        $files->shouldReceive('describeCurrent')->once()->with(
             $document->storage_path,
-            'source-v1',
             Mockery::type('int'),
         )->andReturn([
             'path' => $document->storage_path,
@@ -135,7 +133,6 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
             'size' => strlen($content),
             'sha256' => hash('sha256', $content),
             'etag' => null,
-            'version_id' => 'source-v1',
             'content_type' => 'application/octet-stream',
         ]);
 
@@ -163,7 +160,7 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
             'storage_path' => 'org-71/estimate-generation/source.bin',
             'mime_type' => 'application/octet-stream',
             'file_size_bytes' => $declaredBytes,
-            'meta' => ['storage_version_id' => 'source-v1'],
+            'meta' => ['storage_sha256' => str_repeat('a', 64)],
         ]);
         $document->setRelation('session', $session);
 

@@ -4,24 +4,21 @@ declare(strict_types=1);
 
 namespace App\Services\Storage\DTO;
 
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use InvalidArgumentException;
 
 final readonly class StoredFile
 {
     public function __construct(
-        public string $path,
-        public string $versionId,
+        public string $organizationPath,
         public string $etag,
         public int $sizeBytes,
-        public Sha256Hash $checksum,
+        public string $sha256,
         public string $mime,
     ) {
-        if (! self::isPrivateRelativePath($path)
-            || ! self::isSafeString($versionId)
-            || strtolower(trim($versionId)) === 'null'
+        if (! self::isPrivateRelativePath($organizationPath)
             || ! self::isSafeString($etag)
             || $sizeBytes < 1
+            || preg_match('/^[a-f0-9]{64}$/D', $sha256) !== 1
             || ! self::isSafeString($mime)) {
             throw new InvalidArgumentException('stored_file_identity_invalid');
         }

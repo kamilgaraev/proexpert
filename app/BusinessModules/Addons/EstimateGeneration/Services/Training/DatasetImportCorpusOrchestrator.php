@@ -56,7 +56,6 @@ final readonly class DatasetImportCorpusOrchestrator
     private function assertReceipt(BenchmarkPrivateObject $receipt, string $path, string $sha256): void
     {
         if ($receipt->path !== $path || ! hash_equals($sha256, $receipt->sha256)
-            || ! is_string($receipt->versionId) || trim($receipt->versionId) === ''
             || ! is_string($receipt->etag) || trim($receipt->etag) === '') {
             throw new DomainException('dataset_import_receipt_invalid');
         }

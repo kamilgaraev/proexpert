@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
 final class BoundedVersionedS3ObjectReaderTest extends TestCase
 {
     #[Test]
-    public function it_accepts_only_the_exact_tenant_size_hash_and_version(): void
+    public function it_accepts_only_the_exact_tenant_size_and_hash(): void
     {
         $body = '{"ok":true}';
         $reader = new BoundedVersionedS3ObjectReader($this->files($body));
@@ -26,12 +26,11 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
             1024,
             strlen($body),
             'sha256:'.hash('sha256', $body),
-            'version-7',
         );
 
         self::assertSame($body, $object->body);
         self::assertSame(strlen($body), $object->bytes);
-        self::assertSame('version-7', $object->versionId);
+        self::assertSame('sha256:'.hash('sha256', $body), $object->sha256);
     }
 
     #[Test]
@@ -41,13 +40,13 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
         {
             public function __construct() {}
 
-            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            public function describeCurrent(string $path, int $maxBytes = 64_000_000): array
             {
                 throw new \RuntimeException('network down');
             }
         };
         $this->expectException(S3ObjectTransportException::class);
-        (new BoundedVersionedS3ObjectReader($files))->read(7, 'org-7/a', 10, 1, 'sha256:'.str_repeat('a', 64), 'v1');
+        (new BoundedVersionedS3ObjectReader($files))->read(7, 'org-7/a', 10, 1, 'sha256:'.str_repeat('a', 64));
     }
 
     #[Test]
@@ -57,17 +56,17 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
         {
             public function __construct() {}
 
-            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            public function describeCurrent(string $path, int $maxBytes = 64_000_000): array
             {
                 throw new VersionedObjectIntegrityException('provider wording is irrelevant');
             }
         };
         $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException::class);
-        (new BoundedVersionedS3ObjectReader($files))->read(7, 'org-7/a', 10, 1, 'sha256:'.str_repeat('a', 64), 'v1');
+        (new BoundedVersionedS3ObjectReader($files))->read(7, 'org-7/a', 10, 1, 'sha256:'.str_repeat('a', 64));
     }
 
     #[Test]
-    public function it_rejects_a_locator_hash_that_does_not_match_the_versioned_body(): void
+    public function it_rejects_a_locator_hash_that_does_not_match_the_current_body(): void
     {
         $reader = new BoundedVersionedS3ObjectReader($this->files('content'));
         $this->expectException(DomainException::class);
@@ -79,7 +78,6 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
             1024,
             7,
             'sha256:'.str_repeat('0', 64),
-            'version-7',
         );
     }
 
@@ -89,7 +87,7 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
         {
             public function __construct(private readonly string $body) {}
 
-            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            public function describeCurrent(string $path, int $maxBytes = 64_000_000): array
             {
                 return [
                     'path' => $path,
@@ -97,7 +95,6 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
                     'size' => strlen($this->body),
                     'sha256' => hash('sha256', $this->body),
                     'etag' => 'etag',
-                    'version_id' => 'version-7',
                     'content_type' => 'application/json',
                 ];
             }

@@ -2,7 +2,6 @@
 
 namespace App\Services\Storage;
 
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
 use App\Services\Storage\DTO\CurrentMultipartCompletion;
@@ -279,11 +278,9 @@ class FileService
             throw new VersionedObjectTransportException('s3_multipart_unavailable', 0, $exception);
         }
 
-        $versionId = is_string($result['VersionId'] ?? null) ? trim($result['VersionId']) : '';
         $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], " \t\n\r\0\x0B\"") : '';
         if (
-            ! $this->isUsableVersionId($versionId)
-            || $etag === ''
+            $etag === ''
             || (isset($result['Key'])
                 && (! is_string($result['Key'])
                     || ! hash_equals($upload->organizationPath, $result['Key'])))
@@ -296,10 +293,9 @@ class FileService
 
         return new StoredFile(
             $upload->organizationPath,
-            $versionId,
             $etag,
             $sizeBytes,
-            new Sha256Hash($checksumSha256),
+            $checksumSha256,
             $upload->mime,
         );
     }
@@ -405,38 +401,35 @@ class FileService
         }
     }
 
-    public function headVersion(string $organizationPath, string $versionId): StoredFile
+    public function headCurrent(string $organizationPath, int $maxBytes = 64_000_000): StoredFile
     {
-        $this->assertOrganizationPath($organizationPath);
-        $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
-        $description = $this->describeVersionInternal($organizationPath, $versionId, PHP_INT_MAX, false);
+        if ($maxBytes < 1) {
+            throw new \InvalidArgumentException('s3_object_size_invalid');
+        }
+
+        $description = $this->describeCurrent($organizationPath, -$maxBytes);
         if (
-            ! is_string($description['version_id'])
-            || ! hash_equals($versionId, $description['version_id'])
-            || ! is_string($description['etag'])
+            ! is_string($description['etag'])
             || $description['etag'] === ''
             || $description['size'] < 1
         ) {
-            throw new VersionedObjectIntegrityException('s3_object_version_mismatch');
+            throw new VersionedObjectIntegrityException('s3_object_identity_mismatch');
         }
 
         return new StoredFile(
             $organizationPath,
-            $description['version_id'],
             $description['etag'],
             $description['size'],
-            new Sha256Hash($description['sha256']),
+            $description['sha256'],
             $description['content_type'],
         );
     }
 
     public function createTemporaryLink(
         string $organizationPath,
-        string $versionId,
         int $ttlSeconds,
     ): TemporaryFileLink {
         $this->assertOrganizationPath($organizationPath);
-        $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
         if ($ttlSeconds < 1 || $ttlSeconds > 300) {
             throw new \InvalidArgumentException('temporary_link_ttl_invalid');
         }
@@ -446,7 +439,6 @@ class FileService
             $command = $this->reportS3Client()->getCommand('GetObject', [
                 'Bucket' => $this->reportBucket(),
                 'Key' => $organizationPath,
-                'VersionId' => $versionId,
             ]);
             $request = $this->reportS3Client()->createPresignedRequest($command, $expiresAt);
         } catch (AwsException $exception) {
@@ -455,29 +447,10 @@ class FileService
             throw new VersionedObjectTransportException('s3_presigned_link_unavailable', 0, $exception);
         }
 
-        return new TemporaryFileLink((string) $request->getUri(), $versionId, $expiresAt);
+        return new TemporaryFileLink((string) $request->getUri(), $organizationPath, $expiresAt);
     }
 
-    public function deleteVersion(string $organizationPath, string $versionId): void
-    {
-        $this->assertOrganizationPath($organizationPath);
-        $this->assertVersionId($versionId, 's3_versioned_delete_requires_version');
-
-        try {
-            $this->reportS3Client()->deleteObject([
-                'Bucket' => $this->reportBucket(),
-                'Key' => $organizationPath,
-                'VersionId' => $versionId,
-                '@http' => $this->s3HttpOptions(),
-            ]);
-        } catch (AwsException $exception) {
-            throw $this->versionedAwsException($exception);
-        } catch (\InvalidArgumentException $exception) {
-            throw new VersionedObjectTransportException('s3_versioned_delete_unavailable', 0, $exception);
-        }
-    }
-
-    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,created:bool} */
+    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,content_type:string,created:bool} */
     public function putImmutable(string $path, string $body, string $contentType): array
     {
         try {
@@ -493,15 +466,14 @@ class FileService
                 '@http' => $this->s3HttpOptions(),
             ]);
             $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], '"') : null;
-            $version = is_string($result['VersionId'] ?? null) ? $result['VersionId'] : null;
-            if ($version === null || trim($version) === '') {
-                throw new VersionedObjectIntegrityException('s3_bucket_versioning_required');
+            if ($etag === null || trim($etag) === '') {
+                throw new VersionedObjectIntegrityException('s3_object_identity_invalid');
             }
 
-            $this->tagEstimateGenerationObject($path, $version, true);
+            $this->tagEstimateGenerationObject($path, true);
 
             return ['path' => $path, 'body' => $body, 'size' => strlen($body),
-                'sha256' => hash('sha256', $body), 'etag' => $etag, 'version_id' => $version,
+                'sha256' => hash('sha256', $body), 'etag' => $etag,
                 'content_type' => $contentType, 'created' => true];
         } catch (AwsException $exception) {
             $status = $exception->getStatusCode();
@@ -509,8 +481,8 @@ class FileService
                 throw $this->versionedAwsException($exception);
             }
 
-            $existing = $this->describeVersion($path, null);
-            $this->tagEstimateGenerationObject($path, $existing['version_id'], false);
+            $existing = $this->describeCurrent($path);
+            $this->tagEstimateGenerationObject($path, false);
 
             return [...$existing, 'created' => false];
         } catch (\InvalidArgumentException $exception) {
@@ -523,41 +495,32 @@ class FileService
     }
 
     /**
-     * A negative max size selects exact-version verification without retaining the response body.
+     * A negative max size verifies the current object without retaining the response body.
      * Its absolute value is the maximum accepted object size.
      *
-     * @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>}
+     * @return array{path:string,body:string,size:int,sha256:string,etag:?string,content_type:string,metadata?:array<string,string>}
      */
-    public function describeVersion(
+    public function describeCurrent(
         string $path,
-        ?string $versionId,
         int $maxBytes = 64_000_000,
     ): array {
-        return $this->describeVersionInternal($path, $versionId, $maxBytes, $maxBytes > 0);
+        return $this->describeCurrentInternal($path, $maxBytes, $maxBytes > 0);
     }
 
-    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>} */
-    private function describeVersionInternal(
+    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,content_type:string,metadata?:array<string,string>} */
+    private function describeCurrentInternal(
         string $path,
-        ?string $versionId,
         int $maxBytes,
         bool $includeBody,
     ): array {
         if ($maxBytes === 0 || $maxBytes === PHP_INT_MIN) {
             throw new \InvalidArgumentException('s3_object_size_invalid');
         }
-        if ($maxBytes < 0 && ($versionId === null || ! $this->isUsableVersionId($versionId))) {
-            throw new \InvalidArgumentException('s3_versioned_read_requires_version');
-        }
         $streamLimitBytes = $maxBytes < 0 ? abs($maxBytes) : $maxBytes;
         $reportObject = preg_match('#^org-[1-9][0-9]*/reports(?:/|$)#D', $path) === 1;
         $organizationId = null;
         if ($reportObject) {
             $organizationId = $this->assertOrganizationPath($path);
-            if ($versionId === null) {
-                throw new \InvalidArgumentException('s3_versioned_read_requires_version');
-            }
-            $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
         }
         try {
             $client = $reportObject ? $this->reportS3Client() : $this->s3Client();
@@ -571,24 +534,10 @@ class FileService
             throw new VersionedObjectTransportException('s3_versioned_read_unavailable', 0, $exception);
         }
         $arguments = ['Bucket' => $bucket, 'Key' => $path];
-        if ($versionId !== null && $versionId !== '') {
-            $arguments['VersionId'] = $versionId;
-        }
         try {
             $head = $client->headObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
             throw $this->versionedAwsException($exception);
-        }
-        $resolvedVersion = is_string($head['VersionId'] ?? null) ? $head['VersionId'] : $versionId;
-        if (
-            $resolvedVersion === null
-            || ! $this->isUsableVersionId($resolvedVersion)
-            || ($reportObject
-                && (! isset($head['VersionId'])
-                    || ! is_string($head['VersionId'])
-                    || ! hash_equals((string) $versionId, $head['VersionId'])))
-        ) {
-            throw new VersionedObjectIntegrityException('s3_bucket_versioning_required');
         }
         $contentLength = $head['ContentLength'] ?? null;
         $contentLengthBytes = is_numeric($contentLength) ? (int) $contentLength : -1;
@@ -603,22 +552,10 @@ class FileService
             $metadata = $this->normalizeReportMetadata($metadata);
             $this->assertClosedReportMetadata($metadata, $organizationId);
         }
-        $arguments['VersionId'] = $resolvedVersion;
         try {
             $object = $client->getObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
             throw $this->versionedAwsException($exception);
-        }
-        if (
-            ($reportObject
-                && (! isset($object['VersionId'])
-                    || ! is_string($object['VersionId'])
-                    || ! hash_equals($resolvedVersion, $object['VersionId'])))
-            || (! $reportObject
-                && isset($object['VersionId'])
-                && (string) $object['VersionId'] !== $resolvedVersion)
-        ) {
-            throw new VersionedObjectIntegrityException('s3_object_version_mismatch');
         }
         $stream = $object['Body'] ?? null;
         if (! is_object($stream) || ! method_exists($stream, 'read') || ! method_exists($stream, 'eof')) {
@@ -649,7 +586,6 @@ class FileService
         $description = ['path' => $path, 'body' => $body, 'size' => $readBytes,
             'sha256' => hash_final($hash),
             'etag' => is_string($head['ETag'] ?? null) ? trim($head['ETag'], '"') : null,
-            'version_id' => $resolvedVersion,
             'content_type' => is_string($head['ContentType'] ?? null) ? $head['ContentType'] : 'application/octet-stream'];
         if ($reportObject) {
             $description['metadata'] = $metadata;
@@ -669,7 +605,7 @@ class FileService
         return new VersionedObjectTransportException('s3_versioned_object_transport_failed', 0, $exception);
     }
 
-    /** @return array{size:int,version_id:string} */
+    /** @return array{size:int,etag:?string} */
     public function describeHead(string $path): array
     {
         $bucket = $this->disk()->getConfig()['bucket'] ?? null;
@@ -682,15 +618,15 @@ class FileService
             '@http' => $this->s3HttpOptions(),
         ]);
         $size = $head['ContentLength'] ?? null;
-        $version = $head['VersionId'] ?? null;
-        if (! is_numeric($size) || (int) $size < 1 || ! is_string($version) || trim($version) === '') {
+        $etag = is_string($head['ETag'] ?? null) ? trim($head['ETag'], '"') : null;
+        if (! is_numeric($size) || (int) $size < 1) {
             throw new \RuntimeException('s3_object_head_invalid');
         }
 
-        return ['size' => (int) $size, 'version_id' => $version];
+        return ['size' => (int) $size, 'etag' => $etag];
     }
 
-    /** @return array{path:string,size:int,version_id:string} */
+    /** @return array{path:string,size:int,etag:?string} */
     public function duplicateEstimateGenerationObject(string $sourcePath, string $destinationPath): array
     {
         $pattern = '#^org-([1-9][0-9]*)/estimate-generation/sessions/[1-9][0-9]*/documents/[A-Za-z0-9._-]+$#D';
@@ -710,7 +646,7 @@ class FileService
 
         try {
             $head = $this->describeHead($destinationPath);
-            $this->tagEstimateGenerationObject($destinationPath, $head['version_id'], true);
+            $this->tagEstimateGenerationObject($destinationPath, true);
 
             return ['path' => $destinationPath, ...$head];
         } catch (\Throwable $exception) {
@@ -723,16 +659,13 @@ class FileService
         }
     }
 
-    public function removeImmutable(string $path, ?string $versionId): void
+    public function removeImmutable(string $path): void
     {
         $bucket = $this->disk()->getConfig()['bucket'] ?? null;
         if (! is_string($bucket) || $bucket === '') {
             throw new \RuntimeException('s3_versioned_delete_unavailable');
         }
-        if ($versionId === null || trim($versionId) === '') {
-            throw new \RuntimeException('s3_versioned_delete_requires_version');
-        }
-        $arguments = ['Bucket' => $bucket, 'Key' => $path, 'VersionId' => $versionId];
+        $arguments = ['Bucket' => $bucket, 'Key' => $path];
         $this->s3Client()->deleteObject([...$arguments, '@http' => $this->s3HttpOptions()]);
     }
 
@@ -866,22 +799,6 @@ class FileService
         }
     }
 
-    private function assertVersionId(string $versionId, string $error): void
-    {
-        $this->assertSafeStorageString($versionId, 255, $error);
-        if (strtolower(trim($versionId)) === 'null') {
-            throw new \InvalidArgumentException($error);
-        }
-    }
-
-    private function isUsableVersionId(string $versionId): bool
-    {
-        return $versionId !== ''
-            && strlen($versionId) <= 255
-            && strtolower(trim($versionId)) !== 'null'
-            && preg_match('/[\x00-\x1F\x7F]/', $versionId) !== 1;
-    }
-
     private function assertStorageMetadata(array $metadata): void
     {
         foreach ($metadata as $key => $value) {
@@ -992,7 +909,6 @@ class FileService
 
     private function tagEstimateGenerationObject(
         string $path,
-        ?string $versionId = null,
         bool $deleteOnFailure = false,
     ): void {
         if (preg_match('#^org-[1-9][0-9]*/estimate-generation(?:/|$)#D', $path) !== 1) {
@@ -1005,23 +921,10 @@ class FileService
             throw new \RuntimeException('s3_object_tagging_unavailable');
         }
 
-        if ($versionId === null || trim($versionId) === '') {
-            $head = $client->headObject([
-                'Bucket' => $bucket,
-                'Key' => $path,
-                '@http' => $this->s3HttpOptions(),
-            ]);
-            $versionId = is_string($head['VersionId'] ?? null) ? trim($head['VersionId']) : null;
-        }
-        if ($versionId === null || $versionId === '') {
-            throw new \RuntimeException('s3_bucket_versioning_required');
-        }
-
         try {
             $client->putObjectTagging([
                 'Bucket' => $bucket,
                 'Key' => $path,
-                'VersionId' => $versionId,
                 '@http' => $this->s3HttpOptions(),
                 'Tagging' => [
                     'TagSet' => [['Key' => 'most-module', 'Value' => 'estimate-generation']],
@@ -1033,7 +936,6 @@ class FileService
                     $client->deleteObject([
                         'Bucket' => $bucket,
                         'Key' => $path,
-                        'VersionId' => $versionId,
                         '@http' => $this->s3HttpOptions(),
                     ]);
                 } catch (\Throwable) {
@@ -1055,7 +957,6 @@ class FileService
     private function safeStorageFailureCode(\Throwable $exception): string
     {
         return in_array($exception->getMessage(), [
-            's3_bucket_versioning_required',
             's3_conditional_put_unavailable',
             's3_object_head_invalid',
             's3_object_tagging_failed',

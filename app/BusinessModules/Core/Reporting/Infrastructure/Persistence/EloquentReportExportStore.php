@@ -223,15 +223,14 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
             }
             $this->assertParentIdentity($record);
-            $subject = $this->transitionSubject($record, ReportExportStatus::READY) + ['definition_hash' => (string) $record->definition_hash, 'query_hash' => (string) $record->query_hash, 'source_hash' => (string) $record->source_hash, 'result_hash' => (string) $record->result_hash, 'snapshot_id' => (string) $record->snapshot_id, 'renderer_version' => (string) $record->renderer_version, 'row_count' => $rowCount, 'artifact' => ['version_id' => $artifact->versionId, 'etag' => $artifact->etag, 'checksum' => $artifact->checksum->value, 'size' => $artifact->sizeBytes, 'mime' => $artifact->mime]];
-            $this->audit->append("reports:export:{$exportId}:ready:{$artifact->checksum->value}", 'report.export.ready', $context, $subject, $occurredAt);
+            $subject = $this->transitionSubject($record, ReportExportStatus::READY) + ['definition_hash' => (string) $record->definition_hash, 'query_hash' => (string) $record->query_hash, 'source_hash' => (string) $record->source_hash, 'result_hash' => (string) $record->result_hash, 'snapshot_id' => (string) $record->snapshot_id, 'renderer_version' => (string) $record->renderer_version, 'row_count' => $rowCount, 'artifact' => ['storage_key' => $artifact->organizationPath, 'etag' => $artifact->etag, 'sha256' => $artifact->sha256, 'size_bytes' => $artifact->sizeBytes, 'mime_type' => $artifact->mime]];
+            $this->audit->append("reports:export:{$exportId}:ready:{$artifact->sha256}", 'report.export.ready', $context, $subject, $occurredAt);
             $this->cas($record, ReportExportStatus::UPLOADING, [
                 'status' => ReportExportStatus::READY->value,
-                'artifact_path' => $artifact->path,
-                'artifact_version_id' => $artifact->versionId,
+                'artifact_path' => $artifact->organizationPath,
                 'artifact_etag' => $artifact->etag,
                 'artifact_mime' => $artifact->mime,
-                'artifact_checksum' => $artifact->checksum->value,
+                'artifact_checksum' => $artifact->sha256,
                 'artifact_size_bytes' => $artifact->sizeBytes,
                 'row_count' => $rowCount,
                 'ready_at' => $occurredAt,

@@ -279,7 +279,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
 
                 return new ReportDownloadLink(
                     'https://storage.example.test/report.csv',
-                    (string) $export->versionId,
+                    (string) $export->artifactPath,
                     $issuedAt,
                     $issuedAt->modify("+{$boundedTtl} seconds"),
                 );
@@ -633,7 +633,6 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             'locale' => 'ru-RU',
             'render_timezone' => 'UTC',
             'artifact_path' => $ready ? 'org-1/reports/report.csv' : null,
-            'artifact_version_id' => $ready ? 'version-1' : null,
             'artifact_etag' => $ready ? 'etag-1' : null,
             'artifact_mime' => $ready ? 'text/csv' : null,
             'artifact_checksum' => $ready ? str_repeat('9', 64) : null,

@@ -19,7 +19,6 @@ final readonly class BoundedVersionedS3ObjectReader
         int $maxBytes,
         ?int $expectedBytes = null,
         ?string $expectedSha256 = null,
-        ?string $versionId = null,
     ): VersionedS3ObjectContent {
         if ($organizationId < 1 || ! str_starts_with($path, "org-{$organizationId}/")
             || str_contains($path, '..') || str_contains($path, "\0") || $maxBytes < 1) {
@@ -31,11 +30,8 @@ final readonly class BoundedVersionedS3ObjectReader
         if ($expectedSha256 !== null && preg_match('/\Asha256:[0-9a-f]{64}\z/', $expectedSha256) !== 1) {
             throw new S3ObjectLocatorException('estimate_generation_object_hash_invalid');
         }
-        if ($versionId !== null && preg_match('/\A[\x21-\x7e]{1,1024}\z/D', $versionId) !== 1) {
-            throw new S3ObjectLocatorException('estimate_generation_object_version_invalid');
-        }
         try {
-            $object = $this->files->describeVersion($path, $versionId, $maxBytes);
+            $object = $this->files->describeCurrent($path, $maxBytes);
         } catch (VersionedObjectIntegrityException $exception) {
             throw new S3ObjectLocatorException('estimate_generation_object_integrity_failed', 0, $exception);
         } catch (VersionedObjectTransportException $exception) {
@@ -45,8 +41,7 @@ final readonly class BoundedVersionedS3ObjectReader
         }
         $resolvedHash = 'sha256:'.$object['sha256'];
         if (($expectedBytes !== null && $object['size'] !== $expectedBytes)
-            || ($expectedSha256 !== null && ! hash_equals($expectedSha256, $resolvedHash))
-            || ($versionId !== null && ! hash_equals($versionId, $object['version_id']))) {
+            || ($expectedSha256 !== null && ! hash_equals($expectedSha256, $resolvedHash))) {
             throw new S3ObjectLocatorException('estimate_generation_object_integrity_failed');
         }
 
@@ -54,7 +49,6 @@ final readonly class BoundedVersionedS3ObjectReader
             $object['body'],
             $object['size'],
             $resolvedHash,
-            $object['version_id'],
             $object['content_type'],
         );
     }

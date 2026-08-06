@@ -16,7 +16,6 @@ class QualityDefectPhoto extends Model
         'uploaded_by',
         'type',
         'url',
-        'storage_version_id',
         'storage_etag',
         'storage_sha256',
         'size_bytes',

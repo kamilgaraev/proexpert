@@ -6,8 +6,8 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProvenance;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProvenance;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProductionDocumentUnitProcessor;
@@ -71,7 +71,6 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
                 'artifact_path' => 'org-2/artifacts/spreadsheet-sheet-1',
                 'artifact_bytes' => strlen($nativePayload),
                 'artifact_sha256' => 'sha256:'.hash('sha256', $nativePayload),
-                'artifact_version_id' => 'legacy-sheet-v1',
                 'artifact_source_version' => 'sha256:'.hash('sha256', $nativePayload),
                 'content_type' => 'application/vnd.most.spreadsheet-sheet+json',
                 'sheet' => 1,
@@ -130,7 +129,6 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
                 'artifact_path' => 'org-2/artifacts/pdf-page-1',
                 'artifact_bytes' => strlen($nativePayload),
                 'artifact_sha256' => 'sha256:'.hash('sha256', $nativePayload),
-                'artifact_version_id' => 'legacy-pdf-v1',
                 'artifact_source_version' => 'sha256:'.hash('sha256', $nativePayload),
                 'content_type' => 'application/vnd.most.spreadsheet-sheet+json',
                 'page' => 1,
@@ -283,7 +281,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
         self::assertSame($geometry->runtimeVersion, $output->normalizedPayload['provenance']['runtime_version']);
         self::assertNotEmpty($output->normalizedPayload['vector_geometry']['entities']);
         self::assertSame('org-2/source.dxf', $cad->source?->artifactPath);
-        self::assertSame('source-v1', $cad->source?->artifactVersionId);
+        self::assertSame(1, $cad->source?->artifactBytes);
         self::assertSame('sha256:'.str_repeat('a', 64), $cad->source?->artifactSha256);
     }
 
@@ -299,7 +297,6 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
             'artifact_path' => 'org-2/source.dxf',
             'artifact_bytes' => 1,
             'artifact_sha256' => $sourceVersion,
-            'artifact_version_id' => 'source-v1',
             'artifact_source_version' => $sourceVersion,
             'content_type' => 'application/dxf',
         ];

@@ -28,8 +28,8 @@ final readonly class CoreReportAuditIntentConsumer
         'report.export.ready' => ['export_id', 'run_id', 'report_code', 'status', 'definition_hash', 'query_hash', 'source_hash', 'result_hash', 'snapshot_id', 'format', 'renderer_version', 'row_count', 'artifact'],
         'report.export.failed' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'error_code'],
         'report.export.cancelled' => ['export_id', 'run_id', 'report_code', 'status', 'format'],
-        'report.export.expired' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'version_id', 'occurred_at'],
-        'report.export.artifact_deleted' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'version_id', 'occurred_at'],
+        'report.export.expired' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
+        'report.export.artifact_deleted' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
     ];
 
     private const FORBIDDEN_KEYS = [
@@ -177,15 +177,15 @@ final readonly class CoreReportAuditIntentConsumer
         if (! is_array($artifact) || array_is_list($artifact)) {
             throw new InvalidArgumentException('report_core_audit_artifact_invalid');
         }
-        $this->assertExactKeys($artifact, ['version_id', 'etag', 'checksum', 'size', 'mime']);
+        $this->assertExactKeys($artifact, ['storage_key', 'etag', 'sha256', 'size_bytes', 'mime_type']);
         if (
-            ! $this->boundedText($artifact['version_id'], 255)
+            ! $this->boundedText($artifact['storage_key'], 1024)
             || ! $this->boundedText($artifact['etag'], 255)
-            || ! is_string($artifact['checksum'])
-            || preg_match('/\A[a-f0-9]{64}\z/D', $artifact['checksum']) !== 1
-            || ! is_int($artifact['size'])
-            || $artifact['size'] < 1
-            || ! $this->boundedText($artifact['mime'], 255)
+            || ! is_string($artifact['sha256'])
+            || preg_match('/\A[a-f0-9]{64}\z/D', $artifact['sha256']) !== 1
+            || ! is_int($artifact['size_bytes'])
+            || $artifact['size_bytes'] < 1
+            || ! $this->boundedText($artifact['mime_type'], 255)
         ) {
             throw new InvalidArgumentException('report_core_audit_artifact_invalid');
         }

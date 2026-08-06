@@ -19,8 +19,7 @@ final readonly class S3DocumentUnitContentReader implements DocumentUnitContentR
         $path = $context->locator['artifact_path'] ?? null;
         $bytes = $context->locator['artifact_bytes'] ?? null;
         $sha256 = $context->locator['artifact_sha256'] ?? null;
-        $versionId = $context->locator['artifact_version_id'] ?? null;
-        if (! is_string($path) || ! is_int($bytes) || ! is_string($sha256) || ! is_string($versionId)) {
+        if (! is_string($path) || ! is_int($bytes) || ! is_string($sha256)) {
             throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_locator_invalid');
         }
 
@@ -33,7 +32,6 @@ final readonly class S3DocumentUnitContentReader implements DocumentUnitContentR
                 max(1, (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024)),
                 $bytes,
                 $sha256,
-                $versionId,
             )->body;
         } catch (S3ObjectLocatorException $exception) {
             throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);

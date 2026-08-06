@@ -72,7 +72,6 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
                 $fence,
                 function (ReportExport $lockedExport, int $boundedTtlSeconds) use ($context): ReportDownloadLink {
                     if ($lockedExport->artifactPath === null
-                        || $lockedExport->versionId === null
                         || ! str_starts_with(
                             $lockedExport->artifactPath,
                             'org-'.$context->scope->organizationId.'/',
@@ -80,20 +79,17 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
                         throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
                     }
 
-                    $temporary = $this->files->createTemporaryLink(
+                    $url = $this->files->temporaryDownloadUrl(
                         $lockedExport->artifactPath,
-                        $lockedExport->versionId,
                         $boundedTtlSeconds,
                     );
-                    if (! hash_equals($lockedExport->versionId, $temporary->versionId)) {
-                        throw ReportContractException::fromCode(ReportErrorCode::REPORT_DEPENDENCY_FAILED);
-                    }
+                    $issuedAt = $this->clock->now();
 
                     return new ReportDownloadLink(
-                        $temporary->url,
-                        $temporary->versionId,
-                        $this->clock->now(),
-                        $temporary->expiresAt,
+                        $url,
+                        $lockedExport->artifactPath,
+                        $issuedAt,
+                        $issuedAt->modify("+{$boundedTtlSeconds} seconds"),
                     );
                 },
             );

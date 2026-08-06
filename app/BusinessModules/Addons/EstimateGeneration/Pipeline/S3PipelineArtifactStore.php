@@ -48,7 +48,7 @@ final readonly class S3PipelineArtifactStore implements PipelineArtifactStore
             throw $this->integrityFailure();
         }
 
-        return new PipelineArtifactReference('s3_json_v1', $path, $version, $bytes, (string) $stored['version_id']);
+        return new PipelineArtifactReference('s3_json_v1', $path, $version, $bytes);
     }
 
     public function read(PipelineContext $context, PipelineArtifactReference $reference): array
@@ -65,7 +65,6 @@ final readonly class S3PipelineArtifactStore implements PipelineArtifactStore
                 PipelineDefinitionGraph::MAX_TOTAL_ARTIFACT_BYTES,
                 $reference->bytes,
                 $reference->contentVersion,
-                $reference->versionId,
             )->body;
         } catch (S3ObjectLocatorException $exception) {
             throw $this->integrityFailure($exception);

@@ -26,8 +26,8 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
         'report.export.ready' => ['export_id', 'run_id', 'report_code', 'status', 'definition_hash', 'query_hash', 'source_hash', 'result_hash', 'snapshot_id', 'format', 'renderer_version', 'row_count', 'artifact'],
         'report.export.failed' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'error_code'],
         'report.export.cancelled' => ['export_id', 'run_id', 'report_code', 'status', 'format'],
-        'report.export.expired' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'version_id', 'occurred_at'],
-        'report.export.artifact_deleted' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'version_id', 'occurred_at'],
+        'report.export.expired' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
+        'report.export.artifact_deleted' => ['export_id', 'run_id', 'report_code', 'status', 'format', 'storage_key', 'occurred_at'],
     ];
 
     private const FORBIDDEN_KEYS = [
@@ -44,7 +44,7 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
         array $subject,
         DateTimeImmutable $occurredAt,
     ): void {
-        if ($eventId === '' || strlen($eventId) > 512 || !isset(self::SUBJECT_KEYS[$eventType])) {
+        if ($eventId === '' || strlen($eventId) > 512 || ! isset(self::SUBJECT_KEYS[$eventType])) {
             throw new InvalidArgumentException('report_audit_event_invalid');
         }
 
@@ -67,43 +67,43 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
             if (in_array($key, self::FORBIDDEN_KEYS, true)) {
                 throw new InvalidArgumentException('report_audit_subject_forbidden');
             }
-            if (in_array($key, ['run_id', 'export_id'], true) && !$this->isUlid($value)) {
+            if (in_array($key, ['run_id', 'export_id'], true) && ! $this->isUlid($value)) {
                 throw new InvalidArgumentException('report_audit_subject_id_invalid');
             }
-            if (str_ends_with($key, '_hash') && !$this->isHash($value)) {
+            if (str_ends_with($key, '_hash') && ! $this->isHash($value)) {
                 throw new InvalidArgumentException('report_audit_subject_hash_invalid');
             }
-            if (in_array($key, ['report_code', 'snapshot_id', 'version_id', 'format', 'locale', 'timezone'], true) && !$this->isSafeString($value)) {
+            if (in_array($key, ['report_code', 'snapshot_id', 'storage_key', 'format', 'locale', 'timezone'], true) && ! $this->isSafeString($value, $key === 'storage_key' ? 1024 : 255)) {
                 throw new InvalidArgumentException('report_audit_subject_value_invalid');
             }
-            if (str_ends_with($key, '_version') && !$this->isVersion($value)) {
+            if (str_ends_with($key, '_version') && ! $this->isVersion($value)) {
                 throw new InvalidArgumentException('report_audit_subject_version_invalid');
             }
-            if (in_array($key, ['row_count', 'size'], true) && (!is_int($value) || $value < 0)) {
+            if (in_array($key, ['row_count', 'size'], true) && (! is_int($value) || $value < 0)) {
                 throw new InvalidArgumentException('report_audit_subject_count_invalid');
             }
         }
 
         if (
             isset($subject['error_code'])
-            && (!is_string($subject['error_code']) || ReportErrorCode::tryFrom($subject['error_code']) === null)
+            && (! is_string($subject['error_code']) || ReportErrorCode::tryFrom($subject['error_code']) === null)
         ) {
             throw new InvalidArgumentException('report_audit_subject_error_invalid');
         }
         if (
             isset($subject['snapshot_classification'])
-            && !in_array($subject['snapshot_classification'], ['operational', 'official'], true)
+            && ! in_array($subject['snapshot_classification'], ['operational', 'official'], true)
         ) {
             throw new InvalidArgumentException('report_audit_snapshot_classification_invalid');
         }
         if (
             isset($subject['data_classification'])
-            && !in_array($subject['data_classification'], ['standard', 'sensitive'], true)
+            && ! in_array($subject['data_classification'], ['standard', 'sensitive'], true)
         ) {
             throw new InvalidArgumentException('report_audit_data_classification_invalid');
         }
         foreach (['expired_at', 'occurred_at'] as $instantKey) {
-            if (isset($subject[$instantKey]) && !$this->isCanonicalInstant($subject[$instantKey])) {
+            if (isset($subject[$instantKey]) && ! $this->isCanonicalInstant($subject[$instantKey])) {
                 throw new InvalidArgumentException('report_audit_subject_instant_invalid');
             }
         }
@@ -111,45 +111,45 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
             $this->assertColumns($subject['columns']);
         }
         if (array_key_exists('saved_view', $subject) && $subject['saved_view'] !== null) {
-            if (!is_array($subject['saved_view'])) {
+            if (! is_array($subject['saved_view'])) {
                 throw new InvalidArgumentException('report_audit_saved_view_invalid');
             }
             $this->assertClosedObject($subject['saved_view'], ['id', 'revision', 'hash']);
             if (
-                !$this->isUlid($subject['saved_view']['id'])
-                || !is_int($subject['saved_view']['revision'])
+                ! $this->isUlid($subject['saved_view']['id'])
+                || ! is_int($subject['saved_view']['revision'])
                 || $subject['saved_view']['revision'] < 1
-                || !$this->isHash($subject['saved_view']['hash'])
+                || ! $this->isHash($subject['saved_view']['hash'])
             ) {
                 throw new InvalidArgumentException('report_audit_saved_view_invalid');
             }
         }
         if (isset($subject['snapshot'])) {
-            if (!is_array($subject['snapshot'])) {
+            if (! is_array($subject['snapshot'])) {
                 throw new InvalidArgumentException('report_audit_snapshot_invalid');
             }
             $this->assertClosedObject($subject['snapshot'], ['kind', 'id', 'classification', 'seal_digest']);
             if (
-                !$this->isSafeString($subject['snapshot']['kind'])
-                || !$this->isSafeString($subject['snapshot']['id'])
-                || !in_array($subject['snapshot']['classification'], ['operational', 'official'], true)
-                || ($subject['snapshot']['seal_digest'] !== null && !$this->isHash($subject['snapshot']['seal_digest']))
+                ! $this->isSafeString($subject['snapshot']['kind'])
+                || ! $this->isSafeString($subject['snapshot']['id'])
+                || ! in_array($subject['snapshot']['classification'], ['operational', 'official'], true)
+                || ($subject['snapshot']['seal_digest'] !== null && ! $this->isHash($subject['snapshot']['seal_digest']))
             ) {
                 throw new InvalidArgumentException('report_audit_snapshot_invalid');
             }
         }
         if (isset($subject['artifact'])) {
-            if (!is_array($subject['artifact'])) {
+            if (! is_array($subject['artifact'])) {
                 throw new InvalidArgumentException('report_audit_artifact_invalid');
             }
-            $this->assertClosedObject($subject['artifact'], ['version_id', 'etag', 'checksum', 'size', 'mime']);
+            $this->assertClosedObject($subject['artifact'], ['storage_key', 'etag', 'sha256', 'size_bytes', 'mime_type']);
             if (
-                !$this->isSafeString($subject['artifact']['version_id'])
-                || !$this->isSafeString($subject['artifact']['etag'])
-                || !$this->isHash($subject['artifact']['checksum'])
-                || !is_int($subject['artifact']['size'])
-                || $subject['artifact']['size'] < 0
-                || !$this->isSafeString($subject['artifact']['mime'])
+                ! $this->isSafeString($subject['artifact']['storage_key'], 1024)
+                || ! $this->isSafeString($subject['artifact']['etag'])
+                || ! $this->isHash($subject['artifact']['sha256'])
+                || ! is_int($subject['artifact']['size_bytes'])
+                || $subject['artifact']['size_bytes'] < 1
+                || ! $this->isSafeString($subject['artifact']['mime_type'])
             ) {
                 throw new InvalidArgumentException('report_audit_artifact_invalid');
             }
@@ -173,12 +173,12 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
 
     private function assertColumns(mixed $columns): void
     {
-        if (!is_array($columns) || !array_is_list($columns)) {
+        if (! is_array($columns) || ! array_is_list($columns)) {
             throw new InvalidArgumentException('report_audit_columns_invalid');
         }
         $normalized = [];
         foreach ($columns as $column) {
-            if (!is_string($column) || preg_match('/\A[a-z][a-z0-9_.-]{0,127}\z/D', $column) !== 1) {
+            if (! is_string($column) || preg_match('/\A[a-z][a-z0-9_.-]{0,127}\z/D', $column) !== 1) {
                 throw new InvalidArgumentException('report_audit_columns_invalid');
             }
             $normalized[] = $column;
@@ -214,9 +214,9 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
         return is_string($value) && preg_match('/\A[a-f0-9]{64}\z/D', $value) === 1;
     }
 
-    private function isSafeString(mixed $value): bool
+    private function isSafeString(mixed $value, int $maxLength = 255): bool
     {
-        return is_string($value) && $value !== '' && strlen($value) <= 255 && preg_match('/[\x00-\x1F\x7F]/', $value) !== 1;
+        return is_string($value) && $value !== '' && strlen($value) <= $maxLength && preg_match('/[\x00-\x1F\x7F]/', $value) !== 1;
     }
 
     private function isVersion(mixed $value): bool
@@ -226,7 +226,7 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
 
     private function isCanonicalInstant(mixed $value): bool
     {
-        if (!is_string($value) || preg_match('/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\z/D', $value) !== 1) {
+        if (! is_string($value) || preg_match('/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\z/D', $value) !== 1) {
             return false;
         }
 

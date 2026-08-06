@@ -42,7 +42,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactVersionInventory;
+use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactInventory;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Services\Storage\FileService;
 use Aws\S3\S3ClientInterface;
@@ -63,13 +63,12 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
 
     private const RUN_ID = '01J00000000000000000000000';
 
-    public function test_exact_version_is_sealed_before_old_orphan_is_deleted_with_full_reauthorization(): void
+    public function test_exact_current_object_is_sealed_before_old_orphan_is_deleted_with_full_reauthorization(): void
     {
         [$context, $export, $source, $published, $subject] = $this->fixture();
         $exact = $this->version($context->scope->organizationId, $export, $source);
         $orphan = $exact;
         $orphan['path'] = 'org-1/reports/exports/'.self::EXPORT_ID.'/old-part';
-        $orphan['version_id'] = 'old-version';
         $orphan['created_at'] = new DateTimeImmutable('2025-12-31T22:00:00Z');
         $mutations = [];
         $recovery = $this->createMock(ReportCompletedArtifactRecoveryStore::class);
@@ -91,8 +90,8 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
             });
         $files = $this->createMock(FileService::class);
         $files->expects(self::once())
-            ->method('deleteVersion')
-            ->with($orphan['path'], 'old-version')
+            ->method('deleteCurrent')
+            ->with($orphan['path'])
             ->willReturnCallback(static function () use (&$mutations): void {
                 $mutations[] = 'delete';
             });
@@ -165,7 +164,7 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         $exports->expects(self::once())->method('get')->willReturn($export);
         $exports->expects(self::never())->method('sealReady');
         $files = $this->createMock(FileService::class);
-        $files->expects(self::never())->method('deleteVersion');
+        $files->expects(self::never())->method('deleteCurrent');
 
         try {
             $this->service(
@@ -203,7 +202,7 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         $exports->expects(self::once())->method('get')->willReturn($export);
         $exports->expects(self::never())->method('sealReady');
         $files = $this->createMock(FileService::class);
-        $files->expects(self::never())->method('deleteVersion');
+        $files->expects(self::never())->method('deleteCurrent');
 
         $this->expectException(ReportContractException::class);
         $this->service(
@@ -222,12 +221,11 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         );
     }
 
-    public function test_multiple_exact_versions_fail_before_recovery_claim(): void
+    public function test_duplicate_exact_objects_fail_before_recovery_claim(): void
     {
         [$context, $export, $source, $published, $subject] = $this->fixture();
         $first = $this->version(1, $export, $source);
         $second = $first;
-        $second['version_id'] = 'version-2';
         $recovery = $this->createMock(ReportCompletedArtifactRecoveryStore::class);
         $recovery->expects(self::never())->method('claimExpiredUpload');
         $exports = $this->createMock(ReportExportStore::class);
@@ -250,55 +248,59 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         );
     }
 
-    public function test_s3_inventory_paginates_exact_prefix_and_returns_closed_versions(): void
+    public function test_s3_inventory_paginates_exact_prefix_and_returns_closed_current_objects(): void
     {
         $client = $this->createMock(S3ClientInterface::class);
         $client->expects(self::once())
             ->method('getPaginator')
-            ->with('ListObjectVersions', [
+            ->with('ListObjectsV2', [
                 'Bucket' => 'reports',
                 'Prefix' => 'org-1/reports/exports/'.self::EXPORT_ID.'/',
             ])
             ->willReturn(new \ArrayIterator([[
-                'Versions' => [[
+                'Contents' => [[
                     'Key' => 'org-1/reports/exports/'.self::EXPORT_ID.'/artifact.csv',
-                    'VersionId' => 'version-1',
                     'LastModified' => new DateTimeImmutable('2026-01-01T00:01:00Z'),
                 ]],
             ]]));
-        $files = $this->createMock(FileService::class);
-        $files->expects(self::once())
-            ->method('describeVersion')
-            ->with(
-                'org-1/reports/exports/'.self::EXPORT_ID.'/artifact.csv',
-                'version-1',
-                self::lessThan(0),
-            )
-            ->willReturn([
-                'path' => 'org-1/reports/exports/'.self::EXPORT_ID.'/artifact.csv',
-                'version_id' => 'version-1',
-                'etag' => 'etag-1',
-                'size' => 12,
-                'sha256' => str_repeat('e', 64),
-                'content_type' => 'text/csv; charset=UTF-8',
-                'metadata' => [
-                    'contract_version' => '1',
-                    'data_classification' => 'standard',
-                    'export_hash' => str_repeat('d', 64),
-                    'export_id' => self::EXPORT_ID,
-                    'formula_version' => '1',
-                    'organization_id' => '1',
-                    'renderer_version' => '1',
-                    'result_hash' => str_repeat('f', 64),
-                    'run_id' => self::RUN_ID,
-                    'snapshot_classification' => 'operational',
-                    'snapshot_id' => 'snapshot-1',
-                    'source_schema_version' => '1',
-                ],
-            ]);
+        $files = new class extends FileService
+        {
+            public function __construct() {}
 
-        $versions = iterator_to_array(
-            (new S3ReportArtifactVersionInventory(
+            public function describeCurrent(string $path, int $maxBytes = 64_000_000): array
+            {
+                TestCase::assertSame(
+                    'org-1/reports/exports/01J00000000000000000000001/artifact.csv',
+                    $path,
+                );
+                TestCase::assertLessThan(0, $maxBytes);
+
+                return [
+                    'path' => $path,
+                    'etag' => 'etag-1',
+                    'size' => 12,
+                    'sha256' => str_repeat('e', 64),
+                    'content_type' => 'text/csv; charset=UTF-8',
+                    'metadata' => [
+                        'contract_version' => '1',
+                        'data_classification' => 'standard',
+                        'export_hash' => str_repeat('d', 64),
+                        'export_id' => '01J00000000000000000000001',
+                        'formula_version' => '1',
+                        'organization_id' => '1',
+                        'renderer_version' => '1',
+                        'result_hash' => str_repeat('f', 64),
+                        'run_id' => '01J00000000000000000000000',
+                        'snapshot_classification' => 'operational',
+                        'snapshot_id' => 'snapshot-1',
+                        'source_schema_version' => '1',
+                    ],
+                ];
+            }
+        };
+
+        $objects = iterator_to_array(
+            (new S3ReportArtifactInventory(
                 $client,
                 $files,
                 'reports',
@@ -306,9 +308,20 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
             false,
         );
 
-        self::assertCount(1, $versions);
-        self::assertSame('version-1', $versions[0]['version_id']);
-        self::assertSame(str_repeat('e', 64), $versions[0]['sha256']);
+        self::assertCount(1, $objects);
+        self::assertSame(
+            [
+                'path',
+                'etag',
+                'size',
+                'sha256',
+                'mime',
+                'metadata',
+                'created_at',
+            ],
+            array_keys($objects[0]),
+        );
+        self::assertSame(str_repeat('e', 64), $objects[0]['sha256']);
     }
 
     private function service(
@@ -534,7 +547,6 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
     ): array {
         return [
             'path' => "org-{$organizationId}/reports/exports/{$export->id}/artifact.csv",
-            'version_id' => 'version-1',
             'etag' => 'etag-1',
             'size' => 12,
             'sha256' => str_repeat('e', 64),

@@ -22,7 +22,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
 use DateTimeImmutable;
@@ -96,22 +95,22 @@ final readonly class ReconcileCompletedReportArtifacts
         foreach ($this->inventory->forExport(
             $context->scope->organizationId,
             $exportId,
-        ) as $version) {
-            $this->assertVersion($version);
-            if (! $this->hasExpectedMetadata($current, $export, $source, $version)) {
+        ) as $artifact) {
+            $this->assertArtifact($artifact);
+            if (! $this->hasExpectedMetadata($current, $export, $source, $artifact)) {
                 throw ReportContractException::fromCode(
                     ReportErrorCode::REPORT_INTERNAL_ERROR,
                 );
             }
-            if ($this->matches($current, $export, $version)) {
-                $matches[] = $version;
+            if ($this->matches($current, $export, $artifact)) {
+                $matches[] = $artifact;
             } else {
-                if (! hash_equals($version['mime'], $this->mime($export->format))) {
+                if (! hash_equals($artifact['mime'], $this->mime($export->format))) {
                     throw ReportContractException::fromCode(
                         ReportErrorCode::REPORT_INTERNAL_ERROR,
                     );
                 }
-                $unmatched[] = $version;
+                $unmatched[] = $artifact;
             }
         }
 
@@ -162,10 +161,9 @@ final readonly class ReconcileCompletedReportArtifacts
         $match = $matches[0];
         $artifact = new StoredFile(
             $match['path'],
-            $match['version_id'],
             $match['etag'],
             $match['size'],
-            new Sha256Hash($match['sha256']),
+            $match['sha256'],
             $match['mime'],
         );
         $this->exports->sealReady(
@@ -271,30 +269,30 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param  array<string, mixed>  $version
+     * @param  array<string, mixed>  $artifact
      */
     private function matches(
         ReportExecutionContext $context,
         ReportExport $export,
-        array $version,
+        array $artifact,
     ): bool {
         return hash_equals(
-            $version['path'],
+            $artifact['path'],
             "org-{$context->scope->organizationId}/reports/exports/"
                 ."{$export->id}/artifact.{$export->format}",
-        ) && hash_equals($version['mime'], $this->mime($export->format));
+        ) && hash_equals($artifact['mime'], $this->mime($export->format));
     }
 
     /**
-     * @param  array<string, mixed>  $version
+     * @param  array<string, mixed>  $artifact
      */
     private function hasExpectedMetadata(
         ReportExecutionContext $context,
         ReportExport $export,
         ReportRunExportSource $source,
-        array $version,
+        array $artifact,
     ): bool {
-        $actualMetadata = $version['metadata'];
+        $actualMetadata = $artifact['metadata'];
         $expectedMetadata = [
             'organization_id' => (string) $context->scope->organizationId,
             'export_id' => $export->id,
@@ -328,11 +326,11 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param  array<string, mixed>  $version
+     * @param  array<string, mixed>  $artifact
      */
-    private function assertVersion(array $version): void
+    private function assertArtifact(array $artifact): void
     {
-        $keys = array_keys($version);
+        $keys = array_keys($artifact);
         sort($keys, SORT_STRING);
         if ($keys !== [
             'created_at',
@@ -342,18 +340,16 @@ final readonly class ReconcileCompletedReportArtifacts
             'path',
             'sha256',
             'size',
-            'version_id',
         ]
-            || ! is_string($version['path'])
-            || ! is_string($version['version_id'])
-            || ! is_string($version['etag'])
-            || ! is_int($version['size'])
-            || $version['size'] < 1
-            || ! is_string($version['sha256'])
-            || preg_match('/^[a-f0-9]{64}$/D', $version['sha256']) !== 1
-            || ! is_string($version['mime'])
-            || ! is_array($version['metadata'])
-            || ! $version['created_at'] instanceof DateTimeImmutable
+            || ! is_string($artifact['path'])
+            || ! is_string($artifact['etag'])
+            || ! is_int($artifact['size'])
+            || $artifact['size'] < 1
+            || ! is_string($artifact['sha256'])
+            || preg_match('/^[a-f0-9]{64}$/D', $artifact['sha256']) !== 1
+            || ! is_string($artifact['mime'])
+            || ! is_array($artifact['metadata'])
+            || ! $artifact['created_at'] instanceof DateTimeImmutable
         ) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_INTERNAL_ERROR,
@@ -362,24 +358,21 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param  list<array<string, mixed>>  $versions
+     * @param  list<array<string, mixed>>  $artifacts
      * @return array{int, int}
      */
     private function deleteUnmatched(
-        array $versions,
+        array $artifacts,
         DateTimeImmutable $occurredAt,
     ): array {
         $deleted = 0;
         $skipped = 0;
-        foreach ($versions as $version) {
+        foreach ($artifacts as $artifact) {
             if (
-                $version['created_at']
+                $artifact['created_at']
                 <= $occurredAt->modify("-{$this->deleteGraceSeconds} seconds")
             ) {
-                $this->files->deleteVersion(
-                    $version['path'],
-                    $version['version_id'],
-                );
+                $this->files->deleteCurrent($artifact['path']);
                 $deleted++;
             } else {
                 $skipped++;

@@ -167,7 +167,6 @@ final class EstimateGenerationTrainingDatasetService
                                 'locator' => 's3://'.$manifestObject->path,
                                 'sha256' => $manifestSha256,
                                 'base_prefix' => $manifestBasePrefix,
-                                'object_version' => $manifestObject->versionId,
                                 'object_etag' => $manifestObject->etag,
                                 'dataset_content_hash' => 'sha256:'.$datasetContentHash,
                             ],
@@ -180,7 +179,7 @@ final class EstimateGenerationTrainingDatasetService
                             'file_role' => $file['upload']->role, 'storage_disk' => 's3', 'storage_path' => $file['object']->path,
                             'original_name' => $file['upload']->name, 'mime_type' => $file['upload']->mimeType,
                             'file_size' => $file['object']->contentLength, 'file_hash' => $file['object']->sha256,
-                            'metadata' => ['object_version' => $file['object']->versionId, 'object_etag' => $file['object']->etag],
+                            'metadata' => ['object_etag' => $file['object']->etag],
                         ]);
                     }
                     $dataset->forceFill(['stats' => [...($dataset->stats ?? []), 'uploaded_files' => count($stagedFiles)]])->save();

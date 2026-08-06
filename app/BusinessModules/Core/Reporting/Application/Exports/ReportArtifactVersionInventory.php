@@ -9,7 +9,6 @@ interface ReportArtifactVersionInventory
     /**
      * @return iterable<array{
      *     path: string,
-     *     version_id: string,
      *     etag: string,
      *     size: int,
      *     sha256: string,

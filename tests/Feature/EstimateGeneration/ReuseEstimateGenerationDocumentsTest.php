@@ -131,7 +131,7 @@ final class ReuseEstimateGenerationDocumentsTest extends TestCase
             'meta' => [
                 'original_extension' => $extension,
                 'original_name' => $filename,
-                'storage_version_id' => 'source-version',
+                'storage_sha256' => $checksum,
             ],
         ]);
     }

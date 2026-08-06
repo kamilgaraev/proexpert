@@ -16,11 +16,10 @@ final class ReportExportAuthorizationIdentity
     public static function fromRecord(ReportExportRecord $record): Sha256Hash
     {
         $artifact = $record->artifact_checksum === null ? null : [
-            'path' => $record->artifact_path,
-            'version_id' => $record->artifact_version_id,
+            'storage_key' => $record->artifact_path,
             'etag' => $record->artifact_etag,
-            'mime' => $record->artifact_mime,
-            'checksum' => $record->artifact_checksum,
+            'mime_type' => $record->artifact_mime,
+            'sha256' => $record->artifact_checksum,
             'size_bytes' => $record->artifact_size_bytes,
             'row_count' => $record->row_count,
         ];

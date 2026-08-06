@@ -11,7 +11,7 @@ final readonly class SignatureVerificationContext
     public function __construct(
         public LegalDocumentSignature $signature,
         public SignatureArtifact $artifact,
-        public string $storageVersionId,
+        public string $storageKey,
         public ?string $storageEtag,
     ) {}
 }

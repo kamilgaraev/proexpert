@@ -19,7 +19,7 @@ final class FileServiceObjectTagTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $container = new Container();
+        $container = new Container;
         $container->instance('log', new class
         {
             public function __call(string $name, array $arguments): void {}
@@ -34,13 +34,12 @@ final class FileServiceObjectTagTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_ai_content_write_is_tagged_on_the_exact_resolved_version(): void
+    public function test_ai_content_write_is_tagged_on_the_current_object(): void
     {
         $client = new RecordingTagS3Client([
-            new Result(['VersionId' => 'version-7']),
-            new Result(),
+            new Result,
         ]);
-        $organization = new Organization();
+        $organization = new Organization;
         $organization->id = 7;
 
         $stored = $this->service($client)->putContent(
@@ -51,15 +50,14 @@ final class FileServiceObjectTagTest extends TestCase
         );
 
         self::assertSame('org-7/estimate-generation/sessions/42/document.json', $stored);
-        self::assertSame('headObject', $client->calls[0]['name']);
-        self::assertSame('putObjectTagging', $client->calls[1]['name']);
-        self::assertSame('version-7', $client->calls[1]['arguments']['VersionId']);
+        self::assertSame('putObjectTagging', $client->calls[0]['name']);
+        self::assertArrayNotHasKey('VersionId', $client->calls[0]['arguments']);
     }
 
     public function test_ordinary_content_write_is_not_tagged(): void
     {
-        $client = new RecordingTagS3Client();
-        $organization = new Organization();
+        $client = new RecordingTagS3Client;
+        $organization = new Organization;
         $organization->id = 7;
 
         $stored = $this->service($client)->putContent(

@@ -39,10 +39,10 @@ final class EstimateGenerationS3AndOcrHardeningTest extends TestCase
         $unitReader = $this->source('Application/Documents/S3DocumentUnitContentReader.php');
         $processor = $this->source('Application/Documents/ProductionDocumentUnitProcessor.php');
 
-        self::assertStringContainsString('describeVersion(', $reader);
+        self::assertStringContainsString('describeCurrent(', $reader);
         self::assertStringContainsString('expectedBytes', $reader);
         self::assertStringContainsString('expectedSha256', $reader);
-        self::assertStringContainsString('versionId', $reader);
+        self::assertStringNotContainsString('versionId', $reader);
         self::assertStringContainsString('BoundedVersionedS3ObjectReader', $pipeline);
         self::assertStringContainsString('BoundedVersionedS3ObjectReader', $unitReader);
         self::assertStringContainsString('BoundedVersionedS3ObjectReader', $processor);
@@ -57,9 +57,9 @@ final class EstimateGenerationS3AndOcrHardeningTest extends TestCase
         self::assertStringContainsString('BoundedVersionedS3ObjectReader', $raster);
         self::assertStringNotContainsString('BoundedStorageReader', $raster);
         self::assertStringContainsString('sourceBytes', $input);
-        self::assertStringContainsString('sourceVersionId', $input);
+        self::assertStringNotContainsString('sourceVersionId', $input);
         self::assertStringContainsString('derivativeBytes', $result);
-        self::assertStringContainsString('derivativeVersionId', $result);
+        self::assertStringNotContainsString('derivativeVersionId', $result);
         self::assertStringContainsString('putImmutable(', $raster);
         self::assertStringContainsString('S3ObjectTransportException', $raster);
         self::assertStringContainsString('S3ObjectLocatorException', $raster);

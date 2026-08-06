@@ -14,10 +14,7 @@ final readonly class ImmutableBenchmarkReportOutputStore implements ProductionIm
             throw new BenchmarkCommandException('production_output_locator_invalid');
         }
         $object = $this->objects->putImmutable(substr($locator, 5), $contents, 'application/json');
-        if ($object->versionId === null || $object->versionId === '') {
-            throw new BenchmarkCommandException('production_output_version_missing');
-        }
 
-        return $object->path.'?versionId='.$object->versionId;
+        return $object->path;
     }
 }

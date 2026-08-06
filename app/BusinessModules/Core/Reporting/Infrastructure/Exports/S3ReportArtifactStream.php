@@ -10,8 +10,6 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactStream;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
@@ -191,15 +189,14 @@ final class S3ReportArtifactStream implements ReportArtifactStream
 
             $this->completionAccepted = true;
             $this->closed = true;
-            [$headed, $metadata] = $this->verifiedVersion(
-                $completed->path,
-                $completed->versionId,
+            [$headed, $metadata] = $this->verifiedCurrent(
+                $completed->organizationPath,
                 $completed->sizeBytes,
             );
             if (
                 ! self::sameFile($completed, $headed)
-                || ! hash_equals($this->upload->organizationPath, $headed->path)
-                || ! hash_equals($checksumSha256, $headed->checksum->value)
+                || ! hash_equals($this->upload->organizationPath, $headed->organizationPath)
+                || ! hash_equals($checksumSha256, $headed->sha256)
                 || $headed->sizeBytes !== $this->sizeBytes
                 || ! hash_equals($this->upload->mime, $headed->mime)
                 || ! self::sameMetadata($this->metadata, $metadata)
@@ -263,7 +260,7 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             $bytes,
             $checksum,
         );
-        ++$this->nextPartNumber;
+        $this->nextPartNumber++;
     }
 
     private function assertOpen(): void
@@ -304,7 +301,6 @@ final class S3ReportArtifactStream implements ReportArtifactStream
                 $winner->status !== ReportExportStatus::READY
                 || ! hash_equals($this->metadata['export_hash'], $winner->exportHash->value)
                 || $winner->artifactPath === null
-                || $winner->versionId === null
                 || $winner->etag === null
                 || $winner->checksum === null
                 || $winner->sizeBytes === null
@@ -315,16 +311,14 @@ final class S3ReportArtifactStream implements ReportArtifactStream
                 throw new InvalidArgumentException('report_artifact_race_winner_invalid');
             }
 
-            [$headed, $metadata] = $this->verifiedVersion(
+            [$headed, $metadata] = $this->verifiedCurrent(
                 $winner->artifactPath,
-                $winner->versionId,
                 $winner->sizeBytes,
             );
             if (
-                ! hash_equals($winner->artifactPath, $headed->path)
-                || ! hash_equals($winner->versionId, $headed->versionId)
+                ! hash_equals($winner->artifactPath, $headed->organizationPath)
                 || ! hash_equals($winner->etag, $headed->etag)
-                || ! hash_equals($winner->checksum->value, $headed->checksum->value)
+                || ! hash_equals($winner->checksum->value, $headed->sha256)
                 || $winner->sizeBytes !== $headed->sizeBytes
                 || ! hash_equals($this->upload->mime, $headed->mime)
                 || ! self::sameMetadata($this->metadata, $metadata)
@@ -365,24 +359,21 @@ final class S3ReportArtifactStream implements ReportArtifactStream
 
     private static function sameFile(StoredFile $left, StoredFile $right): bool
     {
-        return hash_equals($left->path, $right->path)
-            && hash_equals($left->versionId, $right->versionId)
+        return hash_equals($left->organizationPath, $right->organizationPath)
             && hash_equals($left->etag, $right->etag)
             && $left->sizeBytes === $right->sizeBytes
-            && hash_equals($left->checksum->value, $right->checksum->value)
+            && hash_equals($left->sha256, $right->sha256)
             && hash_equals($left->mime, $right->mime);
     }
 
-    private function verifiedVersion(string $path, string $versionId, int $sizeBytes): array
+    private function verifiedCurrent(string $path, int $sizeBytes): array
     {
-        $description = $this->files->describeVersion(
+        $description = $this->files->describeCurrent(
             $path,
-            $versionId,
             -$sizeBytes,
         );
         if (
             ($description['path'] ?? null) !== $path
-            || ($description['version_id'] ?? null) !== $versionId
             || ! is_string($description['etag'] ?? null)
             || ($description['etag'] ?? '') === ''
             || ($description['size'] ?? null) !== $sizeBytes
@@ -396,10 +387,9 @@ final class S3ReportArtifactStream implements ReportArtifactStream
         return [
             new StoredFile(
                 $path,
-                $versionId,
                 $description['etag'],
                 $sizeBytes,
-                new Sha256Hash($description['sha256']),
+                $description['sha256'],
                 $description['content_type'],
             ),
             $description['metadata'],

@@ -61,7 +61,6 @@ final class ReportExportHydrator
                 $this->string($record->locale),
                 new DateTimeZone($this->string($record->render_timezone)),
                 $projectArtifact ? $artifact['path'] : null,
-                $projectArtifact ? $artifact['version_id'] : null,
                 $projectArtifact ? $artifact['etag'] : null,
                 $projectArtifact ? $artifact['checksum'] : null,
                 $projectArtifact ? $artifact['size_bytes'] : null,
@@ -149,7 +148,6 @@ final class ReportExportHydrator
     {
         $values = [
             'path' => $record->artifact_path,
-            'version_id' => $record->artifact_version_id,
             'etag' => $record->artifact_etag,
             'mime' => $record->artifact_mime,
             'checksum' => $record->artifact_checksum,
@@ -166,7 +164,6 @@ final class ReportExportHydrator
 
             return [
                 'path' => null,
-                'version_id' => null,
                 'etag' => null,
                 'mime' => null,
                 'checksum' => null,
@@ -177,13 +174,11 @@ final class ReportExportHydrator
         }
 
         $path = $this->string($values['path']);
-        $versionId = $this->string($values['version_id']);
         $etag = $this->string($values['etag']);
         $mime = $this->string($values['mime']);
         $sizeBytes = $this->integer($values['size_bytes']);
         $rowCount = $this->integer($values['row_count']);
         if (! $this->privatePath($path)
-            || ! $this->safeString($versionId)
             || ! $this->safeString($etag)
             || ! $this->safeString($mime)
             || $sizeBytes < 1
@@ -193,7 +188,6 @@ final class ReportExportHydrator
 
         return [
             'path' => $path,
-            'version_id' => $versionId,
             'etag' => $etag,
             'mime' => $mime,
             'checksum' => new Sha256Hash($this->string($values['checksum'])),

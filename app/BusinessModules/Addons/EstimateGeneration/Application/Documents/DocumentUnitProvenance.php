@@ -9,7 +9,7 @@ use InvalidArgumentException;
 final readonly class DocumentUnitProvenance
 {
     /**
-     * @param array<string, scalar|null> $locator
+     * @param  array<string, scalar|null>  $locator
      */
     private function __construct(
         public string $sourceKind,
@@ -18,11 +18,10 @@ final readonly class DocumentUnitProvenance
         public string $artifactPath,
         public int $artifactBytes,
         public string $artifactSha256,
-        public string $artifactVersionId,
     ) {}
 
     /**
-     * @param array<string, scalar|null> $locator
+     * @param  array<string, scalar|null>  $locator
      */
     public static function fromLocator(DocumentUnitType $type, string $sourceVersion, array $locator): self
     {
@@ -32,15 +31,13 @@ final readonly class DocumentUnitProvenance
         $artifactPath = self::string($locator, 'artifact_path');
         $artifactBytes = $locator['artifact_bytes'] ?? null;
         $artifactSha256 = self::string($locator, 'artifact_sha256');
-        $artifactVersionId = self::string($locator, 'artifact_version_id');
 
         if ($sourceKind !== $type->sourceKind()
             || $declaredSourceVersion !== $sourceVersion
             || $coordinateSpace !== $type->coordinateSpace()
             || strlen($artifactPath) > 2048
             || ! is_int($artifactBytes) || $artifactBytes < 1
-            || preg_match('/\\Asha256:[a-f0-9]{64}\\z/', $artifactSha256) !== 1
-            || preg_match('/\\A[\\x21-\\x7e]{1,1024}\\z/D', $artifactVersionId) !== 1) {
+            || preg_match('/\\Asha256:[a-f0-9]{64}\\z/', $artifactSha256) !== 1) {
             throw new InvalidArgumentException('Document unit provenance is invalid.');
         }
 
@@ -51,11 +48,10 @@ final readonly class DocumentUnitProvenance
             $artifactPath,
             $artifactBytes,
             $artifactSha256,
-            $artifactVersionId,
         );
     }
 
-    /** @return array{source_kind: string, source_version: string, coordinate_space: string, artifact_path: string, artifact_bytes: int, artifact_sha256: string, artifact_version_id: string} */
+    /** @return array{source_kind: string, source_version: string, coordinate_space: string, artifact_path: string, artifact_bytes: int, artifact_sha256: string} */
     public function toArray(): array
     {
         return [
@@ -65,12 +61,11 @@ final readonly class DocumentUnitProvenance
             'artifact_path' => $this->artifactPath,
             'artifact_bytes' => $this->artifactBytes,
             'artifact_sha256' => $this->artifactSha256,
-            'artifact_version_id' => $this->artifactVersionId,
         ];
     }
 
     /**
-     * @param array<string, scalar|null> $locator
+     * @param  array<string, scalar|null>  $locator
      */
     private static function string(array $locator, string $key): string
     {

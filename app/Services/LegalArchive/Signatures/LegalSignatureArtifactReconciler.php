@@ -74,15 +74,9 @@ final readonly class LegalSignatureArtifactReconciler
             $signature = $this->connection->table('legal_document_signatures')
                 ->where('organization_id', $artifact->organization_id)
                 ->where('signature_path', $artifact->storage_path)
-                ->when($artifact->storage_version_id !== null, static fn ($query) => $query->where('storage_version_id', $artifact->storage_version_id))
+                ->where('signature_content_hash', $artifact->content_hash)
                 ->lockForUpdate()->first();
             if ($signature !== null) {
-                if (in_array((string) $artifact->state, ['uploading', 'ambiguous'], true) && $artifact->storage_version_id === null) {
-                    $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                        'state' => 'uploaded', 'storage_version_id' => $signature->storage_version_id,
-                        'cleanup_owned' => true, 'updated_at' => now(),
-                    ]);
-                }
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'state' => 'referenced', 'referenced_signature_id' => $signature->id, 'claim_count' => 0,
                     'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
@@ -112,15 +106,12 @@ final readonly class LegalSignatureArtifactReconciler
             return true;
         }
         try {
-            $description = $this->files->describeVersion(
-                (string) $claim->storage_path,
-                $claim->storage_version_id === null ? null : (string) $claim->storage_version_id,
-            );
+            $description = $this->files->describeCurrent((string) $claim->storage_path);
             if (! hash_equals((string) $claim->content_hash, (string) $description['sha256'])) {
                 throw new VersionedObjectIntegrityException('legal_signature_artifact_hash_mismatch');
             }
         } catch (VersionedObjectIntegrityException $error) {
-            if ($error->getMessage() === 's3_pinned_object_unavailable' && $claim->storage_version_id === null) {
+            if ($error->getMessage() === 's3_pinned_object_unavailable') {
                 return $this->observeAbsence((int) $claim->id, $token, $claim);
             }
             $this->recordFailure((int) $claim->id, $token, $claim, $error);
@@ -132,7 +123,7 @@ final readonly class LegalSignatureArtifactReconciler
             return false;
         }
 
-        $finalized = $this->connection->transaction(function () use ($claim, $token, $description): ?object {
+        $finalized = $this->connection->transaction(function () use ($claim, $token): ?object {
             $this->lockArtifactMutex((int) $claim->organization_id, (string) $claim->storage_path);
             $artifact = $this->connection->table('legal_signature_artifacts')->where('id', $claim->id)
                 ->where('upload_lease_token_hash', hash('sha256', $token))->lockForUpdate()->first();
@@ -141,11 +132,9 @@ final readonly class LegalSignatureArtifactReconciler
             }
             if (in_array((string) $artifact->state, ['uploading', 'ambiguous'], true)) {
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                    'state' => 'uploaded', 'storage_version_id' => (string) $description['version_id'],
+                    'state' => 'uploaded',
                     'cleanup_owned' => true, 'updated_at' => now(),
                 ]);
-            } elseif (! hash_equals((string) $artifact->storage_version_id, (string) $description['version_id'])) {
-                throw new \RuntimeException('legal_signature_artifact_version_mismatch');
             }
             $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                 'state' => 'deleting', 'claim_count' => 0, 'cleanup_owned' => true,
@@ -153,7 +142,6 @@ final readonly class LegalSignatureArtifactReconciler
                 'next_reconcile_at' => null,
                 'last_error_code' => null, 'updated_at' => now(),
             ]);
-            $artifact->storage_version_id = (string) $description['version_id'];
 
             return $artifact;
         }, 3);
@@ -169,13 +157,9 @@ final readonly class LegalSignatureArtifactReconciler
 
     private function repairDeletingDebt(object $snapshot): bool
     {
-        if ($snapshot->storage_version_id === null) {
-            return false;
-        }
         $debtKey = LegalCleanupDebtKey::for(
             (int) $snapshot->organization_id,
             (string) $snapshot->storage_path,
-            (string) $snapshot->storage_version_id,
         );
 
         $this->ensureDebt($snapshot);
@@ -195,7 +179,7 @@ final readonly class LegalSignatureArtifactReconciler
             $signature = $this->connection->table('legal_document_signatures')
                 ->where('organization_id', $artifact->organization_id)
                 ->where('signature_path', $artifact->storage_path)
-                ->where('storage_version_id', $artifact->storage_version_id)
+                ->where('signature_content_hash', $artifact->content_hash)
                 ->lockForUpdate()->first();
             if ($signature !== null) {
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
@@ -254,9 +238,9 @@ final readonly class LegalSignatureArtifactReconciler
             $dead = $attempts >= self::MAX_ATTEMPTS;
             $updated = $this->connection->table('legal_signature_artifacts')->where('id', $id)
                 ->where('upload_lease_token_hash', hash('sha256', $token))->update([
-                    'state' => $artifact->storage_version_id === null ? 'ambiguous' : $artifact->state,
+                    'state' => in_array((string) $artifact->state, ['uploading', 'ambiguous'], true) ? 'ambiguous' : $artifact->state,
                     'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
-                    'first_ambiguous_at' => $artifact->storage_version_id === null ? ($artifact->first_ambiguous_at ?? now()) : $artifact->first_ambiguous_at,
+                    'first_ambiguous_at' => $artifact->first_ambiguous_at ?? now(),
                     'next_reconcile_at' => $dead ? null : now()->addMinutes(min(30, 2 ** min(5, $attempts))),
                     'last_error_code' => $error::class, 'dead_lettered_at' => $dead ? now() : null,
                     'updated_at' => now(),
@@ -269,17 +253,13 @@ final readonly class LegalSignatureArtifactReconciler
 
     private function ensureDebt(object $artifact): void
     {
-        if ($artifact->storage_version_id === null) {
-            throw new \RuntimeException('legal_signature_artifact_version_missing');
-        }
         $now = now();
         $this->connection->table('legal_archive_file_cleanup_debts')->insertOrIgnore([
             'organization_id' => (int) $artifact->organization_id,
             'document_id' => (int) $artifact->document_id,
             'document_version_id' => (int) $artifact->document_version_id,
             'storage_path' => (string) $artifact->storage_path,
-            'storage_version_id' => (string) $artifact->storage_version_id,
-            'debt_key' => LegalCleanupDebtKey::for((int) $artifact->organization_id, (string) $artifact->storage_path, (string) $artifact->storage_version_id),
+            'debt_key' => LegalCleanupDebtKey::for((int) $artifact->organization_id, (string) $artifact->storage_path),
             'content_hash' => (string) $artifact->content_hash,
             'reason' => 'signature_registration_failed', 'attempts' => 0, 'next_attempt_at' => $now,
             'resolved_at' => null, 'created_at' => $now, 'updated_at' => $now,
@@ -291,7 +271,6 @@ final readonly class LegalSignatureArtifactReconciler
         $debtKey = LegalCleanupDebtKey::for(
             (int) $artifact->organization_id,
             (string) $artifact->storage_path,
-            (string) $artifact->storage_version_id,
         );
         $this->connection->transaction(function () use ($artifact, $debtKey): void {
             $debt = $this->connection->table('legal_archive_file_cleanup_debts')
@@ -316,7 +295,6 @@ final readonly class LegalSignatureArtifactReconciler
         $debtKey = LegalCleanupDebtKey::for(
             (int) $artifact->organization_id,
             (string) $artifact->storage_path,
-            (string) $artifact->storage_version_id,
         );
         $this->connection->table('legal_archive_file_cleanup_debts')
             ->where('organization_id', $artifact->organization_id)->where('debt_key', $debtKey)

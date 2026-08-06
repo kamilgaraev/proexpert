@@ -32,7 +32,7 @@ final readonly class RasterPreprocessor
     public function preprocess(RasterPreprocessInput $input): RasterPreprocessResult
     {
         $this->assertTenantKey($input);
-        $bytes = $this->reader->read($input->organizationId, $input->storageKey, $input->maxBytes, $input->sourceBytes, $input->sourceSha256, $input->sourceVersionId)->body;
+        $bytes = $this->reader->read($input->organizationId, $input->storageKey, $input->maxBytes, $input->sourceBytes, $input->sourceSha256)->body;
         $this->animation->assertSingleFrame($bytes, $input->contentType);
         $dimensions = @getimagesizefromstring($bytes);
         $mime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
@@ -118,7 +118,7 @@ final readonly class RasterPreprocessor
         }
 
         return new RasterPreprocessResult(
-            $key, "sha256:{$hash}", self::VERSION, $stored['size'], (string) $stored['version_id'], $sourceWidth, $sourceHeight,
+            $key, "sha256:{$hash}", self::VERSION, $stored['size'], $sourceWidth, $sourceHeight,
             $output->width(), $output->height(), $sharpness, $dynamicRange, $blankRatio, $clippingRatio,
             $skewDegrees, $perspectiveStatus, $transform, array_values(array_unique($warnings)),
         );

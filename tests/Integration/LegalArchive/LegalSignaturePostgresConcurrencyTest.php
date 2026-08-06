@@ -77,6 +77,7 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         foreach (['000600_create_legal_document_signatures', '000610_create_legal_document_signature_indexes', '000620_add_legal_document_signature_constraints', '000630_validate_legal_document_signature_constraints'] as $suffix) {
             (require dirname(__DIR__, 3)."/database/migrations/2026_07_19_{$suffix}.php")->up();
         }
+        (require dirname(__DIR__, 3).'/database/migrations/2026_08_06_000200_reset_legacy_file_storage_records.php')->up();
         $this->seedAggregate();
     }
 
@@ -158,7 +159,7 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1, 'signature_request_id' => $requestId,
             'party_id' => null, 'method' => 'paper', 'provider' => null, 'signer_name' => 'Иван',
             'signers' => json_encode([['name' => 'Иван']], JSON_THROW_ON_ERROR), 'signed_content_hash' => str_repeat('a', 64),
-            'signature_path' => null, 'signature_content_hash' => null, 'storage_version_id' => null, 'storage_etag' => null,
+            'signature_path' => null, 'signature_content_hash' => null, 'storage_etag' => null,
             'detected_mime_type' => null, 'certificate_metadata' => '{}', 'provider_metadata' => '{}',
             'storage_location' => 'Архив', 'signed_at' => now()->subDay(), 'verified_at' => null,
             'verification_status' => 'registered', 'signature_kind' => 'paper_original', 'container_format' => null,
@@ -378,14 +379,13 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         $requestId = $this->first->table('legal_signature_requests')->insertGetId($this->requestRow());
         $body = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
         $path = 'org-1/reconcile-race.p7s';
-        $versionId = 'reconcile-race-version';
         $this->first->table('signature_test_storage_objects')->insert([
-            'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => hash('sha256', $body),
+            'storage_path' => $path, 'content_hash' => hash('sha256', $body),
         ]);
         $this->first->table('legal_signature_artifacts')->insert([
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
             'signature_request_id' => $requestId, 'artifact_key' => str_repeat('8', 64),
-            'storage_path' => $path, 'storage_version_id' => $versionId,
+            'storage_path' => $path,
             'content_hash' => hash('sha256', $body), 'put_request_hash' => str_repeat('7', 64),
             'state' => 'uploaded', 'claim_count' => 2,
             'cleanup_owned' => true, 'upload_lease_token_hash' => str_repeat('9', 64),
@@ -507,7 +507,6 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         $lateArtifact = $this->first->table('legal_signature_artifacts')->where('id', '<>', $canonical->id)->sole();
         self::assertSame('deleting', $lateArtifact->state);
         self::assertSame(1, $this->first->table('legal_archive_file_cleanup_debts')->count());
-        $lateVersion = (string) $lateArtifact->storage_version_id;
         self::assertSame(1, (new LegalSignatureCleanupDebtService(
             $this->signatureStorage($this->first), $this->first, $this->audit(), $this->metrics(),
         ))->processDue());
@@ -515,26 +514,25 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         self::assertSame('ambiguous', $this->first->table('legal_signature_artifacts')->where('id', $canonical->id)->value('state'));
         self::assertNull($this->first->table('legal_archive_file_cleanup_debts')->value('dead_lettered_at'));
         self::assertSame(1, $this->first->table('signature_test_storage_deletions')
-            ->where('storage_version_id', $lateVersion)->count());
+            ->where('storage_path', $lateArtifact->storage_path)->count());
     }
 
     public function test_reconciler_and_cleanup_worker_share_lock_order_without_deadlock(): void
     {
         $requestId = $this->first->table('legal_signature_requests')->insertGetId($this->requestRow());
         $path = 'org-1/cleanup-reconcile-race.p7s';
-        $versionId = 'cleanup-reconcile-version';
         $this->first->table('legal_signature_artifacts')->insert([
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
             'signature_request_id' => $requestId, 'artifact_key' => str_repeat('7', 64),
-            'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => str_repeat('a', 64),
+            'storage_path' => $path, 'content_hash' => str_repeat('a', 64),
             'put_request_hash' => str_repeat('6', 64),
             'state' => 'deleting', 'claim_count' => 0, 'cleanup_owned' => true,
             'created_at' => now()->subMinutes(20), 'updated_at' => now()->subMinutes(20),
         ]);
         $this->first->table('legal_archive_file_cleanup_debts')->insert([
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
-            'storage_path' => $path, 'storage_version_id' => $versionId,
-            'debt_key' => \App\Services\LegalArchive\Files\LegalCleanupDebtKey::for(1, $path, $versionId),
+            'storage_path' => $path,
+            'debt_key' => \App\Services\LegalArchive\Files\LegalCleanupDebtKey::for(1, $path),
             'content_hash' => str_repeat('a', 64), 'reason' => 'signature_registration_failed',
             'attempts' => 0, 'next_attempt_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ]);
@@ -708,10 +706,9 @@ CREATE TABLE legal_document_access_grants (
  id bigserial PRIMARY KEY, abilities jsonb NOT NULL, subject_kind text NOT NULL
 );
 CREATE TABLE signature_test_storage_objects (
- storage_path text NOT NULL, storage_version_id text NOT NULL, content_hash text NOT NULL,
- PRIMARY KEY (storage_path, storage_version_id)
+ storage_path text PRIMARY KEY, content_hash text NOT NULL
 );
-CREATE TABLE signature_test_storage_deletions (storage_path text NOT NULL, storage_version_id text);
+CREATE TABLE signature_test_storage_deletions (storage_path text NOT NULL);
 CREATE TABLE signature_test_put_waiters (id bigserial PRIMARY KEY, gate_key text NOT NULL);
 ALTER TABLE legal_document_access_grants ADD CONSTRAINT legal_document_access_abilities_check
 CHECK (jsonb_typeof(abilities) = 'array' AND jsonb_array_length(abilities) > 0 AND abilities <@ '["view","comment","approve","sign","download","manage"]'::jsonb AND (NOT abilities ? 'manage' OR subject_kind = 'internal_user'));
@@ -814,25 +811,23 @@ SQL);
                 $connection->select('SELECT pg_advisory_lock_shared(hashtextextended(?, 0))', [$putGate]);
                 $connection->select('SELECT pg_advisory_unlock_shared(hashtextextended(?, 0))', [$putGate]);
             }
-            $versionId = 'race-version-'.hash('sha256', $path.$body);
             $created = $connection->table('signature_test_storage_objects')->insertOrIgnore([
-                'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => hash('sha256', $body),
+                'storage_path' => $path, 'content_hash' => hash('sha256', $body),
             ]) === 1;
 
             return [
                 'path' => $path, 'body' => $body, 'size' => strlen($body), 'sha256' => hash('sha256', $body),
-                'etag' => 'race-etag', 'version_id' => $versionId, 'content_type' => $contentType, 'created' => $created,
+                'etag' => 'race-etag', 'content_type' => $contentType, 'created' => $created,
             ];
         });
-        $storage->method('removeImmutable')->willReturnCallback(static function (string $path, ?string $versionId) use ($connection): void {
+        $storage->method('removeImmutable')->willReturnCallback(static function (string $path) use ($connection): void {
             $connection->table('signature_test_storage_deletions')->insert([
-                'storage_path' => $path, 'storage_version_id' => $versionId,
+                'storage_path' => $path,
             ]);
         });
-        $storage->method('describeVersion')->willReturnCallback(static function (string $path, ?string $versionId) use ($connection): array {
+        $storage->method('describeCurrent')->willReturnCallback(static function (string $path) use ($connection): array {
             $body = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
-            $object = $connection->table('signature_test_storage_objects')->where('storage_path', $path)
-                ->when($versionId !== null, static fn ($query) => $query->where('storage_version_id', $versionId))->first();
+            $object = $connection->table('signature_test_storage_objects')->where('storage_path', $path)->first();
             if ($object === null) {
                 throw new VersionedObjectIntegrityException('s3_pinned_object_unavailable');
             }
@@ -840,8 +835,7 @@ SQL);
             return [
                 'path' => $path, 'body' => $body, 'size' => strlen($body),
                 'sha256' => (string) $object->content_hash,
-                'version_id' => (string) $object->storage_version_id, 'etag' => 'race-etag',
-                'content_type' => 'application/pkcs7-signature',
+                'etag' => 'race-etag', 'content_type' => 'application/pkcs7-signature',
             ];
         });
 
@@ -852,17 +846,16 @@ SQL);
     {
         $storage = $this->createMock(FileService::class);
         $storage->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use ($connection, $gate): array {
-            $versionId = 'slow-version-'.hash('sha256', $path.$body);
             $connection->table('signature_test_put_waiters')->insert(['gate_key' => $gate]);
             $connection->select('SELECT pg_advisory_lock_shared(hashtextextended(?, 0))', [$gate]);
             $connection->select('SELECT pg_advisory_unlock_shared(hashtextextended(?, 0))', [$gate]);
             $connection->table('signature_test_storage_objects')->insertOrIgnore([
-                'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => hash('sha256', $body),
+                'storage_path' => $path, 'content_hash' => hash('sha256', $body),
             ]);
 
             return [
                 'path' => $path, 'body' => $body, 'size' => strlen($body), 'sha256' => hash('sha256', $body),
-                'etag' => 'slow-etag', 'version_id' => $versionId, 'content_type' => $contentType, 'created' => true,
+                'etag' => 'slow-etag', 'content_type' => $contentType, 'created' => true,
             ];
         });
 

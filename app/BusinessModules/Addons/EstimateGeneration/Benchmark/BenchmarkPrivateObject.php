@@ -12,7 +12,6 @@ final readonly class BenchmarkPrivateObject
         public int $contentLength,
         public string $sha256,
         public ?string $etag,
-        public ?string $versionId,
         public string $contentType,
         public bool $created = false,
     ) {}

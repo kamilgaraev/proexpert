@@ -210,12 +210,11 @@ class PdfGeometryWorker
     private function publishedPreview(mixed $published, int $size, int $width, int $height): array
     {
         if (! is_array($published)
-            || array_keys($published) !== ['artifact_path', 'content_type', 'sha256', 'bytes', 'version_id', 'width', 'height']
+            || array_keys($published) !== ['artifact_path', 'artifact_bytes', 'artifact_sha256', 'content_type', 'width', 'height']
             || ! is_string($published['artifact_path']) || $published['artifact_path'] === ''
-            || ! is_string($published['version_id']) || $published['version_id'] === ''
             || $published['content_type'] !== 'image/png'
-            || ! is_string($published['sha256']) || preg_match('/^[a-f0-9]{64}$/D', $published['sha256']) !== 1
-            || $published['bytes'] !== $size || $published['width'] !== $width || $published['height'] !== $height) {
+            || ! is_string($published['artifact_sha256']) || preg_match('/^sha256:[a-f0-9]{64}$/D', $published['artifact_sha256']) !== 1
+            || $published['artifact_bytes'] !== $size || $published['width'] !== $width || $published['height'] !== $height) {
             throw new PdfGeometryExtractionException('pdf_preview_artifact_invalid');
         }
 

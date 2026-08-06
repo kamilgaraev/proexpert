@@ -25,7 +25,6 @@ final readonly class ReportExport
         public string $locale,
         public DateTimeZone $timezone,
         public ?string $artifactPath,
-        public ?string $versionId,
         public ?string $etag,
         public ?Sha256Hash $checksum,
         public ?int $sizeBytes,
@@ -38,13 +37,13 @@ final readonly class ReportExport
         public string $httpDisposition,
         public ?int $pollAfterMs,
     ) {
-        if (!self::isUlid($id) || !self::isUlid($runId) || !in_array($format, ['csv', 'xlsx', 'pdf'], true) || !self::hasColumns($columns) || trim($locale) === '' || !self::hasValidTimestamps($createdAt, $updatedAt, $expiresAt, $readyAt, $cancelRequestedAt) || !in_array($httpDisposition, ['created', 'reused'], true)) {
+        if (! self::isUlid($id) || ! self::isUlid($runId) || ! in_array($format, ['csv', 'xlsx', 'pdf'], true) || ! self::hasColumns($columns) || trim($locale) === '' || ! self::hasValidTimestamps($createdAt, $updatedAt, $expiresAt, $readyAt, $cancelRequestedAt) || ! in_array($httpDisposition, ['created', 'reused'], true)) {
             throw new InvalidArgumentException('report_export_invalid');
         }
 
         if ($status === ReportExportStatus::READY) {
             $this->assertReadyArtifact();
-        } elseif (!$this->hasEmptyArtifact()) {
+        } elseif (! $this->hasEmptyArtifact()) {
             throw new InvalidArgumentException('report_export_invalid');
         }
 
@@ -70,25 +69,25 @@ final readonly class ReportExport
 
     private function assertReadyArtifact(): void
     {
-        if ($this->artifactPath === null || !self::isPrivateRelativePath($this->artifactPath) || $this->versionId === null || trim($this->versionId) === '' || $this->etag === null || trim($this->etag) === '' || $this->checksum === null || $this->sizeBytes === null || $this->sizeBytes < 1 || $this->rowCount === null || $this->rowCount < 0 || $this->readyAt === null) {
+        if ($this->artifactPath === null || ! self::isPrivateRelativePath($this->artifactPath) || $this->etag === null || trim($this->etag) === '' || $this->checksum === null || $this->sizeBytes === null || $this->sizeBytes < 1 || $this->rowCount === null || $this->rowCount < 0 || $this->readyAt === null) {
             throw new InvalidArgumentException('report_export_invalid');
         }
     }
 
     private function hasEmptyArtifact(): bool
     {
-        return $this->artifactPath === null && $this->versionId === null && $this->etag === null && $this->checksum === null && $this->sizeBytes === null && $this->rowCount === null && $this->readyAt === null;
+        return $this->artifactPath === null && $this->etag === null && $this->checksum === null && $this->sizeBytes === null && $this->rowCount === null && $this->readyAt === null;
     }
 
     private static function hasColumns(array $columns): bool
     {
-        if (!array_is_list($columns) || $columns === []) {
+        if (! array_is_list($columns) || $columns === []) {
             return false;
         }
 
         $unique = [];
         foreach ($columns as $column) {
-            if (!is_string($column) || preg_match('/^[a-z][a-z0-9_]{0,63}$/', $column) !== 1 || isset($unique[$column])) {
+            if (! is_string($column) || preg_match('/^[a-z][a-z0-9_]{0,63}$/', $column) !== 1 || isset($unique[$column])) {
                 return false;
             }
 
@@ -100,7 +99,7 @@ final readonly class ReportExport
 
     private static function isPrivateRelativePath(string $path): bool
     {
-        return $path !== '' && !str_starts_with($path, '/') && !str_contains($path, '://') && !preg_match('#(?:^|/)\.\.(?:/|$)#', $path) && !str_contains($path, '\\');
+        return $path !== '' && ! str_starts_with($path, '/') && ! str_contains($path, '://') && ! preg_match('#(?:^|/)\.\.(?:/|$)#', $path) && ! str_contains($path, '\\');
     }
 
     private static function hasValidTimestamps(DateTimeImmutable $createdAt, DateTimeImmutable $updatedAt, DateTimeImmutable $expiresAt, ?DateTimeImmutable $readyAt, ?DateTimeImmutable $cancelRequestedAt): bool

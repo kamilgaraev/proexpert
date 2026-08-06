@@ -42,13 +42,12 @@ final class ReportExportHydratorTest extends TestCase
         yield [ReportExportStatus::UPLOADING];
     }
 
-    public function test_ready_preserves_exact_artifact_version_identity(): void
+    public function test_ready_preserves_storage_key_and_checksum_identity(): void
     {
         $readyAt = new DateTimeImmutable('2026-07-29T10:02:00.123456Z');
         $record = $this->record([
             'status' => 'ready',
             'artifact_path' => 'org-1/reports/export.csv',
-            'artifact_version_id' => '3LgY4fExactVersion',
             'artifact_etag' => '"7f83b1657ff1fc53b92dc18148a1d65dfa13514a2096"-3',
             'artifact_mime' => 'text/csv',
             'artifact_checksum' => str_repeat('f', 64),
@@ -60,7 +59,7 @@ final class ReportExportHydratorTest extends TestCase
 
         $export = (new ReportExportHydrator)->hydrate($record, 'created', 1250);
 
-        self::assertSame('3LgY4fExactVersion', $export->versionId);
+        self::assertSame('org-1/reports/export.csv', $export->artifactPath);
         self::assertSame('"7f83b1657ff1fc53b92dc18148a1d65dfa13514a2096"-3', $export->etag);
         self::assertSame(str_repeat('f', 64), $export->checksum?->value);
         self::assertSame(412, $export->sizeBytes);
@@ -73,7 +72,6 @@ final class ReportExportHydratorTest extends TestCase
         $record = $this->record([
             'status' => 'expired',
             'artifact_path' => 'org-1/reports/export.csv',
-            'artifact_version_id' => 'version-one',
             'artifact_etag' => '"opaque-etag"',
             'artifact_mime' => 'text/csv',
             'artifact_checksum' => str_repeat('f', 64),
@@ -89,7 +87,6 @@ final class ReportExportHydratorTest extends TestCase
 
         self::assertSame(ReportExportStatus::EXPIRED, $export->status);
         self::assertNull($export->artifactPath);
-        self::assertNull($export->versionId);
         self::assertNull($export->etag);
         self::assertNull($export->checksum);
         self::assertNull($export->rowCount);
@@ -115,7 +112,6 @@ final class ReportExportHydratorTest extends TestCase
         yield 'empty retained etag' => [[
             'status' => 'expired',
             'artifact_path' => 'org-1/reports/export.csv',
-            'artifact_version_id' => 'version',
             'artifact_etag' => '',
             'artifact_mime' => 'text/csv',
             'artifact_checksum' => str_repeat('f', 64),
@@ -145,7 +141,6 @@ final class ReportExportHydratorTest extends TestCase
             'locale' => 'ru',
             'render_timezone' => 'Europe/Moscow',
             'artifact_path' => null,
-            'artifact_version_id' => null,
             'artifact_etag' => null,
             'artifact_mime' => null,
             'artifact_checksum' => null,

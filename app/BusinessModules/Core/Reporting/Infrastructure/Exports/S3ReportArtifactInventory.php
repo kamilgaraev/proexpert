@@ -15,7 +15,7 @@ use DateTimeInterface;
 use InvalidArgumentException;
 use Throwable;
 
-final readonly class S3ReportArtifactVersionInventory implements ReportArtifactVersionInventory
+final readonly class S3ReportArtifactInventory implements ReportArtifactVersionInventory
 {
     private const METADATA_KEYS = [
         'contract_version',
@@ -57,39 +57,36 @@ final readonly class S3ReportArtifactVersionInventory implements ReportArtifactV
 
         $prefix = "org-{$organizationId}/reports/exports/{$exportId}/";
         try {
-            $pages = $this->client->getPaginator('ListObjectVersions', [
+            $pages = $this->client->getPaginator('ListObjectsV2', [
                 'Bucket' => $this->bucket,
                 'Prefix' => $prefix,
             ]);
             foreach ($pages as $page) {
-                $versions = is_array($page['Versions'] ?? null)
-                    ? $page['Versions']
+                $objects = is_array($page['Contents'] ?? null)
+                    ? $page['Contents']
                     : [];
-                foreach ($versions as $version) {
-                    if (! is_array($version)) {
+                foreach ($objects as $object) {
+                    if (! is_array($object)) {
                         throw new InvalidArgumentException(
                             'report_artifact_inventory_entry_invalid',
                         );
                     }
 
-                    $path = $this->string($version['Key'] ?? null);
-                    $versionId = $this->string($version['VersionId'] ?? null);
-                    $createdAt = $this->instant($version['LastModified'] ?? null);
+                    $path = $this->string($object['Key'] ?? null);
+                    $createdAt = $this->instant($object['LastModified'] ?? null);
                     if (! str_starts_with($path, $prefix)) {
                         throw new InvalidArgumentException(
                             'report_artifact_inventory_entry_invalid',
                         );
                     }
 
-                    $description = $this->files->describeVersion(
+                    $description = $this->files->describeCurrent(
                         $path,
-                        $versionId,
                         -ReportExportLimits::ARTIFACT_MAX_BYTES,
                     );
                     $metadata = $this->metadata($description['metadata'] ?? null);
                     $entry = [
                         'path' => $path,
-                        'version_id' => $versionId,
                         'etag' => $this->string($description['etag'] ?? null),
                         'size' => $this->integer($description['size'] ?? null),
                         'sha256' => $this->hash($description['sha256'] ?? null),
@@ -103,10 +100,6 @@ final readonly class S3ReportArtifactVersionInventory implements ReportArtifactV
                         ! hash_equals(
                             $entry['path'],
                             $this->string($description['path'] ?? null),
-                        )
-                        || ! hash_equals(
-                            $entry['version_id'],
-                            $this->string($description['version_id'] ?? null),
                         )
                         || $entry['size'] < 1
                         || $entry['size'] > ReportExportLimits::ARTIFACT_MAX_BYTES
