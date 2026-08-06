@@ -19,10 +19,10 @@ final class S3ReportArtifactIntegrationTest extends TestCase
 {
     private const PART_SIZE = 5 * 1024 * 1024;
 
-    public function test_disposable_versioned_s3_enforces_immutable_race_and_pinned_operations(): void
+    public function test_disposable_s3_enforces_immutable_race_and_current_object_operations(): void
     {
         if (env('REPORTS_S3_INTEGRATION') !== '1') {
-            self::markTestSkipped('Disposable versioned S3 integration is CI-only.');
+            self::markTestSkipped('Disposable S3 integration is CI-only.');
         }
 
         $integrationBucket = env('REPORTS_S3_INTEGRATION_BUCKET');
@@ -101,44 +101,34 @@ final class S3ReportArtifactIntegrationTest extends TestCase
                 $loser = null;
             }
 
-            $headed = $files->headVersion($path, $stored->versionId);
-            self::assertSame($stored->versionId, $headed->versionId);
-            self::assertSame($checksum, $headed->checksum->value);
+            $headed = $files->headCurrent($path);
+            self::assertSame($checksum, $headed->sha256);
             self::assertSame(self::PART_SIZE, $headed->sizeBytes);
             self::assertSame($stored->etag, $headed->etag);
 
-            $link = $files->createTemporaryLink($path, $stored->versionId, 60);
-            self::assertStringContainsString(
-                rawurlencode($stored->versionId),
-                rawurldecode($link->url),
-            );
+            $link = $files->createTemporaryLink($path, 60);
+            self::assertSame($path, $link->storageKey);
+            self::assertStringNotContainsString('versionid=', strtolower($link->url));
 
-            $second = $files->reportClient()->putObject([
+            $files->reportClient()->putObject([
                 'Bucket' => $files->reportBucketName(),
                 'Key' => $path,
                 'Body' => 'newer-version',
                 'ContentType' => 'application/octet-stream',
                 'Metadata' => $metadata,
             ]);
-            $secondVersion = (string) ($second['VersionId'] ?? '');
-            self::assertNotSame('', $secondVersion);
+            self::assertSame(
+                hash('sha256', 'newer-version'),
+                $files->headCurrent($path)->sha256,
+            );
 
-            $files->deleteVersion($path, $stored->versionId);
+            $files->deleteCurrent($path);
             $winner = null;
             try {
-                $files->headVersion($path, $stored->versionId);
-                self::fail('Deleted exact version is still readable.');
+                $files->headCurrent($path);
+                self::fail('Deleted current object is still readable.');
             } catch (VersionedObjectIntegrityException) {
             }
-            self::assertSame(
-                $secondVersion,
-                $files->reportClient()->headObject([
-                    'Bucket' => $files->reportBucketName(),
-                    'Key' => $path,
-                    'VersionId' => $secondVersion,
-                ])['VersionId'],
-            );
-            $files->deleteVersion($path, $secondVersion);
         } finally {
             if ($winner instanceof MultipartUpload) {
                 try {

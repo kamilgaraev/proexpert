@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\DocumentSheetOperationScope;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationJournal;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\DocumentSheetOperationScope;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadDocumentAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
@@ -42,11 +42,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         try {
             $provenance = DocumentUnitProvenance::fromLocator($context->type, $context->sourceVersion, $context->locator);
             $output = match (true) {
-                $context->type === DocumentUnitType::PdfPage && ($context->locator['content_type'] ?? null) === 'image/png'
-                    => $this->processRaster($context, $provenance),
+                $context->type === DocumentUnitType::PdfPage && ($context->locator['content_type'] ?? null) === 'image/png' => $this->processRaster($context, $provenance),
                 $context->type === DocumentUnitType::CadDrawing => $this->processCad($context, $provenance),
-                $context->type === DocumentUnitType::RasterImage, $context->type === DocumentUnitType::Sketch
-                    => $this->processRaster($context, $provenance),
+                $context->type === DocumentUnitType::RasterImage, $context->type === DocumentUnitType::Sketch => $this->processRaster($context, $provenance),
                 default => $this->ocr->process($context),
             };
 
@@ -113,8 +111,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $artifactVersion = $context->locator['artifact_source_version'] ?? null;
         $sourceBytes = $context->locator['artifact_bytes'] ?? null;
         $sourceSha256 = $context->locator['artifact_sha256'] ?? null;
-        $sourceVersionId = $context->locator['artifact_version_id'] ?? null;
-        if (! is_string($artifactVersion) || ! is_int($sourceBytes) || ! is_string($sourceSha256) || ! is_string($sourceVersionId)) {
+        if (! is_string($artifactVersion) || ! is_int($sourceBytes) || ! is_string($sourceSha256)) {
             throw new DocumentUnitProcessingException('raster_source_locator_invalid');
         }
         $preprocessed = $this->raster->preprocess(new RasterPreprocessInput(
@@ -129,7 +126,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 : $context->mimeType,
             sourceBytes: $sourceBytes,
             sourceSha256: $sourceSha256,
-            sourceVersionId: $sourceVersionId,
             perspectiveRequired: $context->type === DocumentUnitType::Sketch,
         ));
         $image = $this->reader->read(
@@ -138,7 +134,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             max(1, (int) config('estimate-generation.vision.preprocessing.max_bytes', 20_000_000)),
             $preprocessed->derivativeBytes,
             $preprocessed->derivativeHash,
-            $preprocessed->derivativeVersionId,
         )->body;
         $correlationId = SheetAnalysisOperationIdentity::primary(
             $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
@@ -197,8 +192,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         if (is_string($geometryPath)) {
             $geometryBytes = $context->locator['geometry_artifact_bytes'] ?? null;
             $geometrySha256 = $context->locator['geometry_artifact_sha256'] ?? null;
-            $geometryVersionId = $context->locator['geometry_artifact_version_id'] ?? null;
-            if (! is_int($geometryBytes) || ! is_string($geometrySha256) || ! is_string($geometryVersionId)) {
+            if (! is_int($geometryBytes) || ! is_string($geometrySha256)) {
                 throw new DocumentUnitProcessingException('pdf_page_geometry_locator_invalid');
             }
             $geometryContent = $this->reader->read(
@@ -207,7 +201,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 max(1, (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024)),
                 $geometryBytes,
                 $geometrySha256,
-                $geometryVersionId,
             )->body;
             $decoded = json_decode($geometryContent, true, 64, JSON_THROW_ON_ERROR);
             if (! is_array($decoded) || ($decoded['schema_version'] ?? null) !== 1
@@ -230,34 +223,34 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             );
             try {
                 $targetedInput = new VisionDocumentInput(
-                organizationId: $input->organizationId,
-                projectId: $input->projectId,
-                sessionId: $input->sessionId,
-                documentId: $input->documentId,
-                pageId: $input->pageId,
-                pageNumber: $input->pageNumber,
-                processingUnitId: $input->processingUnitId,
-                sourceVersion: $input->sourceVersion,
-                derivativeHash: $input->derivativeHash,
-                contentType: $input->contentType,
-                imageContent: $input->imageContent,
-                imageDetail: $input->imageDetail,
-                operationContext: new AiOperationContext(
-                    correlationId: $targetedOperation,
-                    attemptId: $targetedOperation,
-                    organizationId: $input->operationContext->organizationId,
-                    projectId: $input->operationContext->projectId,
-                    sessionId: $input->operationContext->sessionId,
-                    stage: $input->operationContext->stage,
-                    operation: 'vision',
-                    attemptOrdinal: 2,
-                    documentId: $input->operationContext->documentId,
-                    pageId: $input->operationContext->pageId,
-                    unitId: $input->operationContext->unitId,
-                ),
-                sourceTransform: $input->sourceTransform,
-                focusedSheetRole: $routing->classification->role->value,
-                reanalysisReason: $routing->classification->reanalysisReason,
+                    organizationId: $input->organizationId,
+                    projectId: $input->projectId,
+                    sessionId: $input->sessionId,
+                    documentId: $input->documentId,
+                    pageId: $input->pageId,
+                    pageNumber: $input->pageNumber,
+                    processingUnitId: $input->processingUnitId,
+                    sourceVersion: $input->sourceVersion,
+                    derivativeHash: $input->derivativeHash,
+                    contentType: $input->contentType,
+                    imageContent: $input->imageContent,
+                    imageDetail: $input->imageDetail,
+                    operationContext: new AiOperationContext(
+                        correlationId: $targetedOperation,
+                        attemptId: $targetedOperation,
+                        organizationId: $input->operationContext->organizationId,
+                        projectId: $input->operationContext->projectId,
+                        sessionId: $input->operationContext->sessionId,
+                        stage: $input->operationContext->stage,
+                        operation: 'vision',
+                        attemptOrdinal: 2,
+                        documentId: $input->operationContext->documentId,
+                        pageId: $input->operationContext->pageId,
+                        unitId: $input->operationContext->unitId,
+                    ),
+                    sourceTransform: $input->sourceTransform,
+                    focusedSheetRole: $routing->classification->role->value,
+                    reanalysisReason: $routing->classification->reanalysisReason,
                 );
                 $targetedRun = $this->sheetAnalysisJournal?->run($targetedOperation, 'targeted', $scope, $targetedRouting,
                     function () use ($context, $targetedInput, $preprocessed) {

@@ -19,16 +19,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ImageDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationUnitJobDispatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ImageDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\InMemoryDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PdfDocumentAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StoredDocumentArtifact;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetDocumentAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StoredDocumentArtifact;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
@@ -157,14 +157,14 @@ final class DocumentProcessingUnitContractTest extends TestCase
             'page_count' => 3,
             'storage_path' => 'org-1/tests/plan.pdf',
             'file_size_bytes' => 1,
-            'meta' => ['storage_version_id' => 'pdf-v1'],
+            'meta' => ['storage_sha256' => str_repeat('a', 64)],
         ]);
         $sketch = new EstimateGenerationDocument([
             'filename' => 'sketch.tiff',
             'mime_type' => 'image/tiff',
             'storage_path' => 'org-1/tests/sketch.tiff',
             'file_size_bytes' => 1,
-            'meta' => ['frame_count' => 2, 'is_sketch' => true, 'storage_version_id' => 'sketch-v1'],
+            'meta' => ['frame_count' => 2, 'is_sketch' => true, 'storage_sha256' => str_repeat('b', 64)],
         ]);
 
         $pdfUnits = $detector->detect($pdf, 'sha256:'.str_repeat('a', 64));
@@ -180,7 +180,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'storage_path' => 'org-1/tests/estimate.xlsx',
             'file_size_bytes' => 1,
-            'meta' => ['sheet_count' => 75, 'storage_version_id' => 'xlsx-v1'],
+            'meta' => ['sheet_count' => 75, 'storage_sha256' => str_repeat('c', 64)],
         ]);
         $sheetUnits = $detector->detect($workbook, 'sha256:'.str_repeat('c', 64));
 
@@ -367,7 +367,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 $path = sprintf('org-10/manifest/%s-%d.txt', $type->value, $index);
                 $this->paths[] = $path;
 
-                return new StoredDocumentArtifact($path, strlen($content), 'sha256:'.hash('sha256', $content), 'version-'.$index, $contentType);
+                return new StoredDocumentArtifact($path, strlen($content), 'sha256:'.hash('sha256', $content), $contentType);
             }
         };
         $pages = array_map(
@@ -463,7 +463,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             ): StoredDocumentArtifact {
                 $this->writes++;
 
-                return new StoredDocumentArtifact('org-10/never', strlen($content), 'sha256:'.hash('sha256', $content), 'version-'.$index, $contentType);
+                return new StoredDocumentArtifact('org-10/never', strlen($content), 'sha256:'.hash('sha256', $content), $contentType);
             }
         };
         $pdf = new class extends PdfTextLayerExtractor
@@ -755,9 +755,9 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString('setConnection($this->database->getName())', $store);
         self::assertStringContainsString("->where('organization_id', \$unit->organization_id)", $store);
         self::assertStringContainsString("->where('source_version', \$unit->source_version)", $store);
-        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_QUEUED", $store);
-        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_PROCESSING", $store);
-        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_FAILED", $store);
+        self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_QUEUED', $store);
+        self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_PROCESSING', $store);
+        self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_FAILED', $store);
         self::assertStringContainsString("->where('status', '<>', ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED)", $store);
         self::assertStringContainsString("'processing_stage' => 'preflight'", $store);
         self::assertStringNotContainsString("'processing_stage' => 'processing'", $store);
@@ -781,7 +781,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString('ensureQueuedPages', $creator);
         self::assertStringContainsString('EstimateGenerationDocumentPage::query()->firstOrCreate', $creator);
         self::assertStringContainsString("'page_count' => \$models->pluck('unit_index')->unique()->count()", $creator);
-        self::assertStringContainsString("ManageEstimateGenerationDocumentPages::STATUS_QUEUED", $creator);
+        self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_QUEUED', $creator);
         self::assertIsString($detail);
         self::assertStringContainsString('self::pageStatus($page)', $detail);
         self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_QUEUED', $detail);
@@ -838,8 +838,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
             'source_version' => $sourceVersion,
             'coordinate_space' => $type->coordinateSpace(),
             'artifact_path' => 'org-1/tests/'.$type->value.'-'.$index,
+            'artifact_bytes' => 1,
             'artifact_sha256' => 'sha256:'.hash('sha256', $sourceVersion),
-            'artifact_version_id' => 'test-'.$type->value.'-'.$index,
         ]);
     }
 }

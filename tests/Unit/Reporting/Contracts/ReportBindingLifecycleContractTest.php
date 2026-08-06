@@ -371,7 +371,6 @@ final class ReportBindingLifecycleContractTest extends TestCase
             ['locale', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->locale('en'), static fn ($export): string => $export->locale, 'en', 'queued'],
             ['timezone', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->timezone(new \DateTimeZone('Europe/Moscow')), static fn ($export) => $export->timezone, new \DateTimeZone('Europe/Moscow'), 'queued'],
             ['artifactPath', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->artifactPath('org-1/reports/custom.csv'), static fn ($export) => $export->artifactPath, 'org-1/reports/custom.csv', 'ready'],
-            ['versionId', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->versionId('version2'), static fn ($export) => $export->versionId, 'version2', 'ready'],
             ['etag', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->etag('etag2'), static fn ($export) => $export->etag, 'etag2', 'ready'],
             ['checksum', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->checksum($checksum), static fn ($export) => $export->checksum, $checksum, 'ready'],
             ['sizeBytes', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->sizeBytes(2), static fn ($export) => $export->sizeBytes, 2, 'ready'],

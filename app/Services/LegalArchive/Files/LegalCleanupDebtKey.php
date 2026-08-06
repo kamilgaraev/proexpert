@@ -6,10 +6,9 @@ namespace App\Services\LegalArchive\Files;
 
 final class LegalCleanupDebtKey
 {
-    public static function for(int $organizationId, string $storagePath, ?string $storageVersionId): string
+    public static function for(int $organizationId, string $storagePath): string
     {
-        $version = $storageVersionId ?? 'legacy';
-        $canonical = $organizationId.':'.strlen($storagePath).':'.$storagePath.':'.strlen($version).':'.$version;
+        $canonical = $organizationId.':'.strlen($storagePath).':'.$storagePath;
 
         return hash('sha256', $canonical);
     }

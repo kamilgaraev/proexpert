@@ -10,7 +10,6 @@ final readonly class VersionedS3ObjectContent
         public string $body,
         public int $bytes,
         public string $sha256,
-        public string $versionId,
         public string $contentType,
     ) {}
 }

@@ -95,13 +95,13 @@ final class FileServiceBenchmarkPrivateObjectStoreTest extends TestCase
                 return $this->adapter;
             }
 
-            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            public function describeCurrent(string $path, int $maxBytes = 64_000_000): array
             {
                 $body = $this->adapter->get($path);
 
                 return ['path' => $path, 'body' => $body, 'size' => strlen($body),
                     'sha256' => hash('sha256', $body), 'etag' => hash('md5', $body),
-                    'version_id' => $versionId ?? 'test-version', 'content_type' => 'application/json'];
+                    'content_type' => 'application/json'];
             }
 
             public function putImmutable(string $path, string $body, string $contentType): array
@@ -111,10 +111,10 @@ final class FileServiceBenchmarkPrivateObjectStoreTest extends TestCase
                     $this->adapter->put($path, $body);
                 }
 
-                return [...$this->describeVersion($path, null), 'created' => $created];
+                return [...$this->describeCurrent($path), 'created' => $created];
             }
 
-            public function removeImmutable(string $path, ?string $versionId): void
+            public function removeImmutable(string $path): void
             {
                 $this->adapter->delete($path);
             }

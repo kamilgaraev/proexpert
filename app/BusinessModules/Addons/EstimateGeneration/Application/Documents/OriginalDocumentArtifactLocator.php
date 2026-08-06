@@ -9,7 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 final class OriginalDocumentArtifactLocator
 {
     /**
-     * @param array<string, scalar|null> $locator
+     * @param  array<string, scalar|null>  $locator
      * @return array<string, scalar|null>
      */
     public static function forUnit(
@@ -22,9 +22,14 @@ final class OriginalDocumentArtifactLocator
         $meta = is_array($document->meta) ? $document->meta : [];
         $path = trim((string) $document->storage_path);
         $bytes = (int) $document->file_size_bytes;
-        $versionId = $meta['storage_version_id'] ?? null;
+        $checksum = $meta['storage_sha256'] ?? $document->checksum_sha256;
 
-        if ($path === '' || $bytes < 1 || ! is_string($versionId) || trim($versionId) === '') {
+        if ($path === '' || $bytes < 1 || ! is_string($checksum)
+            || preg_match('/\A(?:sha256:)?[0-9a-f]{64}\z/D', $checksum) !== 1) {
+            throw new DocumentManifestNeedsReview('document_source_provenance_required');
+        }
+        $artifactHash = str_starts_with($checksum, 'sha256:') ? $checksum : 'sha256:'.$checksum;
+        if (! hash_equals($sourceVersion, $artifactHash)) {
             throw new DocumentManifestNeedsReview('document_source_provenance_required');
         }
 
@@ -35,8 +40,7 @@ final class OriginalDocumentArtifactLocator
             'coordinate_space' => $type->coordinateSpace(),
             'artifact_path' => $path,
             'artifact_bytes' => $bytes,
-            'artifact_sha256' => $sourceVersion,
-            'artifact_version_id' => $versionId,
+            'artifact_sha256' => $artifactHash,
             'artifact_source_version' => $sourceVersion,
             'content_type' => strtolower(trim((string) $document->mime_type)),
         ];

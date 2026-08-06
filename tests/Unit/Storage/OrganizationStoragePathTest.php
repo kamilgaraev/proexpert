@@ -54,6 +54,32 @@ final class OrganizationStoragePathTest extends TestCase
         );
     }
 
+    public function test_builds_actor_and_system_domain_paths(): void
+    {
+        self::assertSame(
+            'org-42/reports/exports/01J4EXPORT/user-7/artifact.xlsx',
+            OrganizationStoragePath::forActor(
+                42,
+                'reports',
+                'exports/01J4EXPORT',
+                7,
+                'artifact',
+                'xlsx',
+            ),
+        );
+        self::assertSame(
+            'org-42/estimate-generation/01J4SESSION/vision/v1/user-system/01J4OBJECT.png',
+            OrganizationStoragePath::forActor(
+                42,
+                'estimate-generation',
+                '01J4SESSION/vision/v1',
+                null,
+                '01J4OBJECT',
+                'png',
+            ),
+        );
+    }
+
     #[DataProvider('invalidStrictPathProvider')]
     public function test_rejects_invalid_strict_path(callable $build): void
     {
@@ -85,6 +111,9 @@ final class OrganizationStoragePathTest extends TestCase
         ];
         yield 'extension with dot' => [
             static fn (): string => OrganizationStoragePath::forDomain(42, 'reports', 'exports', '01J5', '.xlsx'),
+        ];
+        yield 'actor zero' => [
+            static fn (): string => OrganizationStoragePath::forActor(42, 'reports', 'exports', 0, '01J5', 'xlsx'),
         ];
     }
 

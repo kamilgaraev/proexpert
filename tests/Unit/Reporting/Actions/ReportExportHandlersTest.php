@@ -273,7 +273,6 @@ final class ReportExportHandlersTest extends TestCase
             null,
             null,
             null,
-            null,
             new DateTimeImmutable('2026-07-29T09:00:00+00:00'),
             new DateTimeImmutable('2026-07-29T09:01:00+00:00'),
             null,

@@ -31,7 +31,6 @@ final readonly class LegalDocumentFileCleanupDebtService
     public function processDue(int $limit = 100): int
     {
         $ids = $this->connection->table('legal_archive_file_cleanup_debts')
-            ->whereNull('storage_version_id')
             ->whereIn('reason', self::REASONS)
             ->whereNull('resolved_at')
             ->whereNull('dead_lettered_at')
@@ -59,7 +58,7 @@ final readonly class LegalDocumentFileCleanupDebtService
             $row = $this->connection->table('legal_archive_file_cleanup_debts')
                 ->where('id', $id)->lockForUpdate()->first();
             if ($row === null || $row->resolved_at !== null || $row->dead_lettered_at !== null
-                || $row->storage_version_id !== null || ! in_array((string) $row->reason, self::REASONS, true)
+                || ! in_array((string) $row->reason, self::REASONS, true)
                 || ($row->next_attempt_at !== null && now()->lt($row->next_attempt_at))
                 || ($row->lease_expires_at !== null && now()->lt($row->lease_expires_at))) {
                 return null;

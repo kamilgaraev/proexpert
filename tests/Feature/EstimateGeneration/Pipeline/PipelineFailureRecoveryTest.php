@@ -32,8 +32,8 @@ final class PipelineFailureRecoveryTest extends TestCase
             'source_version' => 'source',
             'coordinate_space' => 'image_pixels',
             'artifact_path' => 'org-1/tests/sketch-1',
+            'artifact_bytes' => 1,
             'artifact_sha256' => 'sha256:'.hash('sha256', 'source'),
-            'artifact_version_id' => 'test-sketch-1',
         ]));
         $processor = new class implements DocumentUnitProcessor
         {

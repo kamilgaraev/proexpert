@@ -93,7 +93,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRen
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\DompdfReportPdfDocumentRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\ReportExportRendererRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactVersionInventory;
+use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactInventory;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Listeners\FinalizeFailedReportExportAttempt;
 use App\BusinessModules\Core\Reporting\Infrastructure\Listeners\FinalizeFailedReportRunAttempt;
@@ -348,7 +348,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
 
     private function registerArtifactInventory(): void
     {
-        $this->app->singleton(ReportArtifactVersionInventory::class, function (Container $app): S3ReportArtifactVersionInventory {
+        $this->app->singleton(ReportArtifactVersionInventory::class, function (Container $app): S3ReportArtifactInventory {
             $disk = config('filesystems.disks.s3');
             if (! is_array($disk) || ! is_string($disk['bucket'] ?? null) || $disk['bucket'] === '') {
                 throw new InvalidArgumentException('report_s3_inventory_configuration_invalid');
@@ -364,7 +364,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 ],
             ]);
 
-            return new S3ReportArtifactVersionInventory(
+            return new S3ReportArtifactInventory(
                 $client,
                 $app->make(FileService::class),
                 $disk['bucket'],
@@ -440,9 +440,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $this->app->when(ReconcileCompletedReportArtifacts::class)
             ->needs('$leaseSeconds')
             ->give(fn (): int => $this->configArray('execution')['lease_seconds']);
-        $this->app->when(ReconcileCompletedReportArtifacts::class)
-            ->needs('$deleteGraceSeconds')
-            ->give(fn (): int => $this->configArray('artifacts')['reconciliation_grace_seconds']);
         $this->app->singleton(ReconcileCompletedReportArtifacts::class);
     }
 
@@ -453,7 +450,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $dispatch = $this->closedIntegerMap('dispatch', ['batch_size', 'lease_seconds', 'max_attempts']);
         $audit = $this->closedIntegerMap('audit', ['batch_size', 'lease_seconds', 'max_attempts']);
         $execution = $this->closedIntegerMap('execution', ['lease_seconds', 'watchdog_batch_size']);
-        $artifacts = $this->closedIntegerMap('artifacts', ['reconciliation_grace_seconds']);
 
         if (
             $runs['ttl_seconds'] < 3600 || $runs['ttl_seconds'] > 2_592_000
@@ -464,7 +460,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
             || $dispatch !== ['batch_size' => 100, 'lease_seconds' => 60, 'max_attempts' => 12]
             || $audit !== ['batch_size' => 100, 'lease_seconds' => 300, 'max_attempts' => 12]
             || $execution !== ['lease_seconds' => 960, 'watchdog_batch_size' => 100]
-            || $artifacts !== ['reconciliation_grace_seconds' => 3600]
             || config('queue.connections.redis_reports.queue') !== 'reports'
             || config('queue.connections.redis_reports.job_timeout') !== 900
             || config('queue.connections.redis_reports.execution_lease_seconds') !== 960

@@ -462,7 +462,6 @@ final class ReportWireDtoContractTest extends TestCase
         self::assertSame('csv', $export->format);
         self::assertSame(['row_key', 'amount'], $export->columns);
         self::assertSame('org-1/reports/export.csv', $export->artifactPath);
-        self::assertSame('version_1', $export->versionId);
         self::assertSame(10, $export->sizeBytes);
         self::assertSame(3, $export->rowCount);
     }
@@ -506,19 +505,19 @@ final class ReportWireDtoContractTest extends TestCase
     #[Test]
     public function download_link_requires_https_and_short_lifetime(): void
     {
-        $link = new ReportDownloadLink('https://storage.example/report.csv', 'version_1', $this->at(), $this->at('+300 seconds'));
+        $link = new ReportDownloadLink('https://storage.example/report.csv', 'org-1/reports/export.csv', $this->at(), $this->at('+300 seconds'));
 
-        self::assertSame('version_1', $link->versionId);
+        self::assertSame('org-1/reports/export.csv', $link->storageKey);
         self::assertSame('https://storage.example/report.csv', $link->url);
         self::assertSame(300, $link->expiresAt->getTimestamp() - $link->issuedAt->getTimestamp());
         $this->expectException(InvalidArgumentException::class);
-        new ReportDownloadLink('http://storage.example/report.csv', 'version_1', $this->at(), $this->at('+301 seconds'));
+        new ReportDownloadLink('http://storage.example/report.csv', 'org-1/reports/export.csv', $this->at(), $this->at('+301 seconds'));
     }
 
     #[Test]
     public function download_link_accepts_case_insensitive_https_scheme(): void
     {
-        $link = new ReportDownloadLink('HTTPS://storage.example/report.csv', 'version_1', $this->at(), $this->at('+1 minute'));
+        $link = new ReportDownloadLink('HTTPS://storage.example/report.csv', 'org-1/reports/export.csv', $this->at(), $this->at('+1 minute'));
 
         self::assertSame('HTTPS://storage.example/report.csv', $link->url);
     }
@@ -531,7 +530,7 @@ final class ReportWireDtoContractTest extends TestCase
             ['https://user:pass@storage.example/report.csv', $this->at(), $this->at('+1 minute')],
         ] as [$url, $issuedAt, $expiresAt]) {
             try {
-                new ReportDownloadLink($url, 'version_1', $issuedAt, $expiresAt);
+                new ReportDownloadLink($url, 'org-1/reports/export.csv', $issuedAt, $expiresAt);
                 self::fail('Допущена недопустимая ссылка на скачивание.');
             } catch (InvalidArgumentException $exception) {
                 self::assertSame('report_download_link_invalid', $exception->getMessage());
@@ -613,7 +612,7 @@ final class ReportWireDtoContractTest extends TestCase
     {
         $ready = $status === ReportExportStatus::READY;
 
-        return new ReportExport($this->ulid(), $this->ulid(), $status, $this->hash(), 'csv', ['row_key', 'amount'], $this->sort(), 'ru', new DateTimeZone('UTC'), $ready ? $artifactPath : null, $ready ? 'version_1' : null, $ready ? 'etag_1' : null, $ready ? $this->hash('b') : null, $ready ? 10 : null, $ready ? 3 : null, $this->at('-1 minute'), $this->at(), $ready ? ($readyAt ?? $this->at()) : null, $this->at('+1 hour'), $cancelRequestedAt, $disposition, $pollAfterMs);
+        return new ReportExport($this->ulid(), $this->ulid(), $status, $this->hash(), 'csv', ['row_key', 'amount'], $this->sort(), 'ru', new DateTimeZone('UTC'), $ready ? $artifactPath : null, $ready ? 'etag_1' : null, $ready ? $this->hash('b') : null, $ready ? 10 : null, $ready ? 3 : null, $this->at('-1 minute'), $this->at(), $ready ? ($readyAt ?? $this->at()) : null, $this->at('+1 hour'), $cancelRequestedAt, $disposition, $pollAfterMs);
     }
 
     private function constructorContracts(): array
@@ -635,8 +634,8 @@ final class ReportWireDtoContractTest extends TestCase
             ReportResourceLink::class => [['resourceType', 'string', false], ['resourceId', 'string', false], ['routeName', 'string', false], ['params', 'array', false], ['availability', 'string', false]],
             ReportDrillDownResult::class => [['rows', 'array', false], ['nextCursor', 'string', true], ['resourceLinks', 'array', false]],
             ReportRun::class => [['id', 'string', false], ['reportCode', 'string', false], ['status', ReportRunStatus::class, false], ['definitionHash', Sha256Hash::class, false], ['contractVersion', 'string', false], ['formulaVersion', 'string', false], ['sourceSchemaVersion', 'string', false], ['rendererVersion', 'string', false], ['queryHash', Sha256Hash::class, false], ['sourceHash', Sha256Hash::class, true], ['progress', 'int', false], ['rowCount', 'int', true], ['resultMetadata', ReportResultMetadata::class, true], ['totals', 'array', false], ['freshness', ReportFreshnessStatus::class, true], ['quality', ReportQuality::class, true], ['provenance', ReportProvenance::class, true], ['createdAt', DateTimeImmutable::class, false], ['updatedAt', DateTimeImmutable::class, false], ['readyAt', DateTimeImmutable::class, true], ['expiresAt', DateTimeImmutable::class, false], ['cancelRequestedAt', DateTimeImmutable::class, true], ['httpDisposition', 'string', false], ['pollAfterMs', 'int', true]],
-            ReportExport::class => [['id', 'string', false], ['runId', 'string', false], ['status', ReportExportStatus::class, false], ['exportHash', Sha256Hash::class, false], ['format', 'string', false], ['columns', 'array', false], ['sort', ReportWindowSort::class, false], ['locale', 'string', false], ['timezone', DateTimeZone::class, false], ['artifactPath', 'string', true], ['versionId', 'string', true], ['etag', 'string', true], ['checksum', Sha256Hash::class, true], ['sizeBytes', 'int', true], ['rowCount', 'int', true], ['createdAt', DateTimeImmutable::class, false], ['updatedAt', DateTimeImmutable::class, false], ['readyAt', DateTimeImmutable::class, true], ['expiresAt', DateTimeImmutable::class, false], ['cancelRequestedAt', DateTimeImmutable::class, true], ['httpDisposition', 'string', false], ['pollAfterMs', 'int', true]],
-            ReportDownloadLink::class => [['url', 'string', false], ['versionId', 'string', false], ['issuedAt', DateTimeImmutable::class, false], ['expiresAt', DateTimeImmutable::class, false]],
+            ReportExport::class => [['id', 'string', false], ['runId', 'string', false], ['status', ReportExportStatus::class, false], ['exportHash', Sha256Hash::class, false], ['format', 'string', false], ['columns', 'array', false], ['sort', ReportWindowSort::class, false], ['locale', 'string', false], ['timezone', DateTimeZone::class, false], ['artifactPath', 'string', true], ['etag', 'string', true], ['checksum', Sha256Hash::class, true], ['sizeBytes', 'int', true], ['rowCount', 'int', true], ['createdAt', DateTimeImmutable::class, false], ['updatedAt', DateTimeImmutable::class, false], ['readyAt', DateTimeImmutable::class, true], ['expiresAt', DateTimeImmutable::class, false], ['cancelRequestedAt', DateTimeImmutable::class, true], ['httpDisposition', 'string', false], ['pollAfterMs', 'int', true]],
+            ReportDownloadLink::class => [['url', 'string', false], ['storageKey', 'string', false], ['issuedAt', DateTimeImmutable::class, false], ['expiresAt', DateTimeImmutable::class, false]],
         ];
     }
 

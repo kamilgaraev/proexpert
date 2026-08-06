@@ -22,7 +22,7 @@ final class S3PipelineArtifactStoreTest extends TestCase
 {
     #[Test]
     #[DataProvider('storageFailures')]
-    public function it_maps_versioned_storage_failures_to_pipeline_contract(
+    public function it_maps_current_object_storage_failures_to_pipeline_contract(
         RuntimeException $storageFailure,
         FailureCategory $expectedCategory,
         string $expectedCode,
@@ -31,7 +31,7 @@ final class S3PipelineArtifactStoreTest extends TestCase
         {
             public function __construct(private readonly RuntimeException $failure) {}
 
-            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            public function describeCurrent(string $path, int $maxBytes = 64_000_000): array
             {
                 throw $this->failure;
             }
@@ -55,7 +55,7 @@ final class S3PipelineArtifactStoreTest extends TestCase
             FailureCategory::Recoverable,
             'pipeline_artifact_storage_unavailable',
         ];
-        yield 'missing pinned version is terminal' => [
+        yield 'missing current object is terminal' => [
             new VersionedObjectIntegrityException('provider details'),
             FailureCategory::Terminal,
             'pipeline_artifact_integrity_failed',
@@ -106,7 +106,6 @@ final class S3PipelineArtifactStoreTest extends TestCase
             'org-20/estimate-generation/sessions/30/pipeline/attempts/00000000-0000-4000-8000-000000000001/object.json',
             'sha256:'.str_repeat('b', 64),
             1,
-            'version-1',
         );
     }
 }

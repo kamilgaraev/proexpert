@@ -9,6 +9,7 @@ final class OrganizationStoragePath
     private const DOMAINS = [
         'acts',
         'design-models',
+        'estimate-generation',
         'estimates',
         'legal-archive',
         'procurement',
@@ -57,6 +58,29 @@ final class OrganizationStoragePath
             $organizationId,
             'personal-files',
             "user-{$userId}",
+            $objectId,
+            $extension,
+        );
+    }
+
+    public static function forActor(
+        int $organizationId,
+        string $domain,
+        string $scope,
+        ?int $actorId,
+        string $objectId,
+        string $extension,
+    ): string {
+        if ($actorId !== null && $actorId < 1) {
+            throw new \InvalidArgumentException('organization_storage_path_invalid');
+        }
+
+        $actorScope = $actorId === null ? 'user-system' : "user-{$actorId}";
+
+        return self::forDomain(
+            $organizationId,
+            $domain,
+            "{$scope}/{$actorScope}",
             $objectId,
             $extension,
         );

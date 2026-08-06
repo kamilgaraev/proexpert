@@ -120,7 +120,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
                 $this->locator = $locator;
                 \PHPUnit\Framework\Assert::assertStringContainsString('"dataset":"acceptance"', $contents);
 
-                return $locator.'?versionId=v1';
+                return $locator;
             }
         };
         $output = 's3://org-42/estimate-generation/benchmarks/123e4567-e89b-12d3-a456-426614174000/'.str_repeat('a', 64).'.json';

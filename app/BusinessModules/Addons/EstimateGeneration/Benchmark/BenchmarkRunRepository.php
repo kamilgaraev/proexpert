@@ -78,7 +78,7 @@ final class BenchmarkRunRepository
     }
 
     /** @param array<string, mixed> $metrics @param array<int, array<string, mixed>>|null $caseResults */
-    public function complete(int $organizationId, string $uuid, array $metrics, ?array $caseResults = null, ?string $s3Path = null, ?int $durationMs = null, string $cost = '0', ?int $s3Size = null, ?string $s3Sha256 = null, ?string $s3Etag = null, ?string $s3Version = null, ?string $s3ContentType = null): EstimateGenerationBenchmarkRun
+    public function complete(int $organizationId, string $uuid, array $metrics, ?array $caseResults = null, ?string $s3Path = null, ?int $durationMs = null, string $cost = '0', ?int $s3Size = null, ?string $s3Sha256 = null, ?string $s3Etag = null, ?string $s3ContentType = null): EstimateGenerationBenchmarkRun
     {
         $this->assertClosedMetrics($metrics);
         $this->boundedJson($metrics);
@@ -112,7 +112,6 @@ final class BenchmarkRunRepository
             $s3Size = $object->contentLength;
             $s3Sha256 = $object->sha256;
             $s3Etag = $object->etag;
-            $s3Version = $object->versionId;
             $s3ContentType = $object->contentType;
         }
 
@@ -121,8 +120,7 @@ final class BenchmarkRunRepository
                 'metrics' => $metrics, 'case_results' => $caseResults,
                 'case_results_storage_disk' => $s3Path === null ? null : 's3', 'case_results_storage_path' => $s3Path,
                 'case_results_size' => $s3Size, 'case_results_sha256' => $s3Sha256,
-                'case_results_etag' => $s3Etag, 'case_results_version' => $s3Version,
-                'case_results_version_scheme' => $s3Path === null ? null : 'provider+sha256',
+                'case_results_etag' => $s3Etag,
                 'case_results_content_type' => $s3ContentType,
                 'duration_ms' => $durationMs, 'cost_amount' => $cost, 'completed_at' => now(),
             ]);
@@ -130,7 +128,7 @@ final class BenchmarkRunRepository
             if ($object?->created === true && $this->objectStore instanceof BenchmarkImmutableObjectStore) {
                 $referenced = EstimateGenerationBenchmarkRun::query()
                     ->where('case_results_storage_path', $object->path)
-                    ->where('case_results_version', $object->versionId)
+                    ->where('case_results_sha256', $object->sha256)
                     ->where('status', EstimateGenerationBenchmarkRun::STATUS_COMPLETED)->exists();
                 if (! $referenced) {
                     $this->objectStore->removeCreated($object);
@@ -270,7 +268,7 @@ final class BenchmarkRunRepository
         } else {
             $body = $this->objectStore->read($path, 64_000_000);
             $hash = hash('sha256', $body);
-            $source = new BenchmarkPrivateObject($path, $body, strlen($body), $hash, null, 'sha256:'.$hash, 'application/json');
+            $source = new BenchmarkPrivateObject($path, $body, strlen($body), $hash, null, 'application/json');
         }
         if (! hash_equals($matches[1], $source->sha256) || $source->contentType !== 'application/json') {
             throw new DomainException('benchmark_results_object_integrity_mismatch');

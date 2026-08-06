@@ -137,7 +137,6 @@ final class ProductionReportScopedResourceAuthorizers
                 'photo.size_bytes',
                 'photo.storage_etag',
                 'photo.storage_sha256',
-                'photo.storage_version_id',
                 'photo.storage_identity_verified',
                 'photo.type',
                 'photo.uploaded_by',
@@ -155,21 +154,17 @@ final class ProductionReportScopedResourceAuthorizers
             'storage_etag' => (string) $photo->storage_etag,
             'storage_key' => (string) $photo->url,
             'storage_sha256' => (string) $photo->storage_sha256,
-            'storage_version_id' => (string) $photo->storage_version_id,
             'storage_identity_verified' => (bool) $photo->storage_identity_verified,
             'type' => (string) $photo->type,
             'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
         ]));
         try {
-            $stored = app(FileService::class)->headVersion(
-                (string) $photo->url,
-                (string) $photo->storage_version_id,
-            );
+            $stored = app(FileService::class)->headCurrent((string) $photo->url);
         } catch (\Throwable) {
             return false;
         }
         if (! (bool) $photo->storage_identity_verified
-            || ! hash_equals((string) $photo->storage_sha256, $stored->checksum->value)
+            || ! hash_equals((string) $photo->storage_sha256, $stored->sha256)
             || ! hash_equals((string) $photo->storage_etag, $stored->etag)
             || (int) $photo->size_bytes !== $stored->sizeBytes
             || ! hash_equals((string) $photo->mime_type, $stored->mime)) {

@@ -102,7 +102,6 @@ final class DwgDxfGeometryProviderTest extends TestCase
             'artifact_path' => 'org-42/drawings/house.dxf',
             'artifact_bytes' => strlen($content),
             'artifact_sha256' => 'sha256:'.str_repeat('a', 64),
-            'artifact_version_id' => 'source-v1',
         ]);
 
         $this->expectException(S3ObjectLocatorException::class);
@@ -111,9 +110,8 @@ final class DwgDxfGeometryProviderTest extends TestCase
 
     private function expectPinnedRead(FileService $files, string $path, string $content): void
     {
-        $files->shouldReceive('describeVersion')->once()->with(
+        $files->shouldReceive('describeCurrent')->once()->with(
             $path,
-            'source-v1',
             Mockery::type('int'),
         )->andReturn([
             'path' => $path,
@@ -121,7 +119,6 @@ final class DwgDxfGeometryProviderTest extends TestCase
             'size' => strlen($content),
             'sha256' => hash('sha256', $content),
             'etag' => null,
-            'version_id' => 'source-v1',
             'content_type' => 'application/dxf',
         ]);
     }
@@ -137,7 +134,6 @@ final class DwgDxfGeometryProviderTest extends TestCase
             'artifact_path' => $path,
             'artifact_bytes' => strlen($content),
             'artifact_sha256' => $sha256,
-            'artifact_version_id' => 'source-v1',
         ]);
     }
 }

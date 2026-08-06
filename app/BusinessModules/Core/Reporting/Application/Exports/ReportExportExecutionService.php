@@ -31,7 +31,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\ReportExportRendererRegistry;
@@ -39,6 +38,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactSt
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -488,8 +488,14 @@ final readonly class ReportExportExecutionService
         ReportExecutionContext $context,
         ReportExport $export,
     ): string {
-        return "org-{$context->scope->organizationId}/reports/exports/"
-            ."{$export->id}/artifact.{$export->format}";
+        return OrganizationStoragePath::forActor(
+            $context->scope->organizationId,
+            'reports',
+            "exports/{$export->id}",
+            $context->actor->id,
+            'artifact',
+            $export->format,
+        );
     }
 
     private function mime(string $format): string
@@ -537,9 +543,9 @@ final readonly class ReportExportExecutionService
         foreach ($this->inventory->forExport(
             $context->scope->organizationId,
             $export->id,
-        ) as $version) {
-            $this->assertCompletedVersion($context, $export, $source, $version);
-            $matches[] = $version;
+        ) as $artifact) {
+            $this->assertCompletedArtifact($context, $export, $source, $artifact);
+            $matches[] = $artifact;
         }
         if (count($matches) > 1) {
             throw ReportContractException::fromCode(
@@ -554,26 +560,25 @@ final readonly class ReportExportExecutionService
 
         return new StoredFile(
             $match['path'],
-            $match['version_id'],
             $match['etag'],
             $match['size'],
-            new Sha256Hash($match['sha256']),
+            $match['sha256'],
             $match['mime'],
         );
     }
 
     /**
-     * @param  array<string, mixed>  $version
+     * @param  array<string, mixed>  $artifact
      */
-    private function assertCompletedVersion(
+    private function assertCompletedArtifact(
         ReportExecutionContext $context,
         ReportExport $export,
         ReportRunExportSource $source,
-        array $version,
+        array $artifact,
     ): void {
-        $keys = array_keys($version);
+        $keys = array_keys($artifact);
         sort($keys, SORT_STRING);
-        $actualMetadata = $version['metadata'] ?? null;
+        $actualMetadata = $artifact['metadata'] ?? null;
         $expectedMetadata = $this->metadata($context, $export, $source);
         if (is_array($actualMetadata)) {
             ksort($actualMetadata, SORT_STRING);
@@ -588,22 +593,19 @@ final readonly class ReportExportExecutionService
                 'path',
                 'sha256',
                 'size',
-                'version_id',
             ]
-            || ! is_string($version['path'])
-            || ! hash_equals($version['path'], $this->artifactPath($context, $export))
-            || ! is_string($version['version_id'])
-            || $version['version_id'] === ''
-            || ! is_string($version['etag'])
-            || $version['etag'] === ''
-            || ! is_int($version['size'])
-            || $version['size'] < 1
-            || ! is_string($version['sha256'])
-            || preg_match('/^[a-f0-9]{64}$/D', $version['sha256']) !== 1
-            || ! is_string($version['mime'])
-            || ! hash_equals($version['mime'], $this->mime($export->format))
+            || ! is_string($artifact['path'])
+            || ! hash_equals($artifact['path'], $this->artifactPath($context, $export))
+            || ! is_string($artifact['etag'])
+            || $artifact['etag'] === ''
+            || ! is_int($artifact['size'])
+            || $artifact['size'] < 1
+            || ! is_string($artifact['sha256'])
+            || preg_match('/^[a-f0-9]{64}$/D', $artifact['sha256']) !== 1
+            || ! is_string($artifact['mime'])
+            || ! hash_equals($artifact['mime'], $this->mime($export->format))
             || $actualMetadata !== $expectedMetadata
-            || ! $version['created_at'] instanceof DateTimeImmutable
+            || ! $artifact['created_at'] instanceof DateTimeImmutable
         ) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_INTERNAL_ERROR,

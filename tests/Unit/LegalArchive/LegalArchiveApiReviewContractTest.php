@@ -21,7 +21,7 @@ final class LegalArchiveApiReviewContractTest extends TestCase
             self::assertStringContainsString('assertSameRequest', $section);
         }
         $verify = substr($service, (int) strpos($service, 'public function verify('), 9000);
-        self::assertLessThan(strpos($verify, 'describeVersion('), strpos($verify, '$replay instanceof LegalSignatureVerification'));
+        self::assertLessThan(strpos($verify, 'describeCurrent('), strpos($verify, '$replay instanceof LegalSignatureVerification'));
         self::assertStringContainsString('?int $expectedDocumentLockVersion', $verify);
         self::assertGreaterThanOrEqual(2, substr_count($controller, "'lock_version' => ['required', 'integer', 'min:0']"));
     }

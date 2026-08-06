@@ -80,7 +80,7 @@ class OcrDocumentStorageService
             'meta' => [
                 'original_extension' => $file->getClientOriginalExtension(),
                 'original_name' => $file->getClientOriginalName(),
-                'storage_version_id' => $head['version_id'],
+                'storage_sha256' => $checksum,
             ],
         ]);
     }
@@ -123,7 +123,7 @@ class OcrDocumentStorageService
         }
         if ((int) $source->file_size_bytes < 1 || $copy['size'] !== (int) $source->file_size_bytes) {
             try {
-                $this->fileService->removeImmutable($copy['path'], $copy['version_id']);
+                $this->fileService->removeImmutable($copy['path']);
             } catch (\Throwable) {
             }
             throw new TypedFailureException(FailureCategory::Terminal, 'document_storage_integrity_failed');
@@ -149,7 +149,7 @@ class OcrDocumentStorageService
             'meta' => [
                 'original_extension' => $extension,
                 'original_name' => $sourceMeta['original_name'] ?? $source->filename,
-                'storage_version_id' => $copy['version_id'],
+                'storage_sha256' => (string) $source->checksum_sha256,
                 'reused_from_session_id' => (int) $source->session_id,
                 'reused_from_document_id' => (int) $source->id,
             ],

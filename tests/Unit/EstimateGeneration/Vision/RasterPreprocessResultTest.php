@@ -13,6 +13,21 @@ use PHPUnit\Framework\TestCase;
 final class RasterPreprocessResultTest extends TestCase
 {
     #[Test]
+    public function result_accepts_the_user_system_derivative_actor_segment(): void
+    {
+        try {
+            $result = $this->makeResult([]);
+        } catch (RasterPreprocessingException) {
+            self::fail('The user-system derivative actor segment was rejected.');
+        }
+
+        self::assertSame(
+            'org-7/estimate-generation/11/vision/v1/user-system/'.str_repeat('a', 64).'.png',
+            $result->derivativeStorageKey,
+        );
+    }
+
+    #[Test]
     public function result_rejects_unknown_status_warning_nonfinite_metrics_and_bad_hash_dimensions(): void
     {
         foreach ([
@@ -36,9 +51,9 @@ final class RasterPreprocessResultTest extends TestCase
     private function makeResult(array $override): RasterPreprocessResult
     {
         $data = array_replace([
-            'derivativeStorageKey' => 'org-7/estimate-generation/11/vision/v1/'.str_repeat('a', 64).'.png',
+            'derivativeStorageKey' => 'org-7/estimate-generation/11/vision/v1/user-system/'.str_repeat('a', 64).'.png',
             'derivativeHash' => 'sha256:'.str_repeat('a', 64), 'derivativeVersion' => 'raster-preprocessor:v1',
-            'derivativeBytes' => 100, 'derivativeVersionId' => 'version-1',
+            'derivativeBytes' => 100,
             'sourceWidth' => 100, 'sourceHeight' => 80, 'outputWidth' => 100, 'outputHeight' => 80,
             'sharpness' => 0.2, 'dynamicRange' => 0.8, 'blankRatio' => 0.1, 'clippingRatio' => 0.1,
             'skewDegrees' => null, 'perspectiveStatus' => 'not_required', 'warnings' => [],
@@ -46,7 +61,7 @@ final class RasterPreprocessResultTest extends TestCase
 
         return new RasterPreprocessResult(
             $data['derivativeStorageKey'], $data['derivativeHash'], $data['derivativeVersion'],
-            $data['derivativeBytes'], $data['derivativeVersionId'],
+            $data['derivativeBytes'],
             $data['sourceWidth'], $data['sourceHeight'], $data['outputWidth'], $data['outputHeight'],
             $data['sharpness'], $data['dynamicRange'], $data['blankRatio'], $data['clippingRatio'],
             $data['skewDegrees'], $data['perspectiveStatus'], (new ProjectiveTransformFactory)->identity(), $data['warnings'],

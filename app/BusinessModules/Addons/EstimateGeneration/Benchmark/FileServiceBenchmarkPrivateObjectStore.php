@@ -19,7 +19,7 @@ final readonly class FileServiceBenchmarkPrivateObjectStore implements Benchmark
     {
         $this->assertPath($path, $maxBytes);
         try {
-            $descriptor = $this->files->describeVersion($path, null, $maxBytes);
+            $descriptor = $this->files->describeCurrent($path, $maxBytes);
         } catch (\Throwable) {
             throw new BenchmarkContractException('private_object_unavailable');
         }
@@ -36,7 +36,7 @@ final readonly class FileServiceBenchmarkPrivateObjectStore implements Benchmark
             $contents,
             strlen($contents),
             hash('sha256', $contents),
-            $descriptor['etag'], $descriptor['version_id'], $descriptor['content_type'],
+            $descriptor['etag'], $descriptor['content_type'],
         );
     }
 
@@ -50,19 +50,18 @@ final readonly class FileServiceBenchmarkPrivateObjectStore implements Benchmark
             throw new BenchmarkContractException('private_object_write_failed');
         }
         if (! hash_equals($expectedHash, $stored['sha256']) || $stored['size'] !== strlen($body)
-            || $stored['content_type'] !== $contentType || ! is_string($stored['version_id'])
-            || trim($stored['version_id']) === '') {
+            || $stored['content_type'] !== $contentType) {
             throw new BenchmarkContractException($stored['created'] ? 'private_object_write_integrity_mismatch' : 'private_object_immutable_conflict');
         }
 
         return new BenchmarkPrivateObject($path, $stored['body'], $stored['size'], $stored['sha256'],
-            $stored['etag'], $stored['version_id'], $stored['content_type'], $stored['created']);
+            $stored['etag'], $stored['content_type'], $stored['created']);
     }
 
     public function removeCreated(BenchmarkPrivateObject $object): void
     {
         if ($object->created) {
-            $this->files->removeImmutable($object->path, $object->versionId);
+            $this->files->removeImmutable($object->path);
         }
     }
 

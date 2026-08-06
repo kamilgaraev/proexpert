@@ -43,17 +43,12 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
         }
 
         try {
-            $versionId = is_array($document->meta) ? $document->meta['storage_version_id'] ?? null : null;
-            if (! is_string($versionId) || trim($versionId) === '') {
-                throw new TypedFailureException(FailureCategory::Terminal, 'document_source_provenance_required');
-            }
             $source = $this->reader->read(
                 (int) $organization->getKey(),
                 (string) $document->storage_path,
                 $maxBytes,
                 $declaredBytes,
                 $sourceVersion,
-                $versionId,
             );
             $offset = 0;
             while ($offset < $source->bytes) {
@@ -113,7 +108,6 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
             $path,
             $stored['size'],
             'sha256:'.$stored['sha256'],
-            (string) $stored['version_id'],
             $contentType,
         );
     }

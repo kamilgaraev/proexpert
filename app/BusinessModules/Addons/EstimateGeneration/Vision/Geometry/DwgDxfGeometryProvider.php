@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry;
 
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProvenance;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\Models\Organization;
@@ -37,7 +37,6 @@ final readonly class DwgDxfGeometryProvider implements CadGeometryProvider
             max(1, $this->maxInputBytes),
             $source->artifactBytes,
             $source->artifactSha256,
-            $source->artifactVersionId,
         )->body;
         $root = $this->workspaceRoot !== '' ? $this->workspaceRoot : sys_get_temp_dir();
         $directory = $root.DIRECTORY_SEPARATOR.'most-cad-source-'.bin2hex(random_bytes(12));

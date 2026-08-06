@@ -25,7 +25,6 @@ final class PipelineArtifactEnvelopeTest extends TestCase
             'org-2/estimate-generation/sessions/1/pipeline/attempts/123e4567-e89b-12d3-a456-426614174000/object.json',
             'sha256:'.str_repeat('c', 64),
             120,
-            'version-1',
         );
         $output = PipelineStageOutput::create($definition, $input, $dependencies, $reference);
 
@@ -45,7 +44,6 @@ final class PipelineArtifactEnvelopeTest extends TestCase
             'org-2/estimate-generation/sessions/1/pipeline/attempts/123e4567-e89b-12d3-a456-426614174000/understand_documents.json',
             'sha256:'.str_repeat('c', 64),
             973,
-            'version-1',
         );
         $output = PipelineStageOutput::create($definition, $input, [], $reference);
         $stored = $output->envelope();
@@ -55,7 +53,6 @@ final class PipelineArtifactEnvelopeTest extends TestCase
                 'kind' => $stored['artifact']['kind'],
                 'bytes' => (string) $stored['artifact']['bytes'],
                 'object_key' => $stored['artifact']['object_key'],
-                'version_id' => $stored['artifact']['version_id'],
                 'content_version' => $stored['artifact']['content_version'],
             ],
             'input_version' => $stored['input_version'],

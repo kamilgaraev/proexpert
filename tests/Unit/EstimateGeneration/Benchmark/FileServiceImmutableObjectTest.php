@@ -24,21 +24,25 @@ final class FileServiceImmutableObjectTest extends TestCase
 {
     public function test_conditional_put_returns_authoritative_provider_descriptor(): void
     {
-        $client = new RecordingS3Client([new Result(['ETag' => '"etag-1"', 'VersionId' => 'version-1'])]);
+        $client = new RecordingS3Client([new Result(['ETag' => '"etag-1"'])]);
 
         $stored = $this->files($client)->putImmutable('org-7/object.json', 'body', 'application/json');
 
         self::assertTrue($stored['created']);
         self::assertSame('etag-1', $stored['etag']);
-        self::assertSame('version-1', $stored['version_id']);
-        self::assertSame(['Bucket' => 'most', 'Key' => 'org-7/object.json', 'Body' => 'body',
-            'ContentType' => 'application/json', 'IfNoneMatch' => '*'], $client->calls[0]['arguments']);
+        self::assertArrayNotHasKey('version_id', $stored);
+        self::assertSame('most', $client->calls[0]['arguments']['Bucket']);
+        self::assertSame('org-7/object.json', $client->calls[0]['arguments']['Key']);
+        self::assertSame('body', $client->calls[0]['arguments']['Body']);
+        self::assertSame('application/json', $client->calls[0]['arguments']['ContentType']);
+        self::assertSame('*', $client->calls[0]['arguments']['IfNoneMatch']);
+        self::assertArrayNotHasKey('VersionId', $client->calls[0]['arguments']);
     }
 
     public function test_ai_estimator_immutable_object_is_tagged_for_module_lifecycle(): void
     {
         $client = new RecordingS3Client([
-            new Result(['ETag' => '"etag-1"', 'VersionId' => 'version-1']),
+            new Result(['ETag' => '"etag-1"']),
             new Result,
         ]);
 
@@ -49,7 +53,7 @@ final class FileServiceImmutableObjectTest extends TestCase
         );
 
         self::assertSame('putObjectTagging', $client->calls[1]['name']);
-        self::assertSame('version-1', $client->calls[1]['arguments']['VersionId']);
+        self::assertArrayNotHasKey('VersionId', $client->calls[1]['arguments']);
         self::assertSame([
             'TagSet' => [['Key' => 'most-module', 'Value' => 'estimate-generation']],
         ], $client->calls[1]['arguments']['Tagging']);
@@ -57,7 +61,7 @@ final class FileServiceImmutableObjectTest extends TestCase
 
     public function test_ordinary_immutable_object_is_not_tagged(): void
     {
-        $client = new RecordingS3Client([new Result(['ETag' => '"etag-1"', 'VersionId' => 'version-1'])]);
+        $client = new RecordingS3Client([new Result(['ETag' => '"etag-1"'])]);
 
         $this->files($client)->putImmutable('org-7/documents/object.json', 'body', 'application/json');
 
@@ -65,22 +69,23 @@ final class FileServiceImmutableObjectTest extends TestCase
         self::assertSame('putObject', $client->calls[0]['name']);
     }
 
-    public function test_precondition_conflict_reads_same_version_and_delete_targets_exact_version(): void
+    public function test_precondition_conflict_reads_and_deletes_the_same_current_key(): void
     {
         $client = new RecordingS3Client;
         $command = $this->createMock(CommandInterface::class);
         $client->responses = [new AwsException('conflict', $command, ['response' => new Response(412)]),
-            new Result(['ETag' => '"etag-existing"', 'VersionId' => 'version-existing', 'ContentType' => 'application/json', 'ContentLength' => 4]),
-            new Result(['Body' => Utils::streamFor('body'), 'VersionId' => 'version-existing']), new Result];
+            new Result(['ETag' => '"etag-existing"', 'ContentType' => 'application/json', 'ContentLength' => 4]),
+            new Result(['Body' => Utils::streamFor('body')]), new Result];
         $files = $this->files($client);
 
         $stored = $files->putImmutable('org-7/object.json', 'body', 'application/json');
-        $files->removeImmutable($stored['path'], $stored['version_id']);
+        $files->removeImmutable($stored['path']);
 
         self::assertFalse($stored['created']);
         self::assertSame(hash('sha256', 'body'), $stored['sha256']);
-        self::assertSame('version-existing', $client->calls[2]['arguments']['VersionId']);
-        self::assertSame('version-existing', $client->calls[3]['arguments']['VersionId']);
+        self::assertArrayNotHasKey('VersionId', $client->calls[1]['arguments']);
+        self::assertArrayNotHasKey('VersionId', $client->calls[2]['arguments']);
+        self::assertArrayNotHasKey('VersionId', $client->calls[3]['arguments']);
     }
 
     public function test_missing_s3_client_capability_fails_closed(): void
@@ -106,8 +111,8 @@ final class FileServiceImmutableObjectTest extends TestCase
         $client = new RecordingS3Client;
         $command = $this->createMock(CommandInterface::class);
         $client->responses = [new AwsException('conflict', $command, ['response' => new Response(409)]),
-            new Result(['ETag' => '"other"', 'VersionId' => 'version-other', 'ContentType' => 'application/json', 'ContentLength' => 9]),
-            new Result(['Body' => Utils::streamFor('different'), 'VersionId' => 'version-other'])];
+            new Result(['ETag' => '"other"', 'ContentType' => 'application/json', 'ContentLength' => 9]),
+            new Result(['Body' => Utils::streamFor('different')])];
         $body = json_encode([['case_id' => 'case-1']], JSON_THROW_ON_ERROR);
         $hash = hash('sha256', $body);
         $path = 'org-7/estimate-generation/benchmarks/123e4567-e89b-12d3-a456-426614174000/'.$hash.'.json';
@@ -119,11 +124,11 @@ final class FileServiceImmutableObjectTest extends TestCase
 
     public function test_oversized_head_rejects_before_get(): void
     {
-        $client = new RecordingS3Client([new Result(['VersionId' => 'v1', 'ContentLength' => 11])]);
+        $client = new RecordingS3Client([new Result(['ContentLength' => 11])]);
 
         $this->expectExceptionMessage('s3_object_size_invalid');
         try {
-            $this->files($client)->describeVersion('org-7/object.json', 'v1', 10);
+            $this->files($client)->describeCurrent('org-7/object.json', 10);
         } finally {
             self::assertCount(1, $client->calls);
             self::assertSame('headObject', $client->calls[0]['name']);
@@ -133,34 +138,35 @@ final class FileServiceImmutableObjectTest extends TestCase
     public function test_stream_larger_than_declared_length_is_rejected(): void
     {
         $client = new RecordingS3Client([
-            new Result(['VersionId' => 'v1', 'ContentLength' => 4]),
-            new Result(['VersionId' => 'v1', 'Body' => Utils::streamFor('overflow')]),
+            new Result(['ContentLength' => 4]),
+            new Result(['Body' => Utils::streamFor('overflow')]),
         ]);
 
         $this->expectExceptionMessage('s3_object_size_mismatch');
-        $this->files($client)->describeVersion('org-7/object.json', 'v1', 20);
+        $this->files($client)->describeCurrent('org-7/object.json', 20);
     }
 
-    public function test_new_object_without_provider_version_fails_closed(): void
+    public function test_new_object_does_not_require_a_provider_version(): void
     {
         $client = new RecordingS3Client([new Result(['ETag' => 'etag'])]);
 
-        $this->expectException(VersionedObjectIntegrityException::class);
-        $this->expectExceptionMessage('s3_bucket_versioning_required');
-        $this->files($client)->putImmutable('org-7/object.json', 'body', 'application/json');
+        $stored = $this->files($client)->putImmutable('org-7/object.json', 'body', 'application/json');
+
+        self::assertSame(hash('sha256', 'body'), $stored['sha256']);
+        self::assertArrayNotHasKey('version_id', $stored);
     }
 
-    public function test_missing_pinned_version_is_integrity_failure(): void
+    public function test_missing_current_key_is_integrity_failure(): void
     {
         $client = new RecordingS3Client;
         $command = $this->createMock(CommandInterface::class);
         $client->responses = [new AwsException('provider wording is irrelevant', $command, [
             'response' => new Response(404),
-            'code' => 'NoSuchVersion',
+            'code' => 'NoSuchKey',
         ])];
 
         $this->expectException(VersionedObjectIntegrityException::class);
-        $this->files($client)->describeVersion('org-7/object.json', 'missing-version', 20);
+        $this->files($client)->describeCurrent('org-7/object.json', 20);
     }
 
     public function test_provider_outage_is_transport_failure(): void
@@ -173,7 +179,7 @@ final class FileServiceImmutableObjectTest extends TestCase
         ])];
 
         $this->expectException(VersionedObjectTransportException::class);
-        $this->files($client)->describeVersion('org-7/object.json', 'version-1', 20);
+        $this->files($client)->describeCurrent('org-7/object.json', 20);
     }
 
     private function files(S3ClientInterface $client): FileService

@@ -479,7 +479,7 @@ vendor/bin/phpstan analyse app/Services/Storage app/Console/Commands app/Busines
 
 Expected: тесты PASS; `rg` не возвращает удалённые команды.
 
-- [ ] **Step 5: Commit, PR, merge и deploy**
+- [x] **Step 5: Commit, PR, merge и deploy**
 
 Commit: `refactor[backend]: удалена устаревшая S3-инфраструктура`.
 
@@ -509,25 +509,25 @@ Commit: `refactor[backend]: удалена устаревшая S3-инфрас�
 - Consumes: обновлённый `StoredFile(organizationPath, etag, sizeBytes, sha256, mime)` из gateway.
 - Produces: отчёты и остальные домены идентифицируют объект по уникальному key + SHA-256; таблицы не содержат S3 `VersionId`.
 
-- [ ] **Step 1: Написать failing контрактные тесты**
+- [x] **Step 1: Написать failing контрактные тесты**
 
 Проверить, что объект отчёта содержит `storage_key`, `etag`, `sha256`, `size_bytes`, `mime_type`, но не `version_id`; download handler подписывает текущий уникальный key; reconciliation перечисляет ключи под точным export prefix без `ListObjectVersions`.
 
-- [ ] **Step 2: Проверить RED**
+- [x] **Step 2: Проверить RED**
 
 Run: `php artisan test tests/Unit/Reporting/Exports --stop-on-failure`
 
 Expected: FAIL на текущем VersionId-контракте.
 
-- [ ] **Step 3: Переписать прикладные контракты**
+- [x] **Step 3: Переписать прикладные контракты**
 
 Заменить `versionId` на `storageKey`/`sha256`, `ListObjectVersions` на `ListObjectsV2` или gateway-list текущих ключей, presigned download без `VersionId`, delete по актуальному ключу. Не трогать доменные `document_version_id` и прочие бизнес-версии.
 
-- [ ] **Step 4: Создать destructive reset migration**
+- [x] **Step 4: Создать destructive reset migration**
 
 `up()` в транзакционно допустимом порядке удаляет строки таблиц, чьи объекты не переносятся (старые `report_files`, report export artifacts, storage cleanup debts, незавершённые multipart/file records), очищает nullable storage-ссылки в сохраняемых бизнес-таблицах и затем удаляет только S3-поля/индексы/constraints. `personal_files` уже очищается и получает organization scope в Task 3. `down()` восстанавливает структуру колонок, но не данные, и это явно отражается именем/описанием миграции.
 
-- [ ] **Step 5: Статически проверить миграцию и GREEN**
+- [x] **Step 5: Статически проверить миграцию и GREEN**
 
 Run:
 

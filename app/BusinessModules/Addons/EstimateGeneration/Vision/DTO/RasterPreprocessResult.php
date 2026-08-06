@@ -14,7 +14,6 @@ final readonly class RasterPreprocessResult
         public string $derivativeHash,
         public string $derivativeVersion,
         public int $derivativeBytes,
-        public string $derivativeVersionId,
         public int $sourceWidth,
         public int $sourceHeight,
         public int $outputWidth,
@@ -29,10 +28,10 @@ final readonly class RasterPreprocessResult
         public array $warnings,
     ) {
         $allowedWarnings = ['perspective_confirmation_required', 'image_blurred', 'low_contrast', 'mostly_blank'];
-        if (preg_match('#^org-[1-9][0-9]*/estimate-generation/[1-9][0-9]*/vision/v1/[a-f0-9]{64}\.png$#', $derivativeStorageKey) !== 1
+        if (preg_match('#^org-[1-9][0-9]*/estimate-generation/[1-9][0-9]*/vision/v1/user-system/[a-f0-9]{64}\.png$#', $derivativeStorageKey) !== 1
             || preg_match('/^sha256:[a-f0-9]{64}$/', $derivativeHash) !== 1
             || ! str_ends_with($derivativeStorageKey, substr($derivativeHash, 7).'.png')
-            || $derivativeVersion !== 'raster-preprocessor:v1' || $derivativeBytes < 1 || trim($derivativeVersionId) === ''
+            || $derivativeVersion !== 'raster-preprocessor:v1' || $derivativeBytes < 1
             || min($sourceWidth, $sourceHeight, $outputWidth, $outputHeight) < 1
             || max($sourceWidth, $sourceHeight) > 50_000 || max($outputWidth, $outputHeight) > 8192
             || ! is_finite($sharpness) || $sharpness < 0.0 || $sharpness > 1.0

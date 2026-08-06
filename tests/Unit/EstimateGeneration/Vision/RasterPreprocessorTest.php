@@ -36,7 +36,7 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         self::assertSame(640, $result->sourceWidth);
         self::assertSame(320, $result->sourceHeight);
         self::assertLessThanOrEqual(256, max($result->outputWidth, $result->outputHeight));
-        self::assertMatchesRegularExpression('#^org-7/estimate-generation/11/vision/v1/[a-f0-9]{64}\.png$#', $result->derivativeStorageKey);
+        self::assertMatchesRegularExpression('#^org-7/estimate-generation/11/vision/v1/user-system/[a-f0-9]{64}\.png$#', $result->derivativeStorageKey);
         self::assertSame('sha256:'.hash('sha256', Storage::disk('s3')->get($result->derivativeStorageKey)), $result->derivativeHash);
         self::assertSame('not_required', $result->perspectiveStatus);
         self::assertEqualsWithDelta([0.25, 0.75], $result->transform->toSource($result->transform->toDerivative([0.25, 0.75])), 0.000001);
@@ -305,7 +305,7 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
 
         $sha = 'sha256:'.hash('sha256', $content);
 
-        return new RasterPreprocessInput(7, 11, 13, 1, $sha, $storageKey, $contentType, max(1, strlen($content)), $sha, 'test-version', $quad, $perspectiveRequired, 20_000_000, $maxPixels, $maxDimension);
+        return new RasterPreprocessInput(7, 11, 13, 1, $sha, $storageKey, $contentType, max(1, strlen($content)), $sha, $quad, $perspectiveRequired, 20_000_000, $maxPixels, $maxDimension);
     }
 
     private function files(): FileService
@@ -314,12 +314,12 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         {
             public function __construct() {}
 
-            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            public function describeCurrent(string $path, int $maxBytes = 64_000_000): array
             {
                 $body = Storage::disk('s3')->get($path);
 
                 return ['path' => $path, 'body' => $body, 'size' => strlen($body), 'sha256' => hash('sha256', $body),
-                    'etag' => null, 'version_id' => 'test-version', 'content_type' => 'image/png'];
+                    'etag' => null, 'content_type' => 'image/png'];
             }
 
             public function putImmutable(string $path, string $body, string $contentType): array
@@ -331,7 +331,7 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
                 $stored = Storage::disk('s3')->get($path);
 
                 return ['path' => $path, 'body' => $stored, 'size' => strlen($stored), 'sha256' => hash('sha256', $stored),
-                    'etag' => null, 'version_id' => 'derivative-version', 'content_type' => $contentType, 'created' => $created];
+                    'etag' => null, 'content_type' => $contentType, 'created' => $created];
             }
         };
     }

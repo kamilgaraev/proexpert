@@ -16,7 +16,7 @@ final class ReportDownloadLinkResource extends JsonResource
 
         return [
             'url' => $this->resource->url,
-            'version_id' => $this->resource->versionId,
+            'storage_key' => $this->resource->storageKey,
             'expires_at' => $this->resource->expiresAt->format(DATE_ATOM),
         ];
     }

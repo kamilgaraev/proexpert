@@ -34,9 +34,6 @@ return [
         'lease_seconds' => 960,
         'watchdog_batch_size' => 100,
     ],
-    'artifacts' => [
-        'reconciliation_grace_seconds' => 3600,
-    ],
     'trusted_seal_keys' => $trustedSealKeys,
     'pdf_budgets' => [],
     'alerts' => [

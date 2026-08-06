@@ -77,7 +77,7 @@ final readonly class QualityDefectTransitionRecorder
             if ($evidence['type'] === 'quality_defect_photo') {
                 $required = [
                     'caption', 'content_hash', 'created_at', 'metadata', 'mime_type', 'photo_type',
-                    'size_bytes', 'storage_etag', 'storage_key', 'storage_sha256', 'storage_version_id', 'uploaded_by',
+                    'size_bytes', 'storage_etag', 'storage_key', 'storage_sha256', 'uploaded_by',
                     'storage_identity_verified',
                 ];
                 if (array_filter($required, static fn (string $key): bool => ! array_key_exists($key, $evidence)) !== []
@@ -94,7 +94,6 @@ final readonly class QualityDefectTransitionRecorder
                         'storage_etag' => $evidence['storage_etag'],
                         'storage_key' => $evidence['storage_key'],
                         'storage_sha256' => $evidence['storage_sha256'],
-                        'storage_version_id' => $evidence['storage_version_id'],
                         'storage_identity_verified' => true,
                         'type' => $evidence['photo_type'],
                         'uploaded_by' => $evidence['uploaded_by'],

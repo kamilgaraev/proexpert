@@ -6,8 +6,8 @@ namespace Tests\Unit\EstimateGeneration\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitData;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ImageDocumentAdapter;
@@ -52,7 +52,7 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
             'mime_type' => $mimeType,
             'storage_path' => 'org-10/source/plan.dwg',
             'file_size_bytes' => 256,
-            'meta' => ['storage_version_id' => 'dwg-v1'],
+            'meta' => ['storage_sha256' => str_repeat('f', 64)],
         ]);
 
         $units = $this->detector()->detect($document, 'sha256:'.str_repeat('f', 64));
@@ -74,14 +74,13 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
     public function ifc_is_rejected_until_a_dedicated_provider_is_available(
         string $filename,
         string $mimeType,
-    ): void
-    {
+    ): void {
         $document = new EstimateGenerationDocument([
             'filename' => $filename,
             'mime_type' => $mimeType,
             'storage_path' => 'org-10/source/model.ifc',
             'file_size_bytes' => 256,
-            'meta' => ['storage_version_id' => 'ifc-v1'],
+            'meta' => ['storage_sha256' => str_repeat('a', 64)],
         ]);
 
         try {
@@ -123,7 +122,7 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
             self::assertSame($coordinateSpace, $unit->locator['coordinate_space']);
             self::assertMatchesRegularExpression('/^org-10\//', $unit->locator['artifact_path']);
             self::assertMatchesRegularExpression('/^sha256:[a-f0-9]{64}$/', $unit->locator['artifact_sha256']);
-            self::assertNotSame('', $unit->locator['artifact_version_id']);
+            self::assertGreaterThan(0, $unit->locator['artifact_bytes']);
             if ($type === DocumentUnitType::SpreadsheetSheet) {
                 self::assertSame('application/json', $unit->locator['content_type']);
                 self::assertSame('spreadsheet_sheet', $unit->locator['artifact_kind']);
@@ -156,7 +155,7 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
                     'mime_type' => 'image/png',
                     'storage_path' => 'org-10/source/photo.png',
                     'file_size_bytes' => 128,
-                    'meta' => ['storage_version_id' => 'image-v1'],
+                    'meta' => ['storage_sha256' => str_repeat('b', 64)],
                 ]),
                 'sha256:'.str_repeat('b', 64),
                 DocumentUnitType::RasterImage,
@@ -170,7 +169,7 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
                     'mime_type' => 'image/vnd.dwg',
                     'storage_path' => 'org-10/source/plan.dwg',
                     'file_size_bytes' => 256,
-                    'meta' => ['storage_version_id' => 'dwg-v1'],
+                    'meta' => ['storage_sha256' => str_repeat('c', 64)],
                 ]),
                 'sha256:'.str_repeat('c', 64),
                 DocumentUnitType::CadDrawing,
@@ -184,7 +183,7 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
                     'mime_type' => 'application/dxf',
                     'storage_path' => 'org-10/source/plan.dxf',
                     'file_size_bytes' => 256,
-                    'meta' => ['storage_version_id' => 'dxf-v1'],
+                    'meta' => ['storage_sha256' => str_repeat('d', 64)],
                 ]),
                 'sha256:'.str_repeat('d', 64),
                 DocumentUnitType::CadDrawing,
@@ -231,7 +230,6 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
                     sprintf('org-10/artifacts/%s-%d', $type->value, $index),
                     max(1, strlen($content)),
                     'sha256:'.hash('sha256', $content),
-                    sprintf('artifact-%s-%d', $type->value, $index),
                     $contentType,
                 );
             }

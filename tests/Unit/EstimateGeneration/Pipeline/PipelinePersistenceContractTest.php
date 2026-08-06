@@ -33,4 +33,19 @@ final class PipelinePersistenceContractTest extends TestCase
         self::assertStringNotContainsString('$claim->context->inputVersion, $draft[\'source_input_version\']', $publisher);
         self::assertStringNotContainsString('->read(', $publisher);
     }
+
+    #[Test]
+    public function storage_reset_invalidates_persisted_outputs_before_removing_the_legacy_locator(): void
+    {
+        $migration = file_get_contents(
+            dirname(__DIR__, 4).'/database/migrations/2026_08_06_000200_reset_legacy_file_storage_records.php',
+        );
+
+        self::assertIsString($migration);
+        self::assertStringContainsString("output_payload = output_payload - 'artifact'", $migration);
+        self::assertStringNotContainsString("output_payload #- '{artifact,version_id}'", $migration);
+        self::assertStringContainsString("status = 'completed'", $migration);
+        self::assertStringContainsString("'invalidated'", $migration);
+        self::assertStringContainsString('eg_checkpoint_immutable_update', $migration);
+    }
 }
