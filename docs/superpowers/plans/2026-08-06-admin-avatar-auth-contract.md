@@ -4,7 +4,7 @@
 
 **Goal:** Показывать один и тот же актуальный аватар администратора в профиле и шапке МОСТ без дублирующих запросов и раскрытия внутреннего S3-ключа.
 
-**Architecture:** Laravel сериализует текущего пользователя единым `UserResource` в login и `/auth/me`. React хранит текущего пользователя только в `AuthContext`; `Layout` читает это состояние, а сохранение профиля обновляет его через явный метод контекста.
+**Architecture:** Laravel сериализует текущего пользователя единым `AdminAuthUserResource` в login и `/auth/me`. React хранит текущего пользователя только в `AuthContext`; `Layout` читает это состояние, а сохранение профиля обновляет его через явный метод контекста с проверкой идентификатора пользователя.
 
 **Tech Stack:** Laravel 11, PHP 8.2, React, TypeScript, Vitest, Material UI.
 
@@ -14,6 +14,7 @@
 
 **Files:**
 - Modify: `app/Http/Controllers/Api/V1/Admin/Auth/AuthController.php`
+- Create: `app/Http/Resources/Api/V1/Admin/Auth/AdminAuthUserResource.php`
 - Create: `tests/Unit/Http/Controllers/Api/V1/Admin/AuthControllerProfileResponseTest.php`
 
 **Step 1: Write the failing test**
@@ -27,7 +28,7 @@ Expected: FAIL, потому что контроллер возвращает н
 
 **Step 3: Write minimal implementation**
 
-Импортировать `UserResource` и использовать его для поля `user` в `login()` и `me()`.
+Добавить `AdminAuthUserResource`, сохранить прежние публичные auth-поля, исключить `avatar_path`, добавить `avatar_url` и использовать ресурс в `login()` и `me()`.
 
 **Step 4: Run test to verify it passes**
 

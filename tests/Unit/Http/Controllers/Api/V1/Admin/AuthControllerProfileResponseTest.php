@@ -27,7 +27,7 @@ final class AuthControllerProfileResponseTest extends TestCase
 
     public function test_me_returns_public_avatar_url_without_internal_storage_path(): void
     {
-        $user = new class(['name' => 'Анна Админова', 'email' => 'anna@example.com', 'avatar_path' => 'org-38/avatars/avatar.png', 'is_active' => true, 'current_organization_id' => 38]) extends User
+        $user = new class(['name' => 'Анна Админова', 'email' => 'anna@example.com', 'avatar_path' => 'org-38/avatars/avatar.png', 'is_active' => true, 'current_organization_id' => 38, 'settings' => ['locale' => 'ru'], 'last_login_ip' => '192.0.2.10']) extends User
         {
             public function getAvatarUrlAttribute(): ?string
             {
@@ -45,6 +45,8 @@ final class AuthControllerProfileResponseTest extends TestCase
         self::assertTrue($payload['success']);
         self::assertArrayHasKey('avatar_url', $payload['data']['user']);
         self::assertArrayNotHasKey('avatar_path', $payload['data']['user']);
+        self::assertSame(['locale' => 'ru'], $payload['data']['user']['settings']);
+        self::assertSame('192.0.2.10', $payload['data']['user']['last_login_ip']);
     }
 
     private function controller(): AuthController
