@@ -42,6 +42,16 @@ final class OrganizationStoragePathTest extends TestCase
                 'pdf',
             ),
         );
+        self::assertSame(
+            'org-42/warehouse/exports/user-7/custody/summary/01J5EXPORT.xlsx',
+            OrganizationStoragePath::forDomain(
+                42,
+                'warehouse',
+                'exports/user-7/custody/summary',
+                '01J5EXPORT',
+                'xlsx',
+            ),
+        );
     }
 
     #[DataProvider('invalidStrictPathProvider')]

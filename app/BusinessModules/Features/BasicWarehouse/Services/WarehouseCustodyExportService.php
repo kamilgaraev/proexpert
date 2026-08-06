@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -29,7 +32,7 @@ final class WarehouseCustodyExportService
         private readonly FileService $fileService
     ) {}
 
-    public function export(int $organizationId, array $filters, string $mode): string
+    public function export(int $organizationId, array $filters, string $mode, int $userId): CurrentStoredFile
     {
         $mode = $this->normalizeMode($mode);
         $spreadsheet = new Spreadsheet;
@@ -40,12 +43,32 @@ final class WarehouseCustodyExportService
             $this->fillSummarySheet($spreadsheet, $organizationId, $filters);
         }
 
-        return $this->saveSpreadsheet($spreadsheet, $organizationId, $mode);
+        return $this->saveSpreadsheet($spreadsheet, $organizationId, $userId, $mode);
     }
 
-    public function temporaryUrl(string $path, int $minutes = 15): ?string
-    {
-        return $this->fileService->temporaryUrl($path, $minutes);
+    public function temporaryUrl(
+        int $organizationId,
+        int $userId,
+        string $path,
+        int $minutes = 15,
+    ): string {
+        $pattern = sprintf(
+            '#^org-%d/warehouse/exports/user-%d/custody/(?:detail|summary)/[^/]+\.xlsx$#D',
+            $organizationId,
+            $userId,
+        );
+
+        if (
+            $organizationId < 1
+            || $userId < 1
+            || $minutes < 1
+            || $minutes > 60
+            || preg_match($pattern, $path) !== 1
+        ) {
+            throw new InvalidArgumentException('warehouse_custody_export_path_invalid');
+        }
+
+        return $this->fileService->temporaryDownloadUrl($path, $minutes * 60);
     }
 
     private function normalizeMode(string $mode): string
@@ -148,8 +171,12 @@ final class WarehouseCustodyExportService
         $this->styleSheet($sheet, 'A', 'G', max(1, $row - 1));
     }
 
-    private function saveSpreadsheet(Spreadsheet $spreadsheet, int $organizationId, string $mode): string
-    {
+    private function saveSpreadsheet(
+        Spreadsheet $spreadsheet,
+        int $organizationId,
+        int $userId,
+        string $mode,
+    ): CurrentStoredFile {
         $writer = new Xlsx($spreadsheet);
 
         ob_start();
@@ -160,20 +187,20 @@ final class WarehouseCustodyExportService
             throw new RuntimeException(trans_message('basic_warehouse.custody.errors.export_failed'));
         }
 
-        $path = sprintf(
-            'org-%d/exports/warehouse/custody/custody_%s_%s.xlsx',
+        $path = OrganizationStoragePath::forDomain(
             $organizationId,
-            $mode,
-            now()->format('Ymd_His_u')
+            'warehouse',
+            "exports/user-{$userId}/custody/{$mode}",
+            Str::uuid()->toString(),
+            'xlsx',
         );
 
-        $stored = $this->fileService->disk()->put($path, $content, 'private');
-
-        if ($stored === false) {
-            throw new RuntimeException(trans_message('basic_warehouse.custody.errors.export_failed'));
-        }
-
-        return $path;
+        return $this->fileService->putPrivate(
+            $path,
+            $content,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            hash('sha256', $content),
+        );
     }
 
     private function styleSheet(Worksheet $sheet, string $firstColumn, string $lastColumn, int $lastRow): void
