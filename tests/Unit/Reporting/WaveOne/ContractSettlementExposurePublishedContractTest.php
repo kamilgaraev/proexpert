@@ -43,7 +43,7 @@ final class ContractSettlementExposurePublishedContractTest extends TestCase
         self::assertSame([], $definition->permissionPolicy->sensitivePermissions);
         self::assertSame([], $definition->permissionPolicy->auditPermissions);
         self::assertSame(['csv', 'xlsx'], $definition->formats);
-        self::assertSame('2.0.0', $definition->contractVersion);
+        self::assertSame('3.0.0', $definition->contractVersion);
         self::assertContains('party', array_column($definition->columns, 'id'));
         self::assertNotContains('party_type', array_column($definition->columns, 'id'));
         self::assertNotContains('party_key', array_column($definition->columns, 'id'));
