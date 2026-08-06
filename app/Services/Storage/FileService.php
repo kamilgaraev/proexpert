@@ -131,6 +131,13 @@ class FileService
         return $stream;
     }
 
+    public function existsCurrent(string $key): bool
+    {
+        $this->assertOrganizationPath($key);
+
+        return $this->disk()->exists($key);
+    }
+
     public function deleteCurrent(string $key): void
     {
         $this->assertOrganizationPath($key);
@@ -222,6 +229,7 @@ class FileService
         if ($etag === '') {
             throw new VersionedObjectIntegrityException('s3_multipart_part_identity_invalid');
         }
+
         return new MultipartPart(
             $upload->organizationPath,
             $upload->uploadId,
@@ -276,6 +284,7 @@ class FileService
         ) {
             throw new VersionedObjectIntegrityException('s3_multipart_completion_identity_invalid');
         }
+
         return new StoredFile(
             $upload->organizationPath,
             $versionId,
@@ -436,8 +445,7 @@ class FileService
         string $path,
         ?string $versionId,
         int $maxBytes = 64_000_000,
-    ): array
-    {
+    ): array {
         return $this->describeVersionInternal($path, $versionId, $maxBytes, $maxBytes > 0);
     }
 
@@ -447,8 +455,7 @@ class FileService
         ?string $versionId,
         int $maxBytes,
         bool $includeBody,
-    ): array
-    {
+    ): array {
         if ($maxBytes === 0 || $maxBytes === PHP_INT_MIN) {
             throw new \InvalidArgumentException('s3_object_size_invalid');
         }
