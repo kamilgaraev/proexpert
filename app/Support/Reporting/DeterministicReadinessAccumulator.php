@@ -6,7 +6,7 @@ namespace App\Support\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceReadinessStatus;
-use DateTimeImmutable;
+use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 
 final class DeterministicReadinessAccumulator
@@ -56,7 +56,7 @@ final class DeterministicReadinessAccumulator
             $watermark,
             $this->eligible->sha256(),
             $this->projected->sha256(),
-            new DateTimeImmutable,
+            CarbonImmutable::now(),
         );
     }
 }

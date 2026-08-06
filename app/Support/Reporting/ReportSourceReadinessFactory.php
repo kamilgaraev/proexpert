@@ -7,7 +7,7 @@ namespace App\Support\Reporting;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceReadinessStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use DateTimeImmutable;
+use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 
 final readonly class ReportSourceReadinessFactory
@@ -42,7 +42,7 @@ final readonly class ReportSourceReadinessFactory
             watermark: $watermark,
             inputHash: hash('sha256', CanonicalJson::encode($eligible)),
             outputHash: hash('sha256', CanonicalJson::encode($projected)),
-            verifiedAt: new DateTimeImmutable,
+            verifiedAt: CarbonImmutable::now(),
         );
     }
 }
