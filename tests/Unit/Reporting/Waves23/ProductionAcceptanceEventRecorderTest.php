@@ -34,6 +34,21 @@ final class ProductionAcceptanceEventRecorderTest extends TestCase
         ]);
         self::assertTrue(true);
 
+        $event->setAttribute('accepted_quantity_delta', '6.0000');
+        $identity->assertMatches($event, [
+            'accepted_quantity_delta' => '6.000',
+        ]);
+        $event->setAttribute('accepted_quantity_delta', '6.0001');
+
+        try {
+            $identity->assertMatches($event, [
+                'accepted_quantity_delta' => '6.0000',
+            ]);
+            self::fail('Fourth decimal place must remain part of immutable identity.');
+        } catch (InvalidArgumentException) {
+            self::assertTrue(true);
+        }
+
         $this->expectException(InvalidArgumentException::class);
         $identity->assertMatches($event, [
             'event_type' => 'accepted',

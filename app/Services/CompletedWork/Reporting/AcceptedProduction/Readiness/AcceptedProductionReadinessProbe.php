@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
+use App\Enums\CurrencyCode;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventUniverse;
 use App\Support\Reporting\DeterministicReadinessAccumulator;
 
@@ -46,7 +47,7 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             if ($event === null
                 || (string) $event->event_type !== (string) $candidate['event_type']
                 || $event->approved_rate_minor === null
-                || preg_match('/^[A-Z]{3}$/D', (string) $event->currency) !== 1
+                || CurrencyCode::tryFrom((string) $event->currency) === null
                 || trim((string) $event->currency_source) === ''
             ) {
                 continue;
@@ -66,8 +67,12 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
         $watermark = implode(':', [
             'owner',
             $stream->ownerWatermark,
+            'member',
+            $stream->ownerMemberWatermark,
             'event',
             $stream->eventWatermark,
+            'checkpoint',
+            $stream->historyBoundary->sourceHash,
         ]);
 
         return $readiness->finish(

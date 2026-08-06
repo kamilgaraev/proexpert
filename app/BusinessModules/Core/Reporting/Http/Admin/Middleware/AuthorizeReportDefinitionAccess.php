@@ -20,6 +20,7 @@ use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidat
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
 use App\Models\User;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionCandidateContract;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -85,6 +86,7 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.project-margin.options',
             'admin.reports.project-evm-control.runs.store',
             'admin.reports.project-evm-control.options',
+            'admin.reports.accepted-production-progress.runs.store',
             'admin.reports.wip-completion-forecast.runs.store',
             'admin.reports.wip-completion-forecast.options',
             'admin.reports.project-labor-cost.runs.store',
@@ -140,6 +142,7 @@ final readonly class AuthorizeReportDefinitionAccess
         if (in_array($reportCode, [
             BudgetPlanFactCandidateContract::CODE,
             ProjectEvmControlCandidateContract::CODE,
+            AcceptedProductionCandidateContract::CODE,
             ProjectMarginCandidateContract::CODE,
             WipCompletionForecastCandidateContract::CODE,
             ProjectLaborCostCandidateContract::CODE,

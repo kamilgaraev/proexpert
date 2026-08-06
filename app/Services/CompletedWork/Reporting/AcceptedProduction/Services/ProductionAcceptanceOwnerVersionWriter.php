@@ -101,25 +101,39 @@ final readonly class ProductionAcceptanceOwnerVersionWriter
 
     private function members(ContractPerformanceAct $act): array
     {
-        $members = $act->lines->isNotEmpty()
-            ? $act->lines->map(function (PerformanceActLine $line): array {
-                $work = $line->completedWork;
+        $completedWorkLines = $act->lines->filter(
+            static fn (PerformanceActLine $line): bool => $line->line_type === PerformanceActLine::TYPE_COMPLETED_WORK,
+        )->sortBy('id')->values();
+        $canonicalWorkIds = array_fill_keys(
+            $completedWorkLines
+                ->pluck('completed_work_id')
+                ->filter(static fn ($id): bool => $id !== null)
+                ->map(static fn ($id): int => (int) $id)
+                ->all(),
+            true,
+        );
+        $members = $completedWorkLines->map(function (PerformanceActLine $line): array {
+            $work = $line->completedWork;
 
-                return $this->member(
-                    'performance_act_line',
-                    (int) $line->id,
-                    $work,
-                    trim((string) $line->unit) !== ''
-                        ? (string) $line->unit
-                        : (string) ($work?->workType?->measurementUnit?->short_name ?? ''),
-                );
-            })->all()
-            : $act->completedWorks->map(fn ($work): array => $this->member(
+            return $this->member(
+                'performance_act_line',
+                (int) $line->id,
+                $work,
+                trim((string) $line->unit) !== ''
+                    ? (string) $line->unit
+                    : (string) ($work?->workType?->measurementUnit?->short_name ?? ''),
+            );
+        })->all();
+        $pivotMembers = $act->completedWorks
+            ->filter(static fn ($work): bool => ! isset($canonicalWorkIds[(int) $work->id]))
+            ->map(fn ($work): array => $this->member(
                 'completed_work',
                 (int) $work->id,
                 $work,
                 (string) ($work->workType?->measurementUnit?->short_name ?? ''),
-            ))->all();
+            ))
+            ->all();
+        $members = array_merge($members, $pivotMembers);
         usort($members, static fn (array $left, array $right): int => [
             $left['source_line_type'],
             $left['source_line_id'],

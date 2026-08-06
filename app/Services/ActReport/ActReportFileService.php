@@ -13,8 +13,10 @@ use App\Services\Storage\FileService;
 use App\Services\Storage\PersonalFileService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 use function trans_message;
 
@@ -48,23 +50,29 @@ class ActReportFileService
             throw new BusinessLogicException(trans_message('act_reports.file_upload_failed'), 500);
         }
 
-        return File::query()->create([
-            'organization_id' => $act->contract->organization_id,
-            'fileable_id' => $act->id,
-            'fileable_type' => ContractPerformanceAct::class,
-            'user_id' => $user?->id,
-            'name' => basename($path),
-            'original_name' => $uploadedFile->getClientOriginalName(),
-            'path' => $path,
-            'mime_type' => $uploadedFile->getClientMimeType(),
-            'size' => $uploadedFile->getSize(),
-            'disk' => 's3',
-            'type' => 'document',
-            'category' => $category,
-            'additional_info' => [
-                'description' => $description,
-            ],
-        ]);
+        try {
+            return File::query()->create([
+                'organization_id' => $act->contract->organization_id,
+                'fileable_id' => $act->id,
+                'fileable_type' => ContractPerformanceAct::class,
+                'user_id' => $user?->id,
+                'name' => basename($path),
+                'original_name' => $uploadedFile->getClientOriginalName(),
+                'path' => $path,
+                'mime_type' => $uploadedFile->getClientMimeType(),
+                'size' => $uploadedFile->getSize(),
+                'disk' => 's3',
+                'type' => 'document',
+                'category' => $category,
+                'additional_info' => [
+                    'description' => $description,
+                ],
+            ]);
+        } catch (Throwable $exception) {
+            $this->fileService->delete($path, $act->contract->organization);
+
+            throw $exception;
+        }
     }
 
     public function uploadSigned(
@@ -81,7 +89,20 @@ class ActReportFileService
             $description ?? trans_message('act_reports.signed_file_description')
         );
 
-        return $this->workflowService->markSigned($act, $file->id, (int) $user?->id);
+        try {
+            return $this->workflowService->markSigned($act, $file->id, (int) $user?->id);
+        } catch (Throwable $exception) {
+            $currentSignedFileId = ContractPerformanceAct::query()
+                ->whereKey($act->id)
+                ->value('signed_file_id');
+            if ((int) $currentSignedFileId !== (int) $file->id
+                && $this->fileService->delete($file->path, $act->contract->organization)
+            ) {
+                $file->delete();
+            }
+
+            throw $exception;
+        }
     }
 
     public function list(ContractPerformanceAct $act): Collection
@@ -127,10 +148,20 @@ class ActReportFileService
 
     public function delete(ContractPerformanceAct $act, mixed $file): void
     {
-        $file = $this->accessService->resolveActFile($act, $file);
+        DB::transaction(function () use ($act, $file): void {
+            $lockedAct = ContractPerformanceAct::query()
+                ->whereKey($act->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $lockedAct->loadMissing('contract.organization');
+            $resolvedFile = $this->accessService->resolveActFile($lockedAct, $file);
+            if ((int) $lockedAct->signed_file_id === (int) $resolvedFile->id) {
+                throw new BusinessLogicException(trans_message('act_reports.signed_file_cannot_delete'), 409);
+            }
 
-        $this->fileService->disk($act->contract->organization)->delete($file->path);
-        $file->delete();
+            $this->fileService->disk($lockedAct->contract->organization)->delete($resolvedFile->path);
+            $resolvedFile->delete();
+        });
     }
 
     public function copyToPersonalStorage(ContractPerformanceAct $act, mixed $file, User $user): PersonalFile

@@ -37,6 +37,7 @@ trait ActingTestSchema
             'work_types',
             'measurement_units',
             'supplementary_agreements',
+            'contract_project',
             'contracts',
             'contractors',
             'projects',
@@ -141,6 +142,12 @@ trait ActingTestSchema
             $table->boolean('is_multi_project')->default(false);
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('contract_project', function (Blueprint $table): void {
+            $table->foreignId('contract_id');
+            $table->foreignId('project_id');
+            $table->timestamps();
         });
 
         Schema::create('contract_state_events', function (Blueprint $table): void {

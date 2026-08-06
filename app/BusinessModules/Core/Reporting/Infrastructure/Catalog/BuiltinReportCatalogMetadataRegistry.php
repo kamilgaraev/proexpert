@@ -31,6 +31,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVa
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
 use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionBuiltinPublishedReport;
 
 final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatalogMetadataRegistry
 {
@@ -42,6 +43,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
         private ContractSettlementExposureBuiltinPublishedReport $contractSettlementExposure,
         private BaselineScheduleVarianceBuiltinPublishedReport $baselineScheduleVariance,
+        private AcceptedProductionBuiltinPublishedReport $acceptedProduction,
         private ProjectLaborCostBuiltinPublishedReport $projectLaborCost,
         private PayrollReadinessBuiltinPublishedReport $payrollReadiness,
         private WorkforceCapacityBuiltinPublishedReport $workforceCapacity,
@@ -70,6 +72,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
             $this->wipCompletionForecast->metadata()->code => $this->wipCompletionForecast->metadata(),
             $this->contractSettlementExposure->metadata()->code => $this->contractSettlementExposure->metadata(),
             $this->baselineScheduleVariance->metadata()->code => $this->baselineScheduleVariance->metadata(),
+            $this->acceptedProduction->metadata()->code => $this->acceptedProduction->metadata(),
             $this->projectLaborCost->metadata()->code => $this->projectLaborCost->metadata(),
             $this->payrollReadiness->metadata()->code => $this->payrollReadiness->metadata(),
             $this->workforceCapacity->metadata()->code => $this->workforceCapacity->metadata(),

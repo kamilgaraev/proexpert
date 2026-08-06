@@ -16,7 +16,7 @@ final class ProductionAcceptanceReversalSourceTest extends TestCase
     {
         $accepted = new ProductionAcceptanceEvent;
         $accepted->forceFill([
-            'accepted_quantity_delta' => '2.500',
+            'accepted_quantity_delta' => '2.5001',
             'approved_rate_minor' => 125_045,
             'contractor_id' => 19,
             'conversion_version' => 'unit_4',
@@ -35,7 +35,7 @@ final class ProductionAcceptanceReversalSourceTest extends TestCase
 
         $reversal = (new ProductionAcceptanceReversalSource)->fromAccepted($accepted);
 
-        self::assertSame('-2.500', $reversal['accepted_quantity_delta']);
+        self::assertSame('-2.5001', $reversal['accepted_quantity_delta']);
         self::assertSame(125_045, $reversal['approved_rate']->minor);
         self::assertSame('RUB', $reversal['approved_rate']->currency);
         self::assertSame('10.000', $reversal['planned_quantity']);

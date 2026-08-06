@@ -6,6 +6,7 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Database\Eloquent\Builder;
 use InvalidArgumentException;
 
@@ -21,6 +22,7 @@ final readonly class AcceptedProductionLineageFilter
         public array $zones,
         public ?string $periodFrom,
         public ?string $periodTo,
+        public string $timezone,
     ) {
         $this->assertValid();
     }
@@ -28,9 +30,8 @@ final readonly class AcceptedProductionLineageFilter
     public static function fromQuery(ReportQuery $query): self
     {
         $values = $query->filters->values;
-        $period = $values['period'] ?? [];
-        $from = $values['period_from'] ?? (is_array($period) ? ($period['from'] ?? null) : null);
-        $to = $values['period_to'] ?? (is_array($period) ? ($period['to'] ?? null) : null);
+        $from = $values['period_from'] ?? null;
+        $to = $values['period_to'] ?? null;
 
         return new self(
             asOf: $query->asOf->format(self::AS_OF_FORMAT),
@@ -40,6 +41,7 @@ final readonly class AcceptedProductionLineageFilter
             zones: self::stringList($values['zones'] ?? []),
             periodFrom: self::nullableDate($from),
             periodTo: self::nullableDate($to),
+            timezone: $query->scope->timezone->getName(),
         );
     }
 
@@ -53,6 +55,7 @@ final readonly class AcceptedProductionLineageFilter
             'period_from',
             'period_to',
             'statuses',
+            'timezone',
             'unit_codes',
             'zones',
         ]) {
@@ -69,6 +72,9 @@ final readonly class AcceptedProductionLineageFilter
             zones: self::stringList($value['zones']),
             periodFrom: self::nullableDate($value['period_from']),
             periodTo: self::nullableDate($value['period_to']),
+            timezone: is_string($value['timezone'])
+                ? $value['timezone']
+                : throw new InvalidArgumentException('accepted_production_lineage_filter_invalid'),
         );
     }
 
@@ -94,18 +100,16 @@ final readonly class AcceptedProductionLineageFilter
             )
             ->when(
                 $this->periodFrom !== null,
-                fn (Builder $query): Builder => $query->whereDate(
-                    'recognized_at',
-                    '>=',
-                    $this->periodFrom,
+                fn (Builder $query): Builder => $query->whereRaw(
+                    '(recognized_at AT TIME ZONE ?)::date >= ?',
+                    [$this->timezone, $this->periodFrom],
                 ),
             )
             ->when(
                 $this->periodTo !== null,
-                fn (Builder $query): Builder => $query->whereDate(
-                    'recognized_at',
-                    '<=',
-                    $this->periodTo,
+                fn (Builder $query): Builder => $query->whereRaw(
+                    '(recognized_at AT TIME ZONE ?)::date <= ?',
+                    [$this->timezone, $this->periodTo],
                 ),
             );
     }
@@ -118,6 +122,7 @@ final readonly class AcceptedProductionLineageFilter
             'period_from' => $this->periodFrom,
             'period_to' => $this->periodTo,
             'statuses' => $this->statuses,
+            'timezone' => $this->timezone,
             'unit_codes' => $this->unitCodes,
             'zones' => $this->zones,
         ];
@@ -126,8 +131,14 @@ final readonly class AcceptedProductionLineageFilter
     private function assertValid(): void
     {
         $asOf = DateTimeImmutable::createFromFormat(self::AS_OF_FORMAT, $this->asOf);
+        try {
+            $timezone = new DateTimeZone($this->timezone);
+        } catch (\Throwable) {
+            throw new InvalidArgumentException('accepted_production_lineage_filter_invalid');
+        }
         if ($asOf === false
             || $asOf->format(self::AS_OF_FORMAT) !== $this->asOf
+            || $timezone->getName() !== $this->timezone
             || ($this->periodFrom !== null
                 && $this->periodTo !== null
                 && $this->periodFrom > $this->periodTo)

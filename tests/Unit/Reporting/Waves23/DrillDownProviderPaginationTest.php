@@ -6,6 +6,8 @@ namespace Tests\Unit\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -98,7 +100,7 @@ final class DrillDownProviderPaginationTest extends TestCase
         $accepted = (new AcceptedProductionDrillDownProvider(source: $acceptedSource))->drillDown(
             $this->context(),
             $this->snapshot('accepted_production_progress'),
-            new ReportDrillDownRequest('token', null, 2),
+            $this->acceptedInput(null, 2),
         );
 
         self::assertSame(
@@ -126,7 +128,7 @@ final class DrillDownProviderPaginationTest extends TestCase
             $result = $provider->drillDown(
                 $this->context(true),
                 $this->snapshot('accepted_production_progress', true),
-                new ReportDrillDownRequest('token', $cursor, 2),
+                $this->acceptedInput($cursor, 2),
             );
             self::assertLessThanOrEqual(2, count($result->rows));
             foreach ($result->rows as $row) {
@@ -253,6 +255,18 @@ final class DrillDownProviderPaginationTest extends TestCase
         ];
     }
 
+    private function acceptedInput(?string $cursor, int $limit): ReportDrillDownInput
+    {
+        return new ReportDrillDownInput(
+            new ReportDrillDownCell(
+                '7:2026-07-30:volume:m3:23:performance_act_line:31',
+                'drill',
+            ),
+            $cursor,
+            $limit,
+        );
+    }
+
     private function summary(int $count, int $firstId, int $lastId): array
     {
         return [
@@ -316,7 +330,7 @@ final class FakeLookaheadDrillDownSource implements LookaheadReadinessDrillDownS
     public function findRow(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        string $token,
+        string $rowKey,
     ): ?array {
         return $this->row;
     }

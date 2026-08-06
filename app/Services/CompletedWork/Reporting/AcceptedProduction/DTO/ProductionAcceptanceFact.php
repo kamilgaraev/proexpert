@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\CompletedWork\Reporting\AcceptedProduction\DTO;
 
+use App\Enums\CurrencyCode;
 use InvalidArgumentException;
 
 final readonly class ProductionAcceptanceFact
@@ -18,9 +19,10 @@ final readonly class ProductionAcceptanceFact
         public ?int $approvedRateMinor,
         public ?string $currency,
         public ?string $currencySource,
+        public ?int $acceptedAmountMinor = null,
     ) {
         foreach ([$plannedQuantity, $reportedQuantity, $acceptedQuantityDelta] as $quantity) {
-            if (preg_match('/^-?\d+(?:\.\d{1,3})?$/D', $quantity) !== 1) {
+            if (preg_match('/^-?\d+(?:\.\d{1,4})?$/D', $quantity) !== 1) {
                 throw new InvalidArgumentException('production_acceptance_quantity_invalid');
             }
         }
@@ -29,11 +31,14 @@ final readonly class ProductionAcceptanceFact
             throw new InvalidArgumentException('production_acceptance_unit_invalid');
         }
 
-        $moneyFieldsPresent = $approvedRateMinor !== null || $currency !== null || $currencySource !== null;
+        $moneyFieldsPresent = $approvedRateMinor !== null
+            || $acceptedAmountMinor !== null
+            || $currency !== null
+            || $currencySource !== null;
         if ($moneyFieldsPresent
-            && ($approvedRateMinor === null
+            && (($approvedRateMinor === null && $acceptedAmountMinor === null)
                 || $currency === null
-                || preg_match('/^[A-Z]{3}$/D', $currency) !== 1
+                || CurrencyCode::tryFrom($currency) === null
                 || trim((string) $currencySource) === '')
         ) {
             throw new InvalidArgumentException('production_acceptance_money_identity_invalid');

@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\Waves23;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceRecognitionGrain;
 use Carbon\CarbonImmutable;
+use DateTimeZone;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -18,16 +19,20 @@ final class ProductionAcceptanceRecognitionGrainTest extends TestCase
         $accepted = $this->event('2026-07-28T11:00:00+03:00');
         $reversed = $this->event('2026-07-30T09:15:00+03:00');
         $grain = new ProductionAcceptanceRecognitionGrain;
+        $timezone = new DateTimeZone('Europe/Moscow');
 
         self::assertSame(
-            '7:2026-07-28:volume:m3:51:performance_act_line:91',
-            $grain->key($accepted),
+            '7:2026-07-28:volume:m3:RUB:51:performance_act_line:91:77',
+            $grain->key($accepted, $timezone),
         );
         self::assertSame(
-            '7:2026-07-30:volume:m3:51:performance_act_line:91',
-            $grain->key($reversed),
+            '7:2026-07-30:volume:m3:RUB:51:performance_act_line:91:77',
+            $grain->key($reversed, $timezone),
         );
-        self::assertNotSame($grain->key($accepted), $grain->key($reversed));
+        self::assertNotSame(
+            $grain->key($accepted, $timezone),
+            $grain->key($reversed, $timezone),
+        );
     }
 
     private function event(string $recognizedAt): ProductionAcceptanceEvent
@@ -41,6 +46,8 @@ final class ProductionAcceptanceRecognitionGrainTest extends TestCase
             'source_line_type' => 'performance_act_line',
             'unit_code' => 'm3',
             'unit_dimension' => 'volume',
+            'work_id' => 77,
+            'currency' => 'RUB',
         ]);
 
         return $event;

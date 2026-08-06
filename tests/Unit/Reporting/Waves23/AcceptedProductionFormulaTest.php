@@ -76,4 +76,42 @@ final class AcceptedProductionFormulaTest extends TestCase
 
         self::assertSame(1, $metric->acceptedAmountMinor);
     }
+
+    public function test_four_decimal_source_quantity_is_preserved_without_rounding(): void
+    {
+        $metric = (new AcceptedProductionFormula())->row(new ProductionAcceptanceFact(
+            '2.0000',
+            '1.5000',
+            '1.2345',
+            'volume',
+            'm3',
+            'unit_4',
+            20_000,
+            'RUB',
+            'performance_act_line',
+        ));
+
+        self::assertSame('1.2345', $metric->acceptedQuantity);
+        self::assertSame('-0.7655', $metric->acceptedPlanVariance);
+        self::assertSame('0.2655', $metric->reportedAcceptedVariance);
+        self::assertSame(24_690, $metric->acceptedAmountMinor);
+    }
+
+    public function test_amount_math_avoids_intermediate_overflow_at_source_precision_limits(): void
+    {
+        $metric = (new AcceptedProductionFormula())->row(new ProductionAcceptanceFact(
+            '99999999999.9999',
+            '99999999999.9999',
+            '99999999999.9999',
+            'volume',
+            'm3',
+            'unit_4',
+            10_000,
+            'RUB',
+            'performance_act_line',
+        ));
+
+        self::assertSame(999_999_999_999_999, $metric->acceptedAmountMinor);
+        self::assertSame('1.00000000', $metric->completionRatio);
+    }
 }

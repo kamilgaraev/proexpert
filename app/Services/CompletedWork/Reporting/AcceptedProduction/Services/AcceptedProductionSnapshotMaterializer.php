@@ -88,10 +88,18 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'source' => 'completed_work',
                     'snapshot_kind' => 'accepted_production',
                     'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
-                    'schema_version' => 'production_acceptance_events_v1',
+                    'schema_version' => 'production_acceptance_events_v2',
                     'watermark' => 'event_'.$watermark,
                     'row_count' => $rowCount,
                     'hash' => $sourceHash->value,
+                ], [
+                    'source' => 'production_acceptance_history_boundary',
+                    'snapshot_kind' => 'immutable_checkpoint',
+                    'snapshot_id' => 'organization_'.$scope->organizationId,
+                    'schema_version' => 'production_acceptance_history_boundary_v1',
+                    'watermark' => 'checkpoint_'.$stream->historyBoundary->sourceHash,
+                    'row_count' => 1,
+                    'hash' => $stream->historyBoundary->sourceHash,
                 ]];
                 $snapshot = AcceptedProductionSnapshot::query()->create([
                     'id' => $snapshotId,
@@ -107,6 +115,8 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'watermarks' => [
                         'acceptance_events' => 'event_'.$watermark,
                         'acceptance_owners' => 'owner_'.$ownerWatermark,
+                        'acceptance_owner_members' => 'member_'.$stream->ownerMemberWatermark,
+                        'history_boundary' => 'checkpoint_'.$stream->historyBoundary->sourceHash,
                         'lineage_projection' => 'v2',
                     ],
                     'totals' => $totals,
@@ -119,7 +129,8 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 foreach ($stream->entries() as $entry) {
                     [$item, $metric] = $this->metric($entry);
                     $event = $item['event'];
-                    $rowKey = $this->grain->key($event);
+                    $recognizedOn = $this->grain->day($event, $scope->timezone);
+                    $rowKey = $this->grain->key($event, $scope->timezone);
                     $payload = [
                         'project_id' => (int) $event->project_id,
                         'performance_act_id' => (int) $event->performance_act_id,
@@ -132,7 +143,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         'wbs_code' => $event->wbs_code,
                         'zone' => $event->zone,
                         'contractor_id' => $event->contractor_id === null ? null : (int) $event->contractor_id,
-                        'recognized_on' => $event->recognized_at->format('Y-m-d'),
+                        'recognized_on' => $recognizedOn,
                         'planned_quantity' => $metric->plannedQuantity,
                         'reported_quantity' => $metric->reportedQuantity,
                         'accepted_quantity' => $metric->acceptedQuantity,
@@ -156,12 +167,15 @@ final readonly class AcceptedProductionSnapshotMaterializer
                             'id' => (int) $event->performance_act_id,
                             'project_id' => (int) $event->project_id,
                         ],
-                        [
-                            'type' => 'production_acceptance_owner_version',
-                            'id' => (int) $item['owner']['owner_version_id'],
-                            'project_id' => (int) $event->project_id,
-                            'source_hash' => (string) $item['owner']['owner_source_hash'],
-                        ],
+                        ...array_map(
+                            static fn (array $owner): array => [
+                                'type' => 'production_acceptance_owner_version',
+                                'id' => (int) $owner['id'],
+                                'project_id' => (int) $event->project_id,
+                                'source_hash' => (string) $owner['source_hash'],
+                            ],
+                            (array) $item['owner']['owner_versions'],
+                        ),
                         ...($event->work_id === null ? [] : [[
                             'type' => 'completed_work',
                             'id' => (int) $event->work_id,
@@ -187,7 +201,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                         'contractor_id' => $event->contractor_id,
                         'zone' => $event->zone,
                         'event_status' => (string) $event->event_type,
-                        'recognized_on' => $event->recognized_at->format('Y-m-d'),
+                        'recognized_on' => $recognizedOn,
                         'unit_dimension' => (string) $event->unit_dimension,
                         'unit_code' => (string) $event->unit_code,
                         'currency' => $event->currency,
@@ -254,9 +268,18 @@ final readonly class AcceptedProductionSnapshotMaterializer
             'accepted_quantity' => 0,
             'accepted_amount_minor' => $metric->acceptedAmountMinor === null ? null : 0,
         ];
-        $groups[$key]['planned_quantity'] += $this->scaled($metric->plannedQuantity);
-        $groups[$key]['reported_quantity'] += $this->scaled($metric->reportedQuantity);
-        $groups[$key]['accepted_quantity'] += $this->scaled($metric->acceptedQuantity);
+        $groups[$key]['planned_quantity'] += AcceptedProductionQuantity::scaled(
+            $metric->plannedQuantity,
+            'accepted_production_quantity_invalid',
+        );
+        $groups[$key]['reported_quantity'] += AcceptedProductionQuantity::scaled(
+            $metric->reportedQuantity,
+            'accepted_production_quantity_invalid',
+        );
+        $groups[$key]['accepted_quantity'] += AcceptedProductionQuantity::scaled(
+            $metric->acceptedQuantity,
+            'accepted_production_quantity_invalid',
+        );
         if ($groups[$key]['accepted_amount_minor'] !== null) {
             if ($metric->acceptedAmountMinor === null) {
                 $groups[$key]['accepted_amount_minor'] = null;
@@ -269,9 +292,9 @@ final readonly class AcceptedProductionSnapshotMaterializer
     private function finalizeTotals(array $groups): array
     {
         foreach ($groups as &$group) {
-            $group['planned_quantity'] = $this->decimal($group['planned_quantity']);
-            $group['reported_quantity'] = $this->decimal($group['reported_quantity']);
-            $group['accepted_quantity'] = $this->decimal($group['accepted_quantity']);
+            $group['planned_quantity'] = AcceptedProductionQuantity::decimal($group['planned_quantity']);
+            $group['reported_quantity'] = AcceptedProductionQuantity::decimal($group['reported_quantity']);
+            $group['accepted_quantity'] = AcceptedProductionQuantity::decimal($group['accepted_quantity']);
         }
         unset($group);
 
@@ -283,26 +306,6 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 [],
             ),
         ];
-    }
-
-    private function scaled(string $value): int
-    {
-        $negative = str_starts_with($value, '-');
-        $unsigned = $negative ? substr($value, 1) : $value;
-        if (preg_match('/^(\d+)(?:\.(\d{1,3}))?$/D', $unsigned, $matches) !== 1) {
-            throw new InvalidArgumentException('accepted_production_quantity_invalid');
-        }
-        $scaled = ((int) $matches[1] * 1000) + (int) str_pad($matches[2] ?? '', 3, '0');
-
-        return $negative ? -$scaled : $scaled;
-    }
-
-    private function decimal(int $scaled): string
-    {
-        $absolute = abs($scaled);
-        $value = intdiv($absolute, 1000).'.'.str_pad((string) ($absolute % 1000), 3, '0', STR_PAD_LEFT);
-
-        return $scaled < 0 ? '-'.$value : $value;
     }
 
     private function reference(
@@ -336,12 +339,14 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 'work_id',
                 'performance_act_id',
                 'source_line_type',
+                'source_line_id',
                 'planned_quantity',
                 'reported_quantity',
                 'accepted_quantity',
                 'accepted_plan_variance',
                 'reported_accepted_variance',
                 'completion_ratio',
+                'unit_dimension',
                 'unit_code',
                 'currency',
                 'approved_rate_minor',
