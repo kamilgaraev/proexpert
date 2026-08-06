@@ -87,6 +87,7 @@ final readonly class AuthorizeReportDefinitionAccess
             'admin.reports.project-evm-control.runs.store',
             'admin.reports.project-evm-control.options',
             'admin.reports.accepted-production-progress.runs.store',
+            'admin.reports.accepted-production-progress.options',
             'admin.reports.wip-completion-forecast.runs.store',
             'admin.reports.wip-completion-forecast.options',
             'admin.reports.project-labor-cost.runs.store',

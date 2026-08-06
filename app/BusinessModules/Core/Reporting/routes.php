@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportingPermissionMatrix;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\AcceptedProductionReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ContractSettlementExposureReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\HoldingPerformanceReportOptionsController;
@@ -153,6 +154,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'accepted_production_progress')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('accepted-production-progress.runs.store');
+        Route::get('/projects/{project}/accepted-production-progress/options', AcceptedProductionReportOptionsController::class)
+            ->defaults('reportCode', 'accepted_production_progress')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('accepted-production-progress.options');
         Route::post('/projects/{project}/wip-completion-forecast/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'wip_completion_forecast')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
