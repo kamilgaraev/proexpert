@@ -15,6 +15,7 @@ final class OrganizationStoragePath
         'quality-control',
         'reports',
         'temporary',
+        'warehouse',
     ];
 
     public static function forDomain(

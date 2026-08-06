@@ -76,22 +76,29 @@ final class WarehouseCustodyController extends Controller
     {
         try {
             $mode = (string) $request->query('mode', 'summary');
-            $path = $this->exportService->export(
-                (int) $request->user()->current_organization_id,
+            $organizationId = (int) $request->user()->current_organization_id;
+            $userId = (int) $request->user()->id;
+            $stored = $this->exportService->export(
+                $organizationId,
                 [
                     'project_id' => $request->query('project_id') !== null ? (int) $request->query('project_id') : null,
                     'responsible_user_id' => $request->query('responsible_user_id') !== null ? (int) $request->query('responsible_user_id') : null,
                     'material_id' => $request->query('material_id') !== null ? (int) $request->query('material_id') : null,
                     'search' => $request->query('search') !== null ? (string) $request->query('search') : null,
                 ],
-                $mode
+                $mode,
+                $userId,
             );
 
             return $this->success(
                 $request,
                 [
-                    'url' => $this->exportService->temporaryUrl($path),
-                    'path' => $path,
+                    'url' => $this->exportService->temporaryUrl(
+                        $organizationId,
+                        $userId,
+                        $stored->key,
+                    ),
+                    'path' => $stored->key,
                     'mode' => $mode === 'detail' ? 'detail' : 'summary',
                 ],
                 trans_message('basic_warehouse.custody.exported')

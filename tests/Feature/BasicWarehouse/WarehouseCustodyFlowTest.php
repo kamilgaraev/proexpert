@@ -12,8 +12,8 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
-use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -212,16 +212,28 @@ final class WarehouseCustodyFlowTest extends TestCase
 
     public function test_admin_can_export_responsible_custody_detail_and_summary(): void
     {
-        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $storedPaths = [];
 
-        $this->mock(FileService::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('disk')->andReturn(Storage::disk('s3'));
-            $mock->shouldReceive('temporaryUrl')->andReturnUsing(
-                static fn (?string $path): string => 'https://files.local/'.basename((string) $path)
-            );
+        $this->mock(FileService::class, function (MockInterface $mock) use (&$storedPaths): void {
+            $mock->shouldReceive('putPrivate')
+                ->twice()
+                ->andReturnUsing(static function (
+                    string $path,
+                    string $content,
+                    string $mime,
+                    string $sha256,
+                ) use (&$storedPaths): CurrentStoredFile {
+                    $storedPaths[] = $path;
+
+                    return new CurrentStoredFile($path, 'etag', strlen($content), $sha256, $mime);
+                });
+            $mock->shouldReceive('temporaryDownloadUrl')
+                ->twice()
+                ->withArgs(static fn (string $path, int $ttlSeconds): bool => $path !== '' && $ttlSeconds === 900)
+                ->andReturnUsing(static fn (string $path): string => 'https://files.local/'.basename($path));
         });
 
-        $context = AdminApiTestContext::create();
         $this->allowAdminAccess();
         $setup = $this->createProjectWarehouseContext($context);
 
@@ -241,8 +253,14 @@ final class WarehouseCustodyFlowTest extends TestCase
         $detailResponse->assertOk();
         $detailResponse->assertJsonPath('success', true);
         $detailResponse->assertJsonPath('data.mode', 'detail');
-        $this->assertStringContainsString('custody_detail_', $detailResponse->json('data.path'));
-        $this->assertStringEndsWith('.xlsx', $detailResponse->json('data.path'));
+        $this->assertMatchesRegularExpression(
+            sprintf(
+                '#^org-%d/warehouse/exports/user-%d/custody/detail/[0-9a-f-]{36}\.xlsx$#D',
+                $context->organization->id,
+                $context->user->id,
+            ),
+            $detailResponse->json('data.path'),
+        );
 
         $summaryResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/warehouses/custody/export?mode=summary');
@@ -250,10 +268,19 @@ final class WarehouseCustodyFlowTest extends TestCase
         $summaryResponse->assertOk();
         $summaryResponse->assertJsonPath('success', true);
         $summaryResponse->assertJsonPath('data.mode', 'summary');
-        $this->assertStringContainsString('custody_summary_', $summaryResponse->json('data.path'));
-        $this->assertStringEndsWith('.xlsx', $summaryResponse->json('data.path'));
+        $this->assertMatchesRegularExpression(
+            sprintf(
+                '#^org-%d/warehouse/exports/user-%d/custody/summary/[0-9a-f-]{36}\.xlsx$#D',
+                $context->organization->id,
+                $context->user->id,
+            ),
+            $summaryResponse->json('data.path'),
+        );
 
-        $this->assertCount(2, Storage::disk('s3')->allFiles());
+        $this->assertSame(
+            [$detailResponse->json('data.path'), $summaryResponse->json('data.path')],
+            $storedPaths,
+        );
     }
 
     public function test_admin_cannot_issue_more_than_project_stock(): void
