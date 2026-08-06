@@ -93,6 +93,41 @@ return [
         'date_to_after_or_equal' => 'Дата окончания должна быть не раньше даты начала.',
         'format_invalid' => 'Выбран некорректный формат отчета.',
     ],
+    'options' => [
+        'contract_settlement_exposure' => [
+            'directions' => [
+                'receivable' => 'Дебиторская задолженность',
+                'payable' => 'Кредиторская задолженность',
+            ],
+            'instruments' => [
+                'payment_request' => 'Платёжное требование',
+                'invoice' => 'Счёт на оплату',
+                'payment_order' => 'Платёжное поручение',
+                'incoming_payment' => 'Входящий платёж',
+                'expense' => 'Расходный ордер',
+                'offset_act' => 'Акт взаимозачёта',
+            ],
+            'statuses' => [
+                'draft' => 'Черновик',
+                'submitted' => 'Отправлен',
+                'pending_approval' => 'На согласовании',
+                'approved' => 'Утверждён',
+                'scheduled' => 'Запланирован',
+                'paid' => 'Оплачен',
+                'partially_paid' => 'Частично оплачен',
+                'rejected' => 'Отклонён',
+                'cancelled' => 'Отменён',
+            ],
+            'aging_buckets' => [
+                'not_due' => 'Срок оплаты не наступил',
+                'days_1_30' => 'Просрочка 1–30 дней',
+                'days_31_60' => 'Просрочка 31–60 дней',
+                'days_61_90' => 'Просрочка 61–90 дней',
+                'over_90' => 'Просрочка более 90 дней',
+                'due_date_missing' => 'Дата оплаты не указана',
+            ],
+        ],
+    ],
     'errors' => [
         'report_not_found' => 'Отчёт не найден.',
         'report_scope_forbidden' => 'Отчёт недоступен в текущей организации.',

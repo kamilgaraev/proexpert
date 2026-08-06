@@ -53,6 +53,32 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
         self::assertSame(['server_report'], $resolver->createRunCodes);
     }
 
+    public function test_contract_settlement_options_route_uses_server_owned_definition_module(): void
+    {
+        $definition = $this->sourceDefinition('2');
+        $resolver = new DefinitionAccessTargetResolver([$definition]);
+        $modules = new DefinitionAccessModuleEntitlement(['act-reporting']);
+        $middleware = new AuthorizeReportDefinitionAccess(
+            $resolver,
+            new ReportDefinitionModuleAuthorizer($modules),
+        );
+        $request = $this->request('admin.reports.contract-settlement-exposure.options', [
+            'reportCode' => 'contract_settlement_exposure',
+        ]);
+        $called = false;
+
+        $response = $middleware->handle($request, static function () use (&$called): Response {
+            $called = true;
+
+            return new Response('', 204);
+        });
+
+        self::assertSame(204, $response->getStatusCode());
+        self::assertTrue($called);
+        self::assertSame(['act-reporting'], $modules->checkedModules);
+        self::assertSame(['contract_settlement_exposure'], $resolver->createRunCodes);
+    }
+
     public function test_catalog_records_only_module_accessible_definition_hashes(): void
     {
         $generic = (new ReportDefinitionBuilder)
@@ -135,6 +161,32 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
                 },
             );
             self::fail('Revoked source module must be denied.');
+        } catch (ReportContractException $exception) {
+            self::assertSame('REPORT_SCOPE_FORBIDDEN', $exception->getMessage());
+            self::assertFalse($called);
+        }
+    }
+
+    public function test_contract_settlement_options_route_denies_revoked_source_module(): void
+    {
+        $middleware = new AuthorizeReportDefinitionAccess(
+            new DefinitionAccessTargetResolver([$this->sourceDefinition('3')]),
+            new ReportDefinitionModuleAuthorizer(new DefinitionAccessModuleEntitlement(['reports'])),
+        );
+        $called = false;
+
+        try {
+            $middleware->handle(
+                $this->request('admin.reports.contract-settlement-exposure.options', [
+                    'reportCode' => 'contract_settlement_exposure',
+                ]),
+                static function () use (&$called): Response {
+                    $called = true;
+
+                    return new Response('', 204);
+                },
+            );
+            self::fail('Revoked contract settlement source module must be denied.');
         } catch (ReportContractException $exception) {
             self::assertSame('REPORT_SCOPE_FORBIDDEN', $exception->getMessage());
             self::assertFalse($called);
