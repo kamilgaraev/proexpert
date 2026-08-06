@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Mail;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPdfService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Attachment;
@@ -16,13 +19,13 @@ class PurchaseOrderSentMail extends Mailable
 
     public function __construct(
         public PurchaseOrder $order,
-        public string $pdfUrl
+        public string $pdfPath,
     ) {}
 
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: "Заказ поставщику №{$this->order->order_number} от " . $this->order->organization->name,
+            subject: "Заказ поставщику №{$this->order->order_number} от ".$this->order->organization->name,
         );
     }
 
@@ -42,9 +45,11 @@ class PurchaseOrderSentMail extends Mailable
     public function attachments(): array
     {
         return [
-            Attachment::fromData(fn () => file_get_contents($this->pdfUrl), "Заказ_{$this->order->order_number}.pdf")
+            Attachment::fromData(
+                fn (): string => app(PurchaseOrderPdfService::class)->read($this->order, $this->pdfPath),
+                "Заказ_{$this->order->order_number}.pdf",
+            )
                 ->withMime('application/pdf'),
         ];
     }
 }
-

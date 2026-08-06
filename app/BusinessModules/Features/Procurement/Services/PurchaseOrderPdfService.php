@@ -1,16 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\Services\Storage\OrgBucketService;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
+use Illuminate\Support\Str;
+use InvalidArgumentException;
+use RuntimeException;
 
 class PurchaseOrderPdfService
 {
     public function __construct(
-        private readonly OrgBucketService $bucketService
+        private readonly FileService $files,
     ) {}
 
     /**
@@ -31,7 +38,7 @@ class PurchaseOrderPdfService
         // Формируем строку организации (Заказчик)
         $orgParts = [];
         $orgParts[] = $organization->legal_name ?: $organization->name;
-        
+
         $orgInn = $organization->tax_number ?: ($organization->inn ?? null);
         if ($orgInn) $orgParts[] = "ИНН " . $orgInn;
         
@@ -46,7 +53,7 @@ class PurchaseOrderPdfService
         // Формируем строку поставщика (Исполнитель)
         $supParts = [];
         $supParts[] = $supplier->name ?: 'Не указано';
-        
+
         $supInn = $supplier->tax_number ?: ($supplier->inn ?? null);
         if ($supInn) $supParts[] = "ИНН " . $supInn;
         
@@ -75,36 +82,63 @@ class PurchaseOrderPdfService
     /**
      * Сохранить PDF в S3 и вернуть путь
      */
-    public function store(PurchaseOrder $order): string
+    public function store(PurchaseOrder $order, ?int $actorId = null): CurrentStoredFile
     {
         $content = $this->generate($order);
-        
-        $path = "procurement/orders/{$order->order_number}.pdf";
-        
-        $disk = $this->bucketService->getDisk($order->organization);
-        $disk->put($path, $content);
-        
-        return $path;
+        $organizationId = (int) $order->organization_id;
+        $orderId = (int) $order->getKey();
+        $actorScope = $actorId !== null && $actorId > 0 ? "user-{$actorId}" : 'system';
+        $path = OrganizationStoragePath::forDomain(
+            $organizationId,
+            'procurement',
+            "purchase-orders/{$actorScope}/order-{$orderId}",
+            Str::uuid()->toString(),
+            'pdf',
+        );
+
+        return $this->files->putPrivate(
+            $path,
+            $content,
+            'application/pdf',
+            hash('sha256', $content),
+        );
     }
 
-    /**
-     * Получить публичный URL файла в S3
-     */
-    public function getUrl(PurchaseOrder $order, string $path): string
+    public function read(PurchaseOrder $order, string $path): string
     {
-        $disk = $this->bucketService->getDisk($order->organization);
-        
-        return $disk->url($path);
+        $this->assertOwnedPath($order, $path);
+
+        $stream = $this->files->readCurrent($path);
+
+        try {
+            $content = stream_get_contents($stream);
+            if ($content === false) {
+                throw new RuntimeException('purchase_order_pdf_read_failed');
+            }
+
+            return $content;
+        } finally {
+            fclose($stream);
+        }
     }
 
-    /**
-     * Получить временный URL для скачивания (signed URL)
-     */
-    public function getTemporaryUrl(PurchaseOrder $order, string $path, int $minutes = 60): string
+    public function remove(PurchaseOrder $order, string $path): void
     {
-        $disk = $this->bucketService->getDisk($order->organization);
-        
-        return $disk->temporaryUrl($path, now()->addMinutes($minutes));
+        $this->assertOwnedPath($order, $path);
+        $this->files->deleteCurrent($path);
+    }
+
+    private function assertOwnedPath(PurchaseOrder $order, string $path): void
+    {
+        $pattern = sprintf(
+            '#^org-%d/procurement/purchase-orders/(?:user-[1-9][0-9]*|system)/order-%d/[^/]+\.pdf$#D',
+            (int) $order->organization_id,
+            (int) $order->getKey(),
+        );
+
+        if (preg_match($pattern, $path) !== 1) {
+            throw new InvalidArgumentException('purchase_order_pdf_path_invalid');
+        }
     }
 
     /**
@@ -158,4 +192,3 @@ class PurchaseOrderPdfService
         return $f5;
     }
 }
-

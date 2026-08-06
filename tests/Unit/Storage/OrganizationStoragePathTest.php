@@ -32,6 +32,16 @@ final class OrganizationStoragePathTest extends TestCase
                 'pdf',
             ),
         );
+        self::assertSame(
+            'org-42/procurement/purchase-orders/user-7/order-15/01J5ORDER.pdf',
+            OrganizationStoragePath::forDomain(
+                42,
+                'procurement',
+                'purchase-orders/user-7/order-15',
+                '01J5ORDER',
+                'pdf',
+            ),
+        );
     }
 
     #[DataProvider('invalidStrictPathProvider')]
