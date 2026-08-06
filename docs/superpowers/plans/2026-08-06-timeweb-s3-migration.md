@@ -540,11 +540,13 @@ rg -n "artifact_version_id|storage_version_id|VersionId|ListObjectVersions" app 
 
 Expected: остаются только явно документированные инфраструктурные/исторические упоминания вне прикладного runtime; production-контракты не зависят от VersionId.
 
-- [ ] **Step 6: Commit, PR, merge и deploy**
+- [x] **Step 6: Commit, PR, merge и deploy**
 
 Commit: `refactor[backend]: удалена зависимость от версий объектов S3`.
 
 После checks merge в `main`; штатный deploy применяет миграцию. Read-only проверить нулевые старые файловые записи, наличие новой схемы и отсутствие ошибок очередей/отчётов.
+
+Фактическое evidence: PR #253 (`9485294a1`) доставил runtime-изменения. Первый deploy остановился до миграции из-за PDO-разбора JSONB `?&`; hotfix PR #254 (`caf3a815d1cf706b0ed3ea86b0bb7d56716726eb`) заменил ровно два `DB::statement` на `DB::unprepared`. Deploy `31074703010` успешно применил одну миграцию. Старые файловые записи уничтожены по явному решению владельца; реальные пользователи отсутствовали.
 
 ---
 
@@ -561,7 +563,7 @@ Commit: `refactor[backend]: удалена зависимость от верс�
 - Consumes: завершённый runtime Tasks 1–6.
 - Produces: проверяемый runbook для CORS/lifecycle/key rotation и финальная evidence-сводка.
 
-- [ ] **Step 1: Зафиксировать внешний checklist Timeweb**
+- [x] **Step 1: Зафиксировать внешний checklist Timeweb**
 
 Runbook содержит без секретов:
 
@@ -577,7 +579,7 @@ Runbook содержит без секретов:
 [ ] rotate temporary runtime key after acceptance
 ```
 
-- [ ] **Step 2: Выполнить финальные проверки без дублирования уже пройденных наборов**
+- [x] **Step 2: Выполнить финальные проверки без дублирования уже пройденных наборов**
 
 Run:
 
@@ -590,9 +592,13 @@ rg -n "storage\.yandexcloud\.net|REPORTS_BUCKET|AWS_PERSONALS_BUCKET|OrgBucketSe
 
 Expected: тесты/Larastan/Pint PASS; legacy search не возвращает production runtime.
 
-- [ ] **Step 3: Независимое review и исправления**
+Полные runtime-наборы уже пройдены в Tasks 1–6 и не повторяются для документационного diff. Для Task 7 выполняются `git diff --check`, поиск секретов и старых ключей, ссылочная и структурная self-review runbook; evidence ранее пройденных runtime-проверок остаётся в PR и deploy-артефактах Tasks 1–6.
+
+- [x] **Step 3: Независимое review и исправления**
 
 Применить `superpowers:requesting-code-review`; исправлять только доказанные замечания, повторяя минимальные затронутые тесты.
+
+Независимое review документационного diff завершено без замечаний после включения runbook в index. До merge не выполняются runtime, DB и deploy-действия.
 
 - [ ] **Step 4: Commit, PR, merge и финальный deploy-smoke**
 

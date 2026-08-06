@@ -194,3 +194,11 @@ MOST_S3_UPLOAD_TTL_SECONDS=900
 - [Timeweb Cloud: versioning](https://timeweb.cloud/docs/s3-storage/supported-features/s3-object-versioning)
 - [Timeweb Cloud: lifecycle](https://timeweb.cloud/docs/s3-storage/supported-features/object-lifecycle)
 - [Timeweb Cloud: дополнительные пользователи](https://timeweb.cloud/docs/s3-storage/manage-storage/additional-users)
+
+## 14. Эксплуатационный runbook и состояние внешних действий
+
+Эксплуатационный порядок, checklist, evidence и границы действий владельца закреплены в [runbook Timeweb S3](../../runbooks/timeweb-s3.md). Он является источником фактического статуса внешней конфигурации и не содержит секретов.
+
+По evidence владельца бакет `prohelper-storage` приватный, versioning включён, CDN и публичный домен не подключены. Дополнительный runtime-пользователь с доступом только Read+Write к этому бакету, точный CORS, lifecycle и ротация временного широкого ключа остаются внешними действиями до их явного подтверждения владельцем.
+
+Runtime Tasks 1–6 завершены и доставлены без простоя. PR #253 после merge остановил deploy до миграции из-за PDO-разбора JSONB `?&`; hotfix PR #254 заменил ровно два `DB::statement` на `DB::unprepared`. Deploy `31074703010` успешно применил одну миграцию. Старые объекты не переносятся, отчёты не имеют автоматической очистки, а откат не включает Yandex fallback.
