@@ -31,12 +31,12 @@ final readonly class EloquentLookaheadReadinessDrillDownSource implements Lookah
     public function findRow(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        string $token,
+        string $rowKey,
     ): ?array {
         return $this->reader->findRow(
             $context,
             $snapshot,
-            $this->reader->rowKeyFromToken($token),
+            $rowKey,
         );
     }
 
