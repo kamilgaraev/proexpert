@@ -134,6 +134,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'management_pnl')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('management-pnl.options');
+        Route::post('/management-pnl/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'management_pnl')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('management-pnl.runs.store');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');
