@@ -15,22 +15,29 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlComponentSet;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlProjectionService;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlProvider;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlQueryService;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Readiness\ManagementPnlReadinessProbe;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Services\ManagementPnlOptionsService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\EloquentProjectPortfolioHealthSourceReader;
-use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBudgetVersionObserver;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionObserver;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthOwnerSourcePolicy;
-use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthReadinessProbe;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthProvider;
-use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthReadinessProbe;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthReportBindingFactory;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthSourceReader;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DrillDown\ProjectEvmControlDrillDownProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
@@ -40,13 +47,15 @@ use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Providers\Pr
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Queries\ProjectEvmControlRowQuery;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Readiness\ProjectControlReadinessProbe;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectEvmControlOptionsService;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\BudgetPlanFactManagementPnlComponentSource;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceQueryService;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectMarginManagementPnlComponentSource;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastOptionsService;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastReportBindingFactory;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportService;
@@ -82,6 +91,8 @@ use App\BusinessModules\Features\Budgeting\Services\ProjectMarginSourceSnapshotM
 use App\BusinessModules\Features\Budgeting\Services\ProjectMarginSourceSnapshotWriter;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardService;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostManagementPnlComponentSource;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessManagementPnlComponentSource;
 use Illuminate\Support\ServiceProvider;
 
 final class BudgetingServiceProvider extends ServiceProvider
@@ -97,8 +108,23 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(PlanFactReportSourceSnapshotAdapter::class);
         $this->app->singleton(BudgetPlanFactCandidateContract::class);
         $this->app->singleton(ManagementPnlCandidateContract::class);
+        $this->app->singleton(ManagementPnlBuiltinPublishedReport::class);
+        $this->app->scoped(ManagementPnlComponentSet::class);
+        $this->app->scoped(ManagementPnlProjectionService::class, static fn ($app): ManagementPnlProjectionService => new ManagementPnlProjectionService(
+            [
+                $app->make(ProjectMarginManagementPnlComponentSource::class),
+                $app->make(BudgetPlanFactManagementPnlComponentSource::class),
+                $app->make(ProjectLaborCostManagementPnlComponentSource::class),
+                $app->make(PayrollReadinessManagementPnlComponentSource::class),
+            ],
+            $app->make(ManagementPnlComponentSet::class),
+        ));
+        $this->app->scoped(ManagementPnlProvider::class);
+        $this->app->scoped(ManagementPnlQueryService::class);
         $this->app->scoped(ManagementPnlReadinessProbe::class);
         $this->app->scoped(ManagementPnlOptionsService::class);
+        $this->app->scoped(ManagementPnlReportBindingFactory::class);
+        $this->app->scoped(ManagementPnlPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(BudgetPlanFactReportBindingFactory::class);
         $this->app->singleton(BudgetPlanFactPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(ProjectMarginSourceSnapshotMaterializer::class);
@@ -172,6 +198,9 @@ final class BudgetingServiceProvider extends ServiceProvider
                     ->register($assembler);
                 $this->app
                     ->make(ProjectMarginPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+                $this->app
+                    ->make(ManagementPnlPublishedRuntimeBindingRegistrar::class)
                     ->register($assembler);
                 $this->app
                     ->make(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class)

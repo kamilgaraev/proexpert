@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataReg
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
@@ -64,6 +65,7 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         private HoldingPerformanceBuiltinPublishedReport $holdingPerformance,
         private IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
         private ?LookaheadReadinessBuiltinPublishedReport $lookaheadReadiness = null,
+        private ?ManagementPnlBuiltinPublishedReport $managementPnl = null,
     ) {}
 
     public function published(string $code): ReportCatalogMetadata
@@ -71,6 +73,10 @@ final readonly class BuiltinReportCatalogMetadataRegistry implements ReportCatal
         if ($this->lookaheadReadiness !== null
             && $code === $this->lookaheadReadiness->metadata()->code) {
             return $this->lookaheadReadiness->metadata();
+        }
+        if ($this->managementPnl !== null
+            && $code === $this->managementPnl->metadata()->code) {
+            return $this->managementPnl->metadata();
         }
 
         return match ($code) {

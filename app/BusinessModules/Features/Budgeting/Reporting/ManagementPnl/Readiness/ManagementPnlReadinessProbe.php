@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Readiness;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadinessProbe;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -20,7 +25,7 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\Models\PayrollRea
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessManagementPnlComponentSource;
 use DomainException;
 
-final readonly class ManagementPnlReadinessProbe
+final readonly class ManagementPnlReadinessProbe implements ReportDefinitionReadinessProbe
 {
     public function __construct(
         private ProjectMarginManagementPnlComponentSource $margin,
@@ -29,6 +34,26 @@ final readonly class ManagementPnlReadinessProbe
         private PayrollReadinessManagementPnlComponentSource $payroll,
         private ManagementPnlComponentSet $componentSet,
     ) {}
+
+    public function supports(ReportDefinition $definition): bool
+    {
+        return $definition->code === 'management_pnl'
+            && $definition->formulaVersion === 'management-pnl.v1';
+    }
+
+    public function assertRunnable(ReportExecutionContext $context, ReportQuery $query): void
+    {
+        $filters = $query->filters->values;
+        $periodFrom = (string) ($filters['period_from'] ?? '');
+        $periodTo = (string) ($filters['period_to'] ?? '');
+        $scopeHash = hash('sha256', CanonicalJson::encode($context->scope->canonicalIdentity()));
+        if ($this->factCount($context->scope, $query, $periodFrom, $periodTo, $scopeHash) === 0) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE, [
+                'report_code' => 'management_pnl',
+                'availability' => 'no_data',
+            ]);
+        }
+    }
 
     public function inspect(ReportScope $scope, ReportQuery $query): ManagementPnlReadinessSnapshot
     {
@@ -40,31 +65,7 @@ final readonly class ManagementPnlReadinessProbe
             : '';
         $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
 
-        $financeFacts = (int) ProjectFinanceSnapshot::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('report_code', ['project_margin', 'budget_plan_fact'])
-            ->whereDate('period_from', $periodFrom)
-            ->whereDate('period_to', $periodTo)
-            ->where('scope_hash', $scopeHash)
-            ->where('generated_at', '<=', $query->asOf)
-            ->sum('row_count');
-        $laborFacts = ApprovedTimeEntryReportingFact::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereBetween('work_date', [$periodFrom, $periodTo])
-            ->where('approved_at', '<=', $query->asOf)
-            ->when($scope->projectIds !== [], static fn ($builder) => $builder->whereIn('project_id', $scope->projectIds))
-            ->count();
-        $payrollFacts = (int) PayrollReadinessSnapshot::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereDate('period_from', '>=', $periodFrom)
-            ->whereDate('period_to', '<=', $periodTo)
-            ->where('locked_at', '<=', $query->asOf)
-            ->when($scope->projectIds !== [], static fn ($builder) => $builder
-                ->where(static fn ($projects) => $projects
-                    ->whereNull('project_id')
-                    ->orWhereIn('project_id', $scope->projectIds)))
-            ->sum('row_count');
-        $factCount = $financeFacts + $laborFacts + $payrollFacts;
+        $factCount = $this->factCount($scope, $query, $periodFrom, $periodTo, $scopeHash);
         $hasPolicy = ManagementPnlPolicy::query()
             ->where('organization_id', $scope->organizationId)
             ->where('status', 'active')
@@ -130,6 +131,41 @@ final readonly class ManagementPnlReadinessProbe
             $this->ids($dimensionRows->pluck('responsibility_center_id')->all()),
             $this->ids($dimensionRows->pluck('budget_article_id')->all()),
         );
+    }
+
+    private function factCount(
+        ReportScope $scope,
+        ReportQuery $query,
+        string $periodFrom,
+        string $periodTo,
+        string $scopeHash,
+    ): int {
+        $financeFacts = (int) ProjectFinanceSnapshot::query()
+            ->where('organization_id', $scope->organizationId)
+            ->whereIn('report_code', ['project_margin', 'budget_plan_fact'])
+            ->whereDate('period_from', $periodFrom)
+            ->whereDate('period_to', $periodTo)
+            ->where('scope_hash', $scopeHash)
+            ->where('generated_at', '<=', $query->asOf)
+            ->sum('row_count');
+        $laborFacts = ApprovedTimeEntryReportingFact::query()
+            ->where('organization_id', $scope->organizationId)
+            ->whereBetween('work_date', [$periodFrom, $periodTo])
+            ->where('approved_at', '<=', $query->asOf)
+            ->when($scope->projectIds !== [], static fn ($builder) => $builder->whereIn('project_id', $scope->projectIds))
+            ->count();
+        $payrollFacts = (int) PayrollReadinessSnapshot::query()
+            ->where('organization_id', $scope->organizationId)
+            ->whereDate('period_from', '>=', $periodFrom)
+            ->whereDate('period_to', '<=', $periodTo)
+            ->where('locked_at', '<=', $query->asOf)
+            ->when($scope->projectIds !== [], static fn ($builder) => $builder
+                ->where(static fn ($projects) => $projects
+                    ->whereNull('project_id')
+                    ->orWhereIn('project_id', $scope->projectIds)))
+            ->sum('row_count');
+
+        return $financeFacts + $laborFacts + $payrollFacts;
     }
 
     /** @return list<int> */

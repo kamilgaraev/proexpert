@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabili
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
@@ -64,6 +65,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private HoldingPerformanceBuiltinPublishedReport $holdingPerformance,
         private IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
         private ?LookaheadReadinessBuiltinPublishedReport $lookaheadReadiness = null,
+        private ?ManagementPnlBuiltinPublishedReport $managementPnl = null,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -71,6 +73,10 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         if ($this->lookaheadReadiness !== null
             && $code === $this->lookaheadReadiness->scheduling()->code) {
             return $this->lookaheadReadiness->scheduling();
+        }
+        if ($this->managementPnl !== null
+            && $code === $this->managementPnl->scheduling()->code) {
+            return $this->managementPnl->scheduling();
         }
 
         return match ($code) {

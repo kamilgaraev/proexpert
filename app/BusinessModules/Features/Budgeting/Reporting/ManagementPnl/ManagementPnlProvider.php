@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Models\ManagementPnlPolicy;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Readiness\ManagementPnlReadinessProbe;
 use DomainException;
 
 final readonly class ManagementPnlProvider implements ReportDataProvider
@@ -18,16 +19,17 @@ final readonly class ManagementPnlProvider implements ReportDataProvider
     public function __construct(
         private ManagementPnlProjectionService $projection,
         private ManagementPnlQueryService $query,
-    ) {
-    }
+        private ManagementPnlReadinessProbe $readiness,
+    ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query, ReportProgress $progress): ReportSnapshotRef
     {
+        $this->readiness->assertRunnable($context, $query);
         $record = ManagementPnlPolicy::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('status', 'active')
             ->first();
-        if (!$record instanceof ManagementPnlPolicy) {
+        if (! $record instanceof ManagementPnlPolicy) {
             throw new DomainException('management_pnl_active_policy_missing');
         }
         $policy = new ManagementAccountingPolicy(

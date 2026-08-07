@@ -15,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
@@ -69,11 +70,15 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         HoldingPerformanceBuiltinPublishedReport $holdingPerformance,
         IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
         ?LookaheadReadinessBuiltinPublishedReport $lookaheadReadiness = null,
+        ?ManagementPnlBuiltinPublishedReport $managementPnl = null,
     ) {
         $byCode = [];
         $definitions = [$projectMargin->definition(), $budgetPlanFact->definition(), $portfolioLiquidity->definition(), $projectPortfolioHealth->definition(), $projectEvmControl->definition(), $wipCompletionForecast->definition(), $contractSettlementExposure->definition(), $baselineScheduleVariance->definition(), $acceptedProduction->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $contractorScorecard->definition(), $customerSla->definition(), $holdingPerformance->definition(), $intercompanyContractFlow->definition()];
         if ($lookaheadReadiness !== null) {
             $definitions[] = $lookaheadReadiness->definition();
+        }
+        if ($managementPnl !== null) {
+            $definitions[] = $managementPnl->definition();
         }
         foreach ($definitions as $definition) {
             $byCode[$definition->code] = $definition;
