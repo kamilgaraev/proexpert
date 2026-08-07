@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ContractSettlement
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\HoldingPerformanceReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContractFlowReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\LookaheadReadinessReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ManagementPnlReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectEvmControlReportOptionsController;
@@ -129,6 +130,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'contract_settlement_exposure')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('contract-settlement-exposure.options');
+        Route::get('/management-pnl/options', ManagementPnlReportOptionsController::class)
+            ->defaults('reportCode', 'management_pnl')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('management-pnl.options');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');
