@@ -46,7 +46,9 @@ final readonly class ProjectPortfolioHealthImmutableSource
             || ! is_array($read['gaps'] ?? null)
             || ! array_is_list($read['gaps'])
             || ! is_array($read['calendar'] ?? null)
-            || ! array_is_list($read['calendar'])) {
+            || ! array_is_list($read['calendar'])
+            || ! is_array($read['projects'] ?? null)
+            || ! array_is_list($read['projects'])) {
             $this->unavailable();
         }
         foreach ($read['calendar'] as $item) {
@@ -113,6 +115,7 @@ final readonly class ProjectPortfolioHealthImmutableSource
                 $ownerPayloads,
                 $read['calendar'],
                 $rowCounts,
+                $read['projects'],
             );
         } catch (InvalidArgumentException) {
             $this->unavailable();

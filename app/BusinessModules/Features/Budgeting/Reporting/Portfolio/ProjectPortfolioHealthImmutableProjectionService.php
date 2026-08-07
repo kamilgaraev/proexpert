@@ -13,6 +13,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioHealthRow;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioProjectionResult;
 use App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregator;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -23,6 +25,7 @@ final readonly class ProjectPortfolioHealthImmutableProjectionService
         private ProjectPortfolioHealthImmutableSource $sources,
         private BudgetingPortfolioProjectionService $snapshots,
         private CfoProjectPortfolioAggregator $aggregator,
+        private ProjectPortfolioHealthRuntimeFilter $runtimeFilters,
     ) {}
 
     public function materialize(
@@ -41,6 +44,12 @@ final readonly class ProjectPortfolioHealthImmutableProjectionService
         if (! isset($projects) || array_keys($projects) !== $projectIds) {
             $this->unavailable();
         }
+        $values = $query->filters->values;
+        $projects = $this->runtimeFilters->projects(
+            $projects,
+            array_key_exists('manager_ids', $values) ? $values['manager_ids'] : [],
+            array_key_exists('project_statuses', $values) ? $values['project_statuses'] : [],
+        );
         $filters = $this->filters($context, $query, $projectIds);
         $progress->advance(20);
         $margin = $selection->ownerPayloads['project_margin'];
@@ -60,10 +69,19 @@ final readonly class ProjectPortfolioHealthImmutableProjectionService
             max(1, count($projects)),
             seedProjects: false,
         );
-        if ($projection->rows === []) {
-            $this->unavailable();
+        $riskRowIndexes = $this->runtimeFilters->riskRowIndexes(
+            array_map(
+                static fn (ProjectPortfolioHealthRow $row): string => $row->riskLevel,
+                $projection->rows,
+            ),
+            array_key_exists('risk_levels', $values) ? $values['risk_levels'] : [],
+        );
+        if (count($riskRowIndexes) !== count($projection->rows)) {
+            $projection = ProjectPortfolioProjectionResult::fromRows(array_map(
+                static fn (int $index): ProjectPortfolioHealthRow => $projection->rows[$index],
+                $riskRowIndexes,
+            ), $query->asOf->format(DATE_ATOM), max(1, count($projects)));
         }
-
         try {
             $snapshot = $this->snapshots->persistHealth(
                 $context,
@@ -129,8 +147,6 @@ final readonly class ProjectPortfolioHealthImmutableProjectionService
             periodStart: $periodStart,
             periodEnd: $periodEnd,
             projectId: count($projectIds) === 1 ? $projectIds[0] : null,
-            projectManagerUserId: $this->firstPositiveInt($values['manager_ids'] ?? null),
-            projectStatus: $this->firstString($values['project_statuses'] ?? null),
             responsibilityCenterId: count($responsibilityCenterIds) === 1
                 ? $responsibilityCenterIds[0]
                 : null,
@@ -185,11 +201,6 @@ final readonly class ProjectPortfolioHealthImmutableProjectionService
             $value,
             static fn (mixed $item): bool => is_string($item) && trim($item) !== '',
         ));
-    }
-
-    private function firstPositiveInt(mixed $value): ?int
-    {
-        return $this->positiveIds($value)[0] ?? null;
     }
 
     private function firstString(mixed $value): ?string

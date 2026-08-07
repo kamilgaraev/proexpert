@@ -9,6 +9,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 
 interface ProjectPortfolioHealthSourceReader
 {
-    /** @return array{components:list<ProjectPortfolioHealthSourceComponent>,gaps:list<array{code:string,kind?:string}>,calendar:list<\App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem>} */
+    /** @return array{components:list<ProjectPortfolioHealthSourceComponent>,gaps:list<array{code:string,kind?:string}>,calendar:list<\App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem>,projects:list<array{id:int,status:string,manager_ids:list<int>}>} */
     public function read(ReportExecutionContext $context, ReportQuery $query): array;
 }
