@@ -12,11 +12,19 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVa
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceQueryService;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceReportBindingFactory;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Readiness\BaselineScheduleVarianceReadinessProbe;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DrillDown\LookaheadReadinessDrillDownProvider;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\LookaheadReadinessCandidateContract;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\LookaheadReadinessPublishedRuntimeBindingRegistrar;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\LookaheadReadinessReportBindingFactory;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Providers\LookaheadReadinessReportProvider;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\LookaheadReadinessRowQuery;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Readiness\LookaheadReadinessProbe;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessSnapshotMaterializer;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Contracts\LookaheadReadinessAuthorizer;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Contracts\LookaheadReadinessSourceStore;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\EloquentLookaheadReadinessSourceStore;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\LaravelLookaheadReadinessAuthorizer;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Readiness\BaselineScheduleVarianceReadinessProbe;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
@@ -47,6 +55,14 @@ class ScheduleManagementServiceProvider extends ServiceProvider
         $this->app->singleton(BaselineScheduleVarianceCandidateContract::class);
         $this->app->scoped(BaselineScheduleVarianceReportBindingFactory::class);
         $this->app->scoped(BaselineScheduleVariancePublishedRuntimeBindingRegistrar::class);
+        $this->app->singleton(LookaheadReadinessCandidateContract::class);
+        $this->app->scoped(LookaheadReadinessSnapshotMaterializer::class);
+        $this->app->scoped(LookaheadReadinessReportProvider::class);
+        $this->app->scoped(LookaheadReadinessRowQuery::class);
+        $this->app->scoped(LookaheadReadinessDrillDownProvider::class);
+        $this->app->scoped(LookaheadReadinessProbe::class);
+        $this->app->scoped(LookaheadReadinessReportBindingFactory::class);
+        $this->app->scoped(LookaheadReadinessPublishedRuntimeBindingRegistrar::class);
     }
 
     public function boot(): void
@@ -55,6 +71,7 @@ class ScheduleManagementServiceProvider extends ServiceProvider
             ReportDefinitionBindingAssembler::class,
             function (ReportDefinitionBindingAssembler $assembler): void {
                 $this->app->make(BaselineScheduleVariancePublishedRuntimeBindingRegistrar::class)->register($assembler);
+                $this->app->make(LookaheadReadinessPublishedRuntimeBindingRegistrar::class)->register($assembler);
             },
         );
 

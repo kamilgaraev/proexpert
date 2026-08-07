@@ -12,11 +12,10 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContra
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\LookaheadReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
-use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectPortfolioHealthReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectEvmControlReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
-use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\WipCompletionForecastReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectPortfolioHealthReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
@@ -25,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunControlle
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSubscriptionController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportWorkspacePreferencesController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\WipCompletionForecastReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\WorkforceCapacityReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors;
@@ -160,6 +160,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'lookahead_readiness')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('lookahead-readiness.options');
+        Route::post('/projects/{project}/lookahead-readiness/runs', [ReportRunController::class, 'store'])
+            ->defaults('reportCode', 'lookahead_readiness')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('lookahead-readiness.runs.store');
         Route::post('/projects/{project}/accepted-production-progress/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'accepted_production_progress')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
