@@ -7,6 +7,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\AcceptedProductionReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ContractSettlementExposureReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ChangeClaimReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\HoldingPerformanceReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContractFlowReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\LookaheadReadinessReportOptionsController;
@@ -138,6 +139,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'management_pnl')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('management-pnl.runs.store');
+        Route::get('/change-claim-contingency/options', ChangeClaimReportOptionsController::class)
+            ->defaults('reportCode', 'change_claim_contingency')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('change-claim-contingency.options');
         Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
             ->middleware($resourceAccess)
             ->name('runs.store');
