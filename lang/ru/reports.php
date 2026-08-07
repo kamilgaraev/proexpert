@@ -164,6 +164,17 @@ return [
                 'due_date_missing' => 'Дата оплаты не указана',
             ],
         ],
+        'change_claim_contingency' => [
+            'option_allocation' => 'Распределение №:id',
+            'option_other' => 'Другое значение',
+            'statuses' => [
+                'draft' => 'Черновик', 'submitted' => 'Отправлено', 'under_review' => 'На рассмотрении',
+                'approved' => 'Утверждено', 'rejected' => 'Отклонено', 'implemented' => 'Исполнено',
+                'closed' => 'Закрыто', 'cancelled' => 'Отменено',
+            ],
+            'initiator_types' => ['internal' => 'Внутренний инициатор', 'customer' => 'Заказчик', 'contractor' => 'Подрядчик'],
+            'source_types' => ['change_request' => 'Изменение', 'manual_adjustment' => 'Корректировка резерва', 'opening_balance' => 'Начальный резерв'],
+        ],
     ],
     'errors' => [
         'report_not_found' => 'Отчёт не найден.',
