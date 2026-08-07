@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DrillDown;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -36,9 +36,9 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
-        $row = $this->source->findRow($context, $snapshot, $request->token);
+        $row = $this->source->findRow($context, $snapshot, $input->cell->rowKey);
         if ($row === null) {
             return new ReportDrillDownResult([], null, []);
         }
@@ -46,11 +46,11 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
         $projectId = (int) $row['project_id'];
         $contextRows = $this->contextRows($context, $row, $projectId);
         $projectionVersion = $this->projectionVersion($row);
-        $cursor = DrillDownPageCursor::decode($request->cursor);
+        $cursor = DrillDownPageCursor::decode($input->cursor);
         [$rows, $remaining, $nextContextCursor] = $this->contextPage(
             $contextRows,
             $cursor,
-            $request->limit,
+            $input->limit,
         );
         if ($nextContextCursor !== null) {
             return new ReportDrillDownResult($rows, $nextContextCursor, []);

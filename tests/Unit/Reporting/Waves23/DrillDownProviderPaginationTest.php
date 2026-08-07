@@ -8,7 +8,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
@@ -50,7 +49,7 @@ final class DrillDownProviderPaginationTest extends TestCase
             $result = $provider->drillDown(
                 $this->context(),
                 $this->snapshot('lookahead_readiness'),
-                new ReportDrillDownRequest('token', $cursor, 2),
+                new ReportDrillDownInput(new ReportDrillDownCell('row-1', 'drill'), $cursor, 2),
             );
             self::assertLessThanOrEqual(2, count($result->rows));
             foreach ($result->rows as $row) {
@@ -66,6 +65,7 @@ final class DrillDownProviderPaginationTest extends TestCase
             'work_constraint_event:12',
             'work_constraint_event:13',
         ], $keys);
+        self::assertSame(['row-1', 'row-1', 'row-1'], $source->requestedRowKeys);
         self::assertSame(2, $source->eventPageCalls);
     }
 
@@ -80,12 +80,12 @@ final class DrillDownProviderPaginationTest extends TestCase
         $first = $lookahead->drillDown(
             $this->context(),
             $this->snapshot('lookahead_readiness'),
-            new ReportDrillDownRequest('token', null, 1),
+            new ReportDrillDownInput(new ReportDrillDownCell('row-1', 'drill'), null, 1),
         );
         $second = $lookahead->drillDown(
             $this->context(),
             $this->snapshot('lookahead_readiness'),
-            new ReportDrillDownRequest('token', $first->nextCursor, 1),
+            new ReportDrillDownInput(new ReportDrillDownCell('row-1', 'drill'), $first->nextCursor, 1),
         );
 
         self::assertSame(['lookahead_task:7:11:13:17'], array_column($first->rows, 'row_key'));
@@ -322,6 +322,8 @@ final class FakeLookaheadDrillDownSource implements LookaheadReadinessDrillDownS
 {
     public int $eventPageCalls = 0;
 
+    public array $requestedRowKeys = [];
+
     public function __construct(
         private readonly array $row,
         private readonly array $events,
@@ -332,6 +334,8 @@ final class FakeLookaheadDrillDownSource implements LookaheadReadinessDrillDownS
         ReportSnapshotRef $snapshot,
         string $rowKey,
     ): ?array {
+        $this->requestedRowKeys[] = $rowKey;
+
         return $this->row;
     }
 
