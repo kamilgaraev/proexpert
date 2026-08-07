@@ -19,6 +19,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioH
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\ChangeClaimBuiltinPublishedReport;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
@@ -66,6 +67,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
         private ?LookaheadReadinessBuiltinPublishedReport $lookaheadReadiness = null,
         private ?ManagementPnlBuiltinPublishedReport $managementPnl = null,
+        private ?ChangeClaimBuiltinPublishedReport $changeClaim = null,
     ) {}
 
     public function published(string $code): ReportSchedulingCapability
@@ -77,6 +79,10 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         if ($this->managementPnl !== null
             && $code === $this->managementPnl->scheduling()->code) {
             return $this->managementPnl->scheduling();
+        }
+        if ($this->changeClaim !== null
+            && $code === $this->changeClaim->scheduling()->code) {
+            return $this->changeClaim->scheduling();
         }
 
         return match ($code) {
