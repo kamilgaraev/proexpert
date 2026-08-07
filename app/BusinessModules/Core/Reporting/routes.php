@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\HoldingPerformance
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContractFlowReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectPortfolioHealthReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectEvmControlReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
@@ -99,6 +100,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'portfolio_liquidity')
             ->middleware(['report.organization-scope', $resourceAccess])
             ->name('portfolio-liquidity.options');
+        Route::get('/project-portfolio-health/options', ProjectPortfolioHealthReportOptionsController::class)
+            ->defaults('reportCode', 'project_portfolio_health')
+            ->middleware(['report.organization-scope', $resourceAccess])
+            ->name('project-portfolio-health.options');
         Route::post('/intercompany-contract-flows/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'intercompany_contract_flows')
             ->middleware($resourceAccess)

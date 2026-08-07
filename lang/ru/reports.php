@@ -94,6 +94,20 @@ return [
         'format_invalid' => 'Выбран некорректный формат отчета.',
     ],
     'options' => [
+        'project_portfolio_health' => [
+            'statuses' => [
+                'active' => 'Активный',
+                'completed' => 'Завершён',
+                'paused' => 'Приостановлен',
+                'cancelled' => 'Отменён',
+            ],
+            'risk_levels' => [
+                'low' => 'Низкий',
+                'medium' => 'Средний',
+                'high' => 'Высокий',
+                'critical' => 'Критический',
+            ],
+        ],
         'accepted_production_progress' => [
             'work' => 'Работа №:id',
             'work_with_name' => 'Работа №:id — :name',
