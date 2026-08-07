@@ -7,15 +7,19 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
 
 final readonly class ProjectPortfolioHealthImmutableSourceSelection
 {
+    private array $projectReferences;
+
     public function __construct(
         public ProjectPortfolioHealthSourceTuple $tuple,
         public array $ownerPayloads,
         public array $calendar,
         private array $rowCounts,
+        array $projectReferences,
     ) {
         if (! $tuple->isReady()
             || ! isset(
@@ -42,12 +46,16 @@ final readonly class ProjectPortfolioHealthImmutableSourceSelection
                 throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
             }
         }
+        $this->projectReferences = $this->normalizeProjectReferences($projectReferences);
         $this->projects();
     }
 
     public function sourceHash(): Sha256Hash
     {
-        return new Sha256Hash($this->tuple->watermark);
+        return new Sha256Hash(hash('sha256', CanonicalJson::encode([
+            'project_dimensions' => $this->projectReferences,
+            'source_tuple' => $this->tuple->watermark,
+        ])));
     }
 
     public function sourceRefs(): array
@@ -67,13 +75,26 @@ final readonly class ProjectPortfolioHealthImmutableSourceSelection
                 hash: new Sha256Hash($component->sourceHash),
             );
         }
+        $projectDimensionsHash = $this->projectDimensionsHash();
+        $refs[] = new ReportSourceRef(
+            source: 'project_dimensions',
+            snapshotKind: 'project_dimensions',
+            snapshotId: 'project_dimensions_'.substr($projectDimensionsHash, 0, 24),
+            schemaVersion: 'project_dimensions_v1',
+            watermark: 'watermark_'.substr($projectDimensionsHash, 0, 24),
+            rowCount: count($this->projectReferences),
+            hash: new Sha256Hash($projectDimensionsHash),
+        );
 
         return $refs;
     }
 
     public function watermarks(): array
     {
-        $watermarks = ['source_tuple' => $this->tuple->watermark];
+        $watermarks = [
+            'project_dimensions' => $this->projectDimensionsHash(),
+            'source_tuple' => $this->tuple->watermark,
+        ];
         foreach ($this->tuple->components as $component) {
             $watermarks[$component->kind] = $component->sourceHash;
         }
@@ -96,15 +117,66 @@ final readonly class ProjectPortfolioHealthImmutableSourceSelection
                 if (isset($projects[$id]) && $projects[$id]['name'] !== $name) {
                     throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
                 }
-                $projects[$id] = ['id' => $id, 'name' => $name, 'status' => null];
+                $projects[$id] = ['id' => $id, 'name' => $name];
             }
         }
         if ($projects === []) {
             throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
         }
         ksort($projects, SORT_NUMERIC);
+        if (array_keys($projects) !== array_column($this->projectReferences, 'id')) {
+            throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
+        }
+        foreach ($this->projectReferences as $reference) {
+            $projects[$reference['id']]['status'] = $reference['status'];
+            $projects[$reference['id']]['manager_ids'] = $reference['manager_ids'];
+        }
 
         return $projects;
+    }
+
+    private function normalizeProjectReferences(array $references): array
+    {
+        if (! array_is_list($references) || $references === []) {
+            throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
+        }
+        $normalized = [];
+        foreach ($references as $reference) {
+            if (! is_array($reference)
+                || ! is_int($reference['id'] ?? null)
+                || $reference['id'] < 1
+                || ! is_string($reference['status'] ?? null)
+                || trim($reference['status']) === ''
+                || ! is_array($reference['manager_ids'] ?? null)
+                || ! array_is_list($reference['manager_ids'])) {
+                throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
+            }
+            $managerIds = [];
+            foreach ($reference['manager_ids'] as $managerId) {
+                if (! is_int($managerId) || $managerId < 1) {
+                    throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
+                }
+                $managerIds[$managerId] = $managerId;
+            }
+            ksort($managerIds, SORT_NUMERIC);
+            $id = $reference['id'];
+            if (isset($normalized[$id])) {
+                throw new InvalidArgumentException('project_portfolio_health_source_selection_invalid');
+            }
+            $normalized[$id] = [
+                'id' => $id,
+                'status' => trim($reference['status']),
+                'manager_ids' => array_values($managerIds),
+            ];
+        }
+        ksort($normalized, SORT_NUMERIC);
+
+        return array_values($normalized);
+    }
+
+    private function projectDimensionsHash(): string
+    {
+        return hash('sha256', CanonicalJson::encode($this->projectReferences));
     }
 
     private function identifier(string $value, string $prefix): string

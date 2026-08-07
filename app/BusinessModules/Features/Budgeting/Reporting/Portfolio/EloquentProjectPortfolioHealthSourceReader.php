@@ -22,8 +22,11 @@ use App\BusinessModules\Features\Budgeting\Models\EpmDataMartSnapshot;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartPayloadProjector;
 use App\Enums\CurrencyCode;
+use App\Models\Project;
+use App\Models\User;
 use DateTimeImmutable;
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use InvalidArgumentException;
 
 final readonly class EloquentProjectPortfolioHealthSourceReader implements ProjectPortfolioHealthSourceReader
@@ -51,6 +54,19 @@ final readonly class EloquentProjectPortfolioHealthSourceReader implements Proje
                     ProjectPortfolioHealthSourceTupleAssembler::REQUIRED_KINDS,
                 ),
                 'calendar' => [],
+                'projects' => [],
+            ];
+        }
+        $projectReferences = $this->projectReferences($context->scope->organizationId, $projectIds);
+        if ($projectReferences === null) {
+            return [
+                'components' => [],
+                'gaps' => array_map(
+                    static fn (string $kind): array => ['code' => 'owner_source_scope_incompatible', 'kind' => $kind],
+                    ProjectPortfolioHealthSourceTupleAssembler::REQUIRED_KINDS,
+                ),
+                'calendar' => [],
+                'projects' => [],
             ];
         }
         $ownerRequest = [
@@ -271,7 +287,12 @@ final readonly class EloquentProjectPortfolioHealthSourceReader implements Proje
         if ($responsibilityCenterIds === null || $counterpartyIds === null || $currencies === null) {
             $gaps[] = ['code' => 'liquidity_source_scope_invalid', 'kind' => 'portfolio_liquidity'];
 
-            return ['components' => $components, 'gaps' => $gaps, 'calendar' => []];
+            return [
+                'components' => $components,
+                'gaps' => $gaps,
+                'calendar' => [],
+                'projects' => $projectReferences,
+            ];
         }
         $calendar = [];
         try {
@@ -319,7 +340,47 @@ final readonly class EloquentProjectPortfolioHealthSourceReader implements Proje
             $gaps[] = ['code' => 'liquidity_source_unavailable', 'kind' => 'portfolio_liquidity'];
         }
 
-        return ['components' => $components, 'gaps' => $gaps, 'calendar' => $calendar];
+        return [
+            'components' => $components,
+            'gaps' => $gaps,
+            'calendar' => $calendar,
+            'projects' => $projectReferences,
+        ];
+    }
+
+    private function projectReferences(int $organizationId, array $projectIds): ?array
+    {
+        $projects = Project::query()
+            ->accessibleByOrganization($organizationId)
+            ->whereIn('id', $projectIds)
+            ->with(['users' => static function (BelongsToMany $query): void {
+                $query
+                    ->wherePivot('role', 'project_manager')
+                    ->wherePivot('is_active', true)
+                    ->select('users.id');
+            }])
+            ->orderBy('id')
+            ->get(['id', 'status']);
+        if ($projects->count() !== count($projectIds)) {
+            return null;
+        }
+        $references = $projects->map(static function (Project $project): array {
+            $managerIds = $project->users
+                ->map(static fn (User $manager): int => (int) $manager->getKey())
+                ->filter(static fn (int $managerId): bool => $managerId > 0)
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+
+            return [
+                'id' => (int) $project->getKey(),
+                'status' => is_string($project->status) ? trim($project->status) : '',
+                'manager_ids' => $managerIds,
+            ];
+        })->all();
+
+        return array_column($references, 'id') === $projectIds ? $references : null;
     }
 
     /** @return array<string, array{formula:string,schema:string}> */
