@@ -49,8 +49,17 @@ final class CfoProjectPortfolioAggregator
         array $calendarItems,
         string $generatedAt,
         int $itemLimit,
+        bool $seedProjects = true,
     ): ProjectPortfolioProjectionResult {
-        $rows = $this->rows($filters, $projects, $marginReport, $wipReport, $planFactItems, $calendarItems);
+        $rows = $this->rows(
+            $filters,
+            $projects,
+            $marginReport,
+            $wipReport,
+            $planFactItems,
+            $calendarItems,
+            $seedProjects,
+        );
         $summary = $this->summary($projects, $rows, $marginReport, $wipReport);
 
         return ProjectPortfolioProjectionResult::fromAggregator($rows, [
@@ -77,16 +86,19 @@ final class CfoProjectPortfolioAggregator
         array $wipReport,
         array $planFactItems,
         array $calendarItems,
+        bool $seedProjects,
     ): array {
         $rows = [];
 
-        foreach ($projects as $project) {
-            if (! is_array($project) || ! isset($project['id'])) {
-                continue;
-            }
+        if ($seedProjects) {
+            foreach ($projects as $project) {
+                if (! is_array($project) || ! isset($project['id'])) {
+                    continue;
+                }
 
-            $currency = $this->currency($filters->currency);
-            $rows[$this->key((int) $project['id'], $currency)] = $this->emptyRow($project, $currency, $filters);
+                $currency = $this->currency($filters->currency);
+                $rows[$this->key((int) $project['id'], $currency)] = $this->emptyRow($project, $currency, $filters);
+            }
         }
 
         foreach (($marginReport['rows'] ?? []) as $row) {

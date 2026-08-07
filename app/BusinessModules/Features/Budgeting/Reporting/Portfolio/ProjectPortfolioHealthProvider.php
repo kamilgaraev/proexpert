@@ -13,7 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 
 final readonly class ProjectPortfolioHealthProvider implements ReportDataProvider
 {
-    public function __construct(private BudgetingPortfolioProjectionService $projection) {}
+    public function __construct(private ProjectPortfolioHealthImmutableProjectionService $projection) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query, ReportProgress $progress): ReportSnapshotRef
     {
@@ -21,7 +21,6 @@ final readonly class ProjectPortfolioHealthProvider implements ReportDataProvide
             $context,
             $query,
             $progress,
-            BudgetingPortfolioProjectionService::HEALTH_CODE,
         );
     }
 
@@ -30,7 +29,6 @@ final readonly class ProjectPortfolioHealthProvider implements ReportDataProvide
         return $this->projection->result(
             $context,
             $snapshot,
-            BudgetingPortfolioProjectionService::HEALTH_CODE,
         );
     }
 }

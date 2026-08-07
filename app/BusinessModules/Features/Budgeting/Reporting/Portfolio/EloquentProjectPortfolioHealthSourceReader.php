@@ -50,6 +50,7 @@ final readonly class EloquentProjectPortfolioHealthSourceReader implements Proje
                     static fn (string $kind): array => ['code' => 'owner_source_scope_incompatible', 'kind' => $kind],
                     ProjectPortfolioHealthSourceTupleAssembler::REQUIRED_KINDS,
                 ),
+                'calendar' => [],
             ];
         }
         $ownerRequest = [
@@ -270,8 +271,9 @@ final readonly class EloquentProjectPortfolioHealthSourceReader implements Proje
         if ($responsibilityCenterIds === null || $counterpartyIds === null || $currencies === null) {
             $gaps[] = ['code' => 'liquidity_source_scope_invalid', 'kind' => 'portfolio_liquidity'];
 
-            return ['components' => $components, 'gaps' => $gaps];
+            return ['components' => $components, 'gaps' => $gaps, 'calendar' => []];
         }
+        $calendar = [];
         try {
             $source = $this->liquidity->read(
                 $context->scope->organizationId,
@@ -317,7 +319,7 @@ final readonly class EloquentProjectPortfolioHealthSourceReader implements Proje
             $gaps[] = ['code' => 'liquidity_source_unavailable', 'kind' => 'portfolio_liquidity'];
         }
 
-        return ['components' => $components, 'gaps' => $gaps];
+        return ['components' => $components, 'gaps' => $gaps, 'calendar' => $calendar];
     }
 
     /** @return array<string, array{formula:string,schema:string}> */
