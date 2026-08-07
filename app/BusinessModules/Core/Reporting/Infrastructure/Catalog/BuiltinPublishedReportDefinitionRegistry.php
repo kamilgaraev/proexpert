@@ -21,6 +21,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioH
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\ChangeClaimBuiltinPublishedReport;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
@@ -71,6 +72,7 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
         ?LookaheadReadinessBuiltinPublishedReport $lookaheadReadiness = null,
         ?ManagementPnlBuiltinPublishedReport $managementPnl = null,
+        ?ChangeClaimBuiltinPublishedReport $changeClaim = null,
     ) {
         $byCode = [];
         $definitions = [$projectMargin->definition(), $budgetPlanFact->definition(), $portfolioLiquidity->definition(), $projectPortfolioHealth->definition(), $projectEvmControl->definition(), $wipCompletionForecast->definition(), $contractSettlementExposure->definition(), $baselineScheduleVariance->definition(), $acceptedProduction->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $contractorScorecard->definition(), $customerSla->definition(), $holdingPerformance->definition(), $intercompanyContractFlow->definition()];
@@ -79,6 +81,9 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         }
         if ($managementPnl !== null) {
             $definitions[] = $managementPnl->definition();
+        }
+        if ($changeClaim !== null) {
+            $definitions[] = $changeClaim->definition();
         }
         foreach ($definitions as $definition) {
             $byCode[$definition->code] = $definition;
