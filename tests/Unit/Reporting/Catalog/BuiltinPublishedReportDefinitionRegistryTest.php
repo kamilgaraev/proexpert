@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Catalog;
 
-use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowBuiltinPublishedReport;
-use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardCandidateContract;
 use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceBuiltinPublishedReport;
 use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceCandidateContract;
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowBuiltinPublishedReport;
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
@@ -23,34 +25,30 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabaseReportCata
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\DatabaseReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\ReportingCatalogServiceProvider;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureCandidateContract;
-use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
-use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskCandidateContract;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleCandidateContract;
+use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
+use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessCandidateContract;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardCandidateContract;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleCandidateContract;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityCandidateContract;
-use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
-use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionCandidateContract;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowBuiltinPublishedReport;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowCandidateContract;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionBuiltinPublishedReport;
@@ -59,14 +57,20 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Safe
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\SafetyIncidentActionsCandidateContract;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceCandidateContract;
-use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
-use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessCandidateContract;
-use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
-use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardCandidateContract;
-use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
-use App\Services\Customer\Reporting\Sla\CustomerSlaCandidateContract;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\LookaheadReadinessBuiltinPublishedReport;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\LookaheadReadinessCandidateContract;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionBuiltinPublishedReport;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionCandidateContract;
+use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
+use App\Services\Customer\Reporting\Sla\CustomerSlaCandidateContract;
 use Illuminate\Foundation\Application;
 use LogicException;
 use PHPUnit\Framework\TestCase;
@@ -208,6 +212,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->projectMargin(),
             new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract),
             $this->portfolioLiquidity(),
+            $this->projectPortfolioHealth(),
             $this->projectEvmControl(),
             $this->wipCompletionForecast(),
             $this->contractSettlementExposure(),
@@ -229,10 +234,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->customerSla(),
             $this->holdingPerformance(),
             $this->intercompanyContractFlow(),
+            $this->lookaheadReadiness(),
         );
         $registry = new CompositePublishedReportDefinitionRegistry($builtins, $this->registry([]));
 
-        self::assertSame(['accepted_production_progress', 'attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contract_settlement_exposure', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'holding_performance', 'intercompany_contract_flows', 'inventory_risk', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_evm_control', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity'], $registry->publishedCodes());
+        self::assertSame(['accepted_production_progress', 'attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contract_settlement_exposure', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'holding_performance', 'intercompany_contract_flows', 'inventory_risk', 'lookahead_readiness', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_evm_control', 'project_labor_cost', 'project_margin', 'project_portfolio_health', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity'], $registry->publishedCodes());
         self::assertSame('project_margin', $registry->published('project_margin')->code);
         $definition = $registry->published('budget_plan_fact');
         $payload = $definition->payload();
@@ -253,6 +259,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->projectMargin(),
             new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract),
             $this->portfolioLiquidity(),
+            $this->projectPortfolioHealth(),
             $this->projectEvmControl(),
             $this->wipCompletionForecast(),
             $this->contractSettlementExposure(),
@@ -274,15 +281,18 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
             $this->customerSla(),
             $this->holdingPerformance(),
             $this->intercompanyContractFlow(),
+            $this->lookaheadReadiness(),
         );
 
         $expectedModules = [
             'budget_plan_fact' => 'budgeting',
             'portfolio_liquidity' => 'budgeting',
+            'project_portfolio_health' => 'budgeting',
             'project_evm_control' => 'budgeting',
             'wip_completion_forecast' => 'budgeting',
             'contract_settlement_exposure' => 'contract-management',
             'baseline_schedule_variance' => 'schedule-management',
+            'lookahead_readiness' => 'schedule-management',
             'accepted_production_progress' => 'contract-management',
             'project_margin' => 'budgeting',
             'project_labor_cost' => 'time-tracking',
@@ -317,11 +327,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->projectEvmControl(), $this->wipCompletionForecast(), $this->contractSettlementExposure(), $this->baselineScheduleVariance(), $this->acceptedProduction(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla(), $this->holdingPerformance(), $this->intercompanyContractFlow()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->projectPortfolioHealth(), $this->projectEvmControl(), $this->wipCompletionForecast(), $this->contractSettlementExposure(), $this->baselineScheduleVariance(), $this->acceptedProduction(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla(), $this->holdingPerformance(), $this->intercompanyContractFlow(), $this->lookaheadReadiness()),
             $this->registry(['ordinary_report' => $builtin]),
         );
 
-        self::assertSame(['accepted_production_progress', 'attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contract_settlement_exposure', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'holding_performance', 'intercompany_contract_flows', 'inventory_risk', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_evm_control', 'project_labor_cost', 'project_margin', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
+        self::assertSame(['accepted_production_progress', 'attendance_execution', 'baseline_schedule_variance', 'budget_plan_fact', 'contract_settlement_exposure', 'contractor_scorecard', 'customer_sla', 'handover_readiness', 'holding_performance', 'intercompany_contract_flows', 'inventory_risk', 'lookahead_readiness', 'payroll_readiness', 'portfolio_liquidity', 'procurement_cycle', 'project_evm_control', 'project_labor_cost', 'project_margin', 'project_portfolio_health', 'quality_defect_flow', 'safety_incident_actions', 'supplier_award_competitiveness', 'supply_reliability', 'wip_completion_forecast', 'workforce_admission', 'workforce_capacity', 'ordinary_report'], $registry->publishedCodes());
         self::assertSame($builtin, $registry->published('ordinary_report'));
     }
 
@@ -329,7 +339,7 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     {
         $builtin = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $registry = new CompositePublishedReportDefinitionRegistry(
-            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->projectEvmControl(), $this->wipCompletionForecast(), $this->contractSettlementExposure(), $this->baselineScheduleVariance(), $this->acceptedProduction(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla(), $this->holdingPerformance(), $this->intercompanyContractFlow()),
+            new BuiltinPublishedReportDefinitionRegistry($this->projectMargin(), new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract), $this->portfolioLiquidity(), $this->projectPortfolioHealth(), $this->projectEvmControl(), $this->wipCompletionForecast(), $this->contractSettlementExposure(), $this->baselineScheduleVariance(), $this->acceptedProduction(), $this->projectLaborCost(), $this->payrollReadiness(), $this->workforceCapacity(), $this->procurementCycle(), $this->supplierAward(), $this->supplyReliability(), $this->inventoryRisk(), $this->attendanceExecution(), $this->qualityDefectFlow(), $this->safetyIncidentActions(), $this->workforceAdmission(), $this->handoverReadiness(), $this->contractorScorecard(), $this->customerSla(), $this->holdingPerformance(), $this->intercompanyContractFlow(), $this->lookaheadReadiness()),
             $this->registry(['budget_plan_fact' => $builtin]),
         );
 
@@ -378,6 +388,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
         return new PortfolioLiquidityBuiltinPublishedReport(new PortfolioLiquidityCandidateContract);
     }
 
+    private function projectPortfolioHealth(): ProjectPortfolioHealthBuiltinPublishedReport
+    {
+        return new ProjectPortfolioHealthBuiltinPublishedReport(new ProjectPortfolioHealthCandidateContract);
+    }
+
     private function projectEvmControl(): ProjectEvmControlBuiltinPublishedReport
     {
         return new ProjectEvmControlBuiltinPublishedReport(new ProjectEvmControlCandidateContract);
@@ -401,6 +416,11 @@ final class BuiltinPublishedReportDefinitionRegistryTest extends TestCase
     private function baselineScheduleVariance(): BaselineScheduleVarianceBuiltinPublishedReport
     {
         return new BaselineScheduleVarianceBuiltinPublishedReport(new BaselineScheduleVarianceCandidateContract);
+    }
+
+    private function lookaheadReadiness(): LookaheadReadinessBuiltinPublishedReport
+    {
+        return new LookaheadReadinessBuiltinPublishedReport(new LookaheadReadinessCandidateContract);
     }
 
     private function acceptedProduction(): AcceptedProductionBuiltinPublishedReport

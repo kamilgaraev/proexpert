@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessFormula;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessSnapshotMaterializer;
@@ -69,8 +70,29 @@ final readonly class LookaheadReadinessCandidateContract
         }
     }
 
-    private function document(): array
+    public function assertDefinition(ReportDefinition $definition): void
     {
+        if ($definition->code !== self::CODE
+            || $definition->sourceModule !== 'schedule-management'
+            || $definition->coreAccessMode !== ReportCoreAccessMode::SOURCE_MODULE_REPORT
+            || $definition->formulaVersion !== self::FORMULA_VERSION
+            || $definition->sourceSchemaVersion !== self::SOURCE_SCHEMA_VERSION
+            || array_column($definition->filters, 'id') !== array_column($this->filters(), 'id')
+            || array_column($definition->columns, 'id') !== array_column($this->columns(), 'id')
+            || array_column($definition->sorts, 'id') !== array_column($this->sorts(), 'id')
+            || $definition->formats !== $this->formats()
+            || $definition->permissionPolicy->viewPermissions !== ['schedule.view']
+            || $definition->permissionPolicy->exportPermissions !== ['schedule.reports.export']) {
+            throw new InvalidArgumentException('lookahead_readiness_candidate_definition_invalid');
+        }
+    }
+
+    public function document(string $publication = 'blocked'): array
+    {
+        if (! in_array($publication, ['blocked', 'published'], true)) {
+            throw new InvalidArgumentException('lookahead_readiness_publication_state_invalid');
+        }
+
         return [
             'code' => self::CODE,
             'title_key' => 'reports.catalog.lookahead_readiness',
@@ -87,7 +109,7 @@ final readonly class LookaheadReadinessCandidateContract
             'versions' => ['contract' => '1.0.0', 'formula' => self::FORMULA_VERSION, 'source_schema' => self::SOURCE_SCHEMA_VERSION, 'renderer' => '1.0.0'],
             'semantic_fingerprints' => ['formula' => self::FORMULA_HASH, 'source' => self::SOURCE_HASH],
             'permissions' => ['view' => ['schedule.view'], 'export' => ['schedule.reports.export'], 'sensitive' => [], 'audit' => []],
-            'readiness' => ['source' => 'ready', 'formula' => 'ready', 'delivery' => 'verified', 'publication' => 'blocked'],
+            'readiness' => ['source' => 'ready', 'formula' => 'ready', 'delivery' => 'verified', 'publication' => $publication],
             'capabilities' => ['supports_subscriptions' => false, 'reproducible_scheduled_snapshot' => false],
         ];
     }
