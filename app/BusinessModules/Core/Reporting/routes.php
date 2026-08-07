@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\BudgetPlanFactRepo
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ContractSettlementExposureReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\HoldingPerformanceReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\IntercompanyContractFlowReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\LookaheadReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PayrollReadinessReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\PortfolioLiquidityReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectPortfolioHealthReportOptionsController;
@@ -155,6 +156,10 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'project_evm_control')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('project-evm-control.options');
+        Route::get('/projects/{project}/lookahead-readiness/options', LookaheadReadinessReportOptionsController::class)
+            ->defaults('reportCode', 'lookahead_readiness')
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('lookahead-readiness.options');
         Route::post('/projects/{project}/accepted-production-progress/runs', [ReportRunController::class, 'store'])
             ->defaults('reportCode', 'accepted_production_progress')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
