@@ -24,6 +24,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\PortfolioLiqu
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioHealthRow;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioProjectionResult;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityProvider;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthImmutableProjectionService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthProvider;
 use App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregator;
 use DateTimeImmutable;
@@ -273,15 +274,56 @@ final class BudgetingPortfolioSourceTest extends TestCase
     }
 
     #[Test]
-    public function project_portfolio_health_fails_closed_until_every_owner_source_is_versioned(): void
+    public function immutable_materializer_rejects_client_projects_when_server_scope_is_empty(): void
     {
+        $timezone = new DateTimeZone('UTC');
+        $scope = new ReportScope(1, [1], [], [], $timezone);
+        $context = new ReportExecutionContext(
+            new ReportActor(7, 'active', ['reports.view']),
+            $scope,
+            new ReportVisibility(true, false, false, false, false, false, false),
+            new AuthorizationDecisionContext('http', 1, [1], [], [], $timezone, 'scope-test', null),
+        );
+        $query = new ReportQuery(
+            (new ReportDefinitionBuilder)->code(BudgetingPortfolioProjectionService::HEALTH_CODE)->payload(),
+            $scope,
+            new ReportFilterSet(['project_ids' => [11]]),
+            [],
+            new DateTimeImmutable('2026-07-29T00:00:00+00:00'),
+            'ru',
+        );
+        $materializer = (new ReflectionClass(ProjectPortfolioHealthImmutableProjectionService::class))
+            ->newInstanceWithoutConstructor();
+
+        try {
+            $materializer->materialize($context, $query, new ReportProgress(0));
+            self::fail('Client project IDs must not expand an empty server-owned scope.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $exception->errorCode);
+        }
+    }
+
+    #[Test]
+    public function project_portfolio_health_materializes_only_from_the_exact_immutable_source_tuple(): void
+    {
+        $provider = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/ProjectPortfolioHealthProvider.php',
+        );
         $source = file_get_contents(
             dirname(__DIR__, 4)
-            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/BudgetingPortfolioProjectionService.php',
+            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/ProjectPortfolioHealthImmutableProjectionService.php',
         );
 
+        self::assertIsString($provider);
         self::assertIsString($source);
-        self::assertStringContainsString('assertImmutableHealthCoverage', $source);
-        self::assertStringContainsString('ReportErrorCode::REPORT_SOURCE_UNAVAILABLE', $source);
+        self::assertStringContainsString('ProjectPortfolioHealthImmutableProjectionService $projection', $provider);
+        self::assertStringContainsString('ProjectPortfolioHealthImmutableSource $sources', $source);
+        self::assertStringContainsString('$selection = $this->sources->load($context, $query);', $source);
+        self::assertStringContainsString('$selection->sourceHash()', $source);
+        self::assertStringNotContainsString('assertImmutableHealthCoverage', $source);
+        self::assertStringNotContainsString('$this->marginReports->report(', $source);
+        self::assertStringNotContainsString('$this->wipReports->report(', $source);
+        self::assertStringNotContainsString('$this->planFactReports->report(', $source);
     }
 }

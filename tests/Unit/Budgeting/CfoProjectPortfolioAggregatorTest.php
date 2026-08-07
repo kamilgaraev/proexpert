@@ -184,6 +184,30 @@ final class CfoProjectPortfolioAggregatorTest extends TestCase
         $this->assertSame('155000.00', $result['items'][0]['metrics']['forecast_revenue']);
     }
 
+    public function test_immutable_projection_does_not_seed_a_phantom_default_currency_row(): void
+    {
+        $result = (new CfoProjectPortfolioAggregator)->buildResult(
+            filters: $this->filters(),
+            projects: [7 => ['id' => 7, 'name' => 'Business Center', 'status' => null]],
+            marginReport: ['rows' => [[
+                'project' => ['id' => 7, 'name' => 'Business Center'],
+                'currency' => 'USD',
+                'actual' => ['revenue' => '100.00', 'cost' => '80.00', 'gross_margin' => '20.00'],
+                'forecast' => ['revenue' => '110.00', 'cost' => '85.00', 'gross_margin' => '25.00'],
+            ]]],
+            wipReport: ['rows' => []],
+            planFactItems: [],
+            calendarItems: [],
+            generatedAt: '2026-06-09T10:00:00+03:00',
+            itemLimit: 5,
+            seedProjects: false,
+        );
+
+        $this->assertCount(1, $result->rows);
+        $this->assertSame('USD', $result->rows[0]->currency);
+        $this->assertSame([['type' => 'project', 'id' => 7]], $result->rows[0]->sourceRefs);
+    }
+
     private function filters(): CfoCommandCenterFilters
     {
         return new CfoCommandCenterFilters(
