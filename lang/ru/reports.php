@@ -3,6 +3,18 @@
 declare(strict_types=1);
 
 return [
+    'management_pnl' => [
+        'currencies' => [
+            'RUB' => 'Российский рубль',
+            'USD' => 'Доллар США',
+            'EUR' => 'Евро',
+        ],
+        'scenarios' => [
+            'actual' => 'Факт',
+            'forecast' => 'Прогноз',
+            'plan' => 'План',
+        ],
+    ],
     'exports' => [
         'total_label' => 'Итого',
     ],
