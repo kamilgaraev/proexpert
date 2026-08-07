@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabili
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
@@ -39,6 +40,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
         private ProjectMarginBuiltinPublishedReport $projectMargin,
         private BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
         private PortfolioLiquidityBuiltinPublishedReport $portfolioLiquidity,
+        private ProjectPortfolioHealthBuiltinPublishedReport $projectPortfolioHealth,
         private ProjectEvmControlBuiltinPublishedReport $projectEvmControl,
         private WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
         private ContractSettlementExposureBuiltinPublishedReport $contractSettlementExposure,
@@ -68,6 +70,7 @@ final readonly class BuiltinReportSchedulingCapabilityRegistry implements Report
             $this->projectMargin->scheduling()->code => $this->projectMargin->scheduling(),
             $this->budgetPlanFact->scheduling()->code => $this->budgetPlanFact->scheduling(),
             $this->portfolioLiquidity->scheduling()->code => $this->portfolioLiquidity->scheduling(),
+            $this->projectPortfolioHealth->scheduling()->code => $this->projectPortfolioHealth->scheduling(),
             $this->projectEvmControl->scheduling()->code => $this->projectEvmControl->scheduling(),
             $this->wipCompletionForecast->scheduling()->code => $this->wipCompletionForecast->scheduling(),
             $this->contractSettlementExposure->scheduling()->code => $this->contractSettlementExposure->scheduling(),
