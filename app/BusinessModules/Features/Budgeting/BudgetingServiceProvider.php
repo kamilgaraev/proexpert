@@ -25,6 +25,9 @@ use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidit
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionObserver;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthOwnerSourcePolicy;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthReadinessProbe;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthProvider;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthReportBindingFactory;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthSourceReader;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DrillDown\ProjectEvmControlDrillDownProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
@@ -105,6 +108,9 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->bind(ProjectPortfolioHealthSourceReader::class, EloquentProjectPortfolioHealthSourceReader::class);
         $this->app->scoped(EloquentProjectPortfolioHealthSourceReader::class);
         $this->app->scoped(ProjectPortfolioHealthReadinessProbe::class);
+        $this->app->scoped(ProjectPortfolioHealthProvider::class);
+        $this->app->scoped(ProjectPortfolioHealthReportBindingFactory::class);
+        $this->app->scoped(ProjectPortfolioHealthPublishedRuntimeBindingRegistrar::class);
         $this->app->scoped(PortfolioLiquidityReportBindingFactory::class);
         $this->app->scoped(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class);
         $this->app->singleton(ProjectEvmControlCandidateContract::class);
@@ -163,6 +169,9 @@ final class BudgetingServiceProvider extends ServiceProvider
                     ->register($assembler);
                 $this->app
                     ->make(PortfolioLiquidityPublishedRuntimeBindingRegistrar::class)
+                    ->register($assembler);
+                $this->app
+                    ->make(ProjectPortfolioHealthPublishedRuntimeBindingRegistrar::class)
                     ->register($assembler);
                 $this->app
                     ->make(ProjectEvmControlPublishedRuntimeBindingRegistrar::class)

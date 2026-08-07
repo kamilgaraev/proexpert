@@ -14,6 +14,7 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlo
 use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
@@ -44,6 +45,7 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         ProjectMarginBuiltinPublishedReport $projectMargin,
         BudgetPlanFactBuiltinPublishedReport $budgetPlanFact,
         PortfolioLiquidityBuiltinPublishedReport $portfolioLiquidity,
+        ProjectPortfolioHealthBuiltinPublishedReport $projectPortfolioHealth,
         ProjectEvmControlBuiltinPublishedReport $projectEvmControl,
         WipCompletionForecastBuiltinPublishedReport $wipCompletionForecast,
         ContractSettlementExposureBuiltinPublishedReport $contractSettlementExposure,
@@ -67,7 +69,7 @@ final readonly class BuiltinPublishedReportDefinitionRegistry implements ReportD
         IntercompanyContractFlowBuiltinPublishedReport $intercompanyContractFlow,
     ) {
         $byCode = [];
-        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $portfolioLiquidity->definition(), $projectEvmControl->definition(), $wipCompletionForecast->definition(), $contractSettlementExposure->definition(), $baselineScheduleVariance->definition(), $acceptedProduction->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $contractorScorecard->definition(), $customerSla->definition(), $holdingPerformance->definition(), $intercompanyContractFlow->definition()] as $definition) {
+        foreach ([$projectMargin->definition(), $budgetPlanFact->definition(), $portfolioLiquidity->definition(), $projectPortfolioHealth->definition(), $projectEvmControl->definition(), $wipCompletionForecast->definition(), $contractSettlementExposure->definition(), $baselineScheduleVariance->definition(), $acceptedProduction->definition(), $projectLaborCost->definition(), $payrollReadiness->definition(), $workforceCapacity->definition(), $procurementCycle->definition(), $supplierAward->definition(), $supplyReliability->definition(), $inventoryRisk->definition(), $attendanceExecution->definition(), $qualityDefectFlow->definition(), $safetyIncidentActions->definition(), $workforceAdmission->definition(), $handoverReadiness->definition(), $contractorScorecard->definition(), $customerSla->definition(), $holdingPerformance->definition(), $intercompanyContractFlow->definition()] as $definition) {
             $byCode[$definition->code] = $definition;
         }
         ksort($byCode, SORT_STRING);
