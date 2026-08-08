@@ -113,7 +113,7 @@ final readonly class ReportSnapshotSealBackfill
                     'status' => 'failed',
                     'failed_count' => 1,
                     'failure_fingerprint' => hash('sha256', $exception::class.':'.$exception->getMessage()),
-                    'remediation' => 'verify_snapshot_identity_then_reseal_with_trusted_active_key',
+                    'remediation' => 'verify_snapshot_identity_then_store_content_hash',
                     'completed_at' => now(),
                     'updated_at' => now(),
                 ],

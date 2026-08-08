@@ -41,7 +41,6 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRe
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\MaterializeReportRunJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
 use App\BusinessModules\Core\Reporting\Infrastructure\Registry\ProductionReportDefinitionRegistry;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill\QualityDefectFlowBackfill;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\DrillDown\QualityDefectFlowDrillDownProvider;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers\QualityDefectFlowReportProvider;
@@ -88,8 +87,6 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
     private bool $previousMigrationState = false;
 
     /** @var array<string, mixed> */
-    private array $previousReportingConfig = [];
-
     protected function setUp(): void
     {
         $dsn = getenv('QUALITY_REPORTS_PG_DSN');
@@ -118,9 +115,6 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
 
         try {
             parent::setUp();
-            $this->previousReportingConfig = (array) config('reporting.snapshot_signing', []);
-            $this->configureSnapshotSigning();
-
             self::assertSame('pgsql', DB::connection()->getDriverName());
             self::assertTrue(DB::getSchemaBuilder()->hasTable('quality_defect_flow_snapshots'));
             self::assertTrue(DB::getSchemaBuilder()->hasTable('safety_incident_snapshots'));
@@ -259,7 +253,7 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         self::assertStringContainsString('evidence_id', $admissionSensitive['xlsx_xml']);
 
         $this->assertHistoricalSnapshotBackfill($quality['source']);
-        $this->assertSealRotationAndRejection($quality['source'], $ordinary, $asOf);
+        $this->assertSealIntegrityAndRejection($quality['source'], $ordinary);
     }
 
     private function execute(
@@ -457,10 +451,9 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         ));
     }
 
-    private function assertSealRotationAndRejection(
+    private function assertSealIntegrityAndRejection(
         ReportRunExportSource $oldSource,
         ReportExecutionContext $context,
-        DateTimeImmutable $asOf,
     ): void {
         self::assertNotNull($oldSource->snapshot->seal);
         $oldKeyId = $oldSource->snapshot->seal->keyId;
@@ -469,63 +462,22 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
             ->where('snapshot_id', $oldSource->snapshot->id)
             ->value('key_id'));
         $this->assertImmutableSealRecord($oldSource->snapshot->kind, $oldSource->snapshot->id);
-        $trusted = json_decode(
-            (string) config('reporting.snapshot_signing.trusted_public_keys_json'),
-            true,
-            32,
-            JSON_THROW_ON_ERROR,
-        );
-        self::assertIsArray($trusted);
-        $newPair = sodium_crypto_sign_keypair();
-        $encode = static fn (string $value): string => rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
-        $trusted['quality-contract-v2'] = [
-            'public_key' => $encode(sodium_crypto_sign_publickey($newPair)),
-            'revoked' => false,
-        ];
-        config([
-            'reporting.snapshot_signing.active_key_id' => 'quality-contract-v2',
-            'reporting.snapshot_signing.active_private_key' => $encode(sodium_crypto_sign_secretkey($newPair)),
-            'reporting.snapshot_signing.trusted_public_keys_json' => json_encode($trusted, JSON_THROW_ON_ERROR),
-        ]);
-        $this->forgetCryptoLifecycleBindings();
-
         $oldRun = app(ReportRunStore::class)->get($context, $oldSource->run->id);
         self::assertSame($oldKeyId, $oldRun->resultMetadata?->snapshot->seal?->keyId);
-        $newSource = $this->execute(
-            'quality_defect_flow',
-            QualityDefectFlowReportProvider::class,
-            QualityDefectFlowRowQuery::class,
-            QualityDefectFlowDrillDownProvider::class,
-            'cohort_date',
-            'status',
-            $context,
-            $asOf->modify('+1 second'),
-        )['source'];
-        self::assertInstanceOf(ReportRunExportSource::class, $newSource);
-        self::assertSame('quality-contract-v2', $newSource->snapshot->seal?->keyId);
-        self::assertSame($oldKeyId, $oldSource->snapshot->seal->keyId);
-
-        $originalSignature = $newSource->snapshot->seal?->signature;
+        $originalSignature = $oldSource->snapshot->seal->signature;
         self::assertIsString($originalSignature);
-        DB::table('report_runs')->where('id', $newSource->run->id)->update([
-            'snapshot_seal_signature' => str_repeat('A', 86),
+        DB::table('report_runs')->where('id', $oldSource->run->id)->update([
+            'snapshot_seal_signature' => str_repeat('A', 43),
         ]);
-        $this->expectUntrustedReadyRun($context, $newSource->run->id);
-        DB::table('report_runs')->where('id', $newSource->run->id)->update([
+        $this->expectUntrustedReadyRun($context, $oldSource->run->id);
+        DB::table('report_runs')->where('id', $oldSource->run->id)->update([
             'snapshot_seal_signature' => $originalSignature,
-            'snapshot_seal_key_id' => 'unknown-contract-key',
+            'snapshot_seal_key_id' => 'unknown_contract_key',
         ]);
-        $this->expectUntrustedReadyRun($context, $newSource->run->id);
-        DB::table('report_runs')->where('id', $newSource->run->id)->update([
-            'snapshot_seal_key_id' => 'quality-contract-v2',
+        $this->expectUntrustedReadyRun($context, $oldSource->run->id);
+        DB::table('report_runs')->where('id', $oldSource->run->id)->update([
+            'snapshot_seal_key_id' => $oldKeyId,
         ]);
-
-        $trusted['quality-contract-v2']['revoked'] = true;
-        config([
-            'reporting.snapshot_signing.trusted_public_keys_json' => json_encode($trusted, JSON_THROW_ON_ERROR),
-        ]);
-        $this->forgetCryptoLifecycleBindings();
-        $this->expectUntrustedReadyRun($context, $newSource->run->id);
     }
 
     private function assertHistoricalSnapshotBackfill(ReportRunExportSource $source): void
@@ -599,14 +551,13 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         }
     }
 
-    private function forgetCryptoLifecycleBindings(): void
+    private function forgetIntegrityLifecycleBindings(): void
     {
         foreach ([
             ReportSnapshotSealVerifier::class,
             ReportSnapshotSealValidator::class,
             ReportSnapshotSealStore::class,
             ReportSnapshotSealBackfill::class,
-            CanonicalReportSnapshotSealer::class,
             ReportRunStore::class,
             ReportDefinitionBindingAssembler::class,
             QualityDefectFlowSnapshotMaterializer::class,
@@ -991,25 +942,6 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         ]);
     }
 
-    private function configureSnapshotSigning(): void
-    {
-        $keyPair = sodium_crypto_sign_keypair();
-        $privateKey = sodium_crypto_sign_secretkey($keyPair);
-        $publicKey = sodium_crypto_sign_publickey($keyPair);
-        $encode = static fn (string $value): string => rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
-
-        config([
-            'reporting.snapshot_signing.active_key_id' => 'quality-contract-v1',
-            'reporting.snapshot_signing.active_private_key' => $encode($privateKey),
-            'reporting.snapshot_signing.trusted_public_keys_json' => json_encode([
-                'quality-contract-v1' => [
-                    'public_key' => $encode($publicKey),
-                    'revoked' => false,
-                ],
-            ], JSON_THROW_ON_ERROR),
-        ]);
-    }
-
     private function xlsxSheetXml(string $bytes): string
     {
         $path = tempnam(sys_get_temp_dir(), 'quality-report-xlsx-');
@@ -1045,7 +977,6 @@ final class QualityReportsEndToEndPostgresTest extends TestCase
         try {
             if (isset($this->app)) {
                 DB::purge('pgsql');
-                config(['reporting.snapshot_signing' => $this->previousReportingConfig]);
             }
         } catch (\Throwable) {
         }

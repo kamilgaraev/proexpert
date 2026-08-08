@@ -16,18 +16,10 @@ final class ReportingSnapshotSealContainerTest extends TestCase
     public function test_registered_contracts_resolve_the_persistent_snapshot_seal_store(): void
     {
         require_once dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php';
+        require_once dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportSnapshotSealStore.php';
 
         $app = new Application(dirname(__DIR__, 3));
-        $app->instance('config', new ConfigRepository([
-            'reporting_execution' => [
-                'active_seal' => [
-                    'private_key' => rtrim(strtr(base64_encode(
-                        sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair()),
-                    ), '+/', '-_'), '='),
-                    'key_id' => 'test-key-v1',
-                ],
-            ],
-        ]));
+        $app->instance('config', new ConfigRepository([]));
         (new ReportingContractsServiceProvider($app))->register();
 
         self::assertInstanceOf(

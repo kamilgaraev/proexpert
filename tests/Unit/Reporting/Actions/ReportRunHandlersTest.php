@@ -48,7 +48,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\ContentHashReportSnapshotSealVerifier;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use PhpParser\Node;
@@ -164,14 +164,13 @@ final class ReportRunHandlersTest extends TestCase
             ['generatedAt', DateTimeImmutable::class],
             ['calculatedSourceHash', Sha256Hash::class],
         ]);
-        $this->assertMethod(ReportSnapshotSealVerificationInput::class, 'signedBytes', [], 'string');
-        $this->assertMethodSurface(ReportSnapshotSealVerificationInput::class, ['__construct', 'signedBytes']);
+        $this->assertMethodSurface(ReportSnapshotSealVerificationInput::class, ['__construct']);
 
-        $this->assertConstructor(TrustedReportSnapshotSealVerifier::class, [['trustedSealKeys', 'array']]);
-        $this->assertMethod(TrustedReportSnapshotSealVerifier::class, 'assertTrusted', [
+        $this->assertConstructor(ContentHashReportSnapshotSealVerifier::class, []);
+        $this->assertMethod(ContentHashReportSnapshotSealVerifier::class, 'assertTrusted', [
             ['input', ReportSnapshotSealVerificationInput::class],
         ], 'void');
-        $this->assertMethodSurface(TrustedReportSnapshotSealVerifier::class, ['__construct', 'assertTrusted']);
+        $this->assertMethodSurface(ContentHashReportSnapshotSealVerifier::class, ['assertTrusted']);
 
         $this->assertConstructor(ReportSnapshotSealValidator::class, [['verifier', ReportSnapshotSealVerifier::class]]);
         $this->assertMethod(ReportSnapshotSealValidator::class, 'assertSealable', [
@@ -189,7 +188,7 @@ final class ReportRunHandlersTest extends TestCase
             'app/BusinessModules/Core/Reporting/Application/Execution/CanonicalReportSourceHashBuilder.php',
             'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportSnapshotSealVerifier.php',
             'app/BusinessModules/Core/Reporting/Application/Execution/ReportSnapshotSealVerificationInput.php',
-            'app/BusinessModules/Core/Reporting/Infrastructure/Security/TrustedReportSnapshotSealVerifier.php',
+            'app/BusinessModules/Core/Reporting/Infrastructure/Security/ContentHashReportSnapshotSealVerifier.php',
             'app/BusinessModules/Core/Reporting/Application/Execution/ReportSnapshotSealValidator.php',
             'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunCoordinator.php',
             'app/BusinessModules/Core/Reporting/Application/Actions/Handlers/CreateReportRunHandler.php',

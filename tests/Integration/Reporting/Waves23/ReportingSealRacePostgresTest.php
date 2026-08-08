@@ -6,7 +6,6 @@ namespace Tests\Integration\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
@@ -101,30 +100,21 @@ final class ReportingSealRacePostgresTest extends TestCase
         }
     }
 
-    public function test_two_processes_persist_exactly_one_identical_crypto_seal(): void
+    public function test_two_processes_persist_exactly_one_identical_content_hash_seal(): void
     {
         if (getenv('RUN_REPORTING_PG_RACE') !== '1') {
             self::markTestSkipped('Set RUN_REPORTING_PG_RACE=1 on an isolated PostgreSQL test database.');
         }
         $suffix = strtolower(Str::random(12));
-        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-crypto-seal-'.$suffix;
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-content-hash-seal-'.$suffix;
         $race = new PostgresProcessRaceHarness($directory);
-        $pair = sodium_crypto_sign_keypair();
-        $private = rtrim(strtr(base64_encode(sodium_crypto_sign_secretkey($pair)), '+/', '-_'), '=');
-        putenv('REPORT_SNAPSHOT_SIGNING_KEY_ID=race-contract-v1');
-        putenv('REPORT_SNAPSHOT_SIGNING_PRIVATE_KEY='.$private);
         $kind = 'race_'.$suffix;
         $snapshotId = 'snapshot-'.$suffix;
 
         try {
             $workers = [];
             foreach ([1, 2] as $worker) {
-                $workers[] = $race->spawn($worker, static function () use ($kind, $snapshotId, $private): array {
-                    config([
-                        'reporting.snapshot_signing.active_key_id' => 'race-contract-v1',
-                        'reporting.snapshot_signing.active_private_key' => $private,
-                    ]);
-                    app()->forgetInstance(CanonicalReportSnapshotSealer::class);
+                $workers[] = $race->spawn($worker, static function () use ($kind, $snapshotId): array {
                     app()->forgetInstance(ReportSnapshotSealStore::class);
                     $seal = app(ReportSnapshotSealStore::class)->create(
                         $kind,
@@ -142,14 +132,12 @@ final class ReportingSealRacePostgresTest extends TestCase
             $race->waitForChildren($workers);
 
             self::assertSame($race->result(1), $race->result(2));
-            self::assertSame('race-contract-v1', $race->result(1)['key_id']);
+            self::assertSame('content_hash_v1', $race->result(1)['key_id']);
             self::assertSame(1, DB::table('report_snapshot_seals')
                 ->where('snapshot_kind', $kind)
                 ->where('snapshot_id', $snapshotId)
                 ->count());
         } finally {
-            putenv('REPORT_SNAPSHOT_SIGNING_KEY_ID');
-            putenv('REPORT_SNAPSHOT_SIGNING_PRIVATE_KEY');
             $race->cleanup();
         }
     }
