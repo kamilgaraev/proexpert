@@ -16,7 +16,7 @@ final readonly class ProjectMarginBuiltinPublishedReport
 
     public const RENDERER_VERSION = '1.0.0';
 
-    public const MANIFEST_ORDINAL = 11;
+    public const MANIFEST_ORDINAL = 9;
 
     public function __construct(private ProjectMarginCandidateContract $contract) {}
 
