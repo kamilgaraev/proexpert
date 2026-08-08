@@ -6,6 +6,7 @@ namespace Tests\Unit\Reporting\Access;
 
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportPermissionDecision;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFactSetFactory;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
@@ -104,6 +105,18 @@ final class CurrentReportScopeAuthorizerAccessModeTest extends TestCase
         self::assertFalse($vector['download']);
     }
 
+    public function test_project_scope_does_not_require_a_broader_organization_fact(): void
+    {
+        $scope = new ReportScope(7, [7], [99], [], new DateTimeZone('UTC'));
+        $vector = $this->permissionVector(
+            new RecordingAccessModeAbacEvaluator(['act_reports.view'], [null]),
+            $scope,
+        );
+
+        self::assertTrue($vector['view']);
+        self::assertTrue($vector['run']);
+    }
+
     public function test_source_module_revocation_zeroes_visibility_before_permissions_are_evaluated(): void
     {
         $evaluator = new RecordingAccessModeAbacEvaluator([
@@ -163,24 +176,11 @@ final class CurrentReportScopeAuthorizerAccessModeTest extends TestCase
             $exportFormat === null ? ReportOperation::VIEW : ReportOperation::EXPORT,
             $exportFormat,
             function (string $permission) use ($evaluator, $scope): bool {
-                $facts = [new CurrentReportAuthorizationFacts(
-                    'queue',
+                $facts = (new ReportAuthorizationFactSetFactory)->forScope(
                     41,
-                    $scope->organizationId,
-                    null,
-                    null,
+                    $scope,
                     new DateTimeImmutable('2026-08-01T00:00:00Z'),
-                )];
-                foreach ($scope->projectIds as $projectId) {
-                    $facts[] = new CurrentReportAuthorizationFacts(
-                        'queue',
-                        41,
-                        $scope->organizationId,
-                        $projectId,
-                        null,
-                        new DateTimeImmutable('2026-08-01T00:00:00Z'),
-                    );
-                }
+                );
                 foreach ($facts as $fact) {
                     if (! $evaluator->evaluate(41, $permission, $fact)->granted) {
                         return false;

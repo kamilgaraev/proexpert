@@ -353,7 +353,7 @@ final class LaravelCurrentReportScopeAuthorizationRaceTest extends TestCase
         }
     }
 
-    public function test_project_permission_cannot_replace_denied_anchor_organization_permission(): void
+    public function test_project_permission_authorizes_project_scope_without_an_artificial_organization_grant(): void
     {
         [$actor, $organization] = $this->actorFixture('all');
         $project = Project::factory()->create([
@@ -372,8 +372,9 @@ final class LaravelCurrentReportScopeAuthorizationRaceTest extends TestCase
             grant: static fn (CurrentReportAuthorizationFacts $facts): bool => $facts->projectId !== null,
         );
 
-        $this->expectException(ReportContractException::class);
-        $this->authorizer($evaluator, [])->authorizeExact((int) $actor->id, $scope, $this->target());
+        self::assertTrue(
+            $this->authorizer($evaluator, [])->authorizeExact((int) $actor->id, $scope, $this->target())->visibility->canRun,
+        );
     }
 
     public function test_existing_repeatable_read_transaction_contains_scope_reads_and_authorization(): void
@@ -418,6 +419,7 @@ final class LaravelCurrentReportScopeAuthorizationRaceTest extends TestCase
             new ReportDefinitionVisibilityResolver(
                 new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement),
             ),
+            new \App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFactSetFactory,
         );
     }
 

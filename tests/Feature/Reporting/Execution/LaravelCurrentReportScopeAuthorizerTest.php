@@ -624,6 +624,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
             new ReportDefinitionVisibilityResolver(
                 new ReportDefinitionModuleAuthorizer($entitlements ?? new DeterministicReportModuleEntitlement),
             ),
+            new \App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFactSetFactory,
         );
     }
 

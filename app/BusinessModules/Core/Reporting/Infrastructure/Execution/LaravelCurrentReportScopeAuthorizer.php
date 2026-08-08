@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFactSetFactory;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAccessDecision;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
@@ -38,6 +39,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         private CurrentReportAbacEvaluator $abac,
         private LaravelReportScopedResourceAuthorizerRegistry $resources,
         private ReportDefinitionVisibilityResolver $visibilityResolver,
+        private ReportAuthorizationFactSetFactory $factSets,
     ) {}
 
     public function authorizeForOrganization(
@@ -321,38 +323,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         DateTimeImmutable $occurredAt,
         string $permission,
     ): bool {
-        $facts = [new CurrentReportAuthorizationFacts(
-            'queue',
-            $actorId,
-            $scope->organizationId,
-            null,
-            null,
-            $occurredAt,
-        )];
-        foreach ($scope->projectIds as $projectId) {
-            $facts[] = new CurrentReportAuthorizationFacts('queue', $actorId, $scope->organizationId, $projectId, null, $occurredAt);
-        }
-        foreach ($scope->resources as $resource) {
-            $facts[] = new CurrentReportAuthorizationFacts(
-                'queue',
-                $actorId,
-                $scope->organizationId,
-                $resource->projectId,
-                $resource,
-                $occurredAt,
-            );
-        }
-        $baseGranted = $this->decisionMatches(
-            $this->abac->evaluate($actorId, $permission, $facts[0]),
-            $actorId,
-            $permission,
-            $facts[0],
-        );
-        if (! $baseGranted) {
-            return false;
-        }
-
-        foreach (array_slice($facts, 1) as $fact) {
+        foreach ($this->factSets->forScope($actorId, $scope, $occurredAt) as $fact) {
             $decision = $this->abac->evaluate($actorId, $permission, $fact);
             if (! $this->decisionMatches($decision, $actorId, $permission, $fact)) {
                 return false;

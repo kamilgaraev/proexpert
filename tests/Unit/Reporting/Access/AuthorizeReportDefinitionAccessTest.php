@@ -53,6 +53,26 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
         self::assertSame(['server_report'], $resolver->createRunCodes);
     }
 
+    public function test_project_run_route_uses_the_same_server_owned_definition_contract(): void
+    {
+        $definition = $this->sourceDefinition('7');
+        $resolver = new DefinitionAccessTargetResolver([$definition]);
+        $modules = new DefinitionAccessModuleEntitlement(['act-reporting']);
+        $middleware = new AuthorizeReportDefinitionAccess(
+            $resolver,
+            new ReportDefinitionModuleAuthorizer($modules),
+        );
+        $request = $this->request('admin.reports.project-runs.store', [
+            'reportCode' => 'supply_reliability',
+        ]);
+
+        $response = $middleware->handle($request, static fn (): Response => new Response('', 204));
+
+        self::assertSame(204, $response->getStatusCode());
+        self::assertSame(['act-reporting'], $modules->checkedModules);
+        self::assertSame(['supply_reliability'], $resolver->createRunCodes);
+    }
+
     public function test_contract_settlement_options_route_uses_server_owned_definition_module(): void
     {
         $definition = $this->sourceDefinition('2');
