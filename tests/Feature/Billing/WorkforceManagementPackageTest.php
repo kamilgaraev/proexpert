@@ -145,6 +145,26 @@ final class WorkforceManagementPackageTest extends TestCase
         }
     }
 
+    public function test_organization_owner_exposes_all_workforce_permissions_to_flat_authorization_consumers(): void
+    {
+        $owner = json_decode(
+            (string) file_get_contents($this->basePath . '/config/RoleDefinitions/lk/organization_owner.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        foreach ($this->workforceManifest()['permissions'] as $permission) {
+            $this->assertContains(
+                $permission,
+                $owner['system_permissions'],
+                "organization_owner misses flat workforce permission {$permission}",
+            );
+        }
+
+        $this->assertSame(['*'], $owner['module_permissions']['workforce-management']);
+    }
+
     /**
      * @return array<string, mixed>
      */
