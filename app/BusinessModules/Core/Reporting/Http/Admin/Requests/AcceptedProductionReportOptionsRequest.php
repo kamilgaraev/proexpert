@@ -54,15 +54,15 @@ final class AcceptedProductionReportOptionsRequest extends ReportFormRequest
 
     public function periodFrom(): DateTimeImmutable
     {
-        return $this->date('period_from');
+        return $this->validatedDate('period_from');
     }
 
     public function periodTo(): DateTimeImmutable
     {
-        return $this->date('period_to');
+        return $this->validatedDate('period_to');
     }
 
-    private function date(string $field): DateTimeImmutable
+    private function validatedDate(string $field): DateTimeImmutable
     {
         $value = $this->validated($field);
         $date = is_string($value) ? DateTimeImmutable::createFromFormat('!Y-m-d', $value) : false;
