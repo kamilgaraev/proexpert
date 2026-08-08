@@ -1139,7 +1139,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $record = $this->connection->table('workforce_report_snapshots')
             ->where('organization_id', $context->scope->organizationId)
             ->where('id', $snapshot->id)
-            ->where('source_hash', $snapshot->sourceHash->value)
+            ->where('source_hash', $snapshot->materializedSourceHash->value)
             ->first();
         if ($record === null) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');

@@ -20,7 +20,7 @@ final readonly class AttendanceExecutionCandidateContract
 
     public const FORMULA_HASH = 'e6a3ad9e002e7c77ad662ded9ee460b8175783aeae31e41b7176a68a5fadab02';
 
-    public const SOURCE_HASH = '2e03ae7b74e26289677f62ee7835b1f0cd8b774c0e38231338f5594904594295';
+    public const SOURCE_HASH = 'e7eb0cc2f4b7f6b428ac8bcba254f9398fe413b9793f64aed34a64509ee32bd8';
 
     public function filters(): array
     {
