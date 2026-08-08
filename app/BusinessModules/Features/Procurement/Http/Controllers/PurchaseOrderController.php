@@ -415,7 +415,7 @@ class PurchaseOrderController extends Controller
                 $line,
                 (string) $request->validated('reason_code'),
                 (string) $request->validated('idempotency_key'),
-                (int) $request->user()->getAuthIdentifier(),
+                $request->user(),
             );
 
             return AdminResponse::success(

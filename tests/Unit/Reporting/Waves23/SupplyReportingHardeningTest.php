@@ -28,13 +28,13 @@ final class SupplyReportingHardeningTest extends TestCase
     public function test_real_mutation_services_depend_on_reporting_recorders(): void
     {
         foreach ([
-            'app/BusinessModules/Features/Procurement/Services/PurchaseRequestService.php',
-            'app/BusinessModules/Features/Procurement/Services/SupplierRequestService.php',
-            'app/BusinessModules/Features/Procurement/Services/SupplierProposalService.php',
-            'app/BusinessModules/Features/Procurement/Services/SupplierProposalComparisonService.php',
-            'app/BusinessModules/Features/Procurement/Services/PurchaseOrderService.php',
-        ] as $file) {
-            self::assertStringContainsString('reportingLifecycle', $this->source($file), $file);
+            'app/BusinessModules/Features/Procurement/Services/PurchaseRequestService.php' => 'cycleEventRecorder',
+            'app/BusinessModules/Features/Procurement/Services/SupplierRequestService.php' => 'cycleEventRecorder',
+            'app/BusinessModules/Features/Procurement/Services/SupplierProposalService.php' => 'awardOwnerRecorder',
+            'app/BusinessModules/Features/Procurement/Services/SupplierProposalComparisonService.php' => 'awardOwnerRecorder',
+            'app/BusinessModules/Features/Procurement/Services/PurchaseOrderService.php' => 'reportingLifecycle',
+        ] as $file => $recorder) {
+            self::assertStringContainsString($recorder, $this->source($file), $file);
         }
         self::assertStringContainsString(
             'WarehouseInventoryEventRecorder',
@@ -396,7 +396,7 @@ final class SupplyReportingHardeningTest extends TestCase
             .'ProductionReportDefinitionBindingAssembler.php',
         );
         $provider = $this->source(
-            'app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php',
+            'app/BusinessModules/Core/Reporting/ReportingCatalogServiceProvider.php',
         );
 
         foreach ([
@@ -412,7 +412,7 @@ final class SupplyReportingHardeningTest extends TestCase
             self::assertStringContainsString("'{$port}'", $assembler);
         }
         self::assertStringContainsString('ReportDefinitionBindingAssembler::class', $provider);
-        self::assertStringContainsString('ProductionReportDefinitionBindingAssembler::class', $provider);
+        self::assertStringContainsString('ImmutableReportDefinitionBindingAssembler::class', $provider);
     }
 
     public function test_cycle_filters_select_owner_cohort_before_loading_complete_timeline(): void
@@ -481,16 +481,9 @@ final class SupplyReportingHardeningTest extends TestCase
             .'SupplyReliabilityReadinessProbe.php',
         );
 
-        foreach ([
-            'sent_purchase_order_line_owners.warehouse_id',
-            'sent_purchase_order_line_owners.buyer_id',
-            'sent_purchase_order_line_owners.priority',
-            'owner_promise.promised_at',
-            'statusAt(',
-            'matchesDelayFilter(',
-        ] as $immutableFilter) {
-            self::assertStringContainsString($immutableFilter, $materializer);
-        }
+        self::assertStringContainsString('$this->period->resolve($query)', $materializer);
+        self::assertStringContainsString("whereBetween('owner_promise.promised_at'", $materializer);
+        self::assertStringNotContainsString('OwnerReportFilterApplier', $materializer);
         self::assertStringContainsString(
             "'authoritative_order.sent_at', '<=', \$query->asOf",
             $readiness,
@@ -743,8 +736,7 @@ final class SupplyReportingHardeningTest extends TestCase
             .'2026_05_03_000002_create_supplier_proposal_versions.php',
         );
 
-        self::assertStringContainsString('static::updating', $model);
-        self::assertStringContainsString('static::deleting', $model);
+        self::assertStringContainsString('RejectsProcurementSourceMutation', $model);
         self::assertStringContainsString("'supplier_proposal_versions'", $migration);
         self::assertStringNotContainsString('chunkById', $legacyMigration);
     }

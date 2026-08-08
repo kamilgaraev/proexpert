@@ -16,6 +16,7 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\Support\ImmutableRepor
 use App\BusinessModules\Features\Procurement\Reporting\Award\Providers\SupplierAwardCompetitivenessReportProvider;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Queries\SupplierAwardRowQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Readiness\SupplierAwardReadinessProbe;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\Concerns\RejectsProcurementSourceMutation;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Providers\ProcurementCycleReportProvider;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Queries\ProcurementCycleRowQuery;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Readiness\ProcurementCycleReadinessProbe;
@@ -80,10 +81,8 @@ final class SupplyOwnerArchitectureTest extends TestCase
             'Award\\Models\\SupplierAwardRow',
             'Award\\Models\\SupplierAwardDecisionVersion',
             'Cycle\\Models\\ProcurementCycleOwnerExpectationVersion',
-            'Cycle\\Models\\ProcurementCyclePolicyVersion',
             'Cycle\\Models\\ProcurementCycleRow',
             'Cycle\\Models\\ProcurementCycleSnapshot',
-            'Cycle\\Models\\ProcurementProcessEvent',
             'Supply\\Models\\PurchaseOrderPromiseVersion',
             'Supply\\Models\\SentPurchaseOrderLineOwner',
             'Supply\\Models\\SupplyLifecycleEvent',
@@ -109,6 +108,14 @@ final class SupplyOwnerArchitectureTest extends TestCase
                 ],
                 $procurement,
             ),
+            [
+                'App\\BusinessModules\\Features\\Procurement\\Reporting\\Cycle\\Models\\ProcurementCyclePolicyVersion',
+                RejectsProcurementSourceMutation::class,
+            ],
+            [
+                'App\\BusinessModules\\Features\\Procurement\\Reporting\\Cycle\\Models\\ProcurementProcessEvent',
+                RejectsProcurementSourceMutation::class,
+            ],
             ...array_map(
                 static fn (string $suffix): array => [
                     'App\\BusinessModules\\Features\\BasicWarehouse\\Reporting\\'.$suffix,

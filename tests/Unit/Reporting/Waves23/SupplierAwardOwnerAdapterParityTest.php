@@ -26,7 +26,7 @@ final class SupplierAwardOwnerAdapterParityTest extends TestCase
             'cheapest_supplier_proposal_version_id',
             'comparison_snapshot',
             'decision_reason',
-            'reportingLifecycle',
+            'awardOwnerRecorder',
         ] as $identity) {
             self::assertStringContainsString($identity, $owner);
         }

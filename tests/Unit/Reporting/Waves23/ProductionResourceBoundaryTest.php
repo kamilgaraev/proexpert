@@ -64,7 +64,7 @@ final class ProductionResourceBoundaryTest extends TestCase
         self::assertStringContainsString('$this->universe->stream($context->scope, $query)', $readiness);
         self::assertStringContainsString('$this->universe->stream($scope, $query)', $materializer);
         self::assertStringContainsString('ProductionAcceptanceOwnerVersion::query()', $universe);
-        self::assertStringContainsString('$ownerQuery->lazyById(100)', $universe);
+        self::assertStringContainsString('foreach ($ownerQuery->cursor() as $owner)', $universe);
         self::assertStringContainsString('foreach ($eventQuery->cursor() as $event)', $universe);
         self::assertStringNotContainsString('$eventsByKey', $universe);
         self::assertTrue(
