@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceAccessResolver;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CancelReportExportHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CancelReportRunHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CreateReportDownloadLinkHandler;
@@ -71,6 +72,7 @@ use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportLimits;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfDocumentBuilder;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfDocumentRenderer;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfRenderBudget;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\DefinitionBoundReportSourceAccessResolver;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelCurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportHttpAuthorizationTargetResolver;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportModuleEntitlement;
@@ -154,6 +156,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
     private function validateArchitectureBindings(): void
     {
         foreach ([
+            ReportSourceAccessResolver::class => DefinitionBoundReportSourceAccessResolver::class,
             ReportAuthorizationSubjectReader::class => EloquentReportAuthorizationSubjectReader::class,
             ReportHttpAuthorizationTargetResolver::class => LaravelReportHttpAuthorizationTargetResolver::class,
             ReportModuleEntitlement::class => LaravelReportModuleEntitlement::class,
@@ -222,6 +225,10 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
 
     private function registerInfrastructure(): void
     {
+        $this->app->singleton(
+            ReportSourceAccessResolver::class,
+            DefinitionBoundReportSourceAccessResolver::class,
+        );
         $this->app->singleton(ReportExecutionClock::class, SystemReportExecutionClock::class);
         $this->app->singleton(ReportExecutionAlertWindow::class);
         $this->app->singleton(ReportExecutionTelemetry::class, function (Container $app): LaravelReportExecutionTelemetry {
