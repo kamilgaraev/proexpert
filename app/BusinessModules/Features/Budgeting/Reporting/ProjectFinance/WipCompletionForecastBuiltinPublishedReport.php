@@ -14,7 +14,7 @@ final readonly class WipCompletionForecastBuiltinPublishedReport
 {
     public const CONTRACT_VERSION = '1.0.0';
     public const RENDERER_VERSION = '1.0.0';
-    public const MANIFEST_ORDINAL = 13;
+    public const MANIFEST_ORDINAL = 11;
 
     public function __construct(private WipCompletionForecastCandidateContract $contract) {}
 

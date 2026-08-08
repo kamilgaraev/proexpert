@@ -16,7 +16,7 @@ final readonly class BudgetPlanFactBuiltinPublishedReport
 
     public const RENDERER_VERSION = '1.0.0';
 
-    public const MANIFEST_ORDINAL = 12;
+    public const MANIFEST_ORDINAL = 10;
 
     public function __construct(private BudgetPlanFactCandidateContract $contract) {}
 
