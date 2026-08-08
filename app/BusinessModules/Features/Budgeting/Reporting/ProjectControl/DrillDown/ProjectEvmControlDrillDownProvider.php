@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DrillDown;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -34,12 +34,12 @@ final readonly class ProjectEvmControlDrillDownProvider implements ReportDrillDo
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $row = $this->reader->findRow(
             $context,
             $snapshot,
-            $this->reader->rowKeyFromToken($request->token),
+            $input->cell->rowKey,
         );
         if ($row === null) {
             return new ReportDrillDownResult([], null, []);

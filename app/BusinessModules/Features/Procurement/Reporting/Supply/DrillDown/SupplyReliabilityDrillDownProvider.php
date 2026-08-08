@@ -6,7 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Supply\DrillDown;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -23,12 +23,12 @@ final readonly class SupplyReliabilityDrillDownProvider implements ReportDrillDo
 
     public function __construct(private EloquentOwnerDrillDown $drillDown) {}
 
-    public function drillDown(ReportExecutionContext $context, ReportSnapshotRef $snapshot, ReportDrillDownRequest $request): ReportDrillDownResult
+    public function drillDown(ReportExecutionContext $context, ReportSnapshotRef $snapshot, ReportDrillDownInput $input): ReportDrillDownResult
     {
         return $this->drillDown->resolve(
             $context,
             $snapshot,
-            $request,
+            $input,
             SupplyReliabilityRow::class,
             SupplyLifecycleEvent::class,
             'purchase_order_item_id',
