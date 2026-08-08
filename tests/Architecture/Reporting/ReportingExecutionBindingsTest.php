@@ -568,7 +568,7 @@ final class ReportingExecutionBindingsTest extends TestCase
             [ReportMaterializationDispatcher::class, \App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportMaterializationDispatcher::class],
             [ReportExportDispatcher::class, \App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportExportDispatcher::class],
             [ReportAuditDispatcher::class, \App\BusinessModules\Core\Reporting\Infrastructure\Audit\LaravelReportAuditDispatcher::class],
-            [ReportSnapshotSealVerifier::class, \App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier::class],
+            [ReportSnapshotSealVerifier::class, \App\BusinessModules\Core\Reporting\Infrastructure\Security\ContentHashReportSnapshotSealVerifier::class],
         ];
     }
 
@@ -586,8 +586,6 @@ final class ReportingExecutionBindingsTest extends TestCase
 
     public static function invalidClosedConfiguration(): array
     {
-        $publicKey = str_repeat('A', 43);
-
         return [
             'run settings missing member' => [
                 'reporting_execution.runs',
@@ -605,29 +603,6 @@ final class ReportingExecutionBindingsTest extends TestCase
             'execution setting is not integer' => [
                 'reporting_execution.execution.lease_seconds',
                 '960',
-            ],
-            'trusted keys are a list' => [
-                'reporting_execution.trusted_seal_keys',
-                [['public_key' => $publicKey, 'revoked' => false]],
-            ],
-            'trusted key has private material' => [
-                'reporting_execution.trusted_seal_keys',
-                [
-                    'primary' => [
-                        'public_key' => $publicKey,
-                        'revoked' => false,
-                        'private_key' => str_repeat('x', 32),
-                    ],
-                ],
-            ],
-            'trusted key is padded' => [
-                'reporting_execution.trusted_seal_keys',
-                [
-                    'primary' => [
-                        'public_key' => str_repeat('A', 42).'=',
-                        'revoked' => false,
-                    ],
-                ],
             ],
             'reports queue is changed' => [
                 'queue.connections.redis_reports.queue',

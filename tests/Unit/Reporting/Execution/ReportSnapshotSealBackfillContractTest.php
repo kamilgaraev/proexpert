@@ -20,7 +20,7 @@ final class ReportSnapshotSealBackfillContractTest extends TestCase
         self::assertStringContainsString('report_snapshot_seal_backfill_payload_mismatch', $source);
         self::assertStringContainsString('$this->verifier->assertTrusted(', $source);
         self::assertStringContainsString(
-            'verify_snapshot_identity_then_reseal_with_trusted_active_key',
+            'verify_snapshot_identity_then_store_content_hash',
             $source,
         );
         self::assertStringNotContainsString("&& \$sourceCount === \$sealedCount) {\n                    return;", $source);

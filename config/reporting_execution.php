@@ -2,19 +2,7 @@
 
 declare(strict_types=1);
 
-$trustedSealKeys = json_decode(
-    (string) env(
-        'REPORT_TRUSTED_SEAL_KEYS_JSON',
-        '{"unconfigured":{"public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","revoked":true}}',
-    ),
-    true,
-);
-
 return [
-    'active_seal' => [
-        'key_id' => env('REPORT_SNAPSHOT_SIGNING_KEY_ID', ''),
-        'private_key' => env('REPORT_SNAPSHOT_SIGNING_PRIVATE_KEY', ''),
-    ],
     'runs' => [
         'ttl_seconds' => (int) env('REPORT_RUN_TTL_SECONDS', 86400),
         'poll_after_ms' => (int) env('REPORT_RUN_POLL_AFTER_MS', 1250),
@@ -38,7 +26,6 @@ return [
         'lease_seconds' => 960,
         'watchdog_batch_size' => 100,
     ],
-    'trusted_seal_keys' => $trustedSealKeys,
     'pdf_budgets' => [],
     'alerts' => [
         'oldest_pending_seconds' => 300,

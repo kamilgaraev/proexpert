@@ -9,15 +9,12 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\CanonicalReportSnapshotSealer;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Support\Facades\DB;
 
 final readonly class EloquentReportSnapshotSealStore implements ReportSnapshotSealStore
 {
-    public function __construct(private CanonicalReportSnapshotSealer $sealer) {}
-
     public function create(
         string $snapshotKind,
         string $snapshotId,
@@ -47,7 +44,17 @@ final readonly class EloquentReportSnapshotSealStore implements ReportSnapshotSe
                 return $persisted;
             }
 
-            $seal = $this->sealer->seal($snapshotId, $snapshotKind, $generatedAt, $sourceHash, $sealedAt);
+            $rawHash = hex2bin($sourceHash->value);
+            if ($rawHash === false) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+            }
+            $seal = new ReportSnapshotSeal(
+                'content_hash_v1',
+                'sha256',
+                $sourceHash,
+                rtrim(strtr(base64_encode($rawHash), '+/', '-_'), '='),
+                $sealedAt,
+            );
             DB::table('report_snapshot_seals')->insert([
                 'snapshot_kind' => $snapshotKind,
                 'snapshot_id' => $snapshotId,

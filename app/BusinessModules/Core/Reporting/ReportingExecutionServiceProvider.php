@@ -113,7 +113,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportExportDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportMaterializationDispatcher;
-use App\BusinessModules\Core\Reporting\Infrastructure\Security\TrustedReportSnapshotSealVerifier;
+use App\BusinessModules\Core\Reporting\Infrastructure\Security\ContentHashReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Infrastructure\Telemetry\LaravelReportExecutionTelemetry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Telemetry\ReportExecutionAlertWindow;
 use App\Services\Storage\FileService;
@@ -295,9 +295,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
             );
         });
 
-        $this->app->singleton(ReportSnapshotSealVerifier::class, function (): TrustedReportSnapshotSealVerifier {
-            return new TrustedReportSnapshotSealVerifier($this->configArray('trusted_seal_keys'));
-        });
+        $this->app->singleton(ReportSnapshotSealVerifier::class, ContentHashReportSnapshotSealVerifier::class);
         $this->app->singleton(SignedReportCursorCodec::class, function (Container $app): SignedReportCursorCodec {
             $secret = (string) config('app.key');
             if (str_starts_with($secret, 'base64:')) {
@@ -477,7 +475,6 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
             throw new InvalidArgumentException('reporting_execution_configuration_invalid');
         }
 
-        new TrustedReportSnapshotSealVerifier($this->configArray('trusted_seal_keys'));
         $this->validatedAlerts();
     }
 
