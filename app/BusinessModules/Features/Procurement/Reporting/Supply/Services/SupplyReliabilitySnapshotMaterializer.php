@@ -90,16 +90,6 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $context->scope->resources,
             'purchase_order_item',
         );
-        $policy = SupplyReliabilityPolicyVersion::query()
-            ->where('organization_id', $organizationId)
-            ->where('effective_from', '<=', $query->asOf)
-            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf))
-            ->orderByDesc('effective_from')
-            ->orderByDesc('policy_version')
-            ->first();
-        if (! $policy instanceof SupplyReliabilityPolicyVersion) {
-            throw new DomainException('Supply reliability policy is unavailable for the requested cutoff.');
-        }
         $ownerQuery = SentPurchaseOrderLineOwner::query()
             ->leftJoin('purchase_order_promise_versions as owner_promise', function ($join): void {
                 $join->on(
@@ -130,6 +120,19 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             ->select('sent_purchase_order_line_owners.*')
             ->orderBy('sent_purchase_order_line_owners.purchase_order_item_id')
             ->get();
+        if ($ownerItems->isEmpty()) {
+            return $this->materializeEmpty($organizationId, $query, $progress);
+        }
+        $policy = SupplyReliabilityPolicyVersion::query()
+            ->where('organization_id', $organizationId)
+            ->where('effective_from', '<=', $query->asOf)
+            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf))
+            ->orderByDesc('effective_from')
+            ->orderByDesc('policy_version')
+            ->first();
+        if (! $policy instanceof SupplyReliabilityPolicyVersion) {
+            throw new DomainException('Supply reliability policy is unavailable for the requested cutoff.');
+        }
         $promises = PurchaseOrderPromiseVersion::query()
             ->where('organization_id', $organizationId)
             ->where('promise_version', 1)
@@ -329,6 +332,69 @@ final readonly class SupplyReliabilitySnapshotMaterializer
 
             return $snapshot;
         }, 3);
+
+        return $this->snapshotRef($query, $snapshot);
+    }
+
+    private function materializeEmpty(
+        int $organizationId,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef {
+        $sourceHash = $this->sourceHashes->make(
+            $query->canonicalJson,
+            [hash('sha256', CanonicalJson::encode([
+                'source' => self::KIND,
+                'state' => 'empty',
+                'policy' => 'not_applicable',
+            ]))],
+        );
+        $existing = SupplyReliabilitySnapshot::query()
+            ->where('organization_id', $organizationId)
+            ->where('query_hash', $query->queryHash->value)
+            ->where('source_hash', $sourceHash)
+            ->first();
+        if ($existing instanceof SupplyReliabilitySnapshot) {
+            $progress->advance(100);
+
+            return $this->snapshotRef($query, $existing);
+        }
+
+        $summary = $this->formula->summarize([]);
+        $generatedAt = new DateTimeImmutable;
+        $snapshot = SupplyReliabilitySnapshot::query()->create([
+            'id' => (string) Str::ulid(),
+            'organization_id' => $organizationId,
+            'definition_hash' => $query->definition->definitionHash->value,
+            'query_hash' => $query->queryHash->value,
+            'scope_hash' => hash('sha256', CanonicalJson::encode($query->scope->canonicalIdentity())),
+            'source_hash' => $sourceHash,
+            'formula_version' => $query->definition->formulaVersion,
+            'source_schema_version' => $query->definition->sourceSchemaVersion,
+            'policy_version_id' => null,
+            'as_of' => $query->asOf,
+            'generated_at' => $generatedAt,
+            'stale_at' => $generatedAt->modify('+86400 seconds'),
+            'row_count' => 0,
+            'eligible_count' => 0,
+            'otif_numerator' => 0,
+            'gap_count' => 0,
+            'quality_status' => 'complete',
+            'reconciliation_status' => 'not_applicable',
+            'totals' => [
+                'otif_numerator' => $summary->otifNumerator,
+                'eligible_denominator' => $summary->eligibleDenominator,
+                'otif_ratio' => $summary->otifRatio,
+                'quantity_otif_numerator' => $summary->quantityOtifNumerator,
+                'quantity_otif_denominator' => $summary->quantityOtifDenominator,
+                'quantity_otif_ratio' => $summary->quantityOtifRatio,
+                'value_otif_numerator_minor' => $summary->valueOtifNumeratorMinor,
+                'value_otif_denominator_minor' => $summary->valueOtifDenominatorMinor,
+                'value_otif_ratio' => $summary->valueOtifRatio,
+                'value_otif_by_basis' => $summary->valueOtifByBasis,
+            ],
+        ]);
+        $progress->advance(100);
 
         return $this->snapshotRef($query, $snapshot);
     }
