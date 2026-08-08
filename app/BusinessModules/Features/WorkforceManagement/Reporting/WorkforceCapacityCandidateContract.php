@@ -20,7 +20,7 @@ final readonly class WorkforceCapacityCandidateContract
 
     public const FORMULA_HASH = 'ec5f0c7c6f0c55c5cb97ae69587c3ca695da41746bcd51b11b1f477e961a18b3';
 
-    public const SOURCE_HASH = '2e03ae7b74e26289677f62ee7835b1f0cd8b774c0e38231338f5594904594295';
+    public const SOURCE_HASH = 'e7eb0cc2f4b7f6b428ac8bcba254f9398fe413b9793f64aed34a64509ee32bd8';
 
     public function filters(): array
     {
