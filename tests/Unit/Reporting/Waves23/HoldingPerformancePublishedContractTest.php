@@ -16,6 +16,9 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
@@ -25,9 +28,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
-use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
@@ -126,7 +126,7 @@ final class HoldingPerformancePublishedContractTest extends TestCase
         self::assertIsString($accepted);
         self::assertIsString($payments);
         self::assertStringContainsString("->whereIn('project_id', \$context->scope->projectIds)", $materializer);
-        self::assertStringNotContainsString("if (\$context->scope->projectIds !== [])", $materializer);
+        self::assertStringNotContainsString('if ($context->scope->projectIds !== [])', $materializer);
         self::assertStringContainsString("['contract_checkpoint', 'contract']", $materializer);
         self::assertStringContainsString("whereColumn('newer_fact.allocation_id'", $materializer);
         self::assertStringContainsString("where('newer_fact.source_schema_version'", $materializer);
@@ -147,18 +147,18 @@ final class HoldingPerformancePublishedContractTest extends TestCase
         self::assertStringNotContainsString('PaymentTransaction::query()', $coverage);
         self::assertStringNotContainsString('ContractPerformanceAct::query()', $coverage);
         self::assertStringContainsString('HoldingPaymentEventCoverageCheckpoint::query()', $events);
-        self::assertStringContainsString("->whereNotExists(function (QueryBuilder \$newer)", $events);
+        self::assertStringContainsString('->whereNotExists(function (QueryBuilder $newer)', $events);
         self::assertStringContainsString('sourceAccess->assertAccessible', $rows);
         self::assertStringContainsString("Route::post('/holding-performance/runs'", $routes);
         self::assertStringContainsString("'admin.reports.holding-performance.runs.store'", $authorization);
-        self::assertStringContainsString("CurrencyCode::tryFrom(\$rawCurrency)?->value", $assembler);
+        self::assertStringContainsString('CurrencyCode::tryFrom($rawCurrency)?->value', $assembler);
         self::assertStringContainsString("'unknown_contract_dimension_checkpoint'", $assembler);
         self::assertStringContainsString('$this->sources->coverageStartedAt($query->asOf)', $materializer);
         self::assertStringContainsString("->where('holding_id', \$holdingId)", $coverage);
         self::assertStringContainsString("->whereIn('contributor_organization_id', \$organizationIds)", $coverage);
         self::assertStringContainsString('if ($metric->currency === null)', $materializer);
-        self::assertStringContainsString("if (! \$active)", $accepted);
-        self::assertStringContainsString("if (! \$event->active)", $payments);
+        self::assertStringContainsString('if (! $active)', $accepted);
+        self::assertStringContainsString('if (! $event->active)', $payments);
         self::assertLessThan(
             strpos($routes, "Route::post('/{reportCode}/runs'"),
             strpos($routes, "Route::post('/holding-performance/runs'"),
@@ -239,7 +239,7 @@ final class HoldingPerformancePublishedContractTest extends TestCase
             'holding_allocations',
             'holding_facts',
             'snapshot_r02',
-            HoldingPerformanceCandidateContract::SOURCE_SCHEMA_VERSION,
+            'holding_allocation_facts_v2',
             'watermark_r02',
             2,
             $raw,
@@ -258,7 +258,7 @@ final class HoldingPerformancePublishedContractTest extends TestCase
             null,
             $raw,
         );
-        $provisionalResult = $this->result($provisional, $source, $raw);
+        $provisionalResult = $this->reportResult($provisional, $source, $raw);
         $canonical = (new CanonicalReportSourceHashBuilder)->build($query, $provisional, $provisionalResult);
         $snapshot = new ReportSnapshotRef(
             $provisional->kind,
@@ -282,12 +282,12 @@ final class HoldingPerformancePublishedContractTest extends TestCase
             (new CanonicalReportSourceHashBuilder)->build(
                 $query,
                 $snapshot,
-                $this->result($snapshot, $source, $canonical),
+                $this->reportResult($snapshot, $source, $canonical),
             )->value,
         );
     }
 
-    private function result(ReportSnapshotRef $snapshot, ReportSourceRef $source, Sha256Hash $hash): ReportResult
+    private function reportResult(ReportSnapshotRef $snapshot, ReportSourceRef $source, Sha256Hash $hash): ReportResult
     {
         return new ReportResult(
             new ReportResultMetadata($snapshot, 0, $snapshot->generatedAt, null),
