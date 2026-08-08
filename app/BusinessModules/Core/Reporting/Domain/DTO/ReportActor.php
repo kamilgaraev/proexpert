@@ -32,7 +32,9 @@ final readonly class ReportActor
         $normalized = [];
 
         foreach ($permissionSlugs as $permissionSlug) {
-            if (!is_string($permissionSlug) || preg_match('/^[a-z0-9][a-z0-9._-]+$/', $permissionSlug) !== 1 || isset($normalized[$permissionSlug])) {
+            if (!is_string($permissionSlug)
+                || preg_match('/^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9_-]+)*(?:\.\*)?$/D', $permissionSlug) !== 1
+                || isset($normalized[$permissionSlug])) {
                 throw new \InvalidArgumentException('report_actor_permissions_invalid');
             }
 
