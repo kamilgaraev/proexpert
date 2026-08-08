@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Application\Access;
 
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportAuthorizationGrant;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use Illuminate\Http\Request;
@@ -59,6 +60,11 @@ final readonly class ReportExecutionContextFactory
             $scope,
             $authorization->visibility,
             $decision,
+            new ReportAuthorizationGrant(
+                $authorization->target->definition->definitionHash->value,
+                $authorization->target->operation,
+                $authorization->target->exportFormat,
+            ),
         );
     }
 }

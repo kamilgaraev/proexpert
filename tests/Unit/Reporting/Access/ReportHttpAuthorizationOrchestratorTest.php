@@ -79,6 +79,9 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
         self::assertSame($scope->canonicalIdentity(), $result['context']->scope->canonicalIdentity());
         self::assertSame($operation, $result['authorization']->target->operation);
         self::assertSame($exportFormat, $result['authorization']->target->exportFormat);
+        self::assertSame($definition->definitionHash->value, $result['context']->grant?->definitionHash);
+        self::assertSame($operation, $result['context']->grant?->operation);
+        self::assertSame($exportFormat, $result['context']->grant?->exportFormat);
         self::assertCount(1, $authorizer->exactCalls);
         self::assertSame($scope->canonicalIdentity(), $authorizer->exactCalls[0]['scope']->canonicalIdentity());
         self::assertSame($result['authorization']->target, $authorizer->exactCalls[0]['target']);
@@ -112,6 +115,9 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
         $result = $orchestrator->createRun($request, 'report');
 
         self::assertSame(['context', 'authorization'], array_keys($result));
+        self::assertSame($definition->definitionHash->value, $result['context']->grant?->definitionHash);
+        self::assertSame(ReportOperation::RUN, $result['context']->grant?->operation);
+        self::assertNull($result['context']->grant?->exportFormat);
         self::assertSame(['report'], $resolver->createRunCodes);
         self::assertCount(1, $authorizer->organizationCalls);
         self::assertSame(17, $authorizer->organizationCalls[0]['actorId']);

@@ -29,15 +29,16 @@ final readonly class ReportAccessService
         ?ReportSourceRef $source,
         ?string $exportFormat = null,
     ): ReportVisibility {
-        $actor = $this->reloadActor($context);
-        $permissions = array_fill_keys($actor->permissionSlugs, true);
-        $visibility = $this->visibilityResolver->resolve(
-            $context->scope->organizationId,
-            $definition,
-            $operation,
-            $exportFormat,
-            static fn (string $permission): bool => isset($permissions[$permission]),
-        );
+        if ($context->grant !== null) {
+            if (! $context->grant->matches($definition, $operation, $exportFormat)) {
+                $this->deny();
+            }
+
+            $visibility = $context->visibility;
+        } else {
+            $actor = $this->reloadActor($context);
+            $visibility = $this->legacyVisibility($context, $definition, $operation, $exportFormat, $actor);
+        }
 
         $allowed = match ($operation) {
             ReportOperation::VIEW => $visibility->canView,
@@ -63,6 +64,24 @@ final readonly class ReportAccessService
         }
 
         return $visibility;
+    }
+
+    private function legacyVisibility(
+        ReportExecutionContext $context,
+        ReportDefinition $definition,
+        ReportOperation $operation,
+        ?string $exportFormat,
+        ReportActor $actor,
+    ): ReportVisibility {
+        $permissions = array_fill_keys($actor->permissionSlugs, true);
+
+        return $this->visibilityResolver->resolve(
+            $context->scope->organizationId,
+            $definition,
+            $operation,
+            $exportFormat,
+            static fn (string $permission): bool => isset($permissions[$permission]),
+        );
     }
 
     private function reloadActor(ReportExecutionContext $context): ReportActor

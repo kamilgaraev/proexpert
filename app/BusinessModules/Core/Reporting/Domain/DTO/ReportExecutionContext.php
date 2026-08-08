@@ -13,6 +13,7 @@ final readonly class ReportExecutionContext
         public ReportScope $scope,
         public ReportVisibility $visibility,
         public AuthorizationDecisionContext $authorization,
+        public ?ReportAuthorizationGrant $grant = null,
     ) {
         if ($actor->status !== 'active') {
             throw new InvalidArgumentException('execution_context_actor_invalid');
