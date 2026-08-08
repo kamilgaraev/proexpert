@@ -16,6 +16,7 @@ use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\RetryReportR
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentPromptPublisher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
@@ -126,7 +127,11 @@ final class ReportRunHandlersTest extends TestCase
             ]],
         ] as $handler => [$interface, $method, $parameters]) {
             self::assertSame([$interface], array_values(class_implements($handler)));
-            $this->assertConstructor($handler, [['coordinator', ReportRunCoordinator::class]]);
+            $constructor = [['coordinator', ReportRunCoordinator::class]];
+            if ($handler === CreateReportRunHandler::class) {
+                $constructor[] = ['promptPublisher', ReportDispatchIntentPromptPublisher::class];
+            }
+            $this->assertConstructor($handler, $constructor);
             $this->assertMethod($handler, $method, $parameters, ReportRun::class);
         }
 
@@ -267,12 +272,14 @@ final class ReportRunHandlersTest extends TestCase
         $key = new IdempotencyKey('run-key-1');
         $data = new CreateReportRunData('report', new ReportFilterSet([]), [], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU', $savedViews->reference->id);
 
-        $run = (new CreateReportRunHandler($coordinator))->handle($context, $data, $key);
+        $publisher = new RecordingReportDispatchIntentPromptPublisher;
+        $run = (new CreateReportRunHandler($coordinator, $publisher))->handle($context, $data, $key);
 
         self::assertSame($store->run, $run);
         self::assertSame($key, $store->lastKey);
         self::assertSame($savedViews->reference, $store->lastSavedView);
         self::assertSame('report', $store->lastQuery?->definition->code);
+        self::assertSame(1, $publisher->calls);
     }
 
     public function test_create_reuses_same_explicit_key_and_conflicts_when_canonical_body_changes(): void
@@ -283,13 +290,13 @@ final class ReportRunHandlersTest extends TestCase
         $changed = new CreateReportRunData('report', new ReportFilterSet([]), ['period' => 'previous'], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU', null);
 
         self::assertSame(
-            (new CreateReportRunHandler($coordinator))->handle($context, $first, $key),
-            (new CreateReportRunHandler($coordinator))->handle($context, $first, $key),
+            (new CreateReportRunHandler($coordinator, new RecordingReportDispatchIntentPromptPublisher))->handle($context, $first, $key),
+            (new CreateReportRunHandler($coordinator, new RecordingReportDispatchIntentPromptPublisher))->handle($context, $first, $key),
         );
         self::assertSame(2, $store->createCalls);
 
         try {
-            (new CreateReportRunHandler($coordinator))->handle($context, $changed, $key);
+            (new CreateReportRunHandler($coordinator, new RecordingReportDispatchIntentPromptPublisher))->handle($context, $changed, $key);
             self::fail('Changed canonical body reused the key.');
         } catch (ReportContractException $exception) {
             self::assertSame(\App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT, $exception->errorCode);
@@ -303,7 +310,7 @@ final class ReportRunHandlersTest extends TestCase
         $data = new CreateReportRunData('report', new ReportFilterSet([]), [], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU', $savedViews->reference->id);
 
         try {
-            (new CreateReportRunHandler($coordinator))->handle($context, $data, new IdempotencyKey('run-key-1'));
+            (new CreateReportRunHandler($coordinator, new RecordingReportDispatchIntentPromptPublisher))->handle($context, $data, new IdempotencyKey('run-key-1'));
             self::fail('Invalid saved view was accepted.');
         } catch (InvalidArgumentException) {
             self::assertSame(0, $store->createCalls);
@@ -502,7 +509,7 @@ final class ReportRunHandlersTest extends TestCase
             null,
         );
         $attempts = [
-            'create' => static fn () => (new CreateReportRunHandler($coordinator))->handle(
+            'create' => static fn () => (new CreateReportRunHandler($coordinator, new RecordingReportDispatchIntentPromptPublisher))->handle(
                 $context,
                 new CreateReportRunData('report', new ReportFilterSet([]), [], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU', null),
                 new IdempotencyKey('denied-create'),
@@ -763,6 +770,16 @@ final class ReportRunHandlersTest extends TestCase
         }
 
         return true;
+    }
+}
+
+final class RecordingReportDispatchIntentPromptPublisher implements ReportDispatchIntentPromptPublisher
+{
+    public int $calls = 0;
+
+    public function publishPending(): void
+    {
+        $this->calls++;
     }
 }
 
