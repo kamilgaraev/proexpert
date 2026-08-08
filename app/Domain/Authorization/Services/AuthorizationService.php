@@ -166,7 +166,7 @@ class AuthorizationService
             $permissions = array_merge($permissions, $rolePermissions);
         }
         
-        return array_unique($permissions);
+        return array_values(array_unique($permissions));
     }
 
     /**
