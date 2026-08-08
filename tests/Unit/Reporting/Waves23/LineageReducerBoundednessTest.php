@@ -244,7 +244,8 @@ final class LineageReducerBoundednessTest extends TestCase
         ];
         $accepted = $this->acceptanceEvent(1, 37);
         $reversed = $this->acceptanceEvent(2, 37);
-        $reversed->forceFill([
+        $reversed->setRawAttributes([
+            ...$reversed->getAttributes(),
             'accepted_quantity_delta' => '-0.001',
             'event_type' => 'reversed',
             'planned_quantity' => '-100.000',
@@ -252,7 +253,8 @@ final class LineageReducerBoundednessTest extends TestCase
             'recognized_at' => new CarbonImmutable('2026-07-30T10:00:00+00:00'),
         ]);
         $reaccepted = $this->acceptanceEvent(3, 37);
-        $reaccepted->forceFill([
+        $reaccepted->setRawAttributes([
+            ...$reaccepted->getAttributes(),
             'approved_rate_minor' => 200_000,
             'currency_source' => 'performance_act_line.reapproved_rate',
             'recognized_at' => new CarbonImmutable('2026-07-30T12:00:00+00:00'),

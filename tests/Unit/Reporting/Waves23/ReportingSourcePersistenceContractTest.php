@@ -112,17 +112,18 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString('$row->evidence_version_id !== null', $drillDown);
         self::assertStringContainsString("'briefing' => 'admin.safety_management.briefings.show'", $drillDown);
         self::assertStringContainsString("'safety_briefing'", $drillDown);
-        $qualityService = file_get_contents(
-            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Services/QualityDefectService.php',
+        $qualityRecorder = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/'
+            .'QualityDefectTransitionRecorder.php',
         );
         $qualityMaterializer = file_get_contents(
             dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/'
             .'QualityDefectFlowSnapshotMaterializer.php',
         );
-        self::assertIsString($qualityService);
+        self::assertIsString($qualityRecorder);
         self::assertIsString($qualityMaterializer);
-        self::assertStringContainsString("'coverage' => 'unknown'", $qualityService);
-        self::assertStringContainsString("'legacy_storage_identity_unverified'", $qualityService);
+        self::assertStringContainsString("['coverage'] ?? null) === 'unknown'", $qualityRecorder);
+        self::assertStringContainsString("'legacy_storage_identity_unverified'", $qualityRecorder);
         self::assertStringContainsString('$hasUnknownEvidence', $qualityMaterializer);
     }
 

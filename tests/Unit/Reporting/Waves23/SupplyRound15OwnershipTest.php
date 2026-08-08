@@ -12,18 +12,20 @@ final class SupplyRound15OwnershipTest extends TestCase
     {
         $recorder = $this->source(
             'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/'
-            .'ProcurementProcessEventRecorder.php',
+            .'ProcurementCycleOwnerEventRecorder.php',
         );
         $backfill = $this->source(
             'app/BusinessModules/Features/Procurement/Reporting/Cycle/Backfill/'
             .'ProcurementCycleBackfill.php',
         );
 
-        self::assertStringContainsString('$this->captureOwnerExpectation(', $recorder);
-        self::assertStringContainsString("'purchase_request_line:'.\$purchaseRequestLineId.':owner'", $recorder);
+        self::assertLessThan(
+            strpos($recorder, '$this->recordLine('),
+            strpos($recorder, '$snapshot = $this->newLineSnapshot('),
+        );
         self::assertStringContainsString('$this->events->captureOwnerExpectation(', $backfill);
         self::assertLessThan(
-            strpos($backfill, "if (\$request->created_at === null)"),
+            strpos($backfill, 'if ($request->created_at === null)'),
             strpos($backfill, '$this->events->captureOwnerExpectation('),
         );
     }

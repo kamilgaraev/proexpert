@@ -58,6 +58,15 @@ class ProcurementServiceProvider extends ServiceProvider
     protected function registerServices(): void
     {
         $this->app->singleton(
+            Contracts\PurchaseReceiptReturnAuthorizer::class,
+            Services\PurchaseReceiptReturnAccessResolver::class,
+        );
+        $this->app->singleton(
+            Contracts\PurchaseReceiptReturnUnitOfWork::class,
+            Services\DatabasePurchaseReceiptReturnUnitOfWork::class,
+        );
+
+        $this->app->singleton(
             Reporting\Cycle\Contracts\ProcurementCycleSourceReader::class,
             Reporting\Cycle\Services\EloquentProcurementCycleSourceReader::class,
         );

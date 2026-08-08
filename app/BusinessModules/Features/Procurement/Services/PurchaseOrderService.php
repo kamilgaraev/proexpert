@@ -4,20 +4,28 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnAuthorizer;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnUnitOfWork;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptReturn;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Models\Supplier;
 use App\Models\User;
+use Brick\Math\BigDecimal;
+use Carbon\CarbonImmutable;
 use DateTimeImmutable;
+use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -37,7 +45,159 @@ class PurchaseOrderService
         private readonly ProjectMaterialDeliveryService $deliveryService,
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
         private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
+        private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
+        private readonly PurchaseReceiptInventoryService $receiptInventory,
+        private readonly PurchaseReceiptReturnAuthorizer $returnAuthorizer,
+        private readonly PurchaseReceiptReturnUnitOfWork $returnUnitOfWork,
     ) {}
+
+    public function returnReceiptLine(
+        int $organizationId,
+        int $purchaseOrderId,
+        int $receiptLineId,
+        string $quantity,
+        string $reasonCode,
+        string $idempotencyKey,
+        User $actor,
+    ): PurchaseOrder {
+        $normalizedQuantity = (string) BigDecimal::of($quantity)->strippedOfTrailingZeros();
+        $payloadFingerprint = hash('sha256', CanonicalJson::encode([
+            'actor_id' => (int) $actor->getAuthIdentifier(),
+            'organization_id' => $organizationId,
+            'purchase_order_id' => $purchaseOrderId,
+            'purchase_receipt_line_id' => $receiptLineId,
+            'quantity' => $normalizedQuantity,
+            'reason_code' => $reasonCode,
+        ]));
+
+        return $this->returnUnitOfWork->run(
+            $organizationId,
+            $idempotencyKey,
+            function () use (
+                $actor,
+                $idempotencyKey,
+                $organizationId,
+                $payloadFingerprint,
+                $purchaseOrderId,
+                $reasonCode,
+                $receiptLineId,
+                $normalizedQuantity,
+            ): PurchaseOrder {
+                $existing = PurchaseReceiptReturn::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('idempotency_key', $idempotencyKey)
+                    ->first();
+                if ($existing instanceof PurchaseReceiptReturn) {
+                    if (! hash_equals((string) $existing->payload_fingerprint, $payloadFingerprint)) {
+                        throw new DomainException('procurement.purchase_orders.receipt_return_idempotency_conflict');
+                    }
+
+                    $line = $this->returnAuthorizer->assertCanReturn(
+                        $actor,
+                        $organizationId,
+                        $purchaseOrderId,
+                        $receiptLineId,
+                    );
+
+                    return $this->freshReceivedPurchaseOrder($line->purchaseReceipt->purchaseOrder);
+                }
+
+                $line = $this->returnAuthorizer->assertCanReturn(
+                    $actor,
+                    $organizationId,
+                    $purchaseOrderId,
+                    $receiptLineId,
+                );
+                $occurredAt = CarbonImmutable::now();
+                $movement = $this->receiptInventory->returnQuantity(
+                    $line,
+                    $normalizedQuantity,
+                    $reasonCode,
+                    (int) $actor->getAuthIdentifier(),
+                    $occurredAt,
+                );
+                $event = $this->reportingLifecycle->receiptReturned(
+                    $line->fresh(),
+                    (int) $movement->getKey(),
+                    $normalizedQuantity,
+                    $reasonCode,
+                    $occurredAt,
+                    $idempotencyKey,
+                );
+                $metadata = is_array($movement->metadata) ? $movement->metadata : [];
+                $sourceVersion = (int) ($metadata['reporting_source_version'] ?? 0);
+                if ($sourceVersion < 1) {
+                    throw new DomainException('procurement.purchase_orders.receipt_return_source_invalid');
+                }
+                PurchaseReceiptReturn::query()->create([
+                    'organization_id' => $organizationId,
+                    'purchase_receipt_line_id' => $receiptLineId,
+                    'warehouse_movement_id' => (int) $movement->getKey(),
+                    'supply_lifecycle_event_id' => (int) $event->getKey(),
+                    'source_type' => 'warehouse_movement',
+                    'source_id' => (int) $movement->getKey(),
+                    'source_version' => $sourceVersion,
+                    'quantity' => $normalizedQuantity,
+                    'reason_code' => $reasonCode,
+                    'actor_id' => (int) $actor->getAuthIdentifier(),
+                    'occurred_at' => $occurredAt,
+                    'idempotency_key' => $idempotencyKey,
+                    'payload_fingerprint' => $payloadFingerprint,
+                ]);
+
+                return $this->freshReceivedPurchaseOrder($line->purchaseReceipt->purchaseOrder);
+            },
+        );
+    }
+
+    public function reverseReceiptLine(
+        int $organizationId,
+        int $purchaseOrderId,
+        int $receiptLineId,
+        string $reasonCode,
+        string $idempotencyKey,
+        User $actor,
+    ): PurchaseOrder {
+        return $this->returnUnitOfWork->run(
+            $organizationId,
+            $idempotencyKey,
+            function () use ($actor, $idempotencyKey, $organizationId, $purchaseOrderId, $reasonCode, $receiptLineId): PurchaseOrder {
+                $line = $this->returnAuthorizer->assertCanReturn(
+                    $actor,
+                    $organizationId,
+                    $purchaseOrderId,
+                    $receiptLineId,
+                );
+                if ($line->reversed_at !== null) {
+                    if ((string) $line->reversal_idempotency_key !== $idempotencyKey
+                        || (string) $line->reversal_reason_code !== $reasonCode
+                        || (int) $line->reversed_by_user_id !== (int) $actor->getAuthIdentifier()) {
+                        throw new DomainException('procurement.purchase_orders.receipt_reversal_idempotency_conflict');
+                    }
+
+                    return $this->freshReceivedPurchaseOrder($line->purchaseReceipt->purchaseOrder);
+                }
+
+                $occurredAt = CarbonImmutable::now();
+                $movement = $this->receiptInventory->reverse(
+                    $line,
+                    $reasonCode,
+                    (int) $actor->getAuthIdentifier(),
+                    $occurredAt,
+                );
+                $line->forceFill([
+                    'reversed_at' => $occurredAt,
+                    'reversed_by_user_id' => (int) $actor->getAuthIdentifier(),
+                    'reversal_reason_code' => $reasonCode,
+                    'reversal_warehouse_movement_id' => (int) $movement->getKey(),
+                    'reversal_idempotency_key' => $idempotencyKey,
+                ])->save();
+                $this->reportingLifecycle->receiptReversed($line->fresh(), $reasonCode, $occurredAt);
+
+                return $this->freshReceivedPurchaseOrder($line->purchaseReceipt->purchaseOrder);
+            },
+        );
+    }
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
     {
