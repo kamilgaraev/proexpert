@@ -22,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -405,7 +406,9 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
                             ->where('project_organization.is_active', true);
                     });
             });
-        if (($membership->project_access_mode ?? 'assigned') !== 'all') {
+        if (($membership->project_access_mode ?? UserProjectAccessMode::ASSIGNED_PROJECTS->value)
+            !== UserProjectAccessMode::ALL_PROJECTS->value
+        ) {
             $query->whereHas('users', static function ($users) use ($actorId): void {
                 $users->where('users.id', $actorId)->where('project_user.is_active', true);
             });
