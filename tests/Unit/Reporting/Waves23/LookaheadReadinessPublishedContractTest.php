@@ -45,6 +45,7 @@ final class LookaheadReadinessPublishedContractTest extends TestCase
         $definitionRegistry = file_get_contents($root.'/app/BusinessModules/Core/Reporting/Infrastructure/Catalog/BuiltinPublishedReportDefinitionRegistry.php');
         $metadataRegistry = file_get_contents($root.'/app/BusinessModules/Core/Reporting/Infrastructure/Catalog/BuiltinReportCatalogMetadataRegistry.php');
         $schedulingRegistry = file_get_contents($root.'/app/BusinessModules/Core/Reporting/Infrastructure/Catalog/BuiltinReportSchedulingCapabilityRegistry.php');
+        $catalogProvider = file_get_contents($root.'/app/BusinessModules/Core/Reporting/ReportingCatalogServiceProvider.php');
         $routes = file_get_contents($root.'/app/BusinessModules/Core/Reporting/routes.php');
 
         foreach ([$definitionRegistry, $metadataRegistry, $schedulingRegistry] as $source) {
@@ -54,6 +55,9 @@ final class LookaheadReadinessPublishedContractTest extends TestCase
         self::assertIsString($routes);
         self::assertStringContainsString("Route::post('/projects/{project}/lookahead-readiness/runs'", $routes);
         self::assertStringContainsString("->defaults('reportCode', 'lookahead_readiness')", $routes);
+        self::assertIsString($catalogProvider);
+        self::assertStringContainsString('LookaheadReadinessBuiltinPublishedReport::class', $catalogProvider);
+        self::assertStringContainsString('$app->make(LookaheadReadinessBuiltinPublishedReport::class)', $catalogProvider);
     }
 
     public function test_runtime_binding_registers_the_verified_r07_components(): void
