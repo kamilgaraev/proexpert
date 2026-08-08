@@ -84,17 +84,6 @@ final readonly class ProcurementCycleSnapshotMaterializer
             $context->scope->resources,
             'purchase_request_line',
         );
-        $policy = ProcurementCyclePolicyVersion::query()
-            ->where('organization_id', $organizationId)
-            ->where('effective_from', '<=', $query->asOf)
-            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf))
-            ->orderByDesc('effective_from')
-            ->orderByDesc('policy_version')
-            ->first();
-        if (! $policy instanceof ProcurementCyclePolicyVersion) {
-            throw new DomainException('Procurement cycle policy is unavailable for the requested cutoff.');
-        }
-
         $eligibleLineIds = $this->universe->query($context, $query);
         $eventQuery = ProcurementProcessEvent::query()
             ->where('procurement_process_events.organization_id', $organizationId)
@@ -120,6 +109,19 @@ final readonly class ProcurementCycleSnapshotMaterializer
             ->orderBy('procurement_process_events.occurred_at')
             ->orderBy('procurement_process_events.id')
             ->get();
+        if ($events->isEmpty()) {
+            return $this->materializeEmpty($organizationId, $query, $progress);
+        }
+        $policy = ProcurementCyclePolicyVersion::query()
+            ->where('organization_id', $organizationId)
+            ->where('effective_from', '<=', $query->asOf)
+            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf))
+            ->orderByDesc('effective_from')
+            ->orderByDesc('policy_version')
+            ->first();
+        if (! $policy instanceof ProcurementCyclePolicyVersion) {
+            throw new DomainException('Procurement cycle policy is unavailable for the requested cutoff.');
+        }
         $purchaseOrderIds = $events->pluck('purchase_order_id')->filter()->unique()->values();
         $promises = PurchaseOrderPromiseVersion::query()
             ->where('organization_id', $organizationId)
@@ -348,6 +350,64 @@ final readonly class ProcurementCycleSnapshotMaterializer
 
             return $snapshot;
         }, 3);
+
+        return $this->snapshotRef($query, $snapshot);
+    }
+
+    private function materializeEmpty(
+        int $organizationId,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef {
+        $sourceHash = $this->sourceHashes->make(
+            $query->canonicalJson,
+            [hash('sha256', CanonicalJson::encode([
+                'source' => self::KIND,
+                'state' => 'empty',
+                'policy' => 'not_applicable',
+            ]))],
+        );
+        $existing = ProcurementCycleSnapshot::query()
+            ->where('organization_id', $organizationId)
+            ->where('query_hash', $query->queryHash->value)
+            ->where('source_hash', $sourceHash)
+            ->first();
+        if ($existing instanceof ProcurementCycleSnapshot) {
+            $progress->advance(100);
+
+            return $this->snapshotRef($query, $existing);
+        }
+
+        $generatedAt = new DateTimeImmutable;
+        $snapshot = ProcurementCycleSnapshot::query()->create([
+            'id' => (string) Str::ulid(),
+            'organization_id' => $organizationId,
+            'definition_hash' => $query->definition->definitionHash->value,
+            'query_hash' => $query->queryHash->value,
+            'scope_hash' => hash('sha256', CanonicalJson::encode($query->scope->canonicalIdentity())),
+            'source_hash' => $sourceHash,
+            'formula_version' => $query->definition->formulaVersion,
+            'source_schema_version' => $query->definition->sourceSchemaVersion,
+            'policy_version_id' => null,
+            'as_of' => $query->asOf,
+            'generated_at' => $generatedAt,
+            'stale_at' => $generatedAt->modify('+86400 seconds'),
+            'row_count' => 0,
+            'eligible_count' => 0,
+            'sla_numerator' => 0,
+            'gap_count' => 0,
+            'quality_status' => 'complete',
+            'reconciliation_status' => 'not_applicable',
+            'totals' => [
+                'row_count' => 0,
+                'sla_numerator' => 0,
+                'sla_denominator' => 0,
+                'sla_ratio' => null,
+                'start_cohorts' => [],
+                'outcome_cohorts' => [],
+            ],
+        ]);
+        $progress->advance(100);
 
         return $this->snapshotRef($query, $snapshot);
     }

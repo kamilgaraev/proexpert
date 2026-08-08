@@ -243,6 +243,38 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringNotContainsString('min($projected, $sentItems)', $source);
     }
 
+    public function test_empty_supply_snapshot_does_not_require_an_organization_policy(): void
+    {
+        $materializer = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Services/'
+            .'SupplyReliabilitySnapshotMaterializer.php',
+        );
+        $migration = $this->source(
+            'app/BusinessModules/Features/Procurement/migrations/'
+            .'2026_08_09_000001_allow_policyless_empty_reporting_snapshots.php',
+        );
+
+        self::assertStringContainsString('if ($ownerItems->isEmpty())', $materializer);
+        self::assertStringContainsString('return $this->materializeEmpty(', $materializer);
+        self::assertStringContainsString("'policy_version_id' => null", $materializer);
+        self::assertLessThan(
+            strpos($materializer, 'SupplyReliabilityPolicyVersion::query()'),
+            strpos($materializer, 'if ($ownerItems->isEmpty())'),
+        );
+        self::assertStringContainsString(
+            'ALTER COLUMN policy_version_id DROP NOT NULL',
+            $migration,
+        );
+
+        $cycle = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Cycle/Services/'
+            .'ProcurementCycleSnapshotMaterializer.php',
+        );
+        self::assertStringContainsString('if ($events->isEmpty())', $cycle);
+        self::assertStringContainsString('return $this->materializeEmpty(', $cycle);
+        self::assertStringContainsString("'policy_version_id' => null", $cycle);
+    }
+
     public function test_sent_owner_first_writer_is_serialized_and_compares_the_complete_identity(): void
     {
         $source = $this->source(
