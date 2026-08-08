@@ -49,6 +49,9 @@ final class ManagementPnlPublishedContractTest extends TestCase
             $source = (string) file_get_contents($root.'/app/BusinessModules/Core/Reporting/Infrastructure/Catalog/'.$file);
             self::assertStringContainsString('ManagementPnlBuiltinPublishedReport', $source);
         }
+        $catalogProvider = (string) file_get_contents($root.'/app/BusinessModules/Core/Reporting/ReportingCatalogServiceProvider.php');
+        self::assertStringContainsString('ManagementPnlBuiltinPublishedReport::class', $catalogProvider);
+        self::assertStringContainsString('$app->make(ManagementPnlBuiltinPublishedReport::class)', $catalogProvider);
         $routes = (string) file_get_contents($root.'/app/BusinessModules/Core/Reporting/routes.php');
         self::assertStringContainsString("Route::post('/management-pnl/runs'", $routes);
         self::assertStringContainsString("->defaults('reportCode', 'management_pnl')", $routes);
