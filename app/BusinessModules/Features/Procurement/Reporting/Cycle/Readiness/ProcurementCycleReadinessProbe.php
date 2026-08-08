@@ -8,8 +8,8 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadines
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\Queries\ProcurementCycleFilteredUniverse;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Queries\ProcurementCycleFilteredUniverse;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
@@ -30,7 +30,7 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
 
     public function assertReady(ReportExecutionContext $context, ReportQuery $query): void
     {
-        $this->inspect($context, $query)->assertReady('procurement_cycle');
+        $this->inspect($context, $query)->assertReady();
     }
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
@@ -44,6 +44,9 @@ final readonly class ProcurementCycleReadinessProbe implements ReportDefinitionR
         $eligible = DB::query()
             ->fromSub(clone $eligibleLineIds, 'eligible_cycle_lines')
             ->count();
+        if ($eligible === 0) {
+            return SourceReadinessResult::empty();
+        }
         $events = ProcurementProcessEvent::query()
             ->where('organization_id', $context->scope->organizationId)
             ->whereIn('purchase_request_line_id', clone $eligibleLineIds)

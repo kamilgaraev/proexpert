@@ -10,8 +10,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskGrainUniverse;
-use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\OwnerReportFilterApplier;
+use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
@@ -32,7 +32,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
 
     public function assertReady(ReportExecutionContext $context, ReportQuery $query): void
     {
-        $this->inspect($context, $query)->assertReady('inventory_risk');
+        $this->inspect($context, $query)->assertReady();
     }
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
@@ -79,6 +79,9 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             $pinnedEvents,
         );
         $eligible = $grains->count();
+        if ($eligible === 0) {
+            return SourceReadinessResult::empty();
+        }
         $projected = $eligible;
         $unknown = (clone $events)
             ->where(function ($builder): void {

@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\Support\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use DateTimeImmutable;
-use DomainException;
 
 final readonly class SourceReadinessResult
 {
@@ -19,14 +20,21 @@ final readonly class SourceReadinessResult
         public DateTimeImmutable $verifiedAt,
     ) {}
 
-    public function assertReady(string $reportCode): void
+    public static function empty(?DateTimeImmutable $verifiedAt = null): self
+    {
+        return new self(0, 0, 0, 0, 0, 0, $verifiedAt ?? new DateTimeImmutable);
+    }
+
+    public function assertReady(): void
     {
         if ($this->eligibleCount !== $this->projectedCount
             || $this->gapCount !== 0
             || $this->unknownUnitCount !== 0
             || $this->invalidVersionCount !== 0
             || $this->invalidHashCount !== 0) {
-            throw new DomainException($reportCode.' reporting source is not ready.');
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
+            );
         }
     }
 }

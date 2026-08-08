@@ -35,7 +35,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
 
     public function assertReady(ReportExecutionContext $context, ReportQuery $query): void
     {
-        $this->inspect($context, $query)->assertReady('supply_reliability');
+        $this->inspect($context, $query)->assertReady();
     }
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
@@ -118,6 +118,9 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
         );
         $authoritativeItemIds = (clone $authoritativeCohort)->select('authoritative_item.id');
         $eligible = (clone $authoritativeCohort)->distinct()->count('authoritative_item.id');
+        if ($eligible === 0) {
+            return SourceReadinessResult::empty();
+        }
         $eligibleMaxItemId = (int) ((clone $authoritativeCohort)->max('authoritative_item.id') ?? 0);
         $eligiblePromiseIds = (clone $reconciliationOwners)
             ->whereNotNull('owner_promise.id')
@@ -315,5 +318,4 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             new DateTimeImmutable,
         );
     }
-
 }

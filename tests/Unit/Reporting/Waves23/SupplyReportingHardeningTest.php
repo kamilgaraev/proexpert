@@ -154,6 +154,20 @@ final class SupplyReportingHardeningTest extends TestCase
         }
     }
 
+    public function test_every_readiness_probe_accepts_an_empty_filtered_universe(): void
+    {
+        foreach ([
+            'Procurement/Reporting/Cycle/Readiness/ProcurementCycleReadinessProbe.php',
+            'Procurement/Reporting/Award/Readiness/SupplierAwardReadinessProbe.php',
+            'Procurement/Reporting/Supply/Readiness/SupplyReliabilityReadinessProbe.php',
+            'BasicWarehouse/Reporting/InventoryRisk/Readiness/InventoryRiskReadinessProbe.php',
+        ] as $suffix) {
+            $source = $this->source('app/BusinessModules/Features/'.$suffix);
+
+            self::assertStringContainsString('SourceReadinessResult::empty()', $source, $suffix);
+        }
+    }
+
     public function test_rows_and_materializers_apply_the_exact_resource_scope(): void
     {
         foreach ([
