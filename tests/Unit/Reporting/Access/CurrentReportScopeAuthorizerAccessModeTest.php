@@ -117,7 +117,7 @@ final class CurrentReportScopeAuthorizerAccessModeTest extends TestCase
         self::assertTrue($vector['run']);
     }
 
-    public function test_source_module_revocation_zeroes_visibility_before_permissions_are_evaluated(): void
+    public function test_source_module_entitlement_does_not_override_report_permissions(): void
     {
         $evaluator = new RecordingAccessModeAbacEvaluator([
             'act_reports.view',
@@ -127,15 +127,15 @@ final class CurrentReportScopeAuthorizerAccessModeTest extends TestCase
         $vector = $this->permissionVector($evaluator, moduleAllowed: false);
 
         self::assertSame([
-            'view' => false,
-            'run' => false,
-            'export' => false,
-            'download' => false,
+            'view' => true,
+            'run' => true,
+            'export' => true,
+            'download' => true,
             'manage' => false,
             'sensitive' => false,
             'audit' => false,
         ], $vector);
-        self::assertSame([], $evaluator->permissions);
+        self::assertSame(['act_reports.view', 'act_reports.export.excel'], $evaluator->permissions);
     }
 
     private function permissionVector(

@@ -49,7 +49,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
 
         self::assertSame(204, $response->getStatusCode());
         self::assertTrue($called);
-        self::assertSame(['act-reporting'], $modules->checkedModules);
+        self::assertSame([], $modules->checkedModules);
         self::assertSame(['server_report'], $resolver->createRunCodes);
     }
 
@@ -69,7 +69,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
         $response = $middleware->handle($request, static fn (): Response => new Response('', 204));
 
         self::assertSame(204, $response->getStatusCode());
-        self::assertSame(['act-reporting'], $modules->checkedModules);
+        self::assertSame([], $modules->checkedModules);
         self::assertSame(['supply_reliability'], $resolver->createRunCodes);
     }
 
@@ -95,11 +95,11 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
 
         self::assertSame(204, $response->getStatusCode());
         self::assertTrue($called);
-        self::assertSame(['act-reporting'], $modules->checkedModules);
+        self::assertSame([], $modules->checkedModules);
         self::assertSame(['contract_settlement_exposure'], $resolver->createRunCodes);
     }
 
-    public function test_catalog_records_only_module_accessible_definition_hashes(): void
+    public function test_catalog_does_not_apply_organization_module_entitlements(): void
     {
         $generic = (new ReportDefinitionBuilder)
             ->definitionHash(new Sha256Hash(str_repeat('b', 64)))
@@ -113,8 +113,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
 
         $middleware->handle($request, static fn (): Response => new Response('', 204));
 
-        self::assertSame(
-            [$source->definitionHash->value],
+        self::assertNull(
             $request->attributes->get(AuthorizeReportDefinitionAccess::ACCESSIBLE_DEFINITION_HASHES_ATTRIBUTE),
         );
     }
@@ -136,7 +135,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
             [['01J00000000000000000000001', ReportOperation::VIEW]],
             $resolver->runCalls,
         );
-        self::assertSame(['act-reporting'], $modules->checkedModules);
+        self::assertSame([], $modules->checkedModules);
     }
 
     public function test_unknown_route_shape_fails_closed_before_next_handler(): void
@@ -163,7 +162,7 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
         }
     }
 
-    public function test_revoked_source_module_fails_closed_before_next_handler(): void
+    public function test_report_route_does_not_depend_on_source_module_entitlement(): void
     {
         $middleware = new AuthorizeReportDefinitionAccess(
             new DefinitionAccessTargetResolver([$this->sourceDefinition('f')]),
@@ -171,46 +170,42 @@ final class AuthorizeReportDefinitionAccessTest extends TestCase
         );
         $called = false;
 
-        try {
-            $middleware->handle(
-                $this->request('admin.reports.runs.store', ['reportCode' => 'server_report']),
-                static function () use (&$called): Response {
-                    $called = true;
+        $response = $middleware->handle(
+            $this->request('admin.reports.runs.store', ['reportCode' => 'server_report']),
+            static function () use (&$called): Response {
+                $called = true;
 
-                    return new Response('', 204);
-                },
-            );
-            self::fail('Revoked source module must be denied.');
-        } catch (ReportContractException $exception) {
-            self::assertSame('REPORT_SCOPE_FORBIDDEN', $exception->getMessage());
-            self::assertFalse($called);
-        }
+                return new Response('', 204);
+            },
+        );
+
+        self::assertSame(204, $response->getStatusCode());
+        self::assertTrue($called);
     }
 
-    public function test_contract_settlement_options_route_denies_revoked_source_module(): void
+    public function test_new_named_options_route_uses_server_report_code_without_module_entitlement(): void
     {
+        $resolver = new DefinitionAccessTargetResolver([$this->sourceDefinition('3')]);
         $middleware = new AuthorizeReportDefinitionAccess(
-            new DefinitionAccessTargetResolver([$this->sourceDefinition('3')]),
+            $resolver,
             new ReportDefinitionModuleAuthorizer(new DefinitionAccessModuleEntitlement(['reports'])),
         );
         $called = false;
 
-        try {
-            $middleware->handle(
-                $this->request('admin.reports.contract-settlement-exposure.options', [
-                    'reportCode' => 'contract_settlement_exposure',
-                ]),
-                static function () use (&$called): Response {
-                    $called = true;
+        $response = $middleware->handle(
+            $this->request('admin.reports.management-pnl.options', [
+                'reportCode' => 'management_pnl',
+            ]),
+            static function () use (&$called): Response {
+                $called = true;
 
-                    return new Response('', 204);
-                },
-            );
-            self::fail('Revoked contract settlement source module must be denied.');
-        } catch (ReportContractException $exception) {
-            self::assertSame('REPORT_SCOPE_FORBIDDEN', $exception->getMessage());
-            self::assertFalse($called);
-        }
+                return new Response('', 204);
+            },
+        );
+
+        self::assertSame(204, $response->getStatusCode());
+        self::assertTrue($called);
+        self::assertSame(['management_pnl'], $resolver->createRunCodes);
     }
 
     public function test_export_routes_use_exact_persisted_resolver_operations(): void

@@ -254,7 +254,7 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
         self::assertSame([], $authorizer->organizationCalls);
     }
 
-    public function test_catalog_honors_definition_module_filter_from_http_gate(): void
+    public function test_catalog_ignores_legacy_module_filter_and_authorizes_every_definition(): void
     {
         $generic = $this->definition('generic_report', 'a');
         $source = $this->definition('source_report', 'b');
@@ -278,9 +278,12 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
             $authorizer,
         )->catalog($request);
 
-        self::assertSame([$source->definitionHash->value], array_keys($authorization->authorizations));
         self::assertSame(
-            [$source->definitionHash->value],
+            [$generic->definitionHash->value, $source->definitionHash->value],
+            array_keys($authorization->authorizations),
+        );
+        self::assertSame(
+            [$generic->definitionHash->value, $source->definitionHash->value],
             array_map(
                 static fn (CurrentReportAuthorizationTarget $target): string => $target->definition->definitionHash->value,
                 $authorizer->catalogCalls[0]['targets'],
