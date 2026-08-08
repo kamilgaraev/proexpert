@@ -73,6 +73,24 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             $moduleAccess = $this->visibilityResolver->moduleAccessDecision($organizationId);
             $this->resources->authorizeAll($actor, $scope->organizationId, $scope->resources, $occurredAt);
             $authorizations = [];
+            $permissionDecisions = [];
+            $permissionGranted = function (string $permission) use (
+                &$permissionDecisions,
+                $actorId,
+                $scope,
+                $occurredAt,
+            ): bool {
+                if (! array_key_exists($permission, $permissionDecisions)) {
+                    $permissionDecisions[$permission] = $this->grantedForEveryFact(
+                        $actorId,
+                        $scope,
+                        $occurredAt,
+                        $permission,
+                    );
+                }
+
+                return $permissionDecisions[$permission];
+            };
             $context = null;
 
             foreach ($targets as $target) {
@@ -89,6 +107,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
                     false,
                     $correlationId,
                     $moduleAccess,
+                    $permissionGranted,
                 );
                 if (! $authorization->visibility->canView) {
                     continue;
@@ -221,8 +240,16 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         bool $assertOperation,
         ?string $correlationId,
         ReportDefinitionModuleAccessDecision $moduleAccess,
+        ?callable $permissionGranted = null,
     ): CurrentReportAuthorization {
-        $permissions = $this->permissionVector((int) $actor->id, $scope, $target, $occurredAt, $moduleAccess);
+        $permissions = $this->permissionVector(
+            (int) $actor->id,
+            $scope,
+            $target,
+            $occurredAt,
+            $moduleAccess,
+            $permissionGranted,
+        );
         $visibility = new ReportVisibility(
             $permissions['view'],
             $permissions['run'],
@@ -260,18 +287,20 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         CurrentReportAuthorizationTarget $target,
         DateTimeImmutable $occurredAt,
         ReportDefinitionModuleAccessDecision $moduleAccess,
+        ?callable $permissionGranted = null,
     ): array {
+        $permissionGranted ??= fn (string $permission): bool => $this->grantedForEveryFact(
+            $actorId,
+            $scope,
+            $occurredAt,
+            $permission,
+        );
         $visibility = $this->visibilityResolver->resolve(
             $scope->organizationId,
             $target->definition,
             $target->operation,
             $target->exportFormat,
-            fn (string $permission): bool => $this->grantedForEveryFact(
-                $actorId,
-                $scope,
-                $occurredAt,
-                $permission,
-            ),
+            $permissionGranted,
             $moduleAccess,
         );
 

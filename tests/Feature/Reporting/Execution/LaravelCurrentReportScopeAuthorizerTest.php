@@ -479,15 +479,8 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         self::assertSame(
             [
                 ...$this->expectedPermissionChecksFor('zeta.sensitive'),
-                'reports.view',
-                'reports.run',
-                'reports.export',
-                'reports.download',
-                'reports.manage',
-                'reports.sensitive',
-                'reports.audit',
                 'forbidden.view',
-                ...$this->expectedPermissionChecksFor('alpha.sensitive'),
+                'alpha.sensitive',
             ],
             $evaluator->permissions,
         );

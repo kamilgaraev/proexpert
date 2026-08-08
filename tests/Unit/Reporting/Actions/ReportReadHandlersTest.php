@@ -99,6 +99,25 @@ final class ReportReadHandlersTest extends TestCase
         self::assertSame(50, $fixture['rowQuery']->pageCalls()[0][4]);
     }
 
+    public function test_empty_rows_ignore_drill_token_mapping_missing_from_published_columns(): void
+    {
+        $fixture = $this->fixture(
+            columns: [['id' => 'name']],
+            rows: [],
+            drillTokenColumns: ['drill' => 'source_refs'],
+        );
+        $operations = [];
+
+        $page = $this->rowsHandler($fixture, $this->authorizer($operations))->handle(
+            $this->context,
+            self::RUN_ID,
+            new ReportRowsWindow(null, 50, $this->sort),
+        );
+
+        self::assertSame([], $page->rows);
+        self::assertSame([ReportOperation::VIEW], $operations);
+    }
+
     public function test_rows_sign_and_accept_the_typed_keyset_for_the_next_page(): void
     {
         $fixture = $this->fixture(
