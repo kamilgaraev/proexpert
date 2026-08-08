@@ -210,14 +210,14 @@ final class ReportReadHandlersTest extends TestCase
         );
         $operations = [];
 
-        $this->expectReportError(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
-
         try {
-            $this->rowsHandler($fixture, $this->authorizer($operations, false))->handle(
-                $this->context,
-                self::RUN_ID,
-                new ReportRowsWindow(null, 50, $sort),
-            );
+            $this->expectReportError(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, function () use ($fixture, &$operations, $sort): void {
+                $this->rowsHandler($fixture, $this->authorizer($operations, false))->handle(
+                    $this->context,
+                    self::RUN_ID,
+                    new ReportRowsWindow(null, 50, $sort),
+                );
+            });
         } finally {
             self::assertSame([ReportOperation::VIEW, ReportOperation::VIEW_SENSITIVE], $operations);
             self::assertCount(0, $fixture['rowQuery']->pageCalls());
@@ -268,14 +268,14 @@ final class ReportReadHandlersTest extends TestCase
         );
         $operations = [];
 
-        $this->expectReportError(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
-
         try {
-            $this->rowsHandler($fixture, $this->authorizer($operations, auditAllowed: false))->handle(
-                $this->context,
-                self::RUN_ID,
-                new ReportRowsWindow(null, 50, $sort),
-            );
+            $this->expectReportError(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, function () use ($fixture, &$operations, $sort): void {
+                $this->rowsHandler($fixture, $this->authorizer($operations, auditAllowed: false))->handle(
+                    $this->context,
+                    self::RUN_ID,
+                    new ReportRowsWindow(null, 50, $sort),
+                );
+            });
         } finally {
             self::assertSame([ReportOperation::VIEW, ReportOperation::VIEW_AUDIT], $operations);
             self::assertCount(0, $fixture['rowQuery']->pageCalls());
@@ -351,8 +351,8 @@ final class ReportReadHandlersTest extends TestCase
         );
         $operations = [];
         $request = new ReportDrillDownRequest(
-            $this->cellToken($fixture, 'row-1', 'name'),
-            'details-page-2',
+            $this->cellToken($fixture, 'row-1', 'audit_event'),
+            null,
             25,
         );
 
@@ -370,8 +370,8 @@ final class ReportReadHandlersTest extends TestCase
         self::assertSame($fixture['run']->resultMetadata->snapshot, $fixture['drillDown']->calls()[0][1]);
         $input = $fixture['drillDown']->calls()[0][2];
         self::assertSame('row-1', $input->cell->rowKey);
-        self::assertSame('name', $input->cell->columnId);
-        self::assertSame('details-page-2', $input->cursor);
+        self::assertSame('audit_event', $input->cell->columnId);
+        self::assertNull($input->cursor);
         self::assertSame(25, $input->limit);
         self::assertObjectNotHasProperty('token', $input);
     }
@@ -655,8 +655,7 @@ final class ReportReadHandlersTest extends TestCase
         array &$operations,
         bool $sensitiveAllowed = true,
         bool $auditAllowed = true,
-    ): CurrentReportScopeAuthorizer&MockObject
-    {
+    ): CurrentReportScopeAuthorizer&MockObject {
         $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
         $authorizer->method('authorizeExact')->willReturnCallback(
             function (int $actorId, $scope, CurrentReportAuthorizationTarget $target) use (&$operations, $sensitiveAllowed, $auditAllowed): CurrentReportAuthorization {
@@ -713,6 +712,7 @@ final class ReportReadHandlersTest extends TestCase
             $authorizer,
             new ReportExecutionContextFactory,
             $this->codec(),
+            $this->clock,
         );
     }
 
