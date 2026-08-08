@@ -34,4 +34,11 @@ class CorsConfigTest extends TestCase
         self::assertContains('If-None-Match', $config['allowed_headers']);
         self::assertContains('ETag', $config['exposed_headers']);
     }
+
+    public function test_idempotent_mutation_header_is_cors_accessible(): void
+    {
+        $config = require dirname(__DIR__, 3).'/config/cors.php';
+
+        self::assertContains('Idempotency-Key', $config['allowed_headers']);
+    }
 }
