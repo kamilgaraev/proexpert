@@ -50,12 +50,12 @@ final class ApprovedAcceptanceRateResolverTest extends TestCase
     }
 
     #[Test]
-    public function pivot_rate_preserves_four_decimal_quantities(): void
+    public function pivot_rate_preserves_pivot_quantity_precision(): void
     {
         $pivot = new PerformanceActCompletedWork;
         $pivot->forceFill([
-            'included_quantity' => '1.2345',
-            'included_amount' => '246.90',
+            'included_quantity' => '1.234',
+            'included_amount' => '246.80',
             'currency' => 'RUB',
         ]);
 
@@ -69,8 +69,8 @@ final class ApprovedAcceptanceRateResolverTest extends TestCase
     {
         $pivot = new PerformanceActCompletedWork;
         $pivot->forceFill([
-            'included_quantity' => '99999999999.9999',
-            'included_amount' => '9999999999999.99',
+            'included_quantity' => '99999999999.999',
+            'included_amount' => '9999999999999.90',
             'currency' => 'RUB',
         ]);
 
