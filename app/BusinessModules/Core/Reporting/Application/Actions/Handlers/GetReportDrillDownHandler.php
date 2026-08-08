@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\Reporting\Application\Actions\Handlers;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportDrillDownAction;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
@@ -35,6 +36,7 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
         private CurrentReportScopeAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
         private SignedReportCursorCodec $tokens,
+        private ReportExecutionClock $clock,
     ) {}
 
     public function handle(
@@ -61,13 +63,44 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
                 ['fields' => ['token']],
             );
         }
-        $authorization = $this->authorizeDrillDown($context, $query, $snapshot);
+        $authorization = $this->authorizeDrillDown($context, $query, $snapshot, $cell->columnId);
         $providerContext = $this->contexts->fromCurrentAuthorization($authorization);
+        $providerCursor = $request->cursor === null
+            ? null
+            : $this->tokens->decodeDrillDownPage(
+                $request->cursor,
+                $query->scope->organizationId,
+                $run->reportCode,
+                $run->id,
+                $snapshot,
+                $run->queryHash,
+                $cell->rowKey,
+            );
 
-        return $binding->drillDownProvider->drillDown(
+        $result = $binding->drillDownProvider->drillDown(
             $providerContext,
             $snapshot,
-            new ReportDrillDownInput($cell, $request->cursor, $request->limit),
+            new ReportDrillDownInput($cell, $providerCursor, $request->limit),
+        );
+        if ($result->nextCursor === null) {
+            return $result;
+        }
+
+        $nextCursor = $this->tokens->encodeDrillDownPage(
+            $query->scope->organizationId,
+            $run->reportCode,
+            $run->id,
+            $snapshot,
+            $run->queryHash,
+            $cell->rowKey,
+            $result->nextCursor,
+            $this->clock->now()->modify('+5 minutes'),
+        );
+
+        return new ReportDrillDownResult(
+            $result->rows,
+            $nextCursor,
+            $result->resourceLinks,
         );
     }
 
@@ -124,13 +157,14 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
         ReportExecutionContext $context,
         ReportQuery $query,
         ReportSnapshotRef $snapshot,
+        string $columnId,
     ): CurrentReportAuthorization {
         $authorization = $this->authorize($context, $query, $snapshot, ReportOperation::VIEW);
         $classification = $query->definition->outputClassification;
-        if ($classification->requiresSensitiveForRows()) {
+        if ($classification->requiresSensitiveForColumns([$columnId])) {
             $authorization = $this->authorize($context, $query, $snapshot, ReportOperation::VIEW_SENSITIVE);
         }
-        if ($classification->requiresAuditForRows()) {
+        if ($classification->requiresAuditForColumns([$columnId]) || $classification->provenanceAudit) {
             $authorization = $this->authorize($context, $query, $snapshot, ReportOperation::VIEW_AUDIT);
         }
 
