@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Supply;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyReliabilityPolicy;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyReliabilityFormula;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyReliabilityPeriod;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyReliabilitySnapshotMaterializer;
@@ -16,8 +17,10 @@ use ReflectionClass;
 final readonly class SupplyReliabilityCandidateContract
 {
     public const CODE = 'supply_reliability';
+
     public const FORMULA_HASH = '608c0c2370ced80a02fe7f67337178b59a62a544038727eff3778678b42e6bac';
-    public const SOURCE_HASH = '513e42893d5cb9786fa7702b626f62c306c221afa742dcae0e586c486e659a02';
+
+    public const SOURCE_HASH = '9b643e9ca162fb1fff2cfdfd02ecbca9aa8359d59bbcd5d5d074721035b76a07';
 
     public function filters(): array
     {
@@ -51,6 +54,7 @@ final readonly class SupplyReliabilityCandidateContract
             || ! hash_equals(self::SOURCE_HASH, self::classesHash([
                 SupplyReliabilitySnapshotMaterializer::class,
                 SupplyReliabilityPeriod::class,
+                SupplyReliabilityPolicy::class,
             ]))) {
             throw new InvalidArgumentException('supply_reliability_candidate_contract_drift');
         }
@@ -81,6 +85,7 @@ final readonly class SupplyReliabilityCandidateContract
         if (! is_string($hash)) {
             throw new InvalidArgumentException('supply_reliability_candidate_source_unreadable');
         }
+
         return $hash;
     }
 
@@ -93,6 +98,7 @@ final readonly class SupplyReliabilityCandidateContract
                 throw new InvalidArgumentException('supply_reliability_candidate_source_unreadable');
             }
         }
+
         return hash_final($hash);
     }
 

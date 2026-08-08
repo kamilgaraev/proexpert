@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLifecycleFact;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyLineFact;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\DTO\SupplyReliabilityPolicy;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SentPurchaseOrderLineOwner;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
@@ -130,9 +131,19 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             ->orderByDesc('effective_from')
             ->orderByDesc('policy_version')
             ->first();
-        if (! $policy instanceof SupplyReliabilityPolicyVersion) {
-            throw new DomainException('Supply reliability policy is unavailable for the requested cutoff.');
-        }
+        $resolvedPolicy = $policy?->policy() ?? new SupplyReliabilityPolicy;
+        $policySourceHash = $policy?->source_hash ?? hash(
+            'sha256',
+            CanonicalJson::encode([
+                'policy' => 'supply-reliability-default.v1',
+                'quantity_tolerance' => $resolvedPolicy->quantityTolerance,
+                'on_time_cutoff_seconds' => $resolvedPolicy->onTimeCutoffSeconds,
+                'exclude_cancellation_before_send' => $resolvedPolicy->excludeCancellationBeforeSend,
+                'post_send_exclusion_reason_codes' => $resolvedPolicy->postSendCancellationExclusionReasons,
+                'maturity_seconds' => $resolvedPolicy->maturitySeconds,
+            ]),
+        );
+        $freshnessTtlSeconds = $policy?->freshness_ttl_seconds ?? 86400;
         $promises = PurchaseOrderPromiseVersion::query()
             ->where('organization_id', $organizationId)
             ->where('promise_version', 1)
@@ -158,7 +169,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         $sourceHash = $this->sourceHashes->make(
             $query->canonicalJson,
             [
-                $policy->source_hash,
+                $policySourceHash,
                 hash('sha256', CanonicalJson::encode([
                     'eligible_sent_count' => $eligibleSentCount,
                     'eligible_sent_max_item_id' => $eligibleSentMaxItemId,
@@ -186,6 +197,8 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $eventsByLine,
             $organizationId,
             $policy,
+            $resolvedPolicy,
+            $freshnessTtlSeconds,
             $progress,
             $promises,
             $query,
@@ -230,7 +243,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                             $promise->currency,
                             $promise->value_basis,
                         ),
-                        $policy->policy(),
+                        $resolvedPolicy,
                     );
                 } catch (Throwable) {
                     $gapCount++;
@@ -240,7 +253,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                 $qualifyingReceipt = $this->qualifyingReceipt(
                     $promise,
                     $lineEvents,
-                    (string) $policy->quantity_tolerance,
+                    $resolvedPolicy->quantityTolerance,
                 );
                 $cancelled = $lineEvents->first(
                     static fn (SupplyLifecycleEvent $event): bool => $event->event_type === 'cancelled',
@@ -312,10 +325,10 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                 'source_hash' => $sourceHash,
                 'formula_version' => $query->definition->formulaVersion,
                 'source_schema_version' => $query->definition->sourceSchemaVersion,
-                'policy_version_id' => $policy->getKey(),
+                'policy_version_id' => $policy?->getKey(),
                 'as_of' => $query->asOf,
                 'generated_at' => $generatedAt,
-                'stale_at' => $generatedAt->modify('+'.(int) $policy->freshness_ttl_seconds.' seconds'),
+                'stale_at' => $generatedAt->modify('+'.$freshnessTtlSeconds.' seconds'),
                 'row_count' => count($rows),
                 'eligible_count' => $summary->eligibleDenominator,
                 'otif_numerator' => $summary->otifNumerator,

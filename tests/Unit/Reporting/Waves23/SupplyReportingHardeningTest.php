@@ -275,6 +275,43 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString("'policy_version_id' => null", $cycle);
     }
 
+    public function test_supply_snapshot_uses_the_canonical_default_when_an_organization_policy_is_absent(): void
+    {
+        $materializer = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Services/'
+            .'SupplyReliabilitySnapshotMaterializer.php',
+        );
+        $candidateContract = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/'
+            .'SupplyReliabilityCandidateContract.php',
+        );
+
+        self::assertStringContainsString(
+            '$resolvedPolicy = $policy?->policy() ?? new SupplyReliabilityPolicy;',
+            $materializer,
+        );
+        self::assertStringContainsString(
+            "'policy_version_id' => \$policy?->getKey()",
+            $materializer,
+        );
+        self::assertStringContainsString(
+            '$policySourceHash = $policy?->source_hash ?? hash(',
+            $materializer,
+        );
+        self::assertStringContainsString(
+            '$freshnessTtlSeconds = $policy?->freshness_ttl_seconds ?? 86400;',
+            $materializer,
+        );
+        self::assertStringNotContainsString(
+            'Supply reliability policy is unavailable for the requested cutoff.',
+            $materializer,
+        );
+        self::assertStringContainsString(
+            'SupplyReliabilityPolicy::class',
+            $candidateContract,
+        );
+    }
+
     public function test_sent_owner_first_writer_is_serialized_and_compares_the_complete_identity(): void
     {
         $source = $this->source(
