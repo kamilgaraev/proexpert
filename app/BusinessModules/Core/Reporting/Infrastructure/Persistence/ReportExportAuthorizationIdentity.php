@@ -57,6 +57,7 @@ final class ReportExportAuthorizationIdentity
             'snapshot' => [
                 'kind' => $record->snapshot_kind,
                 'id' => $record->snapshot_id,
+                'materialized_source_hash' => $record->snapshot_materialized_source_hash,
                 'generated_at' => self::instant($record->snapshot_generated_at),
                 'stale_at' => self::nullableInstant($record->snapshot_stale_at),
                 'watermarks' => $record->snapshot_watermarks,

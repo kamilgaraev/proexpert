@@ -229,6 +229,7 @@ final class EloquentReportRunStoreTest extends TestCase
             'execution_lease_token', 'execution_lease_expires_at', 'execution_heartbeat_at', 'queued_at',
             'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at',
             'expired_at', 'created_at', 'updated_at', 'expires_at',
+            'snapshot_materialized_source_hash',
         ], array_keys($columns));
 
         foreach ([
@@ -244,7 +245,7 @@ final class EloquentReportRunStoreTest extends TestCase
         foreach (['definition_snapshot', 'scope_holding_organization_ids', 'scope_project_ids', 'scope_resources', 'filters', 'comparison', 'sensitive_column_ids', 'audit_column_ids', 'result_metadata', 'totals', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_watermarks'] as $jsonb) {
             self::assertSame('jsonb', $columns[$jsonb]['type']);
         }
-        foreach (['source_hash', 'result_hash', 'saved_view_id', 'saved_view_revision', 'saved_view_hash', 'row_count', 'result_metadata', 'freshness', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code', 'execution_lease_token', 'execution_lease_expires_at', 'execution_heartbeat_at', 'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at'] as $nullable) {
+        foreach (['source_hash', 'result_hash', 'saved_view_id', 'saved_view_revision', 'saved_view_hash', 'row_count', 'result_metadata', 'freshness', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_materialized_source_hash', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code', 'execution_lease_token', 'execution_lease_expires_at', 'execution_heartbeat_at', 'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at'] as $nullable) {
             self::assertTrue($columns[$nullable]['nullable'], $nullable);
         }
         $nullableNames = array_keys(array_filter($columns, static fn (array $column): bool => $column['nullable']));
@@ -258,8 +259,9 @@ final class EloquentReportRunStoreTest extends TestCase
             'error_code', 'execution_lease_token', 'execution_lease_expires_at',
             'execution_heartbeat_at', 'started_at', 'ready_at', 'failed_at',
             'cancel_requested_at', 'cancelled_at', 'expired_at',
+            'snapshot_materialized_source_hash',
         ], $nullableNames);
-        foreach (['id', 'definition_hash', 'definition_snapshot_hash', 'query_hash', 'idempotency_key_hash', 'input_fingerprint', 'saved_view_id', 'saved_view_hash', 'source_hash', 'result_hash', 'snapshot_sealed_payload_hash'] as $character) {
+        foreach (['id', 'definition_hash', 'definition_snapshot_hash', 'query_hash', 'idempotency_key_hash', 'input_fingerprint', 'saved_view_id', 'saved_view_hash', 'source_hash', 'result_hash', 'snapshot_materialized_source_hash', 'snapshot_sealed_payload_hash'] as $character) {
             self::assertSame('character', $columns[$character]['type']);
         }
         foreach (['organization_id', 'requester_actor_id', 'saved_view_revision', 'row_count'] as $bigint) {
@@ -462,7 +464,7 @@ final class EloquentReportRunStoreTest extends TestCase
         foreach ([
             'source_hash', 'result_hash', 'row_count', 'result_metadata', 'freshness',
             'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind',
-            'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at',
+            'snapshot_id', 'snapshot_materialized_source_hash', 'snapshot_generated_at', 'snapshot_stale_at',
             'snapshot_watermarks', 'ready_at',
         ] as $attribute) {
             self::assertNull($record->{$attribute}, $attribute);

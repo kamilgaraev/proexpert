@@ -44,6 +44,37 @@ final class EloquentReportAuthorizationSubjectReaderTest extends TestCase
         self::assertSame(['attendance_source' => 'max_id_0'], $snapshot->watermarks);
     }
 
+    public function test_ready_snapshot_reader_restores_materialized_source_hash_separately(): void
+    {
+        $record = $this->runRecord([
+            'snapshot_kind' => 'attendance_execution',
+            'snapshot_id' => 'snapshot-1',
+            'definition_hash' => str_repeat('a', 64),
+            'formula_version' => 'formula-v1',
+            'source_hash' => str_repeat('b', 64),
+            'snapshot_materialized_source_hash' => str_repeat('c', 64),
+            'snapshot_generated_at' => '2026-08-08 00:00:00+00',
+            'snapshot_stale_at' => null,
+            'snapshot_watermarks' => json_encode([], JSON_THROW_ON_ERROR),
+            'snapshot_classification' => 'operational',
+            'snapshot_seal_key_id' => null,
+            'snapshot_seal_algorithm' => null,
+            'snapshot_sealed_payload_hash' => null,
+            'snapshot_seal_signature' => null,
+            'snapshot_sealed_at' => null,
+        ]);
+        $reader = new EloquentReportAuthorizationSubjectReader(new \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator);
+
+        $snapshot = $this->method('snapshot')->invoke(
+            $reader,
+            $record,
+            new ReportScope(38, [38], [52], [], new DateTimeZone('UTC')),
+        );
+
+        self::assertSame(str_repeat('b', 64), $snapshot->canonicalReportHash->value);
+        self::assertSame(str_repeat('c', 64), $snapshot->materializedSourceHash->value);
+    }
+
     public function test_reader_is_the_closed_persistence_adapter_for_authorization_subjects(): void
     {
         self::assertTrue(is_subclass_of(EloquentReportAuthorizationSubjectReader::class, ReportAuthorizationSubjectReader::class));
@@ -88,7 +119,7 @@ final class EloquentReportAuthorizationSubjectReaderTest extends TestCase
             $this->runRecord($this->identityAttributes()),
         );
 
-        self::assertCount(26, $pairs);
+        self::assertCount(27, $pairs);
         self::assertContains([str_repeat('b', 64), str_repeat('b', 64)], $pairs);
         self::assertContains([str_repeat('c', 64), str_repeat('c', 64)], $pairs);
         self::assertContains(['snapshot-1', 'snapshot-1'], $pairs);
@@ -111,6 +142,7 @@ final class EloquentReportAuthorizationSubjectReaderTest extends TestCase
             'report_code' => 'cost_control',
             'query_hash' => str_repeat('c', 64),
             'source_hash' => str_repeat('d', 64),
+            'snapshot_materialized_source_hash' => str_repeat('a', 64),
             'result_hash' => str_repeat('e', 64),
             'snapshot_kind' => 'report-run',
             'snapshot_id' => 'snapshot-1',

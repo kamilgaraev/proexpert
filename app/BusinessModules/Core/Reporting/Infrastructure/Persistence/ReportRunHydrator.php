@@ -314,6 +314,7 @@ final class ReportRunHydrator
             $this->array($record->snapshot_watermarks),
             $classification,
             $seal,
+            new Sha256Hash($this->string($record->snapshot_materialized_source_hash)),
         );
         $metadataData = $this->closedArray($record->result_metadata, ['row_count', 'generated_at', 'stale_at']);
         $metadataGeneratedAt = $this->date($metadataData['generated_at']);
@@ -465,7 +466,7 @@ final class ReportRunHydrator
         foreach ([
             'source_hash', 'result_hash', 'row_count', 'result_metadata', 'freshness',
             'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind',
-            'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at',
+            'snapshot_id', 'snapshot_materialized_source_hash', 'snapshot_generated_at', 'snapshot_stale_at',
             'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm',
             'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at',
             'ready_at',
