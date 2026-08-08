@@ -366,7 +366,7 @@ final class PortfolioHardeningBehaviorTest extends TestCase
 
         self::assertIsString($source);
         self::assertStringContainsString(
-            'CurrencyCode::tryFrom($currency) === null',
+            'CurrencyCode::tryFrom($rawCurrency) === null',
             $source,
         );
         self::assertStringContainsString("\$missing[] = 'currency'", $source);

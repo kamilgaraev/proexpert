@@ -9,11 +9,11 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
-use App\BusinessModules\Core\Reporting\Domain\ReportDefinitionBuilder;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFilterValidator;
 use DateTimeImmutable;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\ReportDefinitionBuilder;
 
 final class AcceptedProductionFilterValidatorTest extends TestCase
 {

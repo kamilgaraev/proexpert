@@ -8,6 +8,7 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFa
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPaymentTransactionEventVersion;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
+use App\Enums\CurrencyCode;
 use Brick\Math\BigDecimal;
 use Brick\Math\Exception\MathException;
 use Brick\Math\RoundingMode;
@@ -101,7 +102,8 @@ final readonly class HoldingPaymentEventFactProducer
         }
 
         $rawCurrency = is_string($event->currency) ? mb_strtoupper(trim($event->currency)) : '';
-        if (preg_match('/^[A-Z]{3}$/D', $rawCurrency) !== 1) {
+        if (preg_match('/^[A-Z]{3}$/D', $rawCurrency) !== 1
+            || CurrencyCode::tryFrom($rawCurrency) === null) {
             $missing[] = 'currency';
         }
         if ($event->amount === null || ! is_numeric($event->amount)) {
