@@ -20,6 +20,7 @@ return [
         'Accept',
         'Authorization',
         'Content-Type',
+        'Idempotency-Key',
         'If-None-Match',
         'Origin',
         'X-CSRF-Token',
