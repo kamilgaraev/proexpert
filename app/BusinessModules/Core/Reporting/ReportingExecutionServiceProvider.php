@@ -35,6 +35,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAud
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportCompletedArtifactRecoveryStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentPromptPublisher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionTelemetry;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportAsyncContextSeedReader;
@@ -57,6 +58,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\BestEffortReportDispatchIntentPromptPublisher;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchBackoffPolicy;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentPublisher;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntentReconciler;
@@ -410,6 +412,13 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
                 $app->make(ReportDispatchBackoffPolicy::class),
                 $app->make(ReportExecutionTelemetry::class),
                 $app->make(ReportExecutionRuntimeConfiguration::class),
+            );
+        });
+        $this->app->singleton(ReportDispatchIntentPromptPublisher::class, function (Container $app): ReportDispatchIntentPromptPublisher {
+            return new BestEffortReportDispatchIntentPromptPublisher(
+                $app->make(ReportDispatchIntentPublisher::class),
+                $app->make(\Psr\Log\LoggerInterface::class),
+                $this->configArray('dispatch')['batch_size'],
             );
         });
         $this->app->singleton(ReportDispatchIntentReconciler::class);
