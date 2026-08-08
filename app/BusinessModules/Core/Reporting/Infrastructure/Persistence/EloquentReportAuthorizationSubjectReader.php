@@ -110,7 +110,7 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
         }
         $seal = ! in_array(true, $present, true) ? null : new ReportSnapshotSeal($this->string($record->snapshot_seal_key_id), $this->string($record->snapshot_seal_algorithm), new Sha256Hash($this->string($record->snapshot_sealed_payload_hash)), $this->string($record->snapshot_seal_signature), $this->instant($record->snapshot_sealed_at));
 
-        return new ReportSnapshotRef($this->string($record->snapshot_kind), $this->string($record->snapshot_id), $scope, new Sha256Hash($this->string($record->definition_hash)), $this->string($record->formula_version), new Sha256Hash($this->string($record->source_hash)), $this->instant($record->snapshot_generated_at), $record->snapshot_stale_at === null ? null : $this->instant($record->snapshot_stale_at), $this->array($record->snapshot_watermarks), $classification, $seal);
+        return new ReportSnapshotRef($this->string($record->snapshot_kind), $this->string($record->snapshot_id), $scope, new Sha256Hash($this->string($record->definition_hash)), $this->string($record->formula_version), new Sha256Hash($this->string($record->source_hash)), $this->instant($record->snapshot_generated_at), $record->snapshot_stale_at === null ? null : $this->instant($record->snapshot_stale_at), $this->arrayValue($record->snapshot_watermarks), $classification, $seal);
     }
 
     private function scope(ReportExportRecord $record): ReportScope
@@ -205,6 +205,15 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
     private function array(mixed $value): array
     {
         if (! is_array($value) || ! array_is_list($value)) {
+            throw new \InvalidArgumentException('report_persistence_array_invalid');
+        }
+
+        return $value;
+    }
+
+    private function arrayValue(mixed $value): array
+    {
+        if (! is_array($value)) {
             throw new \InvalidArgumentException('report_persistence_array_invalid');
         }
 

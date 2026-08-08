@@ -5,14 +5,45 @@ declare(strict_types=1);
 namespace Tests\Feature\Reporting\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
+use DateTimeZone;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
 final class EloquentReportAuthorizationSubjectReaderTest extends TestCase
 {
+    public function test_ready_snapshot_reader_accepts_associative_watermarks(): void
+    {
+        $record = $this->runRecord([
+            'snapshot_kind' => 'materialized',
+            'snapshot_id' => 'snapshot-1',
+            'definition_hash' => str_repeat('a', 64),
+            'formula_version' => 'formula-v1',
+            'source_hash' => str_repeat('b', 64),
+            'snapshot_generated_at' => '2026-08-08 00:00:00+00',
+            'snapshot_stale_at' => null,
+            'snapshot_watermarks' => json_encode(['attendance_source' => 'max_id_0'], JSON_THROW_ON_ERROR),
+            'snapshot_classification' => 'operational',
+            'snapshot_seal_key_id' => null,
+            'snapshot_seal_algorithm' => null,
+            'snapshot_sealed_payload_hash' => null,
+            'snapshot_seal_signature' => null,
+            'snapshot_sealed_at' => null,
+        ]);
+        $reader = new EloquentReportAuthorizationSubjectReader(new \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator);
+
+        $snapshot = $this->method('snapshot')->invoke(
+            $reader,
+            $record,
+            new ReportScope(38, [38], [52], [], new DateTimeZone('UTC')),
+        );
+
+        self::assertSame(['attendance_source' => 'max_id_0'], $snapshot->watermarks);
+    }
+
     public function test_reader_is_the_closed_persistence_adapter_for_authorization_subjects(): void
     {
         self::assertTrue(is_subclass_of(EloquentReportAuthorizationSubjectReader::class, ReportAuthorizationSubjectReader::class));
