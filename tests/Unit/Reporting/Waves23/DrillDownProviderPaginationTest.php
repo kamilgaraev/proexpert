@@ -248,6 +248,7 @@ final class DrillDownProviderPaginationTest extends TestCase
                     'period_from' => null,
                     'period_to' => null,
                     'statuses' => [],
+                    'timezone' => 'UTC',
                     'unit_codes' => [],
                     'zones' => [],
                 ],

@@ -103,10 +103,10 @@ final readonly class HoldingPerformanceRowQuery implements ReportDrillDownProvid
         ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->assertSnapshot($context, $snapshot);
-        $this->materializer->snapshot($context, $snapshot);
         if (! in_array($input->cell->columnId, self::SORTS, true)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
         }
+        $this->materializer->snapshot($context, $snapshot);
         $row = $this->base($context, $snapshot)->where('row_key', $input->cell->rowKey)->first();
         if (! $row instanceof HoldingPerformanceRow) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);

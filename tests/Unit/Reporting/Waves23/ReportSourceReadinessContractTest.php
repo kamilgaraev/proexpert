@@ -83,8 +83,10 @@ final class ReportSourceReadinessContractTest extends TestCase
     public function resume_cursor_is_bound_to_the_same_source_watermark(): void
     {
         $cursor = new ReportSourceBackfillCursor(
-            lastSourceId: 500,
-            sourceWatermark: 'sha256:'.str_repeat('c', 64),
+            position: [
+                'last_source_id' => 500,
+                'source_watermark' => 'sha256:'.str_repeat('c', 64),
+            ],
         );
 
         self::assertSame(
@@ -92,7 +94,7 @@ final class ReportSourceReadinessContractTest extends TestCase
                 'last_source_id' => 500,
                 'source_watermark' => 'sha256:'.str_repeat('c', 64),
             ],
-            $cursor->canonicalIdentity(),
+            $cursor->position,
         );
     }
 }
