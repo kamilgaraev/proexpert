@@ -50,6 +50,9 @@ final class ChangeClaimPublishedContractTest extends TestCase
             $source = (string) file_get_contents($root.'/app/BusinessModules/Core/Reporting/Infrastructure/Catalog/'.$file);
             self::assertStringContainsString('ChangeClaimBuiltinPublishedReport', $source);
         }
+        $catalogProvider = (string) file_get_contents($root.'/app/BusinessModules/Core/Reporting/ReportingCatalogServiceProvider.php');
+        self::assertStringContainsString('ChangeClaimBuiltinPublishedReport::class', $catalogProvider);
+        self::assertStringContainsString('$app->make(ChangeClaimBuiltinPublishedReport::class)', $catalogProvider);
         $routes = (string) file_get_contents($root.'/app/BusinessModules/Core/Reporting/routes.php');
         self::assertStringContainsString("Route::post('/change-claim-contingency/runs'", $routes);
         self::assertStringContainsString("->defaults('reportCode', 'change_claim_contingency')", $routes);
