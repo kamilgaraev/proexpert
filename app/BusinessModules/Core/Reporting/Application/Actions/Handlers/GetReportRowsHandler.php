@@ -223,17 +223,24 @@ final readonly class GetReportRowsHandler implements GetReportRowsAction
             return $page;
         }
         $definitionColumns = array_fill_keys(array_column($query->definition->columns, 'id'), true);
+        $publishedColumns = [];
         foreach ($columns as $outputColumn => $providerColumn) {
             if (! is_string($outputColumn)
                 || ! is_string($providerColumn)
-                || ! isset($definitionColumns[$outputColumn])
+                || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $outputColumn) !== 1
                 || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $providerColumn) !== 1) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
             }
+            if (isset($definitionColumns[$outputColumn])) {
+                $publishedColumns[$outputColumn] = $providerColumn;
+            }
+        }
+        if ($publishedColumns === []) {
+            return $page;
         }
 
-        $rows = array_map(function (array $row) use ($columns, $run, $query, $snapshot): array {
-            foreach ($columns as $outputColumn => $providerColumn) {
+        $rows = array_map(function (array $row) use ($publishedColumns, $run, $query, $snapshot): array {
+            foreach ($publishedColumns as $outputColumn => $providerColumn) {
                 $row[$outputColumn] = $this->cursors->encodeDrillDownCell(
                     $query->scope->organizationId,
                     $run->reportCode,
