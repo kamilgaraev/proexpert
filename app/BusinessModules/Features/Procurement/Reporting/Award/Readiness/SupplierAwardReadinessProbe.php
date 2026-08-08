@@ -10,8 +10,8 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadines
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
-use App\BusinessModules\Features\Procurement\Reporting\Award\Queries\SupplierAwardFilteredUniverse;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Queries\SupplierAwardFilteredUniverse;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
@@ -31,7 +31,7 @@ final readonly class SupplierAwardReadinessProbe implements ReportDefinitionRead
 
     public function assertReady(ReportExecutionContext $context, ReportQuery $query): void
     {
-        $this->inspect($context, $query)->assertReady('supplier_award_competitiveness');
+        $this->inspect($context, $query)->assertReady();
     }
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
@@ -61,6 +61,9 @@ final readonly class SupplierAwardReadinessProbe implements ReportDefinitionRead
         [$start, $end] = $this->period($query);
         $owners->whereBetween('supplier_proposal_decisions.selected_at', [$start, $end]);
         $ownerEligible = $owners->distinct()->count('supplier_proposal_decisions.id');
+        if ($ownerEligible === 0) {
+            return SourceReadinessResult::empty();
+        }
         $versions = $this->universe->query($context, $query);
         $projected = (clone $versions)->distinct()->count('decision_id');
         $eligible = $ownerEligible;
