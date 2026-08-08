@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use Closure;
@@ -38,6 +39,14 @@ final readonly class ReportHttpAuthorizationOrchestrator
         return $this->transaction(function () use ($request, $reportCode): array {
             $facts = $this->contexts->httpFacts($request);
             $target = $this->targets->createRun($reportCode);
+            $projectId = $request->attributes->get('report_project_scope_id');
+            if (is_int($projectId) && $projectId > 0) {
+                return $this->projectAuthorization(
+                    $facts,
+                    $projectId,
+                    $target,
+                );
+            }
 
             return $this->organizationAuthorization($facts, $target);
         });
@@ -225,6 +234,34 @@ final readonly class ReportHttpAuthorizationOrchestrator
             $facts['actor_id'],
             $facts['organization_id'],
             new DateTimeZone('UTC'),
+            $target,
+        );
+        $this->assertAuthorizationMatches($facts['actor_id'], $authorization, $target);
+
+        return [
+            'context' => $this->contexts->fromCurrentAuthorization($authorization),
+            'authorization' => $authorization,
+        ];
+    }
+
+    /**
+     * @param  array{actor_id:int,organization_id:int}  $facts
+     * @return array{context:ReportExecutionContext,authorization:CurrentReportAuthorization}
+     */
+    private function projectAuthorization(
+        array $facts,
+        int $projectId,
+        CurrentReportAuthorizationTarget $target,
+    ): array {
+        $authorization = $this->authorizer->authorizeExact(
+            $facts['actor_id'],
+            new ReportScope(
+                $facts['organization_id'],
+                [$facts['organization_id']],
+                [$projectId],
+                [],
+                new DateTimeZone('UTC'),
+            ),
             $target,
         );
         $this->assertAuthorizationMatches($facts['actor_id'], $authorization, $target);

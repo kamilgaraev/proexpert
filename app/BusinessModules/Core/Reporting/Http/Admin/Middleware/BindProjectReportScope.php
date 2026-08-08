@@ -29,15 +29,17 @@ final class BindProjectReportScope
             return $this->invalidRequest();
         }
 
-        $filters = $request->input('filters');
-        if ($request->isMethod('GET') || ! is_array($filters)) {
-            return $next($request);
-        }
-
         $project = $request->attributes->get('project');
         $organization = $request->attributes->get('current_organization');
         if ($project === null || $organization === null) {
             return $this->invalidRequest();
+        }
+
+        $request->attributes->set('report_project_scope_id', (int) $project->id);
+
+        $filters = $request->input('filters');
+        if ($request->isMethod('GET') || ! is_array($filters)) {
+            return $next($request);
         }
 
         $request->merge([

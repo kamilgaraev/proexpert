@@ -123,6 +123,32 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
         self::assertSame([], $result['context']->scope->resources);
     }
 
+    public function test_create_run_uses_the_trusted_project_scope_instead_of_the_whole_organization(): void
+    {
+        $definition = $this->definition();
+        $resolver = new RecordingAuthorizationTargetResolver(
+            new CurrentReportAuthorizationTarget($definition, ReportOperation::RUN, null),
+        );
+        $authorizer = new RecordingCurrentReportScopeAuthorizer;
+        $orchestrator = $this->orchestrator(
+            $resolver,
+            new RecordingAuthorizationSubjectReader,
+            $authorizer,
+        );
+        $request = $this->request();
+        $request->attributes->set('report_project_scope_id', 73);
+
+        $result = $orchestrator->createRun($request, 'report');
+
+        self::assertSame([], $authorizer->organizationCalls);
+        self::assertCount(1, $authorizer->exactCalls);
+        self::assertSame(17, $authorizer->exactCalls[0]['actorId']);
+        self::assertSame(41, $authorizer->exactCalls[0]['scope']->organizationId);
+        self::assertSame([41], $authorizer->exactCalls[0]['scope']->holdingOrganizationIds);
+        self::assertSame([73], $authorizer->exactCalls[0]['scope']->projectIds);
+        self::assertSame([73], $result['context']->scope->projectIds);
+    }
+
     public function test_persisted_subject_from_another_middleware_organization_fails_before_authorization(): void
     {
         $scope = new ReportScope(42, [42], [], [], new DateTimeZone('UTC'));
