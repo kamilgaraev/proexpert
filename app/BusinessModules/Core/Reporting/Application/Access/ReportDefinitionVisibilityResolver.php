@@ -28,11 +28,6 @@ final readonly class ReportDefinitionVisibilityResolver
         Closure $permissionGranted,
         ?ReportDefinitionModuleAccessDecision $moduleAccess = null,
     ): ReportVisibility {
-        $moduleAccess ??= $this->moduleAccessDecision($organizationId);
-        if (! $moduleAccess->allows($organizationId, $definition)) {
-            return $this->denied();
-        }
-
         if ($definition->coreAccessMode === ReportCoreAccessMode::SOURCE_MODULE_REPORT) {
             return $this->sourceModuleVisibility(
                 $definition,
@@ -195,10 +190,5 @@ final readonly class ReportDefinitionVisibilityResolver
         }
 
         return true;
-    }
-
-    private function denied(): ReportVisibility
-    {
-        return new ReportVisibility(false, false, false, false, false, false, false);
     }
 }

@@ -15,7 +15,6 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
-use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess;
 use Closure;
 use DateTimeZone;
 use Illuminate\Database\ConnectionInterface;
@@ -116,7 +115,7 @@ final readonly class ReportHttpAuthorizationOrchestrator
     {
         return $this->transaction(function () use ($request): ReportCatalogAuthorization {
             $facts = $this->contexts->httpFacts($request);
-            $targets = $this->catalogTargets($request, $this->targets->catalog());
+            $targets = $this->targets->catalog();
             $authorization = $this->authorizer->authorizeCatalog(
                 $facts['actor_id'],
                 $facts['organization_id'],
@@ -138,41 +137,6 @@ final readonly class ReportHttpAuthorizationOrchestrator
 
             return $authorization;
         });
-    }
-
-    private function catalogTargets(Request $request, array $targets): array
-    {
-        $allowed = $request->attributes->get(
-            AuthorizeReportDefinitionAccess::ACCESSIBLE_DEFINITION_HASHES_ATTRIBUTE,
-        );
-        if ($allowed === null) {
-            return $targets;
-        }
-        if (! is_array($allowed) || ! array_is_list($allowed) || $allowed === []) {
-            throw new InvalidArgumentException('report_catalog_authorization_invalid');
-        }
-
-        $allowedHashes = [];
-        foreach ($allowed as $hash) {
-            if (! is_string($hash)
-                || preg_match('/^[a-f0-9]{64}$/D', $hash) !== 1
-                || isset($allowedHashes[$hash])) {
-                throw new InvalidArgumentException('report_catalog_authorization_invalid');
-            }
-            $allowedHashes[$hash] = true;
-        }
-
-        $filtered = array_values(array_filter(
-            $targets,
-            static fn (CurrentReportAuthorizationTarget $target): bool => isset(
-                $allowedHashes[$target->definition->definitionHash->value],
-            ),
-        ));
-        if ($filtered === []) {
-            throw new InvalidArgumentException('report_catalog_authorization_invalid');
-        }
-
-        return $filtered;
     }
 
     /** @return array{context:ReportExecutionContext,authorization:CurrentReportAuthorization} */

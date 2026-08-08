@@ -52,17 +52,8 @@ final readonly class AuthorizeReportDefinitionAccess
                 $this->deny();
             }
 
-            if ($routeName === 'admin.reports.catalog') {
-                $hashes = $this->catalogHashes($organizationId);
-                if ($hashes === []) {
-                    $this->deny();
-                }
-                $request->attributes->set(self::ACCESSIBLE_DEFINITION_HASHES_ATTRIBUTE, $hashes);
-            } else {
-                $target = $this->target($request, $routeName);
-                if (! $this->modules->allows($organizationId, $target->definition)) {
-                    $this->deny();
-                }
+            if ($routeName !== 'admin.reports.catalog') {
+                $this->target($request, $routeName);
             }
         } catch (ReportContractException $exception) {
             throw $exception;
@@ -78,34 +69,13 @@ final readonly class AuthorizeReportDefinitionAccess
 
     private function target(Request $request, string $routeName): CurrentReportAuthorizationTarget
     {
+        if ($routeName === 'admin.reports.project-runs.store'
+            || preg_match('/^admin\.reports\.[a-z0-9-]+\.(?:options|runs\.store)$/D', $routeName) === 1) {
+            return $this->targets->createRun($this->routeId($request, 'reportCode'));
+        }
+
         return match ($routeName) {
-            'admin.reports.runs.store',
-            'admin.reports.project-runs.store' => $this->genericCreateRun($request),
-            'admin.reports.project-budget-plan-fact.runs.store',
-            'admin.reports.project-budget-plan-fact.options',
-            'admin.reports.project-margin.runs.store',
-            'admin.reports.project-margin.options',
-            'admin.reports.project-evm-control.runs.store',
-            'admin.reports.project-evm-control.options',
-            'admin.reports.accepted-production-progress.runs.store',
-            'admin.reports.accepted-production-progress.options',
-            'admin.reports.wip-completion-forecast.runs.store',
-            'admin.reports.wip-completion-forecast.options',
-            'admin.reports.project-labor-cost.runs.store',
-            'admin.reports.payroll-readiness.runs.store',
-            'admin.reports.project-labor-cost.options',
-            'admin.reports.payroll-readiness.options',
-            'admin.reports.workforce-capacity.runs.store',
-            'admin.reports.workforce-capacity.options',
-            'admin.reports.portfolio-liquidity.options',
-            'admin.reports.contract-settlement-exposure.runs.store',
-            'admin.reports.contract-settlement-exposure.options',
-            'admin.reports.holding-performance.runs.store',
-            'admin.reports.holding-performance.options',
-            'admin.reports.intercompany-contract-flows.runs.store',
-            'admin.reports.intercompany-contract-flows.options' => $this->targets->createRun(
-                $this->routeId($request, 'reportCode'),
-            ),
+            'admin.reports.runs.store' => $this->genericCreateRun($request),
             'admin.reports.runs.show', 'admin.reports.runs.rows' => $this->targets->run(
                 $this->routeId($request, 'runId'),
                 ReportOperation::VIEW,
@@ -157,30 +127,6 @@ final readonly class AuthorizeReportDefinitionAccess
         }
 
         return $this->targets->createRun($reportCode);
-    }
-
-    private function catalogHashes(int $organizationId): array
-    {
-        $hashes = [];
-        $moduleAccess = [];
-        foreach ($this->targets->catalog() as $target) {
-            if (! $target instanceof CurrentReportAuthorizationTarget
-                || $target->operation !== ReportOperation::VIEW
-                || $target->snapshot !== null) {
-                $this->deny();
-            }
-
-            $module = $target->definition->sourceModule;
-            $moduleAccess[$module] ??= $this->modules->allows($organizationId, $target->definition);
-            if ($moduleAccess[$module]) {
-                $hashes[$target->definition->definitionHash->value] = true;
-            }
-        }
-
-        $result = array_keys($hashes);
-        sort($result, SORT_STRING);
-
-        return $result;
     }
 
     private function routeId(Request $request, string $key): string
