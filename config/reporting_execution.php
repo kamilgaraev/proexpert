@@ -11,6 +11,10 @@ $trustedSealKeys = json_decode(
 );
 
 return [
+    'active_seal' => [
+        'key_id' => env('REPORT_SNAPSHOT_SIGNING_KEY_ID', ''),
+        'private_key' => env('REPORT_SNAPSHOT_SIGNING_PRIVATE_KEY', ''),
+    ],
     'runs' => [
         'ttl_seconds' => (int) env('REPORT_RUN_TTL_SECONDS', 86400),
         'poll_after_ms' => (int) env('REPORT_RUN_POLL_AFTER_MS', 1250),
