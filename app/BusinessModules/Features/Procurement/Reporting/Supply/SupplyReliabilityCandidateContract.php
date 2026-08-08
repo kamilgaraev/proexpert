@@ -17,7 +17,7 @@ final readonly class SupplyReliabilityCandidateContract
 {
     public const CODE = 'supply_reliability';
     public const FORMULA_HASH = '608c0c2370ced80a02fe7f67337178b59a62a544038727eff3778678b42e6bac';
-    public const SOURCE_HASH = '32ac5b12debfa660b11ecc859fb6f83c2188473a40ee8dee2b94672a4f529a19';
+    public const SOURCE_HASH = '513e42893d5cb9786fa7702b626f62c306c221afa742dcae0e586c486e659a02';
 
     public function filters(): array
     {
