@@ -13,10 +13,12 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModule
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportAuthorizationGrant;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -26,6 +28,75 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportAccessServiceTest extends TestCase
 {
+    public function test_current_authorization_grant_is_not_rejected_by_legacy_flat_permissions(): void
+    {
+        $definition = $this->sourceModuleDefinition();
+        $context = (new ReportExecutionContextBuilder)
+            ->actor(new ReportActor(41, 'active', ['admin.*']))
+            ->visibility(new ReportVisibility(true, true, true, true, false, false, false))
+            ->build();
+        $context = new ReportExecutionContext(
+            $context->actor,
+            $context->scope,
+            $context->visibility,
+            $context->authorization,
+            new ReportAuthorizationGrant(
+                $definition->definitionHash->value,
+                ReportOperation::RUN,
+                null,
+            ),
+        );
+        $loader = new class implements ReportActorLoader
+        {
+            public int $loads = 0;
+
+            public function loadActive(int $actorId): ReportActor
+            {
+                $this->loads++;
+
+                return new ReportActor($actorId, 'active', ['admin.*']);
+            }
+        };
+        $service = new ReportAccessService(
+            $loader,
+            $this->sourceResolver(true),
+            $this->moduleAuthorizer(),
+        );
+
+        self::assertTrue($service->assertOperation(
+            $context,
+            $definition,
+            ReportOperation::RUN,
+            null,
+        )->canRun);
+        self::assertSame(0, $loader->loads);
+    }
+
+    public function test_current_authorization_grant_is_bound_to_definition_and_operation(): void
+    {
+        $definition = $this->definition();
+        $context = (new ReportExecutionContextBuilder)->build();
+        $context = new ReportExecutionContext(
+            $context->actor,
+            $context->scope,
+            $context->visibility,
+            $context->authorization,
+            new ReportAuthorizationGrant(
+                $definition->definitionHash->value,
+                ReportOperation::VIEW,
+                null,
+            ),
+        );
+        $this->expectScopeForbidden();
+
+        $this->service(['reports.view'])->assertOperation(
+            $context,
+            $definition,
+            ReportOperation::RUN,
+            null,
+        );
+    }
+
     public function test_owner_permissions_pass_all_base_operations_without_role_slug_checks(): void
     {
         $permissions = [
@@ -653,8 +724,7 @@ final class ReportAccessServiceTest extends TestCase
         array $sensitivePermissions = [],
         array $auditPermissions = [],
         ?array $exportPermissions = null,
-    ): ReportDefinition
-    {
+    ): ReportDefinition {
         $exportPermissions ??= array_map(
             static fn (string $format): string => match ($format) {
                 'xlsx' => 'act_reports.export.excel',

@@ -69,6 +69,9 @@ final class OrganizationReportScopeResolverTest extends TestCase
         self::assertSame(41, $context->actor->id);
         self::assertTrue($context->visibility->canView);
         self::assertSame($this->authorization()->toAuthorizationArray(), $context->authorization->toAuthorizationArray());
+        self::assertSame($definition->definitionHash->value, $context->grant?->definitionHash);
+        self::assertSame(ReportOperation::VIEW, $context->grant?->operation);
+        self::assertNull($context->grant?->exportFormat);
     }
 
     public function test_http_facts_ignore_every_client_and_ambient_authority_field(): void
