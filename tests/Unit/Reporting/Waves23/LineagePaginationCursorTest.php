@@ -21,26 +21,25 @@ final class LineagePaginationCursorTest extends TestCase
     private const RUN_ID = '01J00000000000000000000000';
 
     #[Test]
-    public function signed_lineage_cursor_is_bound_to_cell_snapshot_and_tuple_position(): void
+    public function signed_lineage_cursor_is_bound_to_parent_snapshot_and_tuple_position(): void
     {
         $codec = $this->codec();
         $snapshot = $this->snapshot();
         $queryHash = new Sha256Hash(str_repeat('b', 64));
-        $token = $codec->encodeDrillDownCursor(
+        $token = $codec->encodeDrillDownPage(
             organizationId: 3,
             reportCode: 'lookahead_readiness',
             runId: self::RUN_ID,
             snapshot: $snapshot,
             queryHash: $queryHash,
-            rowKey: '7:11:13:17',
-            columnId: 'constraint_status',
-            position: 'e:7:91',
+            parentRowKey: '7:11:13:17',
+            lastStableRowKey: 'e:7:91',
             expiresAt: new DateTimeImmutable('2030-01-01T01:00:00+00:00'),
         );
 
         self::assertSame(
             'e:7:91',
-            $codec->decodeDrillDownCursor(
+            $codec->decodeDrillDownPage(
                 $token,
                 3,
                 'lookahead_readiness',
@@ -48,23 +47,21 @@ final class LineagePaginationCursorTest extends TestCase
                 $snapshot,
                 $queryHash,
                 '7:11:13:17',
-                'constraint_status',
             ),
         );
-        $contextToken = $codec->encodeDrillDownCursor(
+        $contextToken = $codec->encodeDrillDownPage(
             organizationId: 3,
             reportCode: 'lookahead_readiness',
             runId: self::RUN_ID,
             snapshot: $snapshot,
             queryHash: $queryHash,
-            rowKey: '7:11:13:17',
-            columnId: 'constraint_status',
-            position: 'c:2',
+            parentRowKey: '7:11:13:17',
+            lastStableRowKey: 'c:2',
             expiresAt: new DateTimeImmutable('2030-01-01T01:00:00+00:00'),
         );
         self::assertSame(
             'c:2',
-            $codec->decodeDrillDownCursor(
+            $codec->decodeDrillDownPage(
                 $contextToken,
                 3,
                 'lookahead_readiness',
@@ -72,12 +69,11 @@ final class LineagePaginationCursorTest extends TestCase
                 $snapshot,
                 $queryHash,
                 '7:11:13:17',
-                'constraint_status',
             ),
         );
 
         $this->expectException(ReportContractException::class);
-        $codec->decodeDrillDownCursor(
+        $codec->decodeDrillDownPage(
             $token,
             3,
             'lookahead_readiness',
@@ -85,7 +81,6 @@ final class LineagePaginationCursorTest extends TestCase
             $snapshot,
             $queryHash,
             '7:11:13:18',
-            'constraint_status',
         );
     }
 

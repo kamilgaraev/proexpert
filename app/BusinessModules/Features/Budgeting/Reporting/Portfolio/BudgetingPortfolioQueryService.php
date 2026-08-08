@@ -170,13 +170,13 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
         ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->assertIdentity($context, $snapshot);
-        $this->snapshot($context, $snapshot);
         $allowedColumns = $snapshot->kind === BudgetingPortfolioProjectionService::HEALTH_CODE
             ? self::HEALTH_COLUMNS
             : self::LIQUIDITY_COLUMNS;
         if (! in_array($input->cell->columnId, $allowedColumns, true)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
         }
+        $this->snapshot($context, $snapshot);
         $record = $this->rowQuery($context, $snapshot)
             ->where('row_key', $input->cell->rowKey)
             ->first();
