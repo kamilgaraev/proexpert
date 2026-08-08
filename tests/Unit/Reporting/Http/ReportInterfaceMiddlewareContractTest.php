@@ -165,6 +165,7 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
             static function (CreateReportRunRequest $request): Response {
                 self::assertSame('17', $request->input('filters.project_id'));
                 self::assertSame('23', $request->input('filters.organization_id'));
+                self::assertSame(17, $request->attributes->get('report_project_scope_id'));
 
                 return new Response(status: 204);
             },

@@ -214,6 +214,9 @@ Route::prefix('api/v1/admin/reports')
             ->defaults('reportCode', 'payroll_readiness')
             ->middleware(['project.context', 'report.project-scope', $resourceAccess])
             ->name('payroll-readiness.options');
+        Route::post('/projects/{project}/{reportCode}/runs', [ReportRunController::class, 'store'])
+            ->middleware(['project.context', 'report.project-scope', $resourceAccess])
+            ->name('project-runs.store');
         Route::get('/runs/{runId}', [ReportRunController::class, 'show'])
             ->middleware($resourceAccess)
             ->name('runs.show');

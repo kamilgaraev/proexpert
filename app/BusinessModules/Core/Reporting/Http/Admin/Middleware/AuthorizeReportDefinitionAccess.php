@@ -79,7 +79,8 @@ final readonly class AuthorizeReportDefinitionAccess
     private function target(Request $request, string $routeName): CurrentReportAuthorizationTarget
     {
         return match ($routeName) {
-            'admin.reports.runs.store' => $this->genericCreateRun($request),
+            'admin.reports.runs.store',
+            'admin.reports.project-runs.store' => $this->genericCreateRun($request),
             'admin.reports.project-budget-plan-fact.runs.store',
             'admin.reports.project-budget-plan-fact.options',
             'admin.reports.project-margin.runs.store',
