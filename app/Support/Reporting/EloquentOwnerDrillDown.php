@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support\Reporting;
 
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -16,14 +16,13 @@ use Illuminate\Database\Eloquent\Model;
 final readonly class EloquentOwnerDrillDown
 {
     public function __construct(
-        private OwnerReportTokenPayload $tokens,
         private ReportSourceAccessPolicy $sourceAccess,
     ) {}
 
     public function resolve(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
         string $rowModel,
         string $sourceModel,
         string $rowRelationColumn,
@@ -50,7 +49,7 @@ final readonly class EloquentOwnerDrillDown
             throw new DomainException('Report drill-down is unavailable for the current access scope.');
         }
 
-        $rowKey = $this->tokens->drillDownRowKey($request->token, $snapshot);
+        $rowKey = $input->cell->rowKey;
         /** @var Model $row */
         $row = (new $rowModel)->newQuery()
             ->where('organization_id', $context->scope->organizationId)
@@ -126,16 +125,16 @@ final readonly class EloquentOwnerDrillDown
                 ->where($sourceOccurredAtColumn, '<', $dayEnd->setTimezone(new DateTimeZone('UTC')));
         }
 
-        if ($request->cursor !== null) {
-            if (preg_match('/^[1-9][0-9]*$/D', $request->cursor) !== 1) {
+        if ($input->cursor !== null) {
+            if (preg_match('/^[1-9][0-9]*$/D', $input->cursor) !== 1) {
                 throw new DomainException('Report drill-down cursor is invalid.');
             }
-            $query->where('id', '>', (int) $request->cursor);
+            $query->where('id', '>', (int) $input->cursor);
         }
 
-        $records = $query->limit($request->limit + 1)->get();
-        $hasMore = $records->count() > $request->limit;
-        $page = $records->take($request->limit);
+        $records = $query->limit($input->limit + 1)->get();
+        $hasMore = $records->count() > $input->limit;
+        $page = $records->take($input->limit);
         $rows = $page->map(function (Model $record) use ($publicColumns): array {
             $serialized = $record->toArray();
             $values = ['row_key' => 'source_'.(string) $record->getKey()];

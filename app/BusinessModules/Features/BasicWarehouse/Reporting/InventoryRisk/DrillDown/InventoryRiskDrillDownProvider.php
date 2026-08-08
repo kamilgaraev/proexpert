@@ -6,7 +6,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Dr
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -15,7 +15,6 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\I
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\InventoryRiskRow;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\Support\Reporting\EloquentOwnerDrillDown;
-use App\Support\Reporting\OwnerReportTokenPayload;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
@@ -30,25 +29,24 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
 
     public function __construct(
         private EloquentOwnerDrillDown $drillDown,
-        private OwnerReportTokenPayload $tokens,
         private ReportSourceAccessPolicy $sourceAccess,
     ) {}
 
-    public function drillDown(ReportExecutionContext $context, ReportSnapshotRef $snapshot, ReportDrillDownRequest $request): ReportDrillDownResult
+    public function drillDown(ReportExecutionContext $context, ReportSnapshotRef $snapshot, ReportDrillDownInput $input): ReportDrillDownResult
     {
-        $row = $this->authorizedRow($context, $snapshot, $request);
+        $row = $this->authorizedRow($context, $snapshot, $input);
         $eventIds = $row->getAttribute('inventory_event_ids');
         if (! is_array($eventIds)) {
             throw new DomainException('Report drill-down pinned source identities are invalid.');
         }
         if ($eventIds === []) {
-            return $this->planningEvidence($context, $snapshot, $request, $row);
+            return $this->planningEvidence($context, $snapshot, $input, $row);
         }
 
         return $this->drillDown->resolve(
             $context,
             $snapshot,
-            $request,
+            $input,
             InventoryRiskRow::class,
             WarehouseInventoryEvent::class,
             'material_id',
@@ -90,7 +88,7 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
     private function authorizedRow(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): InventoryRiskRow {
         if ($context->scope->canonicalIdentity() !== $snapshot->scope->canonicalIdentity()) {
             throw new DomainException('Report scope does not match snapshot scope.');
@@ -102,7 +100,7 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
         $row = InventoryRiskRow::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
-            ->where('row_key', $this->tokens->drillDownRowKey($request->token, $snapshot))
+            ->where('row_key', $input->cell->rowKey)
             ->firstOrFail();
         $warehouseId = $row->getAttribute('warehouse_id');
         $projectId = $row->getAttribute('project_id');
@@ -124,15 +122,15 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
     private function planningEvidence(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
         InventoryRiskRow $row,
     ): ReportDrillDownResult {
         $asOf = $snapshot->dimensions['as_of'] ?? null;
         if (! is_string($asOf) || trim($asOf) === '') {
             throw new DomainException('Report drill-down cutoff is unavailable.');
         }
-        $offset = $request->cursor === null ? 0 : (int) $request->cursor;
-        if ($request->cursor !== null && preg_match('/^[1-9][0-9]*$/D', $request->cursor) !== 1) {
+        $offset = $input->cursor === null ? 0 : (int) $input->cursor;
+        if ($input->cursor !== null && preg_match('/^[1-9][0-9]*$/D', $input->cursor) !== 1) {
             throw new DomainException('Report drill-down cursor is invalid.');
         }
 
@@ -168,7 +166,7 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
             }
         }
 
-        $page = $records->slice($offset, $request->limit)->values();
+        $page = $records->slice($offset, $input->limit)->values();
         $nextOffset = $offset + $page->count();
 
         return new ReportDrillDownResult(

@@ -8,7 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
@@ -27,13 +27,12 @@ final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDo
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
-        $cell = $this->cell($request->token, $snapshot);
         $row = QualityDefectFlowRow::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
-            ->where('row_key', $cell['row_key'])
+            ->where('row_key', $input->cell->rowKey)
             ->first();
         if (! $row instanceof QualityDefectFlowRow) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
@@ -85,19 +84,4 @@ final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDo
         );
     }
 
-    private function cell(string $token, ReportSnapshotRef $snapshot): array
-    {
-        $encoded = explode('.', $token, 2)[0] ?? '';
-        $decoded = base64_decode(strtr($encoded, '-_', '+/').str_repeat('=', (4 - strlen($encoded) % 4) % 4), true);
-        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (! is_array($payload)
-            || ($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || ! is_string($payload['row_key'] ?? null)
-            || ! is_string($payload['column_id'] ?? null)) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID);
-        }
-
-        return ['row_key' => $payload['row_key'], 'column_id' => $payload['column_id']];
-    }
 }

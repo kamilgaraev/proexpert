@@ -8,7 +8,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
@@ -74,12 +74,12 @@ final readonly class ProcurementCycleRowQuery implements ReportDrillDownProvider
         );
     }
 
-    public function drillDown(ReportExecutionContext $context, ReportSnapshotRef $snapshot, ReportDrillDownRequest $request): ReportDrillDownResult
+    public function drillDown(ReportExecutionContext $context, ReportSnapshotRef $snapshot, ReportDrillDownInput $input): ReportDrillDownResult
     {
         return $this->drillDown->resolve(
             $context,
             $snapshot,
-            $request,
+            $input,
             ProcurementCycleRow::class,
             ProcurementProcessEvent::class,
             'purchase_request_line_id',

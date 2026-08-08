@@ -8,7 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownTokenColumns;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
@@ -27,9 +27,9 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
-        $rowKey = $this->rowKey($request->token, $snapshot);
+        $rowKey = $input->cell->rowKey;
         $row = SafetyAdmissionRow::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
@@ -106,18 +106,4 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
         );
     }
 
-    private function rowKey(string $token, ReportSnapshotRef $snapshot): string
-    {
-        $encoded = explode('.', $token, 2)[0] ?? '';
-        $decoded = base64_decode(strtr($encoded, '-_', '+/').str_repeat('=', (4 - strlen($encoded) % 4) % 4), true);
-        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (! is_array($payload)
-            || ($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || ! is_string($payload['row_key'] ?? null)) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID);
-        }
-
-        return $payload['row_key'];
-    }
 }
