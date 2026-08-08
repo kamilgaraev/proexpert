@@ -87,7 +87,7 @@ final class EloquentReportExportStoreTest extends TestCase
             $this->runRecord($this->identityAttributes('run')),
         );
 
-        self::assertCount(30, $pairs);
+        self::assertCount(31, $pairs);
         self::assertContains(['export-query_hash', 'run-query_hash'], $pairs);
         self::assertContains(['export-source_hash', 'run-source_hash'], $pairs);
         self::assertContains(['export-result_hash', 'run-result_hash'], $pairs);
@@ -175,7 +175,7 @@ final class EloquentReportExportStoreTest extends TestCase
         $attributes = [];
         foreach ([
             'report_code', 'definition_hash', 'query_hash', 'source_hash', 'result_hash',
-            'scope_timezone', 'snapshot_kind', 'snapshot_id', 'snapshot_classification',
+            'scope_timezone', 'snapshot_kind', 'snapshot_id', 'snapshot_materialized_source_hash', 'snapshot_classification',
             'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash',
             'snapshot_seal_signature', 'data_classification', 'contract_version', 'formula_version',
             'source_schema_version', 'renderer_version',

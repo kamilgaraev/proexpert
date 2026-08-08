@@ -110,7 +110,7 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
         }
         $seal = ! in_array(true, $present, true) ? null : new ReportSnapshotSeal($this->string($record->snapshot_seal_key_id), $this->string($record->snapshot_seal_algorithm), new Sha256Hash($this->string($record->snapshot_sealed_payload_hash)), $this->string($record->snapshot_seal_signature), $this->instant($record->snapshot_sealed_at));
 
-        return new ReportSnapshotRef($this->string($record->snapshot_kind), $this->string($record->snapshot_id), $scope, new Sha256Hash($this->string($record->definition_hash)), $this->string($record->formula_version), new Sha256Hash($this->string($record->source_hash)), $this->instant($record->snapshot_generated_at), $record->snapshot_stale_at === null ? null : $this->instant($record->snapshot_stale_at), $this->arrayValue($record->snapshot_watermarks), $classification, $seal);
+        return new ReportSnapshotRef($this->string($record->snapshot_kind), $this->string($record->snapshot_id), $scope, new Sha256Hash($this->string($record->definition_hash)), $this->string($record->formula_version), new Sha256Hash($this->string($record->source_hash)), $this->instant($record->snapshot_generated_at), $record->snapshot_stale_at === null ? null : $this->instant($record->snapshot_stale_at), $this->arrayValue($record->snapshot_watermarks), $classification, $seal, new Sha256Hash($this->string($record->snapshot_materialized_source_hash)));
     }
 
     private function scope(ReportExportRecord $record): ReportScope
@@ -159,6 +159,7 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
             [$export->result_hash, $run->result_hash],
             [$export->snapshot_kind, $run->snapshot_kind],
             [$export->snapshot_id, $run->snapshot_id],
+            [$export->snapshot_materialized_source_hash, $run->snapshot_materialized_source_hash],
             [$export->snapshot_generated_at, $run->snapshot_generated_at],
             [$export->snapshot_stale_at, $run->snapshot_stale_at],
             [$export->snapshot_watermarks, $run->snapshot_watermarks],

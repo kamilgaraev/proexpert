@@ -558,6 +558,7 @@ final class EloquentReportRunStore implements ReportRunStore
             'capabilities' => CanonicalJson::encode($result->capabilities),
             'snapshot_kind' => $snapshot->kind,
             'snapshot_id' => $snapshot->id,
+            'snapshot_materialized_source_hash' => $snapshot->materializedSourceHash->value,
             'snapshot_generated_at' => $snapshot->generatedAt,
             'snapshot_stale_at' => $snapshot->staleAt,
             'snapshot_watermarks' => CanonicalJson::encode($snapshot->watermarks),
