@@ -216,6 +216,58 @@ SQL);
     }
 
     #[Test]
+    public function completed_partial_generation_is_reused_until_owner_content_changes(): void
+    {
+        $this->requirePostgres();
+        Queue::fake();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $actor = User::factory()->create();
+        SafetyIncident::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'reported_by_user_id' => $actor->id,
+            'incident_number' => 'HSE-PARTIAL-REUSE-1',
+            'title' => 'Stable partial projection',
+            'incident_type' => 'near_miss',
+            'severity' => 'minor',
+            'status' => 'reported',
+            'occurred_at' => now()->subMinute(),
+        ]);
+
+        ReportingSourceBackfillJob::request(
+            (int) $organization->id,
+            ReportingSourceBackfillJob::SAFETY_INCIDENTS,
+        );
+        $ledger = DB::table('report_source_sync_ledgers')
+            ->where('organization_id', $organization->id)
+            ->where('source_code', ReportingSourceBackfillJob::SAFETY_INCIDENTS)
+            ->first();
+        self::assertNotNull($ledger);
+        DB::table('report_source_sync_ledgers')->where('id', $ledger->id)->update([
+            'cursor' => $ledger->target_cursor,
+            'completed_owner_checksum' => $ledger->owner_checksum,
+            'status' => 'partial',
+            'gap_count' => 1,
+            'unknown_count' => 1,
+            'unknown_owner_keys' => json_encode(['incident:'.$ledger->id], JSON_THROW_ON_ERROR),
+            'completed_at' => now(),
+        ]);
+        Queue::assertPushedTimes(ReportingSourceBackfillJob::class, 1);
+
+        ReportingSourceBackfillJob::request(
+            (int) $organization->id,
+            ReportingSourceBackfillJob::SAFETY_INCIDENTS,
+        );
+
+        Queue::assertPushedTimes(ReportingSourceBackfillJob::class, 1);
+        self::assertSame(
+            'partial',
+            DB::table('report_source_sync_ledgers')->where('id', $ledger->id)->value('status'),
+        );
+    }
+
+    #[Test]
     public function violation_resolution_authorizer_uses_the_exact_evidence_id_and_current_owner_state(): void
     {
         $this->requirePostgres();
