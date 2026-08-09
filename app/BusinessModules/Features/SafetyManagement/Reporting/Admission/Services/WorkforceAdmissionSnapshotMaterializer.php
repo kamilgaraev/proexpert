@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSna
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -44,19 +45,23 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         private ReportSnapshotSealStore $seals,
     ) {}
 
-    public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
-    {
+    public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): SafetyAdmissionSnapshot {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
         $ledgerBinding = CompletedReportSourceLedgerBinding::captureWithDocumentedGaps(
             $organizationId,
             [ReportingSourceBackfillJob::WORKFORCE_ADMISSION],
         );
+        $progress->advance(5);
 
         return ReportSnapshotFirstWriter::run(
             'workforce_admission:'.$organizationId.':'.$query->definition->definitionHash->value
             .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
-            fn (): SafetyAdmissionSnapshot => $this->materializeLocked($context, $query, $ledgerBinding),
+            fn (): SafetyAdmissionSnapshot => $this->materializeLocked($context, $query, $ledgerBinding, $progress),
         );
     }
 
@@ -64,6 +69,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         ReportExecutionContext $context,
         ReportQuery $query,
         array $ledgerBinding,
+        ReportProgress $progress,
     ): SafetyAdmissionSnapshot {
         $organizationId = $context->scope->organizationId;
         CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration($organizationId, $ledgerBinding);
@@ -77,7 +83,9 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             $asOf,
             $query,
         );
-        $projection = $this->projection($organizationId, $assignments, $date, $asOf, $query);
+        $progress->advance(20);
+        $projection = $this->projection($organizationId, $assignments, $date, $asOf, $query, $progress);
+        $progress->advance(82);
         $ownerSources = $assignments->map(static fn (object $ownership): object => (object) [
             'assignment_id' => $ownership->workforce_assignment_id,
             'employee_id' => $ownership->employee_id,
@@ -164,6 +172,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 $inputHash,
                 $ledgerBinding,
                 $outputHash,
+                $progress,
                 $sourceHash,
                 $scopeHash,
             ): SafetyAdmissionSnapshot {
@@ -187,6 +196,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     $inputHash,
                     $ledgerBinding,
                     $outputHash,
+                    $progress,
                     $sourceHash,
                     $scopeHash,
                 ): SafetyAdmissionSnapshot {
@@ -225,7 +235,9 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                         'generated_at' => $generatedAt,
                         'stale_at' => $generatedAt->addMinutes(15),
                     ]);
-                    foreach ($rows as $row) {
+                    $rowCount = count($rows);
+                    foreach ($rows as $rowIndex => $row) {
+                        $progress->advanceProportion($rowIndex, $rowCount, 90, 98);
                         SafetyAdmissionRow::query()->create([
                             'organization_id' => $organizationId,
                             'snapshot_id' => $snapshot->id,
@@ -383,6 +395,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         CarbonImmutable $date,
         CarbonImmutable $asOf,
         ReportQuery $query,
+        ReportProgress $progress,
     ): array {
         $rows = [];
         $metrics = [];
@@ -395,17 +408,9 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         $gapCount = 0;
         $resolvedEvidenceVersions = [];
 
-        if ($assignments->isEmpty()) {
-            $projectIds = $query->scope->projectIds;
-            $siteIds = $this->filterValues($query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
-            if (count($projectIds) !== 1 || count($siteIds) !== 1) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
-            }
-            $policy = $this->policy($organizationId, (int) $projectIds[0], (int) $siteIds[0], $date, $asOf);
-            $policies[(int) $policy->id] = $policy;
-        }
-
-        foreach ($assignments as $assignment) {
+        $assignmentCount = $assignments->count();
+        foreach ($assignments as $assignmentIndex => $assignment) {
+            $progress->advanceProportion($assignmentIndex, $assignmentCount, 20, 80);
             $policy = $this->policy(
                 $organizationId,
                 (int) $assignment->project_id,

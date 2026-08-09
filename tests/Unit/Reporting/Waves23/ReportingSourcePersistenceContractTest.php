@@ -75,6 +75,26 @@ final class ReportingSourcePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function workforce_admission_finishes_empty_scopes_and_reports_live_progress(): void
+    {
+        $materializer = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Services/'
+                .'WorkforceAdmissionSnapshotMaterializer.php',
+        );
+        $provider = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Providers/'
+                .'WorkforceAdmissionReportProvider.php',
+        );
+
+        self::assertIsString($materializer);
+        self::assertIsString($provider);
+        self::assertStringNotContainsString('if ($assignments->isEmpty())', $materializer);
+        self::assertStringContainsString('ReportProgress $progress', $materializer);
+        self::assertStringContainsString('advanceProportion(', $materializer);
+        self::assertStringContainsString('materialize($context, $query, $progress)', $provider);
+    }
+
+    #[Test]
     public function workforce_evidence_is_temporal_and_snapshot_rows_pin_an_exact_version(): void
     {
         $migration = file_get_contents(
