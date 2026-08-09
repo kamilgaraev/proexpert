@@ -111,7 +111,7 @@ final class MaterializeReportRunJob implements ShouldQueue
             $persistedProgress = new ReportProgress($run->progress);
             $persistedAt = $run->updatedAt;
             $progress = new ReportProgress(
-                $run->progress,
+                0,
                 function (ReportProgress $current) use (
                     $clock,
                     $context,
