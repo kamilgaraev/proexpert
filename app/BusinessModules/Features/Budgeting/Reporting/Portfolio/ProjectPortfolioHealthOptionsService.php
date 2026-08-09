@@ -63,7 +63,7 @@ final readonly class ProjectPortfolioHealthOptionsService
             ->where('project_user.role', 'project_manager')
             ->where('project_user.is_active', true)
             ->whereNull('users.deleted_at')
-            ->selectRaw("users.id, NULLIF(TRIM(CONCAT_WS(' ', users.last_name, users.first_name, users.middle_name)), '') AS name")
+            ->selectRaw("users.id, NULLIF(TRIM(users.name), '') AS name")
             ->distinct()
             ->orderBy('name')
             ->orderBy('users.id')
