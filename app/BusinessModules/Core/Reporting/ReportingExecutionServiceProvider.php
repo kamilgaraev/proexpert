@@ -74,6 +74,7 @@ use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportLimits;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfDocumentBuilder;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfDocumentRenderer;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfRenderBudget;
+use App\BusinessModules\Core\Reporting\Application\Readiness\ReportCandidateReadinessGate;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\DefinitionBoundReportSourceAccessResolver;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelCurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportHttpAuthorizationTargetResolver;
@@ -113,6 +114,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunAttemptLifecycleStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunLeaseRecoveryStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReadinessGuardedReportRunStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportExportDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportMaterializationDispatcher;
 use App\BusinessModules\Core\Reporting\Infrastructure\Security\ContentHashReportSnapshotSealVerifier;
@@ -249,7 +251,16 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $this->app->when(EloquentReportRunStore::class)
             ->needs('$pollAfterMs')
             ->give(fn (): int => $this->configArray('runs')['poll_after_ms']);
-        $this->app->singleton(ReportRunStore::class, EloquentReportRunStore::class);
+        $this->app->singleton(EloquentReportRunStore::class);
+        $this->app->singleton(ReportCandidateReadinessGate::class);
+        $this->app->singleton(
+            ReportRunStore::class,
+            static fn (Container $app): ReadinessGuardedReportRunStore => new ReadinessGuardedReportRunStore(
+                $app->make(EloquentReportRunStore::class),
+                $app->make(\App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap::class),
+                $app->make(ReportCandidateReadinessGate::class),
+            ),
+        );
         $this->app->when(EloquentReportExportStore::class)
             ->needs('$exportTtlSeconds')
             ->give(fn (): int => $this->configArray('exports')['ttl_seconds']);
