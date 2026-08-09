@@ -11,6 +11,7 @@ use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\Contrac
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardRow;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardSnapshot;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -42,8 +43,13 @@ final readonly class ContractorScorecardSnapshotMaterializer
         private ContractorScorecardFormula $formula,
     ) {}
 
-    public function materialize(ReportExecutionContext $context, ReportQuery $query): ReportSnapshotRef
+    public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef
     {
+        $progress->advance(5);
         $asOf = $query->filters->values['as_of'] ?? null;
         if (
             $query->definition->code !== 'contractor_scorecard'
@@ -87,6 +93,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
         );
         [$periodFrom, $periodTo] = $this->cohortBounds($cohortKey, $cohortPeriod);
         $tuple = $this->sources->resolve($context, $query, $periodFrom, $periodTo);
+        $progress->advance(20);
         $components = $this->components($policy);
         $this->assertPinnedSources($tuple, $components);
         $objectiveObservations = $this->observations->load($tuple);
@@ -110,6 +117,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $query->asOf,
             $cohortKey,
         );
+        $progress->advance(40);
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'filters' => $query->filters->values,
             'policy_id' => (int) $policy->id,
@@ -141,6 +149,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $staleAt,
             $snapshotId,
             $rowCount,
+            $progress,
         ): void {
             DB::table('organizations')
                 ->where('id', $query->scope->organizationId)
@@ -190,7 +199,8 @@ final readonly class ContractorScorecardSnapshotMaterializer
                 ]);
             }
 
-            foreach ($groups as $group) {
+            $groupCount = $groups->count();
+            foreach ($groups as $groupIndex => $group) {
                 $profileId = $group['profile_id'];
                 $categoryId = $group['category_id'];
                 $projectId = $group['project_id'];
@@ -236,8 +246,11 @@ final readonly class ContractorScorecardSnapshotMaterializer
                         'row_key' => $rowKey,
                     ]);
                 }
+                $progress->advanceProportion($groupIndex + 1, $groupCount, 45, 95);
             }
         }, 3);
+
+        $progress->advance(98);
 
         $snapshot = ContractorScorecardSnapshot::query()
             ->where('organization_id', $query->scope->organizationId)

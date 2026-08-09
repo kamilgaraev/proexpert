@@ -125,6 +125,34 @@ final class ReportingSourcePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function handover_and_contractor_reports_publish_live_progress(): void
+    {
+        foreach ([
+            [
+                'app/BusinessModules/Features/HandoverAcceptance/Reporting/Readiness/Services/'
+                    .'HandoverReadinessSnapshotMaterializer.php',
+                'app/BusinessModules/Features/HandoverAcceptance/Reporting/Readiness/Providers/'
+                    .'HandoverReadinessReportProvider.php',
+            ],
+            [
+                'app/BusinessModules/ContractorMarketplace/Reporting/Scorecard/Services/'
+                    .'ContractorScorecardSnapshotMaterializer.php',
+                'app/BusinessModules/ContractorMarketplace/Reporting/Scorecard/Providers/'
+                    .'ContractorScorecardReportProvider.php',
+            ],
+        ] as [$materializerPath, $providerPath]) {
+            $materializer = file_get_contents(dirname(__DIR__, 4).'/'.$materializerPath);
+            $provider = file_get_contents(dirname(__DIR__, 4).'/'.$providerPath);
+
+            self::assertIsString($materializer);
+            self::assertIsString($provider);
+            self::assertStringContainsString('ReportProgress $progress', $materializer);
+            self::assertStringContainsString('advanceProportion(', $materializer);
+            self::assertStringContainsString('materialize($context, $query, $progress)', $provider);
+        }
+    }
+
+    #[Test]
     public function workforce_evidence_is_temporal_and_snapshot_rows_pin_an_exact_version(): void
     {
         $migration = file_get_contents(

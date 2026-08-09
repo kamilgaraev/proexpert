@@ -38,14 +38,14 @@ final readonly class HandoverReadinessReportProvider implements ReportDataProvid
         ReportQuery $query,
         ReportProgress $progress,
     ): ReportSnapshotRef {
-        $progress->advance(10);
-        $provisional = $this->materializer->materialize($context, $query);
-        $progress->advance(100);
+        $provisional = $this->materializer->materialize($context, $query, $progress);
+        $progress->advance(99);
         $canonical = $this->identities->build(
             $query,
             $provisional,
             $this->result($context, $provisional),
         );
+        $progress->advance(100);
 
         return new ReportSnapshotRef(
             kind: $provisional->kind,

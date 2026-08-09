@@ -35,8 +35,7 @@ final readonly class ContractorScorecardReportProvider implements ReportDataProv
         ReportQuery $query,
         ReportProgress $progress,
     ): ReportSnapshotRef {
-        $progress->advance(10);
-        $snapshot = $this->materializer->materialize($context, $query);
+        $snapshot = $this->materializer->materialize($context, $query, $progress);
         $progress->advance(100);
 
         return $snapshot;
