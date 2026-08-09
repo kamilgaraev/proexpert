@@ -289,16 +289,16 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         $this->app->singleton(ReportAuthorizationSubjectReader::class, EloquentReportAuthorizationSubjectReader::class);
         $this->app->singleton(ReportHttpAuthorizationTargetResolver::class, LaravelReportHttpAuthorizationTargetResolver::class);
         $this->app->singleton(ReportModuleEntitlement::class, LaravelReportModuleEntitlement::class);
-        $this->app->singleton(CurrentReportAbacEvaluator::class, LaravelCurrentReportAbacEvaluator::class);
+        $this->app->scoped(CurrentReportAbacEvaluator::class, LaravelCurrentReportAbacEvaluator::class);
         $this->app->singleton(LaravelReportScopedResourceAuthorizerRegistry::class, function (Container $app): LaravelReportScopedResourceAuthorizerRegistry {
             return new LaravelReportScopedResourceAuthorizerRegistry(
                 $app->tagged(ReportScopedResourceAuthorizer::class),
             );
         });
-        $this->app->singleton(LaravelCurrentReportScopeAuthorizer::class);
-        $this->app->singleton(CurrentReportScopeAuthorizer::class, static fn (Container $app) => $app->make(LaravelCurrentReportScopeAuthorizer::class));
-        $this->app->singleton(CurrentReportExactManyAuthorizer::class, static fn (Container $app) => $app->make(LaravelCurrentReportScopeAuthorizer::class));
-        $this->app->singleton(ReportHttpAuthorizationOrchestrator::class, function (Container $app): ReportHttpAuthorizationOrchestrator {
+        $this->app->scoped(LaravelCurrentReportScopeAuthorizer::class);
+        $this->app->scoped(CurrentReportScopeAuthorizer::class, static fn (Container $app) => $app->make(LaravelCurrentReportScopeAuthorizer::class));
+        $this->app->scoped(CurrentReportExactManyAuthorizer::class, static fn (Container $app) => $app->make(LaravelCurrentReportScopeAuthorizer::class));
+        $this->app->scoped(ReportHttpAuthorizationOrchestrator::class, function (Container $app): ReportHttpAuthorizationOrchestrator {
             return new ReportHttpAuthorizationOrchestrator(
                 $app->make('db')->connection(),
                 $app->make(\App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory::class),

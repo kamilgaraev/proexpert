@@ -21,6 +21,9 @@ final class LaravelCurrentReportAbacEvaluatorTest extends TestCase
             self::assertStringNotContainsString($forbidden, $source);
         }
         self::assertStringContainsString('UserRoleAssignment::query()', $source);
+        self::assertStringContainsString('private ?Collection $assignmentCache', $source);
+        self::assertStringContainsString('private array $customRolePermissionCache', $source);
+        self::assertStringContainsString('$this->assignments($actorId, $facts->occurredAt)', $source);
         self::assertStringContainsString('RoleCondition', $source);
         self::assertStringContainsString('projectCountPasses', $source);
     }
