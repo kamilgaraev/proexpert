@@ -26,7 +26,7 @@ final readonly class IntercompanyContractFlowCandidateContract
     public const FORMULA_VERSION = 'intercompany_contract_flow.v1';
     public const SOURCE_SCHEMA_VERSION = 'holding_allocation_facts.v2';
     public const FORMULA_HASH = '335648ea8becc17ed3d2543deacb02a7c218c8e5546647fc9e94cd3497e57282';
-    public const SOURCE_HASH = '9bfccd639488aebae636e48d9727d7277e9850cd3816c0bb183924fdc7ace4a4';
+    public const SOURCE_HASH = 'decab88170e8c174b3a147fcdde2da136eafaf60910ab309972786cd59f7a773';
 
     public function filters(): array
     {
