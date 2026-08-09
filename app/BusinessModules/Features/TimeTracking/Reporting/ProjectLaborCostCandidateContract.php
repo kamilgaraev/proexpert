@@ -20,7 +20,7 @@ final readonly class ProjectLaborCostCandidateContract
 
     public const FORMULA_HASH = 'a03b8a1d007970b82b1f2dbb5a6cb103ef03eef2d73076b683c85bc57a1e0af5';
 
-    public const SOURCE_HASH = '1a467acd7d121686b2321049ebdeefd3835f069ba35d48953c10296ba686b35a';
+    public const SOURCE_HASH = '5c4f4eebf65d93e46c4a520b463528d450a54fa3f3c725bb3e7104484c550a16';
 
     /** @return list<array{id: string, required: bool}> */
     public function filters(): array
