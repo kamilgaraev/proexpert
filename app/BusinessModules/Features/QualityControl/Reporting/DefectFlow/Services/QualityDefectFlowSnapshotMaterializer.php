@@ -37,7 +37,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
     {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
-        $ledgerBinding = CompletedReportSourceLedgerBinding::capture(
+        $ledgerBinding = CompletedReportSourceLedgerBinding::captureWithDocumentedGaps(
             $organizationId,
             [ReportingSourceBackfillJob::QUALITY_DEFECTS],
         );

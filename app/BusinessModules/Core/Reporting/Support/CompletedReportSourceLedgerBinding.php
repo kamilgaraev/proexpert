@@ -14,6 +14,20 @@ final class CompletedReportSourceLedgerBinding
 {
     public static function capture(int $organizationId, array $sourceCodes): array
     {
+        return self::captureGeneration($organizationId, $sourceCodes, false);
+    }
+
+    public static function captureWithDocumentedGaps(int $organizationId, array $sourceCodes): array
+    {
+        return self::captureGeneration($organizationId, $sourceCodes, true);
+    }
+
+    private static function captureGeneration(
+        int $organizationId,
+        array $sourceCodes,
+        bool $allowDocumentedGaps,
+    ): array
+    {
         $codes = array_values(array_unique(array_map('strval', $sourceCodes)));
         sort($codes, SORT_STRING);
         $records = DB::table('report_source_sync_ledgers')
@@ -33,9 +47,13 @@ final class CompletedReportSourceLedgerBinding
                 $record = $records->get($code);
                 $cursor = self::json((string) $record->cursor);
                 $targetCursor = self::json((string) $record->target_cursor);
-                if ($record->status !== 'ready'
-                    || (int) $record->gap_count !== 0
-                    || (int) $record->unknown_count !== 0
+                $gapCount = (int) $record->gap_count;
+                $unknownCount = (int) $record->unknown_count;
+                $acceptedStatuses = $allowDocumentedGaps ? ['ready', 'partial'] : ['ready'];
+                if (! in_array($record->status, $acceptedStatuses, true)
+                    || (! $allowDocumentedGaps && ($gapCount !== 0 || $unknownCount !== 0))
+                    || $gapCount < 0
+                    || $unknownCount < 0
                     || ! is_string($record->owner_checksum)
                     || ! is_string($record->completed_owner_checksum)
                     || ! hash_equals($record->owner_checksum, $record->completed_owner_checksum)
@@ -47,7 +65,7 @@ final class CompletedReportSourceLedgerBinding
                     ? CarbonImmutable::parse((string) $record->completed_at)
                     : CarbonImmutable::parse((string) $record->source_watermark);
                 $watermark = $watermark === null || $sourceWatermark > $watermark ? $sourceWatermark : $watermark;
-                $sources[$code] = [
+                $source = [
                     'checksum' => $record->completed_owner_checksum,
                     'completed_at' => CarbonImmutable::parse((string) $record->completed_at)->toAtomString(),
                     'cursor' => $cursor,
@@ -57,6 +75,15 @@ final class CompletedReportSourceLedgerBinding
                         : CarbonImmutable::parse((string) $record->source_watermark)->toAtomString(),
                     'target_cursor' => $targetCursor,
                 ];
+                if ($allowDocumentedGaps) {
+                    $source += [
+                        'gap_count' => $gapCount,
+                        'status' => (string) $record->status,
+                        'unknown_count' => $unknownCount,
+                        'unknown_owner_keys' => self::nullableJson($record->unknown_owner_keys),
+                    ];
+                }
+                $sources[$code] = $source;
             }
         } catch (ReportContractException $exception) {
             throw $exception;
@@ -67,8 +94,20 @@ final class CompletedReportSourceLedgerBinding
             );
         }
 
+        if (! $allowDocumentedGaps) {
+            return [
+                'hash' => hash('sha256', CanonicalJson::encode($sources)),
+                'sources' => $sources,
+                'watermark' => $watermark?->toAtomString(),
+            ];
+        }
+
         return [
-            'hash' => hash('sha256', CanonicalJson::encode($sources)),
+            'hash' => hash('sha256', CanonicalJson::encode([
+                'integrity_mode' => 'documented_gaps',
+                'sources' => $sources,
+            ])),
+            'integrity_mode' => 'documented_gaps',
             'sources' => $sources,
             'watermark' => $watermark?->toAtomString(),
         ];
@@ -84,7 +123,11 @@ final class CompletedReportSourceLedgerBinding
         try {
             return hash_equals(
                 (string) ($binding['hash'] ?? ''),
-                (string) self::capture($organizationId, array_keys($sources))['hash'],
+                (string) self::captureGeneration(
+                    $organizationId,
+                    array_keys($sources),
+                    ($binding['integrity_mode'] ?? null) === 'documented_gaps',
+                )['hash'],
             );
         } catch (ReportContractException) {
             return false;
@@ -121,5 +164,14 @@ final class CompletedReportSourceLedgerBinding
         }
 
         return $decoded;
+    }
+
+    private static function nullableJson(mixed $value): array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        return self::json((string) $value);
     }
 }
