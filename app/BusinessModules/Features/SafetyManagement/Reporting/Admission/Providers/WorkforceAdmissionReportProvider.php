@@ -22,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
@@ -44,7 +45,9 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
     ): ReportSnapshotRef {
         $record = $this->materializer->materialize($context, $query);
         $progress->advance(100);
-        $this->sealBackfill->ensureCovered('workforce_admission');
+        if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
+            $this->sealBackfill->ensureCovered('workforce_admission');
+        }
 
         return new ReportSnapshotRef(
             kind: 'workforce_admission',
@@ -57,7 +60,9 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
             staleAt: DateTimeImmutable::createFromInterface($record->stale_at),
             watermarks: ['workforce_admission' => $record->source_watermark->toAtomString()],
             classification: $query->definition->snapshotClassification,
-            seal: $this->seals->get('workforce_admission', (string) $record->id),
+            seal: $query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL
+                ? $this->seals->get('workforce_admission', (string) $record->id)
+                : null,
         );
     }
 
