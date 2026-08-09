@@ -6,7 +6,6 @@ namespace App\BusinessModules\Core\Reporting\Http\Admin\Requests;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Http\Admin\Support\ReportAsOfParser;
 use DateTimeImmutable;
 
 final class LookaheadReadinessReportOptionsRequest extends ReportFormRequest
@@ -14,11 +13,7 @@ final class LookaheadReadinessReportOptionsRequest extends ReportFormRequest
     public function rules(): array
     {
         return [
-            'as_of' => ['required', 'string', static function (string $attribute, mixed $value, callable $fail): void {
-                if (ReportAsOfParser::parse($value) === null) {
-                    $fail(trans_message('reports.errors.report_request_invalid'));
-                }
-            }],
+            'as_of' => ['required', 'date_format:Y-m-d'],
             'horizon_days' => ['sometimes', 'integer', 'min:1', 'max:366'],
             ...$this->forbiddenClientFieldsRules(),
             'project_id' => ['prohibited'],
@@ -35,8 +30,14 @@ final class LookaheadReadinessReportOptionsRequest extends ReportFormRequest
 
     public function asOf(): DateTimeImmutable
     {
-        return ReportAsOfParser::parse($this->validated('as_of'))
-            ?? throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, ['fields' => ['as_of']]);
+        $asOf = DateTimeImmutable::createFromFormat('!Y-m-d', (string) $this->validated('as_of'));
+
+        return $asOf !== false
+            ? $asOf
+            : throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_REQUEST_INVALID,
+                ['fields' => ['as_of']],
+            );
     }
 
     public function horizonDays(): int

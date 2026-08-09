@@ -141,6 +141,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $tuple,
             $policy,
             $cohortPeriod,
+            $cohortKey,
             $components,
             $groups,
             $objectiveObservations,

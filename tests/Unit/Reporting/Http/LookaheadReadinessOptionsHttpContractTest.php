@@ -32,6 +32,8 @@ final class LookaheadReadinessOptionsHttpContractTest extends TestCase
         self::assertIsString($request);
         self::assertStringContainsString("'as_of'", $request);
         self::assertStringContainsString("'horizon_days'", $request);
+        self::assertStringContainsString("'date_format:Y-m-d'", $request);
+        self::assertStringContainsString("DateTimeImmutable::createFromFormat('!Y-m-d'", $request);
         self::assertStringContainsString("'project_id' => ['prohibited']", $request);
         self::assertStringContainsString("'scope' => ['prohibited']", $request);
         self::assertStringContainsString("'actor_id' => ['prohibited']", $request);
