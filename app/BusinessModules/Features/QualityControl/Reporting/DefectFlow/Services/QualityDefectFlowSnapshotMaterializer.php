@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSna
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -34,19 +35,23 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         private ReportSnapshotSealStore $seals,
     ) {}
 
-    public function materialize(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
-    {
+    public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): QualityDefectFlowSnapshot {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
         $ledgerBinding = CompletedReportSourceLedgerBinding::captureWithDocumentedGaps(
             $organizationId,
             [ReportingSourceBackfillJob::QUALITY_DEFECTS],
         );
+        $progress->advance(5);
 
         return ReportSnapshotFirstWriter::run(
             'quality_defect_flow:'.$organizationId.':'.$query->definition->definitionHash->value
             .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
-            fn (): QualityDefectFlowSnapshot => $this->materializeLocked($context, $query, $ledgerBinding),
+            fn (): QualityDefectFlowSnapshot => $this->materializeLocked($context, $query, $ledgerBinding, $progress),
         );
     }
 
@@ -54,6 +59,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         ReportExecutionContext $context,
         ReportQuery $query,
         array $ledgerBinding,
+        ReportProgress $progress,
     ): QualityDefectFlowSnapshot {
         $organizationId = $context->scope->organizationId;
         CompletedReportSourceLedgerBinding::lockAndAssertOwnerGeneration($organizationId, $ledgerBinding);
@@ -68,6 +74,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $asOf,
         );
         $events = $this->filterSubjects($events, $query, $periodFrom, $periodTo);
+        $progress->advance(20);
         $projectIds = $events->pluck('project_id')
             ->map(static fn (mixed $id): int => (int) $id)
             ->unique()
@@ -75,7 +82,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             ->values()
             ->all();
         $policies = $this->policies($organizationId, $projectIds, $asOf);
-        $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies);
+        $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies, $progress);
         $ownerTransitionCount = $this->ownerTransitionCount(
             $organizationId,
             $context->scope->projectIds,
@@ -84,6 +91,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
             $query,
         );
         $analysis['gaps'] += max(0, $ownerTransitionCount - $events->count());
+        $progress->advance(85);
         $policyIds = collect($policies)->pluck('id')->map(static fn (mixed $id): int => (int) $id)->unique()->sort()->values()->all();
         $inputHash = hash('sha256', CanonicalJson::encode([
             'event_hashes' => $events->pluck('event_hash')->all(),
@@ -122,6 +130,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                 $inputHash,
                 $ledgerBinding,
                 $outputHash,
+                $progress,
                 $sourceHash,
                 $scopeHash,
                 $query,
@@ -145,6 +154,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                     $inputHash,
                     $ledgerBinding,
                     $outputHash,
+                    $progress,
                     $sourceHash,
                     $scopeHash,
                     $query,
@@ -187,7 +197,9 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                         'stale_at' => $generatedAt->addDay(),
                     ]);
 
-                    foreach ($analysis['rows'] as $row) {
+                    $rowCount = count($analysis['rows']);
+                    foreach ($analysis['rows'] as $rowIndex => $row) {
+                        $progress->advanceProportion($rowIndex, $rowCount, 90, 98);
                         QualityDefectFlowRow::query()->create([
                             'organization_id' => $organizationId,
                             'snapshot_id' => $snapshot->id,
@@ -362,6 +374,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         CarbonImmutable $periodTo,
         CarbonImmutable $asOf,
         array $policies,
+        ReportProgress $progress,
     ): array {
         $rows = [];
         $states = [];
@@ -375,7 +388,9 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         $gaps = 0;
         $unknowns = 0;
 
-        foreach ($events as $event) {
+        $eventCount = $events->count();
+        foreach ($events as $eventIndex => $event) {
+            $progress->advanceProportion($eventIndex, $eventCount, 20, 75);
             $defectId = (int) $event->quality_defect_id;
             $policy = $policies[(int) $event->project_id] ?? null;
             if (! $policy instanceof QualityDefectFlowPolicyVersion) {
@@ -478,7 +493,11 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         $matureCohortCount = 0;
         $firstPassCount = 0;
         $matureReopenedCount = 0;
+        $stateCount = count($states);
+        $completedStates = 0;
         foreach ($states as $state) {
+            $progress->advanceProportion($completedStates, $stateCount, 75, 82);
+            $completedStates++;
             if ($state['due_date'] !== null && $state['due_date']->startOfDay() <= $asOf->startOfDay()) {
                 $dueCount++;
                 if ($state['current_open'] && $state['due_date']->startOfDay() < $asOf->startOfDay()) {
