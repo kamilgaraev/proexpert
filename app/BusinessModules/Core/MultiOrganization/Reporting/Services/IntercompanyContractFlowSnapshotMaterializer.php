@@ -53,15 +53,19 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
+        $progress->advance(5);
         $batch = $this->sources->assemble($context->scope, $query);
         if ($batch->gaps !== []) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
         }
+        $sourceCount = count($batch->sources);
+        $completedSources = 0;
         foreach ($batch->sources as $source) {
             if (! $source instanceof HoldingAllocationCheckpointSource) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
             }
             $this->projector->persist($source->fact, $source->evidence);
+            $progress->advanceProportion(++$completedSources, max(1, $sourceCount), 5, 25);
         }
         $hierarchy = $batch->hierarchy;
         $coverageStartedAt = new DateTimeImmutable($batch->coverageStartedAt);
@@ -86,6 +90,8 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         ]];
         $unknown = 0;
 
+        $factCount = $facts->count();
+        $completedFacts = 0;
         foreach ($facts as $fact) {
             $currency = $fact->currency === null ? null : (string) $fact->currency;
             $sourceRefs = is_array($fact->source_refs) ? $fact->source_refs : [];
@@ -128,6 +134,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
                 $sourceRefs,
             );
             $sourcePayload[] = ['id' => (int) $fact->getKey(), 'hash' => (string) $fact->source_hash];
+            $progress->advanceProportion(++$completedFacts, max(1, $factCount), 25, 65);
         }
 
         $rows = $this->projectionRows($groups);
@@ -197,12 +204,14 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             ->orderBy('id')
             ->get(['id', 'source_hash', 'missing_fields']);
         $projectionGapCount = $projectionGaps->count();
+        $completedGaps = 0;
         foreach ($projectionGaps as $gap) {
             $sourcePayload[] = [
                 'gap_id' => (int) $gap->getKey(),
                 'source_hash' => (string) $gap->source_hash,
                 'missing_fields' => $gap->missing_fields,
             ];
+            $progress->advanceProportion(++$completedGaps, max(1, $projectionGapCount), 65, 75);
         }
         $qualityGapWatermark = hash('sha256', CanonicalJson::encode([
             'recorded_cutoff' => $recordedCutoff->format(DateTimeInterface::ATOM),
@@ -233,7 +242,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             $sourceHash,
         );
 
-        DB::transaction(function () use ($context, $query, $rows, $totals, $sourceHash, $snapshotId, $watermark, $hierarchyWatermark, $sourceRef, $unknown, $hierarchyGapCount, $hierarchy, $qualityGapWatermark, $projectionGapCount, $recordedCutoff): void {
+        DB::transaction(function () use ($context, $query, $rows, $totals, $sourceHash, $snapshotId, $watermark, $hierarchyWatermark, $sourceRef, $unknown, $hierarchyGapCount, $hierarchy, $qualityGapWatermark, $projectionGapCount, $recordedCutoff, $progress): void {
             IntercompanyContractFlowSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $context->scope->organizationId,
@@ -267,12 +276,15 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
                 'stale_at' => null,
             ]);
 
+            $rowCount = count($rows);
+            $completedRows = 0;
             foreach ($rows as $row) {
                 IntercompanyContractFlowRow::query()->create([
                     'organization_id' => $context->scope->organizationId,
                     'snapshot_id' => $snapshotId,
                     ...$row,
                 ]);
+                $progress->advanceProportion(++$completedRows, max(1, $rowCount), 75, 95);
             }
         });
 

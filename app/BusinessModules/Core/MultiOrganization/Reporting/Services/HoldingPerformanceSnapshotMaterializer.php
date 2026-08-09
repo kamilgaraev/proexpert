@@ -62,6 +62,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
+        $progress->advance(5);
         try {
             $coverageStartedAt = $this->events->coverageStartedAt(
                 $this->sources->coverageStartedAt($query->asOf),
@@ -77,11 +78,14 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             if ($batch->gaps !== []) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
             }
+            $sourceCount = count($batch->sources);
+            $completedSources = 0;
             foreach ($batch->sources as $source) {
                 if (! $source instanceof HoldingAllocationCheckpointSource) {
                     throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
                 }
                 $this->projector->persist($source->fact, $source->evidence);
+                $progress->advanceProportion(++$completedSources, max(1, $sourceCount), 5, 20);
             }
             $contractVersionIds = array_values(array_unique(array_map(
                 static fn (HoldingAllocationCheckpointSource $source): int => $source->fact->sourceVersion,
@@ -109,6 +113,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             if (! $projectionCoverage->complete()) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
             }
+            $progress->advance(30);
         } catch (ReportContractException $exception) {
             throw $exception;
         } catch (InvalidArgumentException $exception) {
@@ -139,6 +144,8 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             'projection_coverage_watermark' => $projectionCoverage->watermark,
         ]];
 
+        $factCount = $facts->count();
+        $completedFacts = 0;
         foreach ($facts as $factRecord) {
             $fact = $this->fact($factRecord);
             $metricRows[] = $this->formula->row(
@@ -152,6 +159,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                 'source_hash' => (string) $factRecord->source_hash,
                 'source_key' => $fact->sourceKey(),
             ];
+            $progress->advanceProportion(++$completedFacts, max(1, $factCount), 30, 65);
         }
 
         $totals = $this->formula->totals($metricRows);
@@ -230,12 +238,14 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             ->orderBy('id')
             ->get(['id', 'source_hash', 'missing_fields']);
         $projectionGapCount = $projectionGaps->count();
+        $completedGaps = 0;
         foreach ($projectionGaps as $gap) {
             $sourcePayload[] = [
                 'gap_id' => (int) $gap->getKey(),
                 'source_hash' => (string) $gap->source_hash,
                 'missing_fields' => $gap->missing_fields,
             ];
+            $progress->advanceProportion(++$completedGaps, max(1, $projectionGapCount), 65, 75);
         }
         $qualityGapPayload = $projectionGaps
             ->map(static fn (HoldingAllocationProjectionGap $gap): array => [
@@ -268,7 +278,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             $sourceHash,
         );
 
-        DB::transaction(function () use ($context, $query, $snapshotId, $generatedAt, $sourceHash, $watermarks, $totals, $unknown, $hierarchyGapCount, $projectionGapCount, $sourceRef, $projectionRows, $hierarchy, $qualityGapWatermark, $recordedCutoff): void {
+        DB::transaction(function () use ($context, $query, $snapshotId, $generatedAt, $sourceHash, $watermarks, $totals, $unknown, $hierarchyGapCount, $projectionGapCount, $sourceRef, $projectionRows, $hierarchy, $qualityGapWatermark, $recordedCutoff, $progress): void {
             HoldingPerformanceSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $context->scope->organizationId,
@@ -296,6 +306,8 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                 'stale_at' => null,
             ]);
 
+            $rowCount = count($projectionRows);
+            $completedRows = 0;
             foreach ($projectionRows as $row) {
                 HoldingPerformanceRow::query()->create([
                     'organization_id' => $context->scope->organizationId,
@@ -311,6 +323,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                     'row_key' => $row->rowKey,
                     'source_refs' => $row->sourceRefs,
                 ]);
+                $progress->advanceProportion(++$completedRows, max(1, $rowCount), 75, 95);
             }
         });
 

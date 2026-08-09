@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementCycleSourceReader;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementCycleSourceSnapshotWriter;
@@ -21,8 +22,9 @@ final readonly class CanonicalProcurementCycleSourceSnapshotWriter implements Pr
         private ReportSourceSnapshotStore $store,
     ) {}
 
-    public function persist(ReportQuery $query): ReportSourceSnapshotHeader
+    public function persist(ReportQuery $query, ReportProgress $progress): ReportSourceSnapshotHeader
     {
+        $progress->advance(10);
         $request = new ProcurementCycleSnapshotRequest(
             $query->scope,
             $query->filters->values,
@@ -39,6 +41,7 @@ final readonly class CanonicalProcurementCycleSourceSnapshotWriter implements Pr
                 $results[] = $this->formula->calculate($events, $policy, $query->asOf);
             },
         );
+        $progress->advance(40);
         $identity = $this->materializer->identity($request, $source, $query->identity);
         $ready = $this->store->findReady($identity);
         if ($ready !== null) {
@@ -52,6 +55,7 @@ final readonly class CanonicalProcurementCycleSourceSnapshotWriter implements Pr
             $results,
             $eventsByLine,
             $query,
+            $progress,
         );
 
         return $this->store->resolveReady($identity, $write);

@@ -77,7 +77,7 @@ final readonly class ProcurementCycleReportAdapter implements ReportDataProvider
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
-        $header = $this->writer->persist($query);
+        $header = $this->writer->persist($query, $progress);
         $this->assertHeader($header, $query);
         $progress->advance(100);
 
