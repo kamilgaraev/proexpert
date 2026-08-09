@@ -35,7 +35,10 @@ final readonly class OwnerProjectionResultFactory
             ->whereKey($snapshot->id)
             ->where('organization_id', $context->scope->organizationId)
             ->first();
-        if ($record === null || !hash_equals((string) $record->getAttribute('source_hash'), $snapshot->sourceHash->value)) {
+        if ($record === null || !hash_equals(
+            (string) $record->getAttribute('source_hash'),
+            $snapshot->materializedSourceHash->value,
+        )) {
             throw new InvalidArgumentException('owner_projection_snapshot_missing');
         }
 
