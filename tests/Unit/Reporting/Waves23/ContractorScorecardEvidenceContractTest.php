@@ -84,6 +84,10 @@ final class ContractorScorecardEvidenceContractTest extends TestCase
 
         self::assertStringContainsString('ContractorReviewSnapshotResolver', $sourceResolver);
         self::assertStringContainsString('contractor_scorecard_review_snapshot_rows', $materializer);
+        self::assertMatchesRegularExpression(
+            '/DB::transaction\(function \(\) use \([\s\S]*?\$cohortKey,[\s\S]*?\): void/',
+            $materializer,
+        );
         self::assertStringNotContainsString('MarketplaceHiringOfferReview::query()', $materializer);
         self::assertStringContainsString('contractor_scorecard_review_events', $backfill);
         self::assertStringNotContainsString('MarketplaceHiringOfferReview::query()', $backfill);
