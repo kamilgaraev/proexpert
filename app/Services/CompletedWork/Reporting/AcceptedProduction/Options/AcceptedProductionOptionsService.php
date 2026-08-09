@@ -50,7 +50,20 @@ final readonly class AcceptedProductionOptionsService
             $asOf,
             'ru-RU',
         );
-        $snapshot = $this->source->snapshot($projectScope, $query);
+        try {
+            $snapshot = $this->source->snapshot($projectScope, $query);
+        } catch (ReportContractException $exception) {
+            if ($exception->errorCode !== ReportErrorCode::REPORT_FILTER_RANGE_INVALID) {
+                throw $exception;
+            }
+
+            return $this->unavailable(
+                $asOf,
+                $periodFrom,
+                $periodTo,
+                'source_history_incomplete',
+            );
+        }
         if (! $snapshot->available) {
             return $this->unavailable($asOf, $periodFrom, $periodTo, $snapshot->reason ?? 'source_unavailable');
         }

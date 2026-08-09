@@ -160,6 +160,35 @@ final class AcceptedProductionOptionsServiceTest extends TestCase
         self::assertSame([], $options['statuses']);
     }
 
+    public function test_source_history_boundary_race_returns_unavailable_options(): void
+    {
+        $source = new class implements AcceptedProductionOptionsSource
+        {
+            public function snapshot(ReportScope $scope, ReportQuery $query): AcceptedProductionOptionsSourceSnapshot
+            {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
+            }
+        };
+        $service = new AcceptedProductionOptionsService(
+            $source,
+            new AcceptedProductionBuiltinPublishedReport(new AcceptedProductionCandidateContract),
+            $this->connection,
+        );
+
+        $options = $service->options(
+            $this->scope(),
+            10,
+            new DateTimeImmutable('2026-08-06T14:15:00+03:00'),
+            new DateTimeImmutable('2026-08-01'),
+            new DateTimeImmutable('2026-08-06'),
+        );
+
+        self::assertFalse($options['available']);
+        self::assertSame('source_history_incomplete', $options['reason']);
+        self::assertSame([], $options['works']);
+        self::assertSame([], $options['statuses']);
+    }
+
     public function test_trusted_route_project_narrows_authorized_multi_project_scope(): void
     {
         $options = $this->service(AcceptedProductionOptionsSourceSnapshot::available(
