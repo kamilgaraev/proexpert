@@ -42,6 +42,13 @@ final class Waves23ProductionContractsTest extends TestCase
             'materializedSourceHash: $provisional->materializedSourceHash',
             $provider,
         );
+
+        $resultFactory = $this->source('app/Support/Reporting/OwnerProjectionResultFactory.php');
+        self::assertStringContainsString('$snapshot->materializedSourceHash->value', $resultFactory);
+        self::assertStringNotContainsString(
+            "getAttribute('source_hash'), \$snapshot->sourceHash->value",
+            $resultFactory,
+        );
     }
 
     #[Test]
