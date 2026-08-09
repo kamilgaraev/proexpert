@@ -333,6 +333,93 @@ final class MaterializeReportRunJobTest extends TestCase
         self::assertSame($snapshot, $provider->calls[1][2]);
     }
 
+    public function test_retry_replays_provider_stages_without_decreasing_persisted_progress(): void
+    {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $definition = (new ReportDefinitionBuilder)->payload();
+        $query = new ReportQuery(
+            $definition,
+            $context->scope,
+            new ReportFilterSet([]),
+            [],
+            new DateTimeImmutable('2026-07-26T09:00:00Z'),
+            'ru',
+        );
+        [$snapshot, $result] = $this->sealedPair($context, $query);
+        $provider = new class($snapshot, $result) implements ReportDataProvider
+        {
+            public function __construct(
+                private ReportSnapshotRef $snapshot,
+                private ReportResult $result,
+            ) {}
+
+            public function materialize(
+                ReportExecutionContext $context,
+                ReportQuery $query,
+                ReportProgress $progress,
+            ): ReportSnapshotRef {
+                $progress->advance(10);
+                $progress->advance(95);
+
+                return $this->snapshot;
+            }
+
+            public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
+            {
+                return $this->result;
+            }
+        };
+        $binding = new ReportDefinitionBinding(
+            $definition->code,
+            $definition->definitionHash,
+            $definition->contractVersion,
+            $provider,
+            $this->createMock(ReportRowQuery::class),
+            $this->createMock(ReportDrillDownProvider::class),
+            null,
+        );
+        $run = (new ReportRunBuilder)
+            ->reportCode($definition->code)
+            ->status(ReportRunStatus::MATERIALIZING)
+            ->progress(90)
+            ->queued();
+        $contexts = $this->createMock(ReportRunExecutionContextRehydrator::class);
+        $contexts->method('forRun')->willReturn($context);
+        $runs = $this->createMock(ReportRunStore::class);
+        $runs->method('get')->willReturn($run);
+        $runs->method('claimMaterialization')->willReturn($run);
+        $runs->method('queryForRun')->willReturn($query);
+        $runs->expects(self::once())->method('persistProgress')->with(
+            $context,
+            $run->id,
+            '0195e44b-a9e7-7f12-a8af-51f2d284d3ef',
+            self::callback(static fn (ReportProgress $progress): bool => $progress->percent() === 95),
+            self::isInstanceOf(DateTimeImmutable::class),
+            self::isInstanceOf(DateTimeImmutable::class),
+        )->willReturn($run);
+        $runs->expects(self::once())->method('sealReady')->willReturn($run);
+        $registry = $this->createMock(ReportDefinitionRegistry::class);
+        $registry->method('published')->willReturn((new ReportDefinitionBuilder)->published());
+        $bindings = new ReportDefinitionBindingMap([$definition->code => $binding]);
+        $job = new MaterializeReportRunJob($run->id);
+        $envelope = $this->createMock(Job::class);
+        $envelope->method('uuid')->willReturn('0195e44b-a9e7-7f12-a8af-51f2d284d3ef');
+        $job->setJob($envelope);
+
+        $job->handle(
+            $this->lifecycleClaiming($run->id),
+            $contexts,
+            $runs,
+            $registry,
+            $bindings,
+            new CanonicalReportSourceHashBuilder,
+            new ReportProgressWritePolicy,
+            new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T10:00:00Z')),
+            $this->createMock(ReportExecutionTelemetry::class),
+            $this->runtime(),
+        );
+    }
+
     public function test_non_retryable_current_authorization_failure_terminalizes_only_the_live_claim(): void
     {
         $runId = '01J00000000000000000000000';
