@@ -76,6 +76,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
         );
         self::assertSame($write->header->reportQueryHash?->value, $roundTrip->reportQueryHash?->value);
         self::assertSame($write->header->materializedSourceHash->value, $roundTrip->materializedSourceHash->value);
+        self::assertEquals($roundTrip, $ready);
 
         $first = $store->page($request, null, 1);
         self::assertSame(['project:1'], array_map(static fn (ReportSourceSnapshotRow $row): string => $row->rowKey, $first->rows));
@@ -311,7 +312,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
             new DateTimeImmutable('2026-07-31T00:00:00+00:00'),
             $this->hash(['source' => $firstAmount]),
             ['portfolio_version' => 3],
-            new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'),
+            new DateTimeImmutable('2026-07-31T00:00:00.123456+00:00'), new DateTimeImmutable('2026-07-31T01:00:00.654321+00:00'),
             ReportSourceSnapshotStatus::WRITING, 2, 1, $this->hash(['placeholder' => 1]), null, null,
             $reportQueryIdentity, $reportQueryHash,
         );
@@ -320,7 +321,7 @@ final class EloquentReportSourceSnapshotStoreTest extends TestCase
             new DateTimeImmutable('2026-07-31T00:00:00+00:00'),
             $this->hash(['source' => $firstAmount]),
             ['portfolio_version' => 3],
-            new DateTimeImmutable('2026-07-31T00:00:00+00:00'), new DateTimeImmutable('2026-07-31T01:00:00+00:00'),
+            new DateTimeImmutable('2026-07-31T00:00:00.123456+00:00'), new DateTimeImmutable('2026-07-31T01:00:00.654321+00:00'),
             ReportSourceSnapshotStatus::WRITING, 2, 1, ReportSourceSnapshotIntegrity::hash($header, $rows, $drillRows), null, null,
             $header->reportQueryIdentity, $header->reportQueryHash,
         );
