@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
@@ -68,6 +69,7 @@ final readonly class BudgetingPortfolioProjectionService
         private CashGapOpeningBalanceService $openingBalances,
         private CashGapForecastService $cashGapForecasts,
         private CfoProjectPortfolioAggregator $portfolioAggregator,
+        private CanonicalReportSourceHashBuilder $identities,
     ) {}
 
     public function persistHealth(
@@ -223,9 +225,29 @@ final readonly class BudgetingPortfolioProjectionService
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query, $code);
 
-        return $code === self::HEALTH_CODE
+        $provisional = $code === self::HEALTH_CODE
             ? $this->materializeHealth($context, $query, $progress)
             : $this->materializeLiquidity($context, $query, $progress);
+        $canonical = $this->identities->build(
+            $query,
+            $provisional,
+            $this->result($context, $provisional, $code),
+        );
+
+        return new ReportSnapshotRef(
+            kind: $provisional->kind,
+            id: $provisional->id,
+            scope: $provisional->scope,
+            definitionHash: $provisional->definitionHash,
+            formulaVersion: $provisional->formulaVersion,
+            sourceHash: $canonical,
+            generatedAt: $provisional->generatedAt,
+            staleAt: $provisional->staleAt,
+            watermarks: $provisional->watermarks,
+            classification: $provisional->classification,
+            seal: $provisional->seal,
+            materializedSourceHash: $provisional->materializedSourceHash,
+        );
     }
 
     public function result(
@@ -239,7 +261,7 @@ final readonly class BudgetingPortfolioProjectionService
             ->where('report_code', $code)
             ->first();
         if (! $record instanceof BudgetingPortfolioSnapshot
-            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->source_hash, $snapshot->materializedSourceHash->value)
             || ! hash_equals((string) $record->definition_hash, $snapshot->definitionHash->value)
             || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
             || ! hash_equals((string) $record->query_hash, (string) ($snapshot->watermarks['query_hash'] ?? ''))) {
