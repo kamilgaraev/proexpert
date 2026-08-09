@@ -39,7 +39,7 @@ final readonly class CustomerSlaReportProvider implements ReportDataProvider
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $progress->advance(10);
-        $provisional = $this->materializer->materialize($context, $query);
+        $provisional = $this->materializer->materialize($context, $query, $progress);
         $progress->advance(100);
         $canonical = $this->identities->build(
             $query,
