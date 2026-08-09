@@ -18,6 +18,7 @@ final class ReportRowMaterializedIdentityContractTest extends TestCase
             'app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Queries/WorkforceAdmissionRowQuery.php',
             'app/BusinessModules/Features/WorkforceManagement/Reporting/Infrastructure/DatabasePayrollReadinessAdapter.php',
             'app/BusinessModules/Features/TimeTracking/Reporting/Infrastructure/DatabaseProjectLaborCostAdapter.php',
+            'app/Support/Reporting/EloquentOwnerReportRows.php',
         ] as $file) {
             $source = file_get_contents(base_path($file));
             self::assertIsString($source, $file);

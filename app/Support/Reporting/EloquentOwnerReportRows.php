@@ -137,7 +137,10 @@ final readonly class EloquentOwnerReportRows
             ->first();
 
         if (! $record instanceof Model
-            || ! hash_equals((string) $record->getAttribute('source_hash'), $snapshot->sourceHash->value)) {
+            || ! hash_equals(
+                (string) $record->getAttribute('source_hash'),
+                $snapshot->materializedSourceHash->value,
+            )) {
             throw new DomainException('Report snapshot is unavailable for the current scope.');
         }
 
