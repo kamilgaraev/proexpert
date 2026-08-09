@@ -14,11 +14,20 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Domain\Authorization\ValueObjects\PermissionSet;
 use DateTimeImmutable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvaluator
 {
+    private ?string $assignmentCacheKey = null;
+
+    /** @var Collection<int, UserRoleAssignment>|null */
+    private ?Collection $assignmentCache = null;
+
+    /** @var array<string, list<string>> */
+    private array $customRolePermissionCache = [];
+
     public function evaluate(
         int $actorId,
         string $permission,
@@ -31,17 +40,7 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
                 return $this->decision($actorId, $permission, $facts, false);
             }
 
-            $assignments = UserRoleAssignment::query()
-                ->with([
-                    'context.parentContext',
-                    'conditions' => static fn ($query) => $query->where('is_active', true),
-                ])
-                ->where('user_id', $actorId)
-                ->where('is_active', true)
-                ->where(static function ($query) use ($facts): void {
-                    $query->whereNull('expires_at')->orWhere('expires_at', '>', $facts->occurredAt);
-                })
-                ->get();
+            $assignments = $this->assignments($actorId, $facts->occurredAt);
 
             foreach ($assignments as $assignment) {
                 try {
@@ -61,6 +60,28 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
         }
 
         return $this->decision($actorId, $permission, $facts, $granted);
+    }
+
+    /** @return Collection<int, UserRoleAssignment> */
+    private function assignments(int $actorId, DateTimeImmutable $occurredAt): Collection
+    {
+        $cacheKey = $actorId.'|'.$occurredAt->format('Y-m-d\TH:i:s.uP');
+        if ($cacheKey !== $this->assignmentCacheKey || ! $this->assignmentCache instanceof Collection) {
+            $this->assignmentCache = UserRoleAssignment::query()
+                ->with([
+                    'context.parentContext',
+                    'conditions' => static fn ($query) => $query->where('is_active', true),
+                ])
+                ->where('user_id', $actorId)
+                ->where('is_active', true)
+                ->where(static function ($query) use ($occurredAt): void {
+                    $query->whereNull('expires_at')->orWhere('expires_at', '>', $occurredAt);
+                })
+                ->get();
+            $this->assignmentCacheKey = $cacheKey;
+        }
+
+        return $this->assignmentCache;
     }
 
     private function contextMatches(UserRoleAssignment $assignment, CurrentReportAuthorizationFacts $facts): bool
@@ -84,13 +105,22 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
     private function roleGrants(UserRoleAssignment $assignment, string $permission, int $organizationId): bool
     {
         if ($assignment->role_type === UserRoleAssignment::TYPE_CUSTOM) {
-            $role = OrganizationCustomRole::query()
-                ->where('organization_id', $organizationId)
-                ->where('slug', $assignment->role_slug)
-                ->where('is_active', true)
-                ->first();
+            $roleKey = $organizationId.'|'.(string) $assignment->role_slug;
+            if (! array_key_exists($roleKey, $this->customRolePermissionCache)) {
+                $role = OrganizationCustomRole::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('slug', $assignment->role_slug)
+                    ->where('is_active', true)
+                    ->first();
+                $this->customRolePermissionCache[$roleKey] = $role instanceof OrganizationCustomRole
+                    ? array_values(array_map(
+                        static fn (mixed $rolePermission): string => (string) $rolePermission,
+                        $role->getAllPermissions(),
+                    ))
+                    : [];
+            }
 
-            return $role instanceof OrganizationCustomRole && in_array($permission, $role->getAllPermissions(), true);
+            return in_array($permission, $this->customRolePermissionCache[$roleKey], true);
         }
 
         if ($assignment->role_type !== UserRoleAssignment::TYPE_SYSTEM) {
