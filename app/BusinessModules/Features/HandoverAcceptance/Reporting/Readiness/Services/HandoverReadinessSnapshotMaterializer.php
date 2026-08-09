@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
@@ -29,9 +30,14 @@ final readonly class HandoverReadinessSnapshotMaterializer
 
     public function __construct(private HandoverReadinessFormula $formula) {}
 
-    public function materialize(ReportExecutionContext $context, ReportQuery $query): ReportSnapshotRef
+    public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef
     {
         $this->assertContext($context, $query);
+        $progress->advance(5);
         $gates = HandoverGateVersion::query()
             ->where('organization_id', $query->scope->organizationId)
             ->where('effective_from', '<=', $query->asOf)
@@ -49,6 +55,7 @@ final readonly class HandoverReadinessSnapshotMaterializer
             ->get()
             ->unique(static fn (HandoverGateVersion $gate): string => $gate->acceptance_scope_id.':'.$gate->gate_code)
             ->values();
+        $progress->advance(20);
 
         $events = HandoverEvidenceEvent::query()
             ->where('organization_id', $query->scope->organizationId)
@@ -57,6 +64,7 @@ final readonly class HandoverReadinessSnapshotMaterializer
             ->orderBy('occurred_at')
             ->orderBy('id')
             ->get();
+        $progress->advance(35);
         $sourceProjection = [
             'as_of' => $query->asOf->format(DATE_ATOM),
             'event_hashes' => $events->pluck('evidence_hash')->all(),
@@ -78,6 +86,7 @@ final readonly class HandoverReadinessSnapshotMaterializer
             $sourceHash,
             $generatedAt,
             $snapshotId,
+            $progress,
         ): void {
             DB::table('organizations')
                 ->where('id', $query->scope->organizationId)
@@ -113,7 +122,8 @@ final readonly class HandoverReadinessSnapshotMaterializer
                 'row_count' => $gates->count(),
             ]);
 
-            foreach ($gates as $gate) {
+            $gateCount = $gates->count();
+            foreach ($gates as $gateIndex => $gate) {
                 $scopeEvents = $events->where('acceptance_scope_id', (int) $gate->acceptance_scope_id);
                 $checklists = [];
                 $evidence = [];
@@ -173,8 +183,11 @@ final readonly class HandoverReadinessSnapshotMaterializer
                     ])->values()->all(),
                     'row_key' => $rowKey,
                 ]);
+                $progress->advanceProportion($gateIndex + 1, $gateCount, 40, 95);
             }
         }, 3);
+
+        $progress->advance(97);
 
         $snapshot = HandoverReadinessSnapshot::query()
             ->where('organization_id', $query->scope->organizationId)

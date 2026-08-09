@@ -20,7 +20,7 @@ final readonly class HandoverReadinessCandidateContract
     public const FORMULA_VERSION = 'handover.v1';
     public const SOURCE_SCHEMA_VERSION = 'handover-readiness.v1';
     public const FORMULA_HASH = '480796625d579f1b2887bc92674efe7dff6e178da9272f34d3da830dca9bb8c5';
-    public const SOURCE_HASH = 'abf160e4af08783cd7f1ad8c08103590efa3334ff84a60a14d66b1f5a781ed21';
+    public const SOURCE_HASH = 'ae87888c76f1f642d28e77969791ecf659851a8bd775a65e859196ae69701c50';
 
     public function filters(): array
     {
