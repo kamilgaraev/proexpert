@@ -69,7 +69,6 @@ final readonly class QualityDefectFlowSnapshotMaterializer
         $events = $this->filterSubjects($events, $query, $periodFrom, $periodTo);
         $projectIds = $events->pluck('project_id')
             ->map(static fn (mixed $id): int => (int) $id)
-            ->merge($context->scope->projectIds)
             ->unique()
             ->sort()
             ->values()
@@ -287,9 +286,8 @@ final readonly class QualityDefectFlowSnapshotMaterializer
 
     private function policies(int $organizationId, array $projectIds, CarbonImmutable $asOf): array
     {
-        $keys = $projectIds === [] ? [0] : $projectIds;
         $policies = [];
-        foreach ($keys as $projectId) {
+        foreach ($projectIds as $projectId) {
             $policy = QualityDefectFlowPolicyVersion::query()
                 ->where('organization_id', $organizationId)
                 ->where('created_at', '<=', $asOf)
