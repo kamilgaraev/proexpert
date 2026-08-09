@@ -9,7 +9,7 @@ use JsonException;
 
 final class CanonicalJson
 {
-    public static function encode(array $value): string
+    public static function encode(mixed $value): string
     {
         try {
             json_encode($value, JSON_THROW_ON_ERROR);
