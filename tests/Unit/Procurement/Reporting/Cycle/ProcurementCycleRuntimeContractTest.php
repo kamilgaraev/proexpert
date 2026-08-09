@@ -41,6 +41,28 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ProcurementCycleRuntimeContractTest extends TestCase
 {
+    public function test_snapshot_request_ignores_canonical_scope_identity_filters(): void
+    {
+        $scope = (new ReportExecutionContextBuilder)->build()->scope;
+
+        $request = new ProcurementCycleSnapshotRequest(
+            $scope,
+            [
+                'organization_id' => (string) $scope->organizationId,
+                'project_id' => (string) $scope->projectIds[0],
+                'period_start' => '2026-07-10',
+                'period_end' => '2026-08-09',
+            ],
+            new DateTimeImmutable('2026-08-09T10:00:00+00:00'),
+            null,
+        );
+
+        self::assertSame([
+            'period_end' => '2026-08-09',
+            'period_start' => '2026-07-10',
+        ], $request->filters);
+    }
+
     public function test_snapshot_request_rejects_project_scope_escape(): void
     {
         $scope = (new ReportExecutionContextBuilder)->build()->scope;

@@ -28,6 +28,7 @@ final readonly class ProcurementCycleSnapshotRequest
         if ($staleAt !== null && $staleAt < $asOf) {
             throw new InvalidArgumentException('procurement_cycle_snapshot_request_invalid');
         }
+        unset($filters['organization_id'], $filters['project_id']);
         foreach (array_keys($filters) as $key) {
             if (! is_string($key) || ! in_array($key, self::FILTERS, true)) {
                 throw new InvalidArgumentException('procurement_cycle_snapshot_filter_invalid');
