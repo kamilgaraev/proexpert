@@ -20,7 +20,7 @@ final readonly class PayrollReadinessCandidateContract
 
     public const FORMULA_HASH = '3ca061e58f58ee1e293c46909e2271f0d46178dccd6abff0eef43421973f988a';
 
-    public const SOURCE_HASH = 'f477fb89a2eb3700be9262046a99ec2f338a78f614a22eb6a43fd00447f02ea0';
+    public const SOURCE_HASH = 'fd800e0239ddda6e235c7eb67acfc69eb3d213a85b33a3fda1fe8fc120fb91f6';
 
     public function filters(): array
     {
