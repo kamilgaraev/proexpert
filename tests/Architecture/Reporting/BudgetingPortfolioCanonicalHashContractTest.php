@@ -25,5 +25,14 @@ final class BudgetingPortfolioCanonicalHashContractTest extends TestCase
             '$snapshot->materializedSourceHash->value',
             $source,
         );
+
+        $querySource = (string) file_get_contents(
+            dirname(__DIR__, 3)
+            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/BudgetingPortfolioQueryService.php',
+        );
+        self::assertStringContainsString(
+            '$snapshot->materializedSourceHash->value',
+            $querySource,
+        );
     }
 }
