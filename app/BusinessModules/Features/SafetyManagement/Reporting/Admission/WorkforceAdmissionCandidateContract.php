@@ -20,7 +20,7 @@ final readonly class WorkforceAdmissionCandidateContract
     public const FORMULA_VERSION = 'workforce_admission_v1';
     public const SOURCE_SCHEMA_VERSION = 'workforce_admission_v1';
     public const FORMULA_HASH = '4df1641fb5a5c69fffbc38b3a7ad11abe2d81869d15f46ce47be44384e43f106';
-    public const SOURCE_HASH = '828cd5cd710c36c73882e62ade60e9e89fd15ad6f244724f503995dd906f8dad';
+    public const SOURCE_HASH = '4e55396c2e0057c7728f8684b10d0294bef0489effab6cda92d1e7ca73edb441';
 
     public function filters(): array
     {
