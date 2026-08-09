@@ -7,8 +7,6 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapOpeningBalanceSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceGap;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceVersion;
@@ -74,10 +72,6 @@ final readonly class PortfolioLiquidityAsOfSource
                 'recorded_at' => $gap->recorded_at?->format(DateTimeInterface::ATOM),
             ])
             ->all();
-        if ($versions->isEmpty()) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
-        }
-
         $calendarItems = [];
         $balances = [];
         foreach ($versions as $version) {
