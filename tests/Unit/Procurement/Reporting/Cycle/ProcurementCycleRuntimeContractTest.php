@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceSnapshotStor
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotCursor;
@@ -106,6 +107,34 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             $materializer->identity($request, $source)->queryHash->value,
             $write->header->queryHash->value,
         );
+    }
+
+    public function test_source_snapshot_reports_progress_while_materializing_rows(): void
+    {
+        $scope = (new ReportExecutionContextBuilder)->build()->scope;
+        $request = new ProcurementCycleSnapshotRequest(
+            $scope,
+            [],
+            new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
+            null,
+        );
+        $reported = [];
+        $progress = new ReportProgress(40, static function (ReportProgress $current) use (&$reported): void {
+            $reported[] = $current->percent();
+        });
+
+        (new ProcurementCycleSourceSnapshotMaterializer)->materialize(
+            '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+            $request,
+            new ProcurementCycleSourceRead([], 1, 1, 0, 0, null, 0, null),
+            [$this->publicResult()],
+            [],
+            null,
+            $progress,
+        );
+
+        self::assertSame(90, $progress->percent());
+        self::assertGreaterThanOrEqual(2, count($reported));
     }
 
     public function test_source_snapshot_identity_changes_with_the_immutable_report_query_identity(): void
@@ -310,7 +339,7 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
     {
         return new class implements ProcurementCycleSourceSnapshotWriter
         {
-            public function persist(ReportQuery $query): ReportSourceSnapshotHeader
+            public function persist(ReportQuery $query, ReportProgress $progress): ReportSourceSnapshotHeader
             {
                 throw new LogicException('not used');
             }

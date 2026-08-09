@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQueryIdentity;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotDrillRow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotHeader;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotIdentity;
@@ -54,16 +55,21 @@ final class ProcurementCycleSourceSnapshotMaterializer
         array $results,
         array $eventsByLine,
         ?ReportQuery $query = null,
+        ?ReportProgress $progress = null,
     ): ReportSourceSnapshotWrite {
+        $progress?->advance(45);
         $identity = $this->identity($request, $source, $query?->identity);
         $rows = [];
         $drillRows = [];
         $resultByLine = [];
+        $resultCount = count($results);
+        $completedResults = 0;
         foreach ($results as $result) {
             if (! $result instanceof ProcurementCycleLineResult) {
                 throw new InvalidArgumentException('procurement_cycle_snapshot_result_invalid');
             }
             $payload = $this->payload($result, $request->filters);
+            $progress?->advanceProportion(++$completedResults, max(1, $resultCount), 45, 60);
             if ($payload === null || ! $this->matches($payload, $request->filters)) {
                 continue;
             }
@@ -82,7 +88,9 @@ final class ProcurementCycleSourceSnapshotMaterializer
                     <=> ('procurement-line:'.$right[0]->purchaseRequestLineId);
         });
 
-        foreach (array_values($resultByLine) as $position => [$result, $payload]) {
+        $materializedRows = array_values($resultByLine);
+        $rowCount = count($materializedRows);
+        foreach ($materializedRows as $position => [$result, $payload]) {
             $row = new ReportSourceSnapshotRow(
                 $snapshotId,
                 $position + 1,
@@ -112,6 +120,7 @@ final class ProcurementCycleSourceSnapshotMaterializer
                     $this->hash($drill),
                 );
             }
+            $progress?->advanceProportion($position + 1, max(1, $rowCount), 60, 85);
         }
 
         $watermarks = $this->watermarks($rows, $source, $request->asOf);
@@ -162,6 +171,8 @@ final class ProcurementCycleSourceSnapshotMaterializer
             $header->reportQueryIdentity,
             $header->reportQueryHash,
         );
+
+        $progress?->advance(90);
 
         return new ReportSourceSnapshotWrite($header, $rows, $drillRows);
     }
