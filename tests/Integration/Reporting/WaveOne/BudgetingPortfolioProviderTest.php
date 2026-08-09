@@ -34,6 +34,24 @@ use Tests\TestCase;
 final class BudgetingPortfolioProviderTest extends TestCase
 {
     #[Test]
+    public function liquidity_as_of_returns_an_empty_versioned_source_for_an_empty_organization(): void
+    {
+        $organizationId = 799999;
+        $result = (new PortfolioLiquidityAsOfSource(new PaymentCalendarSourceService))->read(
+            $organizationId,
+            new PaymentCalendarSourceFilters($organizationId, '2026-08-01', '2026-08-31', currency: 'RUB'),
+            new DateTimeImmutable('2026-08-31T23:59:59+00:00'),
+            new DateTimeImmutable('2026-09-01T00:00:00+00:00'),
+        );
+
+        self::assertSame([], $result['calendar']);
+        self::assertSame([], $result['balances']);
+        self::assertSame([], $result['versions']);
+        self::assertSame([], $result['gaps']);
+        self::assertSame('2026-09-01T00:00:00+00:00', $result['ingestion_watermark']);
+    }
+
+    #[Test]
     public function liquidity_source_version_is_append_only_in_postgres(): void
     {
         if (config('database.default') !== 'pgsql') {
