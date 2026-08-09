@@ -17,6 +17,7 @@ final class ReportProgressWritePolicy
     ): bool {
         return $current->percent() < 100
             && $current->percent() >= $persisted->percent() + 1
-            && $occurredAt >= $persistedAt->modify('+5 seconds');
+            && ($current->percent() >= $persisted->percent() + 5
+                || $occurredAt >= $persistedAt->modify('+5 seconds'));
     }
 }

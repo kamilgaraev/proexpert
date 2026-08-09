@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Domain\DTO;
 
+use Closure;
 use InvalidArgumentException;
 
 final class ReportProgress
 {
     private int $state;
 
-    public function __construct(int $percent)
+    public function __construct(
+        int $percent,
+        private readonly ?Closure $onAdvance = null,
+    )
     {
         self::assertPercent($percent);
 
@@ -35,6 +39,9 @@ final class ReportProgress
         }
 
         $this->state = $percent;
+        if ($this->onAdvance !== null) {
+            ($this->onAdvance)($this);
+        }
 
         return true;
     }
