@@ -17,7 +17,7 @@ final readonly class SupplierAwardCandidateContract
 {
     public const CODE = 'supplier_award_competitiveness';
     public const FORMULA_HASH = '793d196081a3c0773f558a74aee4f845529f20e9a98b574d7a7f1a3adee210a8';
-    public const SOURCE_HASH = '156276ffbc15fb2e35986d8494ec1cc7c53b74aea8aaad9c9387c8a493fcd571';
+    public const SOURCE_HASH = 'b3386fea2911edff0191c2c6a867944d5b95acde0709bb819ab86b6e224d0132';
 
     public function filters(): array
     {
