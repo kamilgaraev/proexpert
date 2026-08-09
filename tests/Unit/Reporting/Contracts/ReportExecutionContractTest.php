@@ -279,6 +279,20 @@ final class ReportExecutionContractTest extends TestCase
     }
 
     #[Test]
+    public function progress_notifies_observer_immediately_after_each_advance(): void
+    {
+        $observed = [];
+        $progress = new ReportProgress(0, static function (ReportProgress $current) use (&$observed): void {
+            $observed[] = $current->percent();
+        });
+
+        $progress->advance(10);
+        $progress->advance(25);
+
+        self::assertSame([10, 25], $observed);
+    }
+
+    #[Test]
     public function window_sort_validates_its_field(): void
     {
         $sort = new ReportWindowSort('created_at', ReportSortDirection::DESC);

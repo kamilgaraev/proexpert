@@ -107,7 +107,41 @@ final class MaterializeReportRunJob implements ShouldQueue
             ]);
 
             $persistedProgress = new ReportProgress($run->progress);
-            $progress = new ReportProgress($run->progress);
+            $persistedAt = $run->updatedAt;
+            $progress = new ReportProgress(
+                $run->progress,
+                function (ReportProgress $current) use (
+                    $clock,
+                    $context,
+                    $leaseToken,
+                    $progressPolicy,
+                    &$persistedAt,
+                    $persistedProgress,
+                    $runs,
+                    $runtime,
+                ): void {
+                    $occurredAt = $clock->now();
+                    if (! $progressPolicy->shouldPersist(
+                        $persistedProgress,
+                        $current,
+                        $persistedAt,
+                        $occurredAt,
+                    )) {
+                        return;
+                    }
+
+                    $runs->persistProgress(
+                        $context,
+                        $this->runId,
+                        $leaseToken,
+                        $current,
+                        $occurredAt->modify("+{$runtime->executionLeaseSeconds} seconds"),
+                        $occurredAt,
+                    );
+                    $persistedProgress->advance($current->percent());
+                    $persistedAt = $occurredAt;
+                },
+            );
             try {
                 $snapshot = $binding->dataProvider->materialize($context, $query, $progress);
             } catch (ReportSnapshotIdentityViolation $exception) {
@@ -115,18 +149,6 @@ final class MaterializeReportRunJob implements ShouldQueue
             } catch (\InvalidArgumentException $exception) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, previous: $exception);
             }
-            $afterMaterialization = $clock->now();
-            if ($progressPolicy->shouldPersist($persistedProgress, $progress, $run->updatedAt, $afterMaterialization)) {
-                $runs->persistProgress(
-                    $context,
-                    $this->runId,
-                    $leaseToken,
-                    $progress,
-                    $afterMaterialization->modify("+{$runtime->executionLeaseSeconds} seconds"),
-                    $afterMaterialization,
-                );
-            }
-
             $result = $binding->dataProvider->result($context, $snapshot);
             $sourceHash = $sourceHashes->build($query, $snapshot, $result);
             if (! hash_equals($snapshot->canonicalReportHash->value, $sourceHash->value)
