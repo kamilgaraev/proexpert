@@ -60,6 +60,21 @@ final class ReportingSourcePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function safety_reports_preserve_documented_source_gaps(): void
+    {
+        foreach ([
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Services/'
+                .'WorkforceAdmissionSnapshotMaterializer.php',
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Services/'
+                .'SafetyIncidentSnapshotMaterializer.php',
+        ] as $file) {
+            $materializer = file_get_contents($file);
+            self::assertIsString($materializer);
+            self::assertStringContainsString('captureWithDocumentedGaps', $materializer);
+        }
+    }
+
+    #[Test]
     public function workforce_evidence_is_temporal_and_snapshot_rows_pin_an_exact_version(): void
     {
         $migration = file_get_contents(

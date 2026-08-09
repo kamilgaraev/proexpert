@@ -48,7 +48,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
     {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
-        $ledgerBinding = CompletedReportSourceLedgerBinding::capture(
+        $ledgerBinding = CompletedReportSourceLedgerBinding::captureWithDocumentedGaps(
             $organizationId,
             [ReportingSourceBackfillJob::WORKFORCE_ADMISSION],
         );
