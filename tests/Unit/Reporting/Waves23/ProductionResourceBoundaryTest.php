@@ -122,6 +122,8 @@ final class ProductionResourceBoundaryTest extends TestCase
             "DB::table('accepted_production_rows')->insert(\$rowBatch)",
             $materializer,
         );
+        self::assertStringContainsString('advanceProportion($rowCount, $eligibleCount, 20, 65)', $materializer);
+        self::assertStringContainsString('advanceProportion($rowIndex, $rowCount, 75, 98)', $materializer);
     }
 
     #[Test]

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
@@ -33,7 +34,11 @@ final readonly class AcceptedProductionSnapshotMaterializer
         $this->universe = $universe ?? new AcceptedProductionEventUniverse;
     }
 
-    public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
+    public function materialize(
+        ReportScope $scope,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): ReportSnapshotRef
     {
         if ($scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
             || $query->definition->snapshotClassification !== ReportSnapshotClassification::OPERATIONAL
@@ -41,6 +46,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
             throw new InvalidArgumentException('accepted_production_materialization_identity_invalid');
         }
 
+        $progress->advance(10);
         $stream = $this->universe->stream($scope, $query);
         if ($stream->gapCount() !== 0) {
             throw new InvalidArgumentException('accepted_production_owner_history_unproven');
@@ -53,23 +59,29 @@ final readonly class AcceptedProductionSnapshotMaterializer
         $stream->updateSourceHash($hashContext);
         hash_update($hashContext, '}');
         $sourceHash = new Sha256Hash(hash_final($hashContext));
+        $progress->advance(20);
         $existing = AcceptedProductionSnapshot::query()
             ->where('organization_id', $scope->organizationId)
             ->where('query_hash', $query->queryHash->value)
             ->where('source_hash', $sourceHash->value)
             ->first();
         if ($existing !== null) {
+            $progress->advance(100);
+
             return $this->reference($scope, $query, $existing);
         }
 
         $rowCount = 0;
         $totalsState = [];
+        $eligibleCount = $stream->eligibleCount();
         foreach ($stream->entries() as $entry) {
+            $progress->advanceProportion($rowCount, $eligibleCount, 20, 65);
             [, $metric] = $this->metric($entry);
             $this->accumulateTotal($totalsState, $metric);
             $rowCount++;
         }
         $totals = $this->finalizeTotals($totalsState);
+        $progress->advance(70);
 
         try {
             return DB::transaction(function () use (
@@ -82,6 +94,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 $rowCount,
                 $totals,
                 $lineageFilter,
+                $progress,
             ): ReportSnapshotRef {
                 $snapshotId = (string) Str::ulid();
                 $sourceRefs = [[
@@ -126,7 +139,8 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 ]);
 
                 $rowBatch = [];
-                foreach ($stream->entries() as $entry) {
+                foreach ($stream->entries() as $rowIndex => $entry) {
+                    $progress->advanceProportion($rowIndex, $rowCount, 75, 98);
                     [$item, $metric] = $this->metric($entry);
                     $event = $item['event'];
                     $recognizedOn = $this->grain->day($event, $scope->timezone);
@@ -218,6 +232,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 if ($rowBatch !== []) {
                     DB::table('accepted_production_rows')->insert($rowBatch);
                 }
+                $progress->advance(99);
 
                 return $this->reference($scope, $query, $snapshot);
             });

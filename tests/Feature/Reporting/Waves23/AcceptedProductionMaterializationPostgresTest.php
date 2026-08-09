@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
@@ -153,7 +154,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         $snapshot = (new AcceptedProductionSnapshotMaterializer(
             new AcceptedProductionFormula,
             new ProductionAcceptanceRecognitionGrain,
-        ))->materialize($scope, $query);
+        ))->materialize($scope, $query, new ReportProgress(0));
 
         $rows = DB::table('accepted_production_rows')
             ->where('organization_id', $organization->id)
