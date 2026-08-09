@@ -201,6 +201,20 @@ final class BudgetingPortfolioSourceTest extends TestCase
     }
 
     #[Test]
+    public function portfolio_liquidity_persists_a_valid_empty_projection(): void
+    {
+        $source = (string) file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/BudgetingPortfolioProjectionService.php',
+        );
+
+        self::assertStringNotContainsString(
+            "if (\$rows === []) {\n            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);",
+            $source,
+        );
+    }
+
+    #[Test]
     public function budgeting_owner_registers_all_non_payment_liquidity_sources_for_versioning(): void
     {
         $provider = (string) file_get_contents(
