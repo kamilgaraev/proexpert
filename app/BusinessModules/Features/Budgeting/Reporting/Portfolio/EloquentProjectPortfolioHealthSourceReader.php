@@ -97,7 +97,7 @@ final readonly class EloquentProjectPortfolioHealthSourceReader implements Proje
                 ->where('formula_version', $contract['formula'])
                 ->where('source_schema_version', $contract['schema'])
                 ->where('quality_status', 'complete')
-                ->where('coverage_numerator', '>', 0)
+                ->where('coverage_numerator', '>=', 0)
                 ->whereColumn('coverage_numerator', 'coverage_denominator')
                 ->whereColumn('coverage_numerator', 'row_count')
                 ->where('generated_at', '<=', $query->asOf)

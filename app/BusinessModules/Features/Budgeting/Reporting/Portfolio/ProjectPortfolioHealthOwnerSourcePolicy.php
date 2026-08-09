@@ -110,7 +110,7 @@ final class ProjectPortfolioHealthOwnerSourcePolicy
             || $staleAt === null || $staleAt <= $asOf
             || $parentGeneratedAt === null || $parentGeneratedAt > $asOf
             || $parentStaleAt === null || $parentStaleAt <= $asOf
-            || $rowCount === null || $rowCount < 1
+            || $rowCount === null
             || $coverageNumerator === null || $coverageNumerator !== $rowCount
             || $coverageDenominator === null || $coverageDenominator !== $rowCount
             || $rowsCount === null || $rowsCount !== $rowCount
@@ -176,6 +176,7 @@ final class ProjectPortfolioHealthOwnerSourcePolicy
         $counterpartyIds = $this->ids($request['counterparty_ids']);
         $rowProjectIds = $this->ids($source['row_project_ids']);
         $rowCurrencies = $this->currencies($source['row_currencies']);
+        $emptySnapshot = $this->nonNegativeInt($source['row_count'] ?? null) === 0;
 
         if ($scopeProjectIds === null || $scopeProjectIds === []
             || $projectIds === null || $projectIds === []
@@ -183,14 +184,14 @@ final class ProjectPortfolioHealthOwnerSourcePolicy
             || $currencies === null
             || $responsibilityCenterIds === null
             || $counterpartyIds === null
-            || $rowProjectIds === null || $rowProjectIds === []
-            || $rowCurrencies === null || $rowCurrencies === []) {
+            || $rowProjectIds === null || (! $emptySnapshot && $rowProjectIds === [])
+            || $rowCurrencies === null || (! $emptySnapshot && $rowCurrencies === [])) {
             return false;
         }
 
         if (array_key_exists('kind', $request)) {
-            return $rowProjectIds === $projectIds
-                && ($currencies === [] || array_diff($currencies, $rowCurrencies) === [])
+            return ($emptySnapshot || $rowProjectIds === $projectIds)
+                && ($emptySnapshot || $currencies === [] || array_diff($currencies, $rowCurrencies) === [])
                 && $this->canonicalQueryFilters($request, $source) !== null;
         }
 
