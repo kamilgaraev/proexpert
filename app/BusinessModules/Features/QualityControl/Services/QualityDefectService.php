@@ -343,6 +343,14 @@ final class QualityDefectService
             'comment' => $comment,
             'changed_by' => $userId,
             'changed_at' => now(),
+            'reporting_dimensions' => [
+                'contractor_id' => $defect->contractor_id === null ? null : (int) $defect->contractor_id,
+                'due_date' => $defect->due_date?->toDateString(),
+                'project_id' => (int) $defect->project_id,
+                'schedule_task_id' => $defect->schedule_task_id === null ? null : (int) $defect->schedule_task_id,
+                'severity' => $defect->severity->value,
+            ],
+            'reporting_evidence_refs' => [],
         ]);
 
         return $history;

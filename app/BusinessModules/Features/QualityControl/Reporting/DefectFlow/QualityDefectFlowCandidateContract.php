@@ -20,7 +20,7 @@ final readonly class QualityDefectFlowCandidateContract
     public const FORMULA_VERSION = 'quality_defect_flow_v1';
     public const SOURCE_SCHEMA_VERSION = 'quality_defect_flow_v1';
     public const FORMULA_HASH = 'acae0365d20840207443202b4e9992034797843ac61e64382823e398edbc3f7a';
-    public const SOURCE_HASH = '8c0972a1b979d4afb341953874051b758051669729d651b90c4ada66fa8d927a';
+    public const SOURCE_HASH = '78393ec39335e7764e8b17ef3b8b929656bc2e248798f368ae90450650240e89';
 
     public function filters(): array
     {

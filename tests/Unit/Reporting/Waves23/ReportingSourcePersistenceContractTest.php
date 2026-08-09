@@ -155,6 +155,31 @@ final class ReportingSourcePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function quality_flow_accepts_only_hashed_documented_source_gaps_and_new_events_pin_dimensions(): void
+    {
+        $materializer = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/'
+            .'QualityDefectFlowSnapshotMaterializer.php',
+        );
+        $binding = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting/Support/CompletedReportSourceLedgerBinding.php',
+        );
+        $writer = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Services/QualityDefectService.php',
+        );
+
+        self::assertIsString($materializer);
+        self::assertIsString($binding);
+        self::assertIsString($writer);
+        self::assertStringContainsString('captureWithDocumentedGaps', $materializer);
+        self::assertStringContainsString("'integrity_mode' => 'documented_gaps'", $binding);
+        self::assertStringContainsString("'gap_count' => \$gapCount", $binding);
+        self::assertStringContainsString("'unknown_owner_keys' => self::nullableJson", $binding);
+        self::assertStringContainsString("'reporting_dimensions' => [", $writer);
+        self::assertStringContainsString("'reporting_evidence_refs' => []", $writer);
+    }
+
+    #[Test]
     public function materializers_dispatch_chunk_jobs_without_full_scan_calls(): void
     {
         foreach ([
