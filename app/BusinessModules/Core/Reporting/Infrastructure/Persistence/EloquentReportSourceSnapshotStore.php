@@ -133,7 +133,7 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStr
     ): ReportSourceSnapshotHeader {
         return DB::transaction(function () use ($snapshot, $identity): ReportSourceSnapshotHeader {
             $header = $snapshot->header;
-            ReportSourceSnapshotRecord::query()->create($this->headerAttributes($header, $identity));
+            $record = ReportSourceSnapshotRecord::query()->create($this->headerAttributes($header, $identity));
             ReportSourceSnapshotRowRecord::query()->insert(array_map(fn (ReportSourceSnapshotRow $row): array => [
                 'snapshot_id' => $row->snapshotId, 'ordinal' => $row->ordinal, 'row_key' => $row->rowKey,
                 'payload' => json_encode($row->payload, JSON_THROW_ON_ERROR), 'payload_hash' => $row->payloadHash->value,
@@ -153,12 +153,9 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStr
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
             }
 
-            return new ReportSourceSnapshotHeader(
-                $header->id, $header->sourceKind, $header->reportCode, $header->schemaVersion, $header->scope,
-                $header->queryHash, $header->asOf, $header->sourceHash, $header->watermarks, $header->generatedAt,
-                $header->staleAt, ReportSourceSnapshotStatus::READY, $header->rowCount, $header->drillRowCount,
-                $header->snapshotHash, $readyAt, null, $header->reportQueryIdentity, $header->reportQueryHash,
-            );
+            $record->refresh();
+
+            return $this->headerFromRecord($record);
         });
     }
 
@@ -304,12 +301,9 @@ final class EloquentReportSourceSnapshotStore implements ReportSourceSnapshotStr
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
             }
 
-            return new ReportSourceSnapshotHeader(
-                $writing->id, $writing->sourceKind, $writing->reportCode, $writing->schemaVersion, $writing->scope,
-                $writing->queryHash, $writing->asOf, $writing->sourceHash, $writing->watermarks, $writing->generatedAt,
-                $writing->staleAt, ReportSourceSnapshotStatus::READY, $writing->rowCount, $writing->drillRowCount,
-                $writing->snapshotHash, $readyAt, null, $writing->reportQueryIdentity, $writing->reportQueryHash,
-            );
+            $record = ReportSourceSnapshotRecord::query()->findOrFail($writing->id);
+
+            return $this->headerFromRecord($record);
         });
     }
 
