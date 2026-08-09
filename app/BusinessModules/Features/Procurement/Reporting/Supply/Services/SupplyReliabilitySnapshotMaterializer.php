@@ -182,6 +182,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                 ...$events->pluck('source_hash')->all(),
             ],
         );
+        $progress->advance(max($progress->percent(), 20));
         $existing = SupplyReliabilitySnapshot::query()
             ->where('organization_id', $organizationId)
             ->where('query_hash', $query->queryHash->value)
@@ -208,7 +209,9 @@ final readonly class SupplyReliabilitySnapshotMaterializer
             $rows = [];
             $metrics = [];
             $gapCount = max(0, $eligibleSentCount - $promises->count());
-            foreach ($promises as $promise) {
+            $promiseCount = $promises->count();
+            foreach ($promises as $promiseIndex => $promise) {
+                $progress->advanceProportion($promiseIndex, $promiseCount, 20, 85);
                 $lineEvents = $eventsByLine->get($promise->purchase_order_item_id, collect());
                 $lineGapCount = 0;
                 if (! $lineEvents->contains('event_type', 'sent')) {
@@ -302,6 +305,7 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                 ];
             }
 
+            $progress->advance(85);
             $summary = $this->formula->summarize($metrics);
             $generatedAt = new DateTimeImmutable;
             $totals = [
@@ -337,7 +341,9 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                 'reconciliation_status' => 'not_applicable',
                 'totals' => $totals,
             ]);
-            foreach ($rows as $row) {
+            $rowCount = count($rows);
+            foreach ($rows as $rowIndex => $row) {
+                $progress->advanceProportion($rowIndex, $rowCount, 90, 99);
                 $row['snapshot_id'] = $snapshot->getKey();
                 SupplyReliabilityRow::query()->create($row);
             }

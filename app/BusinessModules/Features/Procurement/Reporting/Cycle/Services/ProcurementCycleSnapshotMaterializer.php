@@ -193,6 +193,7 @@ final readonly class ProcurementCycleSnapshotMaterializer
                 ...$supplyEvents->pluck('source_hash')->all(),
             ],
         );
+        $progress->advance(max($progress->percent(), 20));
         $existing = ProcurementCycleSnapshot::query()
             ->where('organization_id', $organizationId)
             ->where('query_hash', $query->queryHash->value)
@@ -209,7 +210,12 @@ final readonly class ProcurementCycleSnapshotMaterializer
             $slaNumerator = 0;
             $slaDenominator = 0;
             $gapCount = 0;
-            foreach ($events->groupBy('purchase_request_line_id') as $lineEvents) {
+            $eventGroups = $events->groupBy('purchase_request_line_id');
+            $eventGroupCount = $eventGroups->count();
+            $processedEventGroups = 0;
+            foreach ($eventGroups as $lineEvents) {
+                $progress->advanceProportion($processedEventGroups, $eventGroupCount, 20, 80);
+                $processedEventGroups++;
                 $first = $lineEvents->first();
                 $last = $lineEvents->last();
                 if (! $first instanceof ProcurementProcessEvent || ! $last instanceof ProcurementProcessEvent) {
@@ -277,6 +283,7 @@ final readonly class ProcurementCycleSnapshotMaterializer
                 ];
             }
 
+            $progress->advance(80);
             $generatedAt = new DateTimeImmutable;
             $startCohorts = [];
             $outcomeCohorts = [];
@@ -342,7 +349,9 @@ final readonly class ProcurementCycleSnapshotMaterializer
                 'reconciliation_status' => 'not_applicable',
                 'totals' => $totals,
             ]);
-            foreach ($rows as $row) {
+            $rowCount = count($rows);
+            foreach ($rows as $rowIndex => $row) {
+                $progress->advanceProportion($rowIndex, $rowCount, 90, 99);
                 $row['snapshot_id'] = $snapshot->getKey();
                 ProcurementCycleRow::query()->create($row);
             }

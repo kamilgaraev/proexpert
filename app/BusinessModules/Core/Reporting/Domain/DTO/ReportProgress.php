@@ -46,6 +46,26 @@ final class ReportProgress
         return true;
     }
 
+    public function advanceProportion(
+        int $completed,
+        int $total,
+        int $startPercent = 10,
+        int $endPercent = 90,
+    ): bool {
+        self::assertPercent($startPercent);
+        self::assertPercent($endPercent);
+        if ($total < 1 || $completed < 0 || $completed > $total || $startPercent > $endPercent) {
+            throw new InvalidArgumentException('report_progress_proportion_invalid');
+        }
+
+        $percent = $startPercent + intdiv(
+            ($endPercent - $startPercent) * $completed,
+            $total,
+        );
+
+        return $this->advance(max($this->state, $percent));
+    }
+
     private static function assertPercent(int $percent): void
     {
         if ($percent < 0 || $percent > 100) {

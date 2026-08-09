@@ -185,6 +185,7 @@ final readonly class InventoryRiskSnapshotMaterializer
                 ...$policies->pluck('source_hash')->all(),
             ],
         );
+        $progress->advance(max($progress->percent(), 45));
         $existing = InventoryRiskSnapshot::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('query_hash', $query->queryHash->value)
@@ -211,7 +212,9 @@ final readonly class InventoryRiskSnapshotMaterializer
             $gapCount = 0;
             $valueByCurrency = [];
             $riskStatusCounts = ['healthy' => 0, 'reorder' => 0, 'excess' => 0];
-            foreach ($balanceRows as $balance) {
+            $balanceCount = $balanceRows->count();
+            foreach ($balanceRows as $balanceIndex => $balance) {
+                $progress->advanceProportion($balanceIndex, $balanceCount, 45, 85);
                 $warnings = is_array($balance->quality_warnings) ? $balance->quality_warnings : [];
                 $demand = $this->demandFor($balance, $demands);
                 $policy = $this->policyFor($balance, $policies);
@@ -293,6 +296,7 @@ final readonly class InventoryRiskSnapshotMaterializer
                 ];
             }
 
+            $progress->advance(85);
             ksort($valueByCurrency, SORT_STRING);
             $generatedAt = new DateTimeImmutable;
             $freshnessTtl = $policies
@@ -322,7 +326,9 @@ final readonly class InventoryRiskSnapshotMaterializer
                     'value_by_currency' => $valueByCurrency,
                 ],
             ]);
-            foreach ($rows as $row) {
+            $rowCount = count($rows);
+            foreach ($rows as $rowIndex => $row) {
+                $progress->advanceProportion($rowIndex, $rowCount, 90, 99);
                 $row['snapshot_id'] = $snapshot->getKey();
                 InventoryRiskRow::query()->create($row);
             }
