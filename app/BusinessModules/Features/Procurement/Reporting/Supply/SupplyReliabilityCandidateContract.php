@@ -20,7 +20,7 @@ final readonly class SupplyReliabilityCandidateContract
 
     public const FORMULA_HASH = '608c0c2370ced80a02fe7f67337178b59a62a544038727eff3778678b42e6bac';
 
-    public const SOURCE_HASH = '9b643e9ca162fb1fff2cfdfd02ecbca9aa8359d59bbcd5d5d074721035b76a07';
+    public const SOURCE_HASH = '2812b246ef68d0778d3d1bfe86a348849ed6b096aeae2547d2cbebd9ea0b723d';
 
     public function filters(): array
     {
