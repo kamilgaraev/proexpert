@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Providers;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
@@ -36,6 +37,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
         private QualityDefectFlowSnapshotMaterializer $materializer,
         private ReportSnapshotSealStore $seals,
         private ReportSnapshotSealBackfill $sealBackfill,
+        private CanonicalReportSourceHashBuilder $identities,
     ) {}
 
     public function materialize(
@@ -49,7 +51,23 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
             $this->sealBackfill->ensureCovered('quality_defect_flow');
         }
 
-        return $this->reference($context, $snapshot, $query->definition->snapshotClassification);
+        $provisional = $this->reference($context, $snapshot, $query->definition->snapshotClassification);
+        $canonical = $this->identities->build($query, $provisional, $this->result($context, $provisional));
+
+        return new ReportSnapshotRef(
+            kind: $provisional->kind,
+            id: $provisional->id,
+            scope: $provisional->scope,
+            definitionHash: $provisional->definitionHash,
+            formulaVersion: $provisional->formulaVersion,
+            sourceHash: $canonical,
+            generatedAt: $provisional->generatedAt,
+            staleAt: $provisional->staleAt,
+            watermarks: $provisional->watermarks,
+            classification: $provisional->classification,
+            seal: $provisional->seal,
+            materializedSourceHash: $provisional->materializedSourceHash,
+        );
     }
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
@@ -123,7 +141,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
         $record = QualityDefectFlowSnapshot::query()
             ->whereKey($reference->id)
             ->where('organization_id', $context->scope->organizationId)
-            ->where('source_hash', $reference->sourceHash->value)
+            ->where('source_hash', $reference->materializedSourceHash->value)
             ->where('definition_hash', $reference->definitionHash->value)
             ->first();
         if (! $record instanceof QualityDefectFlowSnapshot) {
