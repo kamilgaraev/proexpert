@@ -79,6 +79,15 @@ final class ReportValueObjectContractTest extends TestCase
     }
 
     #[Test]
+    public function canonical_json_encodes_scalar_values_used_in_streamed_documents(): void
+    {
+        self::assertSame('"2026-08-09T00:00:00+00:00"', CanonicalJson::encode('2026-08-09T00:00:00+00:00'));
+        self::assertSame('null', CanonicalJson::encode(null));
+        self::assertSame('true', CanonicalJson::encode(true));
+        self::assertSame('1.0', CanonicalJson::encode(1.0));
+    }
+
+    #[Test]
     public function canonical_json_rejects_unsupported_values(): void
     {
         $resource = fopen('php://memory', 'rb');
