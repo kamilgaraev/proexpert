@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Providers;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
@@ -36,6 +37,7 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
         private WorkforceAdmissionSnapshotMaterializer $materializer,
         private ReportSnapshotSealStore $seals,
         private ReportSnapshotSealBackfill $sealBackfill,
+        private CanonicalReportSourceHashBuilder $identities,
     ) {}
 
     public function materialize(
@@ -49,7 +51,7 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
             $this->sealBackfill->ensureCovered('workforce_admission');
         }
 
-        return new ReportSnapshotRef(
+        $provisional = new ReportSnapshotRef(
             kind: 'workforce_admission',
             id: (string) $record->id,
             scope: $context->scope,
@@ -63,6 +65,22 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
             seal: $query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL
                 ? $this->seals->get('workforce_admission', (string) $record->id)
                 : null,
+        );
+        $canonical = $this->identities->build($query, $provisional, $this->result($context, $provisional));
+
+        return new ReportSnapshotRef(
+            kind: $provisional->kind,
+            id: $provisional->id,
+            scope: $provisional->scope,
+            definitionHash: $provisional->definitionHash,
+            formulaVersion: $provisional->formulaVersion,
+            sourceHash: $canonical,
+            generatedAt: $provisional->generatedAt,
+            staleAt: $provisional->staleAt,
+            watermarks: $provisional->watermarks,
+            classification: $provisional->classification,
+            seal: $provisional->seal,
+            materializedSourceHash: $provisional->materializedSourceHash,
         );
     }
 
@@ -128,7 +146,7 @@ final readonly class WorkforceAdmissionReportProvider implements ReportDataProvi
         $record = SafetyAdmissionSnapshot::query()
             ->whereKey($snapshot->id)
             ->where('organization_id', $context->scope->organizationId)
-            ->where('source_hash', $snapshot->sourceHash->value)
+            ->where('source_hash', $snapshot->materializedSourceHash->value)
             ->where('definition_hash', $snapshot->definitionHash->value)
             ->first();
         if (! $record instanceof SafetyAdmissionSnapshot) {
