@@ -706,10 +706,6 @@ final readonly class BudgetingPortfolioProjectionService
                 }
             }
         }
-        if ($rows === []) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
-        }
-
         $sourceEvidence = self::liquiditySourceEvidence($sourcePayload, $gaps);
         $sourcePayload = $sourceEvidence['payload'];
         $sourceHash = new Sha256Hash($sourceEvidence['hash']);
