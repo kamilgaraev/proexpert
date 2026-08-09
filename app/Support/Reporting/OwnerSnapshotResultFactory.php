@@ -99,7 +99,7 @@ final readonly class OwnerSnapshotResultFactory
             self::schemaVersionIdentifier($sourceSchemaVersion),
             self::watermarkIdentifier($watermark),
             $rowCount,
-            $snapshot->sourceHash,
+            $snapshot->materializedSourceHash ?? $snapshot->sourceHash,
         );
 
         return new ReportResult(
