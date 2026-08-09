@@ -20,7 +20,7 @@ final readonly class SafetyIncidentActionsCandidateContract
     public const FORMULA_VERSION = 'safety_incident_actions_v1';
     public const SOURCE_SCHEMA_VERSION = 'safety_incident_actions_v1';
     public const FORMULA_HASH = 'f0e98a08eb88ece897c5e552142134cf8b3247fcd8e19a873760b7fad399c790';
-    public const SOURCE_HASH = 'd52fda6ba9b3fccfad9f57a9a427a6bb2dd9fec45ef4767c1ceffb832b59a349';
+    public const SOURCE_HASH = '7a030f41819abe4b2624b42a609f71642ba54a929f9a0cfd7446f971273b2c5e';
 
     public function filters(): array
     {
