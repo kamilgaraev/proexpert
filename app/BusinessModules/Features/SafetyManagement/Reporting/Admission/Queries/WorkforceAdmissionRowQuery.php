@@ -114,7 +114,7 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
         $record = SafetyAdmissionSnapshot::query()
             ->whereKey($snapshot->id)
             ->where('organization_id', $context->scope->organizationId)
-            ->where('source_hash', $snapshot->sourceHash->value)
+            ->where('source_hash', $snapshot->materializedSourceHash->value)
             ->where('definition_hash', $snapshot->definitionHash->value)
             ->where('formula_version', $snapshot->formulaVersion)
             ->first();

@@ -1067,7 +1067,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             ->where('organization_id', $context->scope->organizationId)
             ->where('id', $snapshot->id)
             ->where('report_code', 'payroll_readiness')
-            ->where('source_hash', $snapshot->sourceHash->value)
+            ->where('source_hash', $snapshot->materializedSourceHash->value)
             ->first();
         if ($record === null || $snapshot->scope->organizationId !== $context->scope->organizationId) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
