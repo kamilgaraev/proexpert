@@ -44,7 +44,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_INCIDENTS);
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_EXPOSURE);
-        $ledgerBinding = CompletedReportSourceLedgerBinding::capture(
+        $ledgerBinding = CompletedReportSourceLedgerBinding::captureWithDocumentedGaps(
             $organizationId,
             [
                 ReportingSourceBackfillJob::SAFETY_INCIDENTS,
