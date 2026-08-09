@@ -82,7 +82,6 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $events = $this->filterSubjects($events, $query, $periodFrom, $periodTo);
         $projectIds = $events->pluck('project_id')
             ->map(static fn (mixed $id): int => (int) $id)
-            ->merge($context->scope->projectIds)
             ->unique()
             ->sort()
             ->values()
@@ -129,22 +128,29 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $analysis['gaps'] += $missingExposureDays;
         $analysis['unknowns'] += $missingExposureDays;
         $multipliers = collect($policies)->pluck('frequency_multiplier')->map(static fn (mixed $value): int => (int) $value)->unique();
-        if ($multipliers->count() !== 1) {
+        $emptyPolicyIndependent = $policies === [] && $analysis['rows'] === [];
+        if (! $emptyPolicyIndependent && $multipliers->count() !== 1) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
         }
-        $qualifying = count(array_filter(
-            $analysis['rows'],
-            static function (array $row) use ($policies): bool {
-                $policy = $policies[$row['project_id']] ?? null;
+        $qualifying = $emptyPolicyIndependent
+            ? 0
+            : count(array_filter(
+                $analysis['rows'],
+                static function (array $row) use ($policies): bool {
+                    $policy = $policies[$row['project_id']] ?? null;
 
-                return $policy instanceof SafetyIncidentPolicyVersion
-                    && $row['subject_type'] === 'incident'
-                    && $row['created_flag']
-                    && in_array($row['category'], $policy->qualifying_incident_types, true);
-            },
-        ));
+                    return $policy instanceof SafetyIncidentPolicyVersion
+                        && $row['subject_type'] === 'incident'
+                        && $row['created_flag']
+                        && in_array($row['category'], $policy->qualifying_incident_types, true);
+                },
+            ));
         $frequency = $coverage['complete']
-            ? $this->formula->frequency($qualifying, $coverage['hours'], (int) $multipliers->first())
+            ? $this->formula->frequency(
+                $qualifying,
+                $coverage['hours'],
+                $emptyPolicyIndependent ? 1 : (int) $multipliers->first(),
+            )
             : null;
         $analysis['exposure'] = $coverage;
         $analysis['incident_frequency'] = $frequency;
@@ -365,9 +371,8 @@ final readonly class SafetyIncidentSnapshotMaterializer
 
     private function policies(int $organizationId, array $projectIds, CarbonImmutable $asOf): array
     {
-        $keys = $projectIds === [] ? [0] : $projectIds;
         $policies = [];
-        foreach ($keys as $projectId) {
+        foreach ($projectIds as $projectId) {
             $policy = SafetyIncidentPolicyVersion::query()
                 ->where('organization_id', $organizationId)
                 ->where('created_at', '<=', $asOf)

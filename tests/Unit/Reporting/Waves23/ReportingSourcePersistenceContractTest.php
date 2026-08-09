@@ -180,6 +180,27 @@ final class ReportingSourcePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function empty_fact_sets_do_not_require_unused_project_policies(): void
+    {
+        $quality = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Services/'
+            .'QualityDefectFlowSnapshotMaterializer.php',
+        );
+        $safety = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Services/'
+            .'SafetyIncidentSnapshotMaterializer.php',
+        );
+
+        self::assertIsString($quality);
+        self::assertIsString($safety);
+        self::assertStringNotContainsString('->merge($context->scope->projectIds)', $quality);
+        self::assertStringNotContainsString('->merge($context->scope->projectIds)', $safety);
+        self::assertStringNotContainsString('$projectIds === [] ? [0]', $quality);
+        self::assertStringNotContainsString('$projectIds === [] ? [0]', $safety);
+        self::assertStringContainsString('$emptyPolicyIndependent = $policies === []', $safety);
+    }
+
+    #[Test]
     public function materializers_dispatch_chunk_jobs_without_full_scan_calls(): void
     {
         foreach ([
