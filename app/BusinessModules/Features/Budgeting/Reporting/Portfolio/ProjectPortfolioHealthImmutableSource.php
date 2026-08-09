@@ -92,13 +92,17 @@ final readonly class ProjectPortfolioHealthImmutableSource
             $expectedAsOf = (new DateTimeImmutable($component->asOf))->getTimestamp();
             $version = trim((string) $snapshot->formula_version)
                 .'|'.trim((string) $snapshot->source_schema_version);
-            if ($asOf !== $expectedAsOf
-                || $version !== $component->version
-                || (string) $snapshot->quality_status !== 'complete'
-                || (int) $snapshot->row_count !== $rows->count()
-                || (int) $snapshot->coverage_numerator !== $rows->count()
-                || (int) $snapshot->coverage_denominator !== $rows->count()
-                || $rows->isEmpty()) {
+            if (! (new ProjectPortfolioHealthSnapshotEvidence)->isComplete(
+                actualAsOf: $asOf,
+                expectedAsOf: $expectedAsOf,
+                actualVersion: $version,
+                expectedVersion: $component->version,
+                qualityStatus: (string) $snapshot->quality_status,
+                declaredRowCount: (int) $snapshot->row_count,
+                coverageNumerator: (int) $snapshot->coverage_numerator,
+                coverageDenominator: (int) $snapshot->coverage_denominator,
+                actualRowCount: $rows->count(),
+            )) {
                 $this->unavailable();
             }
             $rowsByKind[$component->kind] = $rows
