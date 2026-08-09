@@ -19,7 +19,7 @@ final readonly class InventoryRiskCandidateContract
 {
     public const CODE = 'inventory_risk';
     public const FORMULA_HASH = '38ab50fe5b126ce090eb54f73fd230136c4bae9623c04eb60710680786a4fcd3';
-    public const SOURCE_HASH = '103febb9a32f643e26ce3e2e87c8512467f140cc754e46b8c6f97fedb6590233';
+    public const SOURCE_HASH = '7be6a337ff9fc3a1328ebebc3b6222b5b36aef6190ea8d8a604484a4d84d5260';
 
     public function filters(): array
     {
