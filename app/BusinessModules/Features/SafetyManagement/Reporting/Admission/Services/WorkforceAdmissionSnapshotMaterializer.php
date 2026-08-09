@@ -27,6 +27,7 @@ use App\Jobs\ReportingSourceBackfillJob;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -784,7 +785,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         return true;
     }
 
-    private function applyFilter(Builder $builder, string $column, mixed $value): void
+    private function applyFilter(Builder|QueryBuilder $builder, string $column, mixed $value): void
     {
         $values = $this->filterValues($value);
         if ($values !== []) {

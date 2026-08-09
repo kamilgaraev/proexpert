@@ -26,6 +26,7 @@ use App\Jobs\ReportingSourceBackfillJob;
 use App\Jobs\SafetyExposureZeroFillJob;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -845,7 +846,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         }
     }
 
-    private function applyFilter(Builder $builder, string $column, mixed $value): void
+    private function applyFilter(Builder|QueryBuilder $builder, string $column, mixed $value): void
     {
         $values = $this->filterValues($value);
         if ($values !== []) {
