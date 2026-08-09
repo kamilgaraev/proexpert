@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Customer\Reporting\Sla\Providers;
 
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -18,6 +19,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Services\Customer\Reporting\Sla\Models\CustomerSlaRow;
 use App\Services\Customer\Reporting\Sla\Models\CustomerSlaSnapshot;
 use App\Services\Customer\Reporting\Sla\Services\CustomerSlaSnapshotMaterializer;
@@ -26,9 +28,10 @@ use InvalidArgumentException;
 
 final readonly class CustomerSlaReportProvider implements ReportDataProvider
 {
-    public function __construct(private CustomerSlaSnapshotMaterializer $materializer)
-    {
-    }
+    public function __construct(
+        private CustomerSlaSnapshotMaterializer $materializer,
+        private CanonicalReportSourceHashBuilder $identities,
+    ) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -36,10 +39,28 @@ final readonly class CustomerSlaReportProvider implements ReportDataProvider
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $progress->advance(10);
-        $snapshot = $this->materializer->materialize($context, $query);
+        $provisional = $this->materializer->materialize($context, $query);
         $progress->advance(100);
+        $canonical = $this->identities->build(
+            $query,
+            $provisional,
+            $this->result($context, $provisional),
+        );
 
-        return $snapshot;
+        return new ReportSnapshotRef(
+            kind: $provisional->kind,
+            id: $provisional->id,
+            scope: $provisional->scope,
+            definitionHash: $provisional->definitionHash,
+            formulaVersion: $provisional->formulaVersion,
+            sourceHash: $canonical,
+            generatedAt: $provisional->generatedAt,
+            staleAt: $provisional->staleAt,
+            watermarks: $provisional->watermarks,
+            classification: $provisional->classification,
+            seal: $provisional->seal,
+            materializedSourceHash: $provisional->materializedSourceHash,
+        );
     }
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
@@ -113,7 +134,7 @@ final readonly class CustomerSlaReportProvider implements ReportDataProvider
                     'customer_sla_v1',
                     'event_'.(string) ($record->watermarks['last_event_id'] ?? 0),
                     $rowCount,
-                    $snapshot->sourceHash,
+                    new Sha256Hash((string) $record->source_hash),
                 )],
                 $snapshot->sourceHash,
                 null,
