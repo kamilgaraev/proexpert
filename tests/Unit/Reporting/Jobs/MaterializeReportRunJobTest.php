@@ -41,6 +41,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\MaterializeReportRunJ
 use DateTimeImmutable;
 use Illuminate\Contracts\Queue\Job;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
@@ -51,6 +52,37 @@ use Tests\Support\Reporting\ReportRunBuilder;
 
 final class MaterializeReportRunJobTest extends TestCase
 {
+    #[Test]
+    public function canonicalization_preserves_materialized_snapshot_identity(): void
+    {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $definition = (new ReportDefinitionBuilder)->payload();
+        $materializedHash = new Sha256Hash(str_repeat('c', 64));
+        $canonicalHash = new Sha256Hash(str_repeat('d', 64));
+        $provisional = new ReportSnapshotRef(
+            'sales_snapshot',
+            'snapshot_1',
+            $context->scope,
+            $definition->definitionHash,
+            $definition->formulaVersion,
+            $materializedHash,
+            new DateTimeImmutable('2026-07-26T09:00:00Z'),
+            null,
+            ['source' => 'watermark_1'],
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+        );
+        $method = new ReflectionMethod(MaterializeReportRunJob::class, 'withCanonicalSourceHash');
+
+        $snapshot = $method->invoke(new MaterializeReportRunJob('01ARZ3NDEKTSV4RRFFQ69G5FAV'), $provisional, $canonicalHash);
+
+        self::assertInstanceOf(ReportSnapshotRef::class, $snapshot);
+        self::assertSame($canonicalHash->value, $snapshot->canonicalReportHash->value);
+        self::assertSame($materializedHash->value, $snapshot->materializedSourceHash->value);
+        self::assertSame($provisional->id, $snapshot->id);
+        self::assertSame($provisional->scope, $snapshot->scope);
+    }
+
     public function test_job_payload_and_retry_runtime_are_closed(): void
     {
         $job = new MaterializeReportRunJob('01J00000000000000000000000');
