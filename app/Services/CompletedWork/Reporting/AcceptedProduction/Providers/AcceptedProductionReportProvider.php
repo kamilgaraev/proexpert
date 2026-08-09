@@ -32,8 +32,8 @@ final readonly class AcceptedProductionReportProvider implements ReportDataProvi
         ReportQuery $query,
         ReportProgress $progress,
     ): ReportSnapshotRef {
-        $progress->advance(10);
-        $snapshot = $this->snapshots->materialize($context->scope, $query);
+        $progress->advance(5);
+        $snapshot = $this->snapshots->materialize($context->scope, $query, $progress);
         $progress->advance(100);
 
         return $snapshot;
