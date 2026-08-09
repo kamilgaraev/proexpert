@@ -258,7 +258,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
             ->whereKey($snapshot->id)
             ->first();
         if (! $record instanceof BudgetingPortfolioSnapshot
-            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->source_hash, $snapshot->materializedSourceHash->value)
             || ! hash_equals((string) $record->definition_hash, $snapshot->definitionHash->value)
             || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
             || ! hash_equals((string) $record->query_hash, (string) ($snapshot->watermarks['query_hash'] ?? ''))) {
