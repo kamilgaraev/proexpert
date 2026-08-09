@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -33,8 +34,13 @@ final readonly class CustomerSlaSnapshotMaterializer
 
     public function __construct(private CustomerSlaFormula $formula) {}
 
-    public function materialize(ReportExecutionContext $context, ReportQuery $query): ReportSnapshotRef
+    public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ?ReportProgress $progress = null,
+    ): ReportSnapshotRef
     {
+        $progress?->advance(15);
         if (
             $query->definition->code !== 'customer_sla'
             || $context->scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
@@ -65,6 +71,7 @@ final readonly class CustomerSlaSnapshotMaterializer
             ->orderBy('effective_from')
             ->orderBy('id')
             ->get();
+        $progress?->advance(35);
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'as_of' => $query->asOf->format(DATE_ATOM),
             'filters' => $normalizedFilters,
@@ -96,6 +103,7 @@ final readonly class CustomerSlaSnapshotMaterializer
         if ($groups->isNotEmpty() && $policies->isEmpty()) {
             throw new InvalidArgumentException('customer_sla_policy_unavailable');
         }
+        $progress?->advance(50);
 
         DB::transaction(function () use (
             $query,
@@ -106,6 +114,7 @@ final readonly class CustomerSlaSnapshotMaterializer
             $snapshotId,
             $groups,
             $normalizedFilters,
+            $progress,
         ): void {
             DB::table('organizations')
                 ->where('id', $query->scope->organizationId)
@@ -141,6 +150,8 @@ final readonly class CustomerSlaSnapshotMaterializer
                 'row_count' => $groups->count(),
             ]);
 
+            $processed = 0;
+            $groupCount = $groups->count();
             foreach ($groups as $workflowEvents) {
                 $first = $workflowEvents->first();
                 if (! $first instanceof CustomerWorkflowEvent) {
@@ -198,8 +209,10 @@ final readonly class CustomerSlaSnapshotMaterializer
                     ])->all(),
                     'row_key' => $rowKey,
                 ]);
+                $progress?->advanceProportion(++$processed, $groupCount, 55, 90);
             }
         }, 3);
+        $progress?->advance(95);
 
         $snapshot = CustomerSlaSnapshot::query()
             ->where('organization_id', $query->scope->organizationId)
