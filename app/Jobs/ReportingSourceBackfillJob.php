@@ -33,7 +33,10 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
     public function __construct(
         public readonly int $organizationId,
         public readonly string $sourceCode,
-    ) {}
+    ) {
+        $this->onConnection('redis_reports');
+        $this->onQueue('reports');
+    }
 
     public function uniqueId(): string
     {
