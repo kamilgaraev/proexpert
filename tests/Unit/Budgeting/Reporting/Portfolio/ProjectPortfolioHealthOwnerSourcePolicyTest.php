@@ -134,6 +134,27 @@ final class ProjectPortfolioHealthOwnerSourcePolicyTest extends TestCase
     }
 
     #[Test]
+    public function it_accepts_a_complete_owner_snapshot_without_rows(): void
+    {
+        $source = [
+            ...$this->snapshotSource(),
+            'row_count' => 0,
+            'coverage_numerator' => 0,
+            'coverage_denominator' => 0,
+            'rows_count' => 0,
+            'row_organization_ids' => [],
+            'row_report_codes' => [],
+            'row_project_ids' => [],
+            'row_currencies' => [],
+        ];
+
+        self::assertTrue((new ProjectPortfolioHealthOwnerSourcePolicy)->accepts(
+            $this->snapshotRequest(),
+            $source,
+        ));
+    }
+
+    #[Test]
     public function it_accepts_a_selected_project_subset_and_multi_currency_coverage(): void
     {
         $policy = new ProjectPortfolioHealthOwnerSourcePolicy;
