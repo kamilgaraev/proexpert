@@ -20,7 +20,7 @@ final readonly class ContractorScorecardCandidateContract
     public const FORMULA_VERSION = 'contractor-scorecard.v1';
     public const SOURCE_SCHEMA_VERSION = 'contractor-scorecard.v1';
     public const FORMULA_HASH = 'a965552184893020d8da3da25875a0f6fe1ee7af6c8d5c373dd062b16a6d9d18';
-    public const SOURCE_HASH = '8d47d0329ae257a7a5979ee3db0c5b3f04a1143ff77612966b742676fd5ab21a';
+    public const SOURCE_HASH = 'bb41178d0672cd6b71a5660dc734a7f848edbecd24a85ae24eaaf2bf51f68e3a';
 
     public function filters(): array
     {
