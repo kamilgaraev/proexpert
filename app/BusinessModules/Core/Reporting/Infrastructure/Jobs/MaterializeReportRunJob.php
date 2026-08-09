@@ -18,9 +18,11 @@ use App\BusinessModules\Core\Reporting\Application\Execution\ReportProgressWrite
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotIdentityViolationReason;
 use App\BusinessModules\Core\Reporting\Domain\Exceptions\ReportSnapshotIdentityViolation;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -151,6 +153,11 @@ final class MaterializeReportRunJob implements ShouldQueue
             }
             $result = $binding->dataProvider->result($context, $snapshot);
             $sourceHash = $sourceHashes->build($query, $snapshot, $result);
+            if (! hash_equals($snapshot->canonicalReportHash->value, $sourceHash->value)) {
+                $snapshot = $this->withCanonicalSourceHash($snapshot, $sourceHash);
+                $result = $binding->dataProvider->result($context, $snapshot);
+                $sourceHash = $sourceHashes->build($query, $snapshot, $result);
+            }
             if (! hash_equals($snapshot->canonicalReportHash->value, $sourceHash->value)
                 || ! hash_equals($result->provenance->sourceHash->value, $sourceHash->value)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
@@ -236,6 +243,26 @@ final class MaterializeReportRunJob implements ShouldQueue
             ]);
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, previous: $exception);
         }
+    }
+
+    private function withCanonicalSourceHash(
+        ReportSnapshotRef $snapshot,
+        Sha256Hash $sourceHash,
+    ): ReportSnapshotRef {
+        return new ReportSnapshotRef(
+            kind: $snapshot->kind,
+            id: $snapshot->id,
+            scope: $snapshot->scope,
+            definitionHash: $snapshot->definitionHash,
+            formulaVersion: $snapshot->formulaVersion,
+            sourceHash: $sourceHash,
+            generatedAt: $snapshot->generatedAt,
+            staleAt: $snapshot->staleAt,
+            watermarks: $snapshot->watermarks,
+            classification: $snapshot->classification,
+            seal: $snapshot->seal,
+            materializedSourceHash: $snapshot->materializedSourceHash,
+        );
     }
 
     private function envelopeUuid(): string
