@@ -28,6 +28,7 @@ final class InventoryRiskSnapshot extends Model
             'row_count' => 'integer',
             'gap_count' => 'integer',
             'totals' => 'array',
+            'as_of' => 'immutable_datetime',
             'generated_at' => 'immutable_datetime',
             'stale_at' => 'immutable_datetime',
         ];

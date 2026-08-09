@@ -31,6 +31,7 @@ final class SupplyReliabilitySnapshot extends Model
             'otif_numerator' => 'integer',
             'gap_count' => 'integer',
             'totals' => 'array',
+            'as_of' => 'immutable_datetime',
             'generated_at' => 'immutable_datetime',
             'stale_at' => 'immutable_datetime',
         ];

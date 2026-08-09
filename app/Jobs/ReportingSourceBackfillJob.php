@@ -60,6 +60,29 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
                 ->first();
             [$targetCursor, $ownerFacts] = self::ownerCutoff($organizationId, $sourceCode);
             $checksum = hash('sha256', CanonicalJson::encode($ownerFacts));
+            if (self::isEmptyTargetCursor($targetCursor)
+                && (int) $ledger->source_count === 0
+                && (int) $ledger->projected_count === 0
+                && (int) $ledger->gap_count === 0
+                && (int) $ledger->unknown_count === 0) {
+                DB::table('report_source_sync_ledgers')->where('id', $ledger->id)->update([
+                    'cursor' => json_encode($targetCursor, JSON_THROW_ON_ERROR),
+                    'target_cursor' => json_encode($targetCursor, JSON_THROW_ON_ERROR),
+                    'owner_checksum' => $checksum,
+                    'status' => 'ready',
+                    'source_count' => 0,
+                    'projected_count' => 0,
+                    'gap_count' => 0,
+                    'unknown_count' => 0,
+                    'unknown_owner_keys' => '[]',
+                    'source_watermark' => null,
+                    'completed_owner_checksum' => $checksum,
+                    'completed_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                return;
+            }
             $shouldDispatch = $ledger->status !== 'ready'
                 || CanonicalJson::encode(json_decode((string) $ledger->cursor, true, 512, JSON_THROW_ON_ERROR))
                     !== CanonicalJson::encode(json_decode((string) $ledger->target_cursor, true, 512, JSON_THROW_ON_ERROR));
@@ -235,5 +258,20 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
         $generation = ReportSourceOwnerGeneration::capture($organizationId, $sourceCode);
 
         return [$generation['target_cursor'], $generation['facts']];
+    }
+
+    private static function isEmptyTargetCursor(array $targetCursor): bool
+    {
+        if (array_keys($targetCursor) === ['id']) {
+            return $targetCursor['id'] === 0;
+        }
+
+        if (array_keys($targetCursor) !== ['incident_id', 'violation_id', 'action_id']) {
+            return false;
+        }
+
+        return $targetCursor['incident_id'] === 0
+            && $targetCursor['violation_id'] === 0
+            && $targetCursor['action_id'] === 0;
     }
 }
