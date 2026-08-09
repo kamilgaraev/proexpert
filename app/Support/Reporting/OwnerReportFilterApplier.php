@@ -18,11 +18,10 @@ final readonly class OwnerReportFilterApplier
             $mapping = $columns[$filter] ?? null;
             $invertBoolean = is_array($mapping) && ($mapping['invert_boolean'] ?? false) === true;
             $column = is_array($mapping) ? ($mapping['column'] ?? null) : $mapping;
-            if ((! is_string($column) && ! $column instanceof Expression) || ! is_array($condition)) {
+            if (! is_string($column) && ! $column instanceof Expression) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
             }
-            $operator = $condition['operator'] ?? null;
-            $value = $condition['value'] ?? null;
+            [$operator, $value] = self::normalizeCondition($condition);
             if ($invertBoolean && is_bool($value)) {
                 $value = ! $value;
             }
@@ -52,6 +51,19 @@ final readonly class OwnerReportFilterApplier
     public function only(ReportFilterSet $filters, array $names): ReportFilterSet
     {
         return new ReportFilterSet(array_intersect_key($filters->values, array_flip($names)));
+    }
+
+    private static function normalizeCondition(mixed $condition): array
+    {
+        if (is_array($condition) && ! array_is_list($condition)) {
+            if (array_keys($condition) !== ['operator', 'value'] || ! is_string($condition['operator'])) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
+            }
+
+            return [$condition['operator'], $condition['value']];
+        }
+
+        return [is_array($condition) ? 'in' : 'eq', $condition];
     }
 
     private function escaped(string $value): string

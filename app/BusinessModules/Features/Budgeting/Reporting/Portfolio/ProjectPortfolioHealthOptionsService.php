@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Domain\Exceptions\ReportContractException;
 use App\Enums\CurrencyCode;
 use App\Models\Project;
 use App\Support\Reporting\StableReportingSourceView;
