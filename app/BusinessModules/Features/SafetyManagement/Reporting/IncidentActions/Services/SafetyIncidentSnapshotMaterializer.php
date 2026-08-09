@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\CompletedReportSourceLedgerBinding;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
@@ -272,13 +273,15 @@ final readonly class SafetyIncidentSnapshotMaterializer
                     $snapshot->output_hash = (string) DB::table('safety_incident_snapshots')
                         ->where('id', $snapshot->id)->value('output_hash');
                     $snapshot->sealed_at = $generatedAt;
-                    $this->seals->create(
-                        'safety_incident_actions',
-                        (string) $snapshot->id,
-                        $generatedAt->toDateTimeImmutable(),
-                        new Sha256Hash((string) $snapshot->source_hash),
-                        $generatedAt->toDateTimeImmutable(),
-                    );
+                    if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
+                        $this->seals->create(
+                            'safety_incident_actions',
+                            (string) $snapshot->id,
+                            $generatedAt->toDateTimeImmutable(),
+                            new Sha256Hash((string) $snapshot->source_hash),
+                            $generatedAt->toDateTimeImmutable(),
+                        );
+                    }
 
                     return $snapshot;
                 });

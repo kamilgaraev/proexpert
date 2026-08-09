@@ -201,6 +201,21 @@ final class ReportingSourcePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function operational_quality_snapshots_never_expose_official_seals(): void
+    {
+        foreach ([
+            'app/BusinessModules/Features/QualityControl/Reporting/DefectFlow/Providers/QualityDefectFlowReportProvider.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/IncidentActions/Providers/SafetyIncidentActionsReportProvider.php',
+            'app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Providers/WorkforceAdmissionReportProvider.php',
+        ] as $relativePath) {
+            $provider = file_get_contents(dirname(__DIR__, 4).'/'.$relativePath);
+            self::assertIsString($provider);
+            self::assertStringContainsString('ReportSnapshotClassification::OFFICIAL', $provider);
+            self::assertMatchesRegularExpression('/seal: .*OFFICIAL[\\s\\S]*?\\? \\$this->seals->get/', $provider);
+        }
+    }
+
+    #[Test]
     public function materializers_dispatch_chunk_jobs_without_full_scan_calls(): void
     {
         foreach ([

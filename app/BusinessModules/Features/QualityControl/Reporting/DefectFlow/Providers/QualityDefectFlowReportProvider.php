@@ -22,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
@@ -44,7 +45,9 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
     ): ReportSnapshotRef {
         $snapshot = $this->materializer->materialize($context, $query);
         $progress->advance(100);
-        $this->sealBackfill->ensureCovered('quality_defect_flow');
+        if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
+            $this->sealBackfill->ensureCovered('quality_defect_flow');
+        }
 
         return $this->reference($context, $snapshot, $query->definition->snapshotClassification);
     }
@@ -96,7 +99,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
     private function reference(
         ReportExecutionContext $context,
         QualityDefectFlowSnapshot $snapshot,
-        \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification $classification,
+        ReportSnapshotClassification $classification,
     ): ReportSnapshotRef {
         return new ReportSnapshotRef(
             kind: 'quality_defect_flow',
@@ -109,7 +112,9 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
             staleAt: DateTimeImmutable::createFromInterface($snapshot->stale_at),
             watermarks: ['quality_defect_transitions' => $snapshot->source_watermark->toAtomString()],
             classification: $classification,
-            seal: $this->seals->get('quality_defect_flow', (string) $snapshot->id),
+            seal: $classification === ReportSnapshotClassification::OFFICIAL
+                ? $this->seals->get('quality_defect_flow', (string) $snapshot->id)
+                : null,
         );
     }
 

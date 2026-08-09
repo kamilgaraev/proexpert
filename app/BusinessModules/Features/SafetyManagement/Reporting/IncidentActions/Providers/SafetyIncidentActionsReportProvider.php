@@ -22,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportSnapshotSealBackfill;
@@ -44,7 +45,9 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
     ): ReportSnapshotRef {
         $record = $this->materializer->materialize($context, $query);
         $progress->advance(100);
-        $this->sealBackfill->ensureCovered('safety_incident_actions');
+        if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
+            $this->sealBackfill->ensureCovered('safety_incident_actions');
+        }
 
         return new ReportSnapshotRef(
             kind: 'safety_incident_actions',
@@ -57,7 +60,9 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
             staleAt: DateTimeImmutable::createFromInterface($record->stale_at),
             watermarks: ['safety_transitions' => $record->source_watermark->toAtomString()],
             classification: $query->definition->snapshotClassification,
-            seal: $this->seals->get('safety_incident_actions', (string) $record->id),
+            seal: $query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL
+                ? $this->seals->get('safety_incident_actions', (string) $record->id)
+                : null,
         );
     }
 
