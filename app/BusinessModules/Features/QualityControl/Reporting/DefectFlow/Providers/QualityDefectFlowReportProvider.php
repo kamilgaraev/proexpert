@@ -45,7 +45,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
         ReportQuery $query,
         ReportProgress $progress,
     ): ReportSnapshotRef {
-        $snapshot = $this->materializer->materialize($context, $query);
+        $snapshot = $this->materializer->materialize($context, $query, $progress);
         $progress->advance(100);
         if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
             $this->sealBackfill->ensureCovered('quality_defect_flow');

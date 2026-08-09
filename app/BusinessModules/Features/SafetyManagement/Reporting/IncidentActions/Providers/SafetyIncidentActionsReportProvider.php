@@ -45,7 +45,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
         ReportQuery $query,
         ReportProgress $progress,
     ): ReportSnapshotRef {
-        $record = $this->materializer->materialize($context, $query);
+        $record = $this->materializer->materialize($context, $query, $progress);
         $progress->advance(100);
         if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
             $this->sealBackfill->ensureCovered('safety_incident_actions');

@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSna
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -39,8 +40,11 @@ final readonly class SafetyIncidentSnapshotMaterializer
         private ReportSnapshotSealStore $seals,
     ) {}
 
-    public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
-    {
+    public function materialize(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        ReportProgress $progress,
+    ): SafetyIncidentSnapshot {
         $organizationId = $context->scope->organizationId;
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_INCIDENTS);
         ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_EXPOSURE);
@@ -51,11 +55,12 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 ReportingSourceBackfillJob::SAFETY_EXPOSURE,
             ],
         );
+        $progress->advance(5);
 
         return ReportSnapshotFirstWriter::run(
             'safety_incident_actions:'.$organizationId.':'.$query->definition->definitionHash->value
             .':'.$query->queryHash->value.':'.$query->asOf->format(DATE_ATOM),
-            fn (): SafetyIncidentSnapshot => $this->materializeLocked($context, $query, $ledgerBinding),
+            fn (): SafetyIncidentSnapshot => $this->materializeLocked($context, $query, $ledgerBinding, $progress),
         );
     }
 
@@ -63,6 +68,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         ReportExecutionContext $context,
         ReportQuery $query,
         array $ledgerBinding,
+        ReportProgress $progress,
     ): SafetyIncidentSnapshot {
         $organizationId = $context->scope->organizationId;
         $this->assertPublicFilterValues($query);
@@ -82,6 +88,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $asOf,
         );
         $events = $this->filterSubjects($events, $query, $periodFrom, $periodTo);
+        $progress->advance(20);
         $projectIds = $events->pluck('project_id')
             ->map(static fn (mixed $id): int => (int) $id)
             ->unique()
@@ -104,7 +111,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $periodFrom,
             $periodTo,
         );
-        $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies, $sites);
+        $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies, $sites, $progress);
         $ownerSubjectCount = $this->ownerSubjectCount(
             $organizationId,
             $context->scope->projectIds,
@@ -129,6 +136,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $missingExposureDays = max(0, $coverage['expected_days'] - $coverage['projected_days']);
         $analysis['gaps'] += $missingExposureDays;
         $analysis['unknowns'] += $missingExposureDays;
+        $progress->advance(85);
         $multipliers = collect($policies)->pluck('frequency_multiplier')->map(static fn (mixed $value): int => (int) $value)->unique();
         $emptyPolicyIndependent = $policies === [] && $analysis['rows'] === [];
         if (! $emptyPolicyIndependent && $multipliers->count() !== 1) {
@@ -196,6 +204,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 $inputHash,
                 $ledgerBinding,
                 $outputHash,
+                $progress,
                 $sourceHash,
                 $scopeHash,
             ): SafetyIncidentSnapshot {
@@ -221,6 +230,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
                     $inputHash,
                     $ledgerBinding,
                     $outputHash,
+                    $progress,
                     $sourceHash,
                     $scopeHash,
                 ): SafetyIncidentSnapshot {
@@ -258,7 +268,9 @@ final readonly class SafetyIncidentSnapshotMaterializer
                         'generated_at' => $generatedAt,
                         'stale_at' => $generatedAt->addDay(),
                     ]);
-                    foreach ($analysis['rows'] as $row) {
+                    $rowCount = count($analysis['rows']);
+                    foreach ($analysis['rows'] as $rowIndex => $row) {
+                        $progress->advanceProportion($rowIndex, $rowCount, 90, 98);
                         SafetyIncidentRow::query()->create([
                             'organization_id' => $organizationId,
                             'snapshot_id' => $snapshot->id,
@@ -459,6 +471,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         CarbonImmutable $asOf,
         array $policies,
         Collection $sites,
+        ReportProgress $progress,
     ): array {
         $rows = [];
         $lastVersion = [];
@@ -471,7 +484,9 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $incidentSubjects = [];
         $violationSubjects = [];
 
-        foreach ($events as $event) {
+        $eventCount = $events->count();
+        foreach ($events as $eventIndex => $event) {
+            $progress->advanceProportion($eventIndex, $eventCount, 20, 75);
             $policy = $policies[(int) $event->project_id] ?? null;
             if (! $policy instanceof SafetyIncidentPolicyVersion) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
@@ -581,7 +596,11 @@ final readonly class SafetyIncidentSnapshotMaterializer
         $actionDue = 0;
         $actionOverdue = 0;
         $actionClosedOnTime = 0;
+        $stateCount = count($states);
+        $completedStates = 0;
         foreach ($states as $key => $state) {
+            $progress->advanceProportion($completedStates, $stateCount, 75, 82);
+            $completedStates++;
             if (! str_starts_with($key, 'corrective_action:') || $state['due_date'] === null) {
                 continue;
             }

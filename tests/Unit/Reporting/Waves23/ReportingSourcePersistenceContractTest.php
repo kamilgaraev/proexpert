@@ -95,6 +95,36 @@ final class ReportingSourcePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function safety_and_quality_event_reports_publish_live_progress(): void
+    {
+        foreach ([
+            ['SafetyManagement/Reporting/IncidentActions', 'SafetyIncident'],
+            ['QualityControl/Reporting/DefectFlow', 'QualityDefectFlow'],
+        ] as [$module, $report]) {
+            $materializer = file_get_contents(
+                dirname(__DIR__, 4).'/app/BusinessModules/Features/'.$module.'/Services/'
+                    .$report.'SnapshotMaterializer.php',
+            );
+            $provider = file_get_contents(
+                dirname(__DIR__, 4).'/app/BusinessModules/Features/'.$module.'/Providers/'
+                    .$report.'ActionsReportProvider.php',
+            );
+            if ($report === 'QualityDefectFlow') {
+                $provider = file_get_contents(
+                    dirname(__DIR__, 4).'/app/BusinessModules/Features/'.$module.'/Providers/'
+                        .$report.'ReportProvider.php',
+                );
+            }
+
+            self::assertIsString($materializer);
+            self::assertIsString($provider);
+            self::assertStringContainsString('ReportProgress $progress', $materializer);
+            self::assertStringContainsString('advanceProportion(', $materializer);
+            self::assertStringContainsString('materialize($context, $query, $progress)', $provider);
+        }
+    }
+
+    #[Test]
     public function workforce_evidence_is_temporal_and_snapshot_rows_pin_an_exact_version(): void
     {
         $migration = file_get_contents(
