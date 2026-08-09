@@ -44,6 +44,8 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString("->string('completed_owner_checksum', 64)", $migration);
         self::assertStringContainsString('lockForUpdate()', $job);
         self::assertStringContainsString('ShouldBeUniqueUntilProcessing', $job);
+        self::assertStringContainsString("\$this->onConnection('redis_reports')", $job);
+        self::assertStringContainsString("\$this->onQueue('reports')", $job);
         self::assertStringContainsString("'status' => 'pending'", $job);
         self::assertStringContainsString("'completed_owner_checksum' => null", $job);
         self::assertStringContainsString('->afterCommit()', $job);
