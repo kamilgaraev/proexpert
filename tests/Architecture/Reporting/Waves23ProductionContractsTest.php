@@ -29,6 +29,22 @@ final class Waves23ProductionContractsTest extends TestCase
     }
 
     #[Test]
+    public function baseline_schedule_provider_preserves_materialized_and_canonical_identities(): void
+    {
+        $provider = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/BaselineScheduleVarianceProvider.php'
+        );
+
+        self::assertStringContainsString('CanonicalReportSourceHashBuilder $identities', $provider);
+        self::assertStringContainsString('$this->identities->build(', $provider);
+        self::assertStringContainsString('sourceHash: $canonical', $provider);
+        self::assertStringContainsString(
+            'materializedSourceHash: $provisional->materializedSourceHash',
+            $provider,
+        );
+    }
+
+    #[Test]
     public function accepted_production_reversal_and_backfill_use_canonical_owner_timestamps(): void
     {
         $service = $this->source('app/Services/Contract/ContractPerformanceActService.php');
