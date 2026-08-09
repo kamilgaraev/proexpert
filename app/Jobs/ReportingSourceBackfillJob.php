@@ -83,7 +83,9 @@ final class ReportingSourceBackfillJob implements ShouldBeUniqueUntilProcessing,
 
                 return;
             }
-            $shouldDispatch = $ledger->status !== 'ready'
+            $isSettled = $ledger->status === 'ready'
+                || ($ledger->status === 'partial' && $ledger->completed_at !== null);
+            $shouldDispatch = ! $isSettled
                 || CanonicalJson::encode(json_decode((string) $ledger->cursor, true, 512, JSON_THROW_ON_ERROR))
                     !== CanonicalJson::encode(json_decode((string) $ledger->target_cursor, true, 512, JSON_THROW_ON_ERROR));
             if ($ledger->completed_owner_checksum !== $checksum) {
