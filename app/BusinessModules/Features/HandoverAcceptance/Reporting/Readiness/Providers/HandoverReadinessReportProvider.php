@@ -19,6 +19,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Models\HandoverReadinessRow;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Models\HandoverReadinessSnapshot;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Services\HandoverReadinessSnapshotMaterializer;
@@ -123,7 +124,7 @@ final readonly class HandoverReadinessReportProvider implements ReportDataProvid
                     'handover_readiness_v1',
                     'event_'.(string) ($record->watermarks['last_event_id'] ?? 0),
                     $rowCount,
-                    $snapshot->sourceHash,
+                    new Sha256Hash((string) $record->source_hash),
                 )],
                 $snapshot->sourceHash,
                 null,

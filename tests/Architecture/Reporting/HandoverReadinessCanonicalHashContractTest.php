@@ -21,5 +21,6 @@ final class HandoverReadinessCanonicalHashContractTest extends TestCase
         self::assertStringContainsString('$this->identities->build(', $source);
         self::assertStringContainsString('sourceHash: $canonical', $source);
         self::assertStringContainsString('materializedSourceHash: $provisional->materializedSourceHash', $source);
+        self::assertStringContainsString("new Sha256Hash((string) \$record->source_hash)", $source);
     }
 }
