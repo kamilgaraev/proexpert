@@ -97,7 +97,7 @@ final readonly class OwnerSnapshotResultFactory
             $snapshot->kind,
             'snapshot_'.strtolower($snapshot->id),
             $sourceSchemaVersion,
-            $watermark,
+            self::watermarkIdentifier($watermark),
             $rowCount,
             $snapshot->sourceHash,
         );
@@ -111,5 +111,10 @@ final readonly class OwnerSnapshotResultFactory
             $rowSchema,
             $capabilities,
         );
+    }
+
+    private static function watermarkIdentifier(string $watermark): string
+    {
+        return 'watermark_'.substr(hash('sha256', $watermark), 0, 32);
     }
 }
