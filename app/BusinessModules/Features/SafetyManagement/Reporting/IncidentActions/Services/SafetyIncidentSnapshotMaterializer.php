@@ -854,7 +854,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
         }
     }
 
-    private function applyResourceScope(Builder $builder, array $resources): void
+    private function applyResourceScope(Builder|QueryBuilder $builder, array $resources): void
     {
         if ($resources === []) {
             return;
