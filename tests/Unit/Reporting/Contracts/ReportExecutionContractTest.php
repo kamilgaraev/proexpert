@@ -293,6 +293,19 @@ final class ReportExecutionContractTest extends TestCase
     }
 
     #[Test]
+    public function progress_maps_completed_work_to_a_bounded_stage(): void
+    {
+        $progress = new ReportProgress(5);
+
+        self::assertTrue($progress->advanceProportion(0, 4, 10, 90));
+        self::assertSame(10, $progress->percent());
+        self::assertTrue($progress->advanceProportion(1, 4, 10, 90));
+        self::assertSame(30, $progress->percent());
+        self::assertTrue($progress->advanceProportion(4, 4, 10, 90));
+        self::assertSame(90, $progress->percent());
+    }
+
+    #[Test]
     public function window_sort_validates_its_field(): void
     {
         $sort = new ReportWindowSort('created_at', ReportSortDirection::DESC);

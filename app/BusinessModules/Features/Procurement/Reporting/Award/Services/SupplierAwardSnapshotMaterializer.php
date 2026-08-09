@@ -77,6 +77,7 @@ final readonly class SupplierAwardSnapshotMaterializer
             ->orderBy('decision_id')
             ->orderBy('decision_version')
             ->get();
+        $progress->advance(10);
         $versionIds = $decisions->flatMap(
             static fn (SupplierAwardDecisionVersion $decision): array => $decision->comparable_proposal_version_ids,
         )->unique()->values()->all();
@@ -106,6 +107,7 @@ final readonly class SupplierAwardSnapshotMaterializer
                 ...$versionHashes,
             ],
         );
+        $progress->advance(20);
         $existing = SupplierAwardSnapshot::query()
             ->where('organization_id', $organizationId)
             ->where('query_hash', $query->queryHash->value)
@@ -128,7 +130,8 @@ final readonly class SupplierAwardSnapshotMaterializer
             $rows = [];
             $gapCount = 0;
             $premiumByCurrency = [];
-            foreach ($decisions as $decision) {
+            $decisionCount = $decisions->count();
+            foreach ($decisions as $decisionIndex => $decision) {
                 try {
                     $proposals = [];
                     foreach ($decision->comparable_proposal_version_ids as $versionId) {
@@ -157,6 +160,7 @@ final readonly class SupplierAwardSnapshotMaterializer
                     $selectedData = $this->proposalFactory->make($selected);
                 } catch (Throwable) {
                     $gapCount++;
+                    $progress->advanceProportion($decisionIndex + 1, $decisionCount, 20, 85);
 
                     continue;
                 }
@@ -206,8 +210,10 @@ final readonly class SupplierAwardSnapshotMaterializer
                     'selected_at' => $decision->selected_at,
                     'quality_warnings' => [],
                 ];
+                $progress->advanceProportion($decisionIndex + 1, $decisionCount, 20, 85);
             }
 
+            $progress->advance(90);
             $generatedAt = new DateTimeImmutable;
             ksort($premiumByCurrency, SORT_STRING);
             $totals = [
@@ -233,9 +239,11 @@ final readonly class SupplierAwardSnapshotMaterializer
                 'reconciliation_status' => 'not_applicable',
                 'totals' => $totals,
             ]);
-            foreach ($rows as $row) {
+            $rowCount = count($rows);
+            foreach ($rows as $rowIndex => $row) {
                 $row['snapshot_id'] = $snapshot->getKey();
                 SupplierAwardRow::query()->create($row);
+                $progress->advanceProportion($rowIndex + 1, $rowCount, 90, 99);
             }
             $progress->advance(100);
 
