@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Providers;
 
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -26,9 +27,10 @@ use InvalidArgumentException;
 
 final readonly class HandoverReadinessReportProvider implements ReportDataProvider
 {
-    public function __construct(private HandoverReadinessSnapshotMaterializer $materializer)
-    {
-    }
+    public function __construct(
+        private HandoverReadinessSnapshotMaterializer $materializer,
+        private CanonicalReportSourceHashBuilder $identities,
+    ) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -36,10 +38,28 @@ final readonly class HandoverReadinessReportProvider implements ReportDataProvid
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $progress->advance(10);
-        $snapshot = $this->materializer->materialize($context, $query);
+        $provisional = $this->materializer->materialize($context, $query);
         $progress->advance(100);
+        $canonical = $this->identities->build(
+            $query,
+            $provisional,
+            $this->result($context, $provisional),
+        );
 
-        return $snapshot;
+        return new ReportSnapshotRef(
+            kind: $provisional->kind,
+            id: $provisional->id,
+            scope: $provisional->scope,
+            definitionHash: $provisional->definitionHash,
+            formulaVersion: $provisional->formulaVersion,
+            sourceHash: $canonical,
+            generatedAt: $provisional->generatedAt,
+            staleAt: $provisional->staleAt,
+            watermarks: $provisional->watermarks,
+            classification: $provisional->classification,
+            seal: $provisional->seal,
+            materializedSourceHash: $provisional->materializedSourceHash,
+        );
     }
 
     public function result(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ReportResult
