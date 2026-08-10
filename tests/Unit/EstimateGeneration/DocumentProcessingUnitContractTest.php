@@ -738,7 +738,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             $constructor->getParameters(),
         );
 
-        self::assertNotContains(\App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler::class, $dependencies);
+        self::assertNotContains('App\\BusinessModules\\Addons\\EstimateGeneration\\Observability\\FailureWorkflowHandler', $dependencies);
         self::assertContains(DocumentUnitExhaustionHandler::class, $dependencies);
     }
 

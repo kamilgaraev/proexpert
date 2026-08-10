@@ -20,14 +20,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePlanResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
@@ -486,10 +485,6 @@ final class PipelineStageFunctionalTest extends TestCase
                     return 0;
                 }
             }),
-            new class implements FailureWorkflowHandler
-            {
-                public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
-            },
             static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'),
         );
         $seed = new PipelineContext(1, 2, 3, 4, $base, 'generating', generationAttemptId: $attempt, baseInputVersion: $base);

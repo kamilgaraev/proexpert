@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -72,10 +71,7 @@ final class PipelineBoundaryParametricTest extends TestCase
             {
                 return 0;
             }
-        }), new class implements FailureWorkflowHandler
-        {
-            public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
-        }, static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'));
+        }), static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'));
         $definition = $graph->get($stage);
         $dependencies = [];
         foreach ($definition->dependencies as $dependency) {

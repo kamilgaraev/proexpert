@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -50,7 +49,7 @@ final class PipelineNineInvocationE2ETest extends TestCase
                 return $this->results->make($context, $this->value, PipelineNineInvocationE2ETest::payload($this->value));
             }
         }, ProcessingStage::cases());
-        $runner = new PipelineRunner(new PipelineRegistry($stages), $state, new FailureRecorder($this->failureStore()), $this->workflow(), static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'));
+        $runner = new PipelineRunner(new PipelineRegistry($stages), $state, new FailureRecorder($this->failureStore()), static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'));
         $base = 'sha256:'.str_repeat('a', 64);
         $attempt = '00000000-0000-4000-8000-000000000001';
         $outputs = [];
@@ -103,14 +102,6 @@ final class PipelineNineInvocationE2ETest extends TestCase
             {
                 return 0;
             }
-        };
-    }
-
-    private function workflow(): FailureWorkflowHandler
-    {
-        return new class implements FailureWorkflowHandler
-        {
-            public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
         };
     }
 }

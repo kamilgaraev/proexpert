@@ -324,11 +324,6 @@ return [
     'admin_operation_state_conflict' => 'Состояние сессии изменилось. Обновите страницу и повторите действие.',
     'admin_operation_failed' => 'Не удалось выполнить действие над сессией AI-сметчика.',
     'admin_operation_completed' => 'Действие над сессией AI-сметчика выполнено.',
-    'failure_resolved' => 'Ошибка отмечена как устранённая.',
-    'failure_resolution_state_conflict' => 'Появился новый случай ошибки или её состояние уже изменилось. Обновите страницу.',
-    'failure_resolution_failed' => 'Не удалось отметить ошибку как устранённую.',
-    'failure_resolution_idempotency_conflict' => 'Это действие уже использовано для другой ошибки. Обновите страницу и повторите.',
-    'failure_resolution_in_progress' => 'Действие уже выполняется. Обновите страницу через несколько секунд.',
     'dashboard' => [
         'navigation' => 'Центр AI-сметчика',
         'title' => 'Работа AI-сметчика',
@@ -465,7 +460,6 @@ return [
         'plural_model' => 'ошибки AI-сметчика',
         'summary' => 'Диагностика ошибки',
         'diagnostics' => 'Безопасные диагностические признаки',
-        'mark_resolved' => 'Отметить устранённой',
         'categories' => [
             'recoverable' => 'Можно повторить',
             'user_action_required' => 'Требуется действие пользователя',

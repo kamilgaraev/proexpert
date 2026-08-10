@@ -30,7 +30,9 @@ final class PipelineRecoveryContractTest extends TestCase
         self::assertIsString($job);
         self::assertIsString($failure);
         self::assertStringNotContainsString('PipelineCheckpointStore', $job);
-        self::assertStringContainsString("->where('status', 'running')", $failure);
+        self::assertStringContainsString("->whereIn('status', [CheckpointStatus::Running->value, CheckpointStatus::Failed->value])", $failure);
+        self::assertStringContainsString('$checkpoint->status === CheckpointStatus::Failed', $failure);
+        self::assertStringContainsString("->where('input_version', \$inputVersion)", $failure);
         self::assertStringContainsString('stage: $checkpoint->stage', $failure);
     }
 

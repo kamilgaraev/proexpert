@@ -269,7 +269,7 @@ refactor[backend]: удалена внутренняя бухгалтерия AI
 - Produces: `FailureRecorder::record(FailureContext $context, Throwable $error): FailureData`.
 - Produces: `RetryEstimateGenerationStage::retry(string $sessionId, string $stage, ActorContext $actor): void` либо существующий эквивалент, без отдельного failure resolution registry.
 
-- [ ] **Step 1: Зафиксировать три допустимых исхода сбоя**
+- [x] **Step 1: Зафиксировать три допустимых исхода сбоя**
 
 ```text
 retryable     → Laravel queue retry/backoff, checkpoint не теряется
@@ -277,26 +277,26 @@ needs_input   → сессия показывает понятное дейст�
 terminal      → сессия завершена технически, quota release выполняется один раз
 ```
 
-- [ ] **Step 2: Написать RED-тест простой recovery policy**
+- [x] **Step 2: Написать RED-тест простой recovery policy**
 
 Проверить, что retryable ошибка не меняет подтверждённые результаты; needs_input создаёт пользовательское исключение; terminal error освобождает пользовательскую quota только если пригодный черновик не создан.
 
-- [ ] **Step 3: Перевести callers на FailureRecorder и штатный retry**
+- [x] **Step 3: Перевести callers на FailureRecorder и штатный retry**
 
 `PipelineRunner`, document failure handler и draft failure handler больше не должны вызывать claim/fence/transition registry. Идемпотентность terminal handling обеспечивается уникальным terminal marker сессии и транзакцией quota service.
 
-- [ ] **Step 4: Удалить mutating admin endpoints и Filament actions**
+- [x] **Step 4: Удалить mutating admin endpoints и Filament actions**
 
 Read-only экран истории сбоев можно оставить. Любые кнопки «resolve/reopen/claim» и связанные маршруты удалить. Ручной повтор выполняется тем же публичным application service, что и пользовательский retry, с ABAC-проверкой.
 
-- [ ] **Step 5: Запустить целевые failure tests и PHPStan**
+- [x] **Step 5: Запустить целевые failure tests и PHPStan**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\EstimateGeneration\Observability\SimpleFailureRecoveryPolicyTest.php tests\Feature\EstimateGeneration\Pipeline\PipelineFailureRecoveryTest.php
 vendor\bin\phpstan analyse app\BusinessModules\Addons\EstimateGeneration\Application\Generation app\BusinessModules\Addons\EstimateGeneration\Application\Documents app\BusinessModules\Addons\EstimateGeneration\Pipeline --memory-limit=1G
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 refactor[backend]: упрощено восстановление AI-смет
