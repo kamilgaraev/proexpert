@@ -8,8 +8,10 @@ use RuntimeException;
 
 final class DocumentManifestNeedsReview extends RuntimeException
 {
-    public function __construct(public readonly string $safeCode)
-    {
+    public function __construct(
+        public readonly string $safeCode,
+        public readonly array $safeContext = [],
+    ) {
         parent::__construct($safeCode);
     }
 }

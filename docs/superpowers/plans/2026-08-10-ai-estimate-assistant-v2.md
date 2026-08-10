@@ -611,13 +611,13 @@ CAD   → layers + blocks + polylines + dimensions + texts + sheet render
 XLSX  → sheets + cells + formulas + merges + table render
 ```
 
-- [ ] Подготовить по одному минимальному и одному production-sized fixture каждого формата без персональных данных.
-- [ ] Написать RED matrix test capability contracts и source-coordinate roundtrip.
-- [ ] Реализовать representation builders с лимитами памяти, страниц, объектов и безопасным S3 workspace.
-- [ ] Не скрывать деградацию: отсутствующая native capability возвращает typed limitation и попадает в review exception.
-- [ ] Проверить, что замена одного файла инвалидирует только его units/evidence/dependants.
-- [ ] Запустить document contract tests и PHPStan; тяжёлые production fixtures вынести в CI gate, если локальный набор превышает пять минут.
-- [ ] Commit: `feat[backend]: унифицировано понимание проектных документов`.
+- [x] Подготовить по одному минимальному и одному production-sized fixture каждого формата без персональных данных.
+- [x] Написать RED matrix test capability contracts и source-coordinate roundtrip.
+- [x] Реализовать representation builders с лимитами памяти, страниц, объектов и безопасным S3 workspace.
+- [x] Не скрывать деградацию: отсутствующая native capability возвращает typed limitation и попадает в review exception.
+- [x] Проверить, что замена одного файла инвалидирует только его units/evidence/dependants.
+- [x] Запустить document contract tests и PHPStan; тяжёлые production fixtures вынести в CI gate, если локальный набор превышает пять минут.
+- [x] Commit: `feat[backend]: унифицировано понимание проектных документов`.
 
 ### Task 11: Маршрутизировать мультимодальный анализ по роли листа
 

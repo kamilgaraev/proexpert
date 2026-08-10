@@ -166,6 +166,13 @@ class SpreadsheetDocumentExtractor
                         'sheet' => $worksheet->getTitle(),
                         'headings' => $headings,
                         'cells' => $cells,
+                        'formulas' => array_values(array_filter(
+                            $cells,
+                            static fn (array $cell): bool => $cell['formula'] !== null,
+                        )),
+                        'merges' => array_values($worksheet->getMergeCells()),
+                        'rows' => $highestRow,
+                        'columns' => $highestColumnIndex,
                     ],
                 ],
             );

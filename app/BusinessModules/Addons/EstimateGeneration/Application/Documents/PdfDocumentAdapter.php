@@ -112,6 +112,11 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                         'geometry_artifact_path' => $geometryArtifact->path,
                         'geometry_artifact_bytes' => $geometryArtifact->bytes,
                         'geometry_artifact_sha256' => $geometryArtifact->sha256,
+                        'text_layer_status' => isset($textByPage[$page->pageNumber]) ? 'available' : 'unavailable',
+                        'source_bounds' => [0, 0, max(1, (int) ($preview['width'] ?? 1)), max(1, (int) ($preview['height'] ?? 1))],
+                        'object_count' => count($page->toArray()['vector_elements'] ?? [])
+                            + count($page->toArray()['text_blocks'] ?? []),
+                        'representation_bytes' => $artifactBytes + $geometryArtifact->bytes,
                     ],
                 );
             }
@@ -128,17 +133,27 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
 
     public function representation(DocumentUnitData $unit): DocumentRepresentation
     {
-        $provenance = $unit->provenance();
-
-        return new DocumentRepresentation(
-            DocumentSourceVersion::fromString($unit->sourceVersion),
+        return (new DocumentRepresentationBuilder)->build(
+            'pdf',
+            $unit,
             [
                 'geometry_artifact_path' => $unit->locator['geometry_artifact_path'] ?? null,
                 'geometry_artifact_sha256' => $unit->locator['geometry_artifact_sha256'] ?? null,
+                'text_spans_artifact_path' => ($unit->locator['text_layer_status'] ?? null) === 'available'
+                    ? ($unit->locator['geometry_artifact_path'] ?? null)
+                    : null,
+                'vector_artifact_path' => $unit->locator['geometry_artifact_path'] ?? null,
             ],
-            $provenance->artifactPath,
-            $provenance->coordinateSpace,
-            ['text_layer' => 'available', 'geometry' => 'available', 'render' => 'available'],
+            [
+                'text_spans' => ($unit->locator['text_layer_status'] ?? null) === 'available'
+                    ? 'available'
+                    : 'unavailable:pdf_text_layer_missing',
+                'vectors' => isset($unit->locator['geometry_artifact_path'])
+                    ? 'available'
+                    : 'unavailable:pdf_vectors_missing',
+                'page_render' => 'available',
+                'source_coordinates' => 'available',
+            ],
         );
     }
 }

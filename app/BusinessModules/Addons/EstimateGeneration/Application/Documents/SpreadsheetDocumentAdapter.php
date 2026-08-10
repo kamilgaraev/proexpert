@@ -37,13 +37,22 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
             $units = [];
 
             foreach ($recognition->pages as $page) {
+                $structure = $this->structureExtractor->extract($page);
                 $artifact = $this->storage->put(
                     $document,
                     $sourceVersion,
                     DocumentUnitType::SpreadsheetSheet,
                     $page->pageNumber,
-                    json_encode($this->structureExtractor->extract($page), JSON_THROW_ON_ERROR),
+                    json_encode($structure, JSON_THROW_ON_ERROR),
                     'application/json',
+                );
+                $visual = $this->storage->put(
+                    $document,
+                    $sourceVersion,
+                    DocumentUnitType::Sketch,
+                    $page->pageNumber,
+                    $this->tableRender($structure),
+                    'image/svg+xml',
                 );
                 $units[] = new DocumentUnitData(
                     DocumentUnitType::SpreadsheetSheet,
@@ -58,6 +67,16 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                         'artifact_kind' => 'spreadsheet_sheet',
                         'artifact_schema_version' => 1,
                         'sheet' => $page->pageNumber,
+                        'native_structure_artifact_path' => $artifact->path,
+                        'visual_artifact_path' => $visual->path,
+                        'source_bounds' => [
+                            0,
+                            0,
+                            max(1, (int) ($structure['native_structure']['columns'] ?? 1)),
+                            max(1, (int) ($structure['native_structure']['rows'] ?? 1)),
+                        ],
+                        'object_count' => count($structure['native_structure']['cells'] ?? []),
+                        'representation_bytes' => $artifact->bytes + $visual->bytes,
                     ],
                 );
             }
@@ -74,18 +93,46 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
 
     public function representation(DocumentUnitData $unit): DocumentRepresentation
     {
-        $provenance = $unit->provenance();
+        $nativeAvailable = isset($unit->locator['native_structure_artifact_path']);
 
-        return new DocumentRepresentation(
-            DocumentSourceVersion::fromString($unit->sourceVersion),
+        return (new DocumentRepresentationBuilder)->build(
+            'xlsx',
+            $unit,
             [
                 'artifact_kind' => $unit->locator['artifact_kind'] ?? null,
                 'artifact_schema_version' => $unit->locator['artifact_schema_version'] ?? null,
+                'native_structure_artifact_path' => $unit->locator['native_structure_artifact_path'] ?? null,
             ],
-            $provenance->artifactPath,
-            $provenance->coordinateSpace,
-            ['cells' => 'available', 'formulas' => 'available', 'headings' => 'available'],
+            [
+                'sheets' => $nativeAvailable ? 'available' : 'unavailable:xlsx_sheets_missing',
+                'cells' => $nativeAvailable ? 'available' : 'unavailable:xlsx_cells_missing',
+                'formulas' => $nativeAvailable ? 'available' : 'unavailable:xlsx_formulas_missing',
+                'merges' => $nativeAvailable ? 'available' : 'unavailable:xlsx_merges_missing',
+                'table_render' => isset($unit->locator['visual_artifact_path'])
+                    ? 'available'
+                    : 'unavailable:xlsx_table_render_missing',
+                'source_coordinates' => isset($unit->locator['source_bounds'])
+                    ? 'available'
+                    : 'unavailable:xlsx_source_bounds_missing',
+            ],
         );
+    }
+
+    private function tableRender(array $structure): string
+    {
+        $cells = array_slice($structure['native_structure']['cells'] ?? [], 0, 400);
+        $labels = [];
+        foreach ($cells as $cell) {
+            if (! is_array($cell)) {
+                continue;
+            }
+            $address = htmlspecialchars((string) ($cell['address'] ?? ''), ENT_XML1 | ENT_QUOTES, 'UTF-8');
+            $value = htmlspecialchars((string) ($cell['value'] ?? ''), ENT_XML1 | ENT_QUOTES, 'UTF-8');
+            $labels[] = '<text x="10" y="'.(20 + (count($labels) * 18)).'">'.$address.' '.$value.'</text>';
+        }
+        $height = max(40, 30 + (count($labels) * 18));
+
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="'.$height.'"><rect width="100%" height="100%" fill="white"/><g font-family="sans-serif" font-size="14">'.implode('', $labels).'</g></svg>';
     }
 
     private function extension(EstimateGenerationDocument $document): string

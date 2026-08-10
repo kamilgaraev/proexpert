@@ -37,14 +37,19 @@ final class ImageDocumentAdapter implements DocumentUnitAdapter
 
     public function representation(DocumentUnitData $unit): DocumentRepresentation
     {
-        $provenance = $unit->provenance();
-
-        return new DocumentRepresentation(
-            DocumentSourceVersion::fromString($unit->sourceVersion),
-            [],
-            $provenance->artifactPath,
-            $provenance->coordinateSpace,
-            ['raster' => 'available', 'ocr' => 'available'],
+        return (new DocumentRepresentationBuilder)->build(
+            'image',
+            $unit,
+            ['ocr_spans_artifact_path' => $unit->locator['ocr_spans_artifact_path'] ?? null],
+            [
+                'original_raster' => 'available',
+                'ocr_spans' => isset($unit->locator['ocr_spans_artifact_path'])
+                    ? 'available'
+                    : 'unavailable:image_ocr_not_completed',
+                'image_coordinates' => isset($unit->locator['source_bounds'])
+                    ? 'available'
+                    : 'unavailable:image_dimensions_missing',
+            ],
         );
     }
 

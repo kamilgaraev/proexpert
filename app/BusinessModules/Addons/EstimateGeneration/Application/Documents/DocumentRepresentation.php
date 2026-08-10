@@ -13,16 +13,16 @@ final readonly class DocumentRepresentation
         public array $nativeStructure,
         public string $visualArtifactPath,
         public string $coordinateSpace,
-        public array $capabilities,
+        public DocumentRepresentationCapabilities $capabilities,
+        public DocumentCoordinateTransform $coordinates,
+        public array $resourceUsage,
     ) {
-        if ($visualArtifactPath === '' || $coordinateSpace === '' || $capabilities === []) {
+        if ($visualArtifactPath === '' || $coordinateSpace === '') {
             throw new InvalidArgumentException('Document representation is incomplete.');
         }
-
-        foreach ($capabilities as $capability => $status) {
-            if (! is_string($capability) || $capability === '' || ! is_string($status) || $status === '') {
-                throw new InvalidArgumentException('Document representation capability is invalid.');
-            }
+        if (preg_match('#^org-[1-9][0-9]*/#D', $visualArtifactPath) !== 1) {
+            throw new InvalidArgumentException('Document representation artifact is outside organization storage.');
         }
+        (new DocumentRepresentationResourceLimits())->assertWithin($resourceUsage);
     }
 }

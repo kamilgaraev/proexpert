@@ -1,0 +1,1 @@
+{"format":"image","scale":"minimal","capabilities":{"original_raster":"available","ocr_spans":"available","image_coordinates":"available"},"source_bounds":[0,0,640,480],"source_point":[160,120],"normalized_point":[0.25,0.25],"resource_usage":{"pages":1,"objects":12,"bytes":8192,"peak_memory_bytes":8388608,"duration_ms":180}}
