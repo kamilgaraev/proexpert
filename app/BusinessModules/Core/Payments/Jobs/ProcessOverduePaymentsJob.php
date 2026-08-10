@@ -5,14 +5,17 @@ namespace App\BusinessModules\Core\Payments\Jobs;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentOverdue;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Notifications\PaymentOverdueNotification;
+use App\BusinessModules\Core\Payments\Support\OverduePaymentFailureContext;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
+use App\Services\Monitoring\SentryScopeService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Job для обработки просроченных платежей
@@ -24,7 +27,7 @@ class ProcessOverduePaymentsJob implements ShouldQueue
 
     public function __construct() {}
 
-    public function handle(): void
+    public function handle(SentryScopeService $sentryScopeService): void
     {
         Log::info('processing_overdue_payments.started');
 
@@ -56,11 +59,13 @@ class ProcessOverduePaymentsJob implements ShouldQueue
                 $processedCount++;
                 $notifiedCount++;
 
-            } catch (\Exception $e) {
-                Log::error('processing_overdue_payments.document_failed', [
-                    'document_id' => $document->id,
-                    'error' => $e->getMessage(),
-                ]);
+            } catch (Throwable $exception) {
+                $sentryScopeService->captureException($exception);
+
+                Log::error(
+                    'processing_overdue_payments.document_failed',
+                    OverduePaymentFailureContext::from((int) $document->id, $exception),
+                );
             }
         }
 
@@ -110,4 +115,3 @@ class ProcessOverduePaymentsJob implements ShouldQueue
             ->values();
     }
 }
-
