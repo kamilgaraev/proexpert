@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Providers;
 
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits;
@@ -39,7 +39,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         private AiUsageStore $usageStore,
         private VisionResponseBodyReader $bodyReader,
         private ?EffectiveSettingsResolver $settingsResolver = null,
-        private ?AiAttemptAuthorizer $budgetAuthorizer = null,
+        private ?AiPriceSnapshotResolver $priceResolver = null,
         private ?DocumentRuntimeLimits $documentLimits = null,
     ) {}
 
@@ -76,13 +76,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $lastException = null;
         for ($wireAttempt = 1; $wireAttempt <= $attempts; $wireAttempt++) {
             $physicalContext = $this->physicalContext($input, $model, $wireAttempt, $contractHash);
-            $priceSnapshot = $this->budgetAuthorizer?->authorize(
+            $priceSnapshot = $this->priceResolver?->resolve(
                 $physicalContext,
                 self::PROVIDER,
                 $model,
-                max(1, (int) config('estimate-generation.vision.max_input_tokens', 32_768)),
-                $this->maxOutputTokens($input),
-                1,
             ) ?? AiPriceSnapshot::fromArray([]);
             $startedAt = hrtime(true);
             $responsePayload = [];
@@ -90,10 +87,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $httpCode = null;
             $reportedModel = null;
             $analysis = null;
-            $wireClaimed = false;
             try {
-                $this->claimWireOrFail($physicalContext->attemptId);
-                $wireClaimed = true;
                 $timeoutSeconds = $effective?->timeoutSeconds('vision')
                     ?? max(1, min(120, (int) config('estimate-generation.vision.timeout_seconds', 60)));
                 $timeoutSeconds = $this->boundedDocumentAttemptTimeout($input, $attempts, $timeoutSeconds);
@@ -179,12 +173,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $status = 'connection_failed';
                 $lastException = new VisionProviderException('vision_request_failed', retryable: false, previous: $exception);
             } finally {
-                if ($wireClaimed) {
-                    $this->recordAttempt(
-                        $input, $model, $reportedModel, $status, $httpCode, $responsePayload,
-                        (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), $physicalContext, $priceSnapshot,
-                    );
-                }
+                $this->recordAttempt(
+                    $input, $model, $reportedModel, $status, $httpCode, $responsePayload,
+                    (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), $physicalContext, $priceSnapshot,
+                );
             }
 
             if ($status === 'succeeded') {
@@ -201,25 +193,6 @@ final readonly class TimewebVisionProvider implements VisionProvider
         }
 
         throw new VisionProviderException('vision_provider_failed');
-    }
-
-    private function claimWireOrFail(string $attemptId): void
-    {
-        if ($this->budgetAuthorizer === null) {
-            return;
-        }
-        try {
-            $claimed = $this->budgetAuthorizer->claimWire($attemptId);
-        } catch (Throwable $exception) {
-            try {
-                $this->budgetAuthorizer->releaseBeforeWire($attemptId);
-            } catch (Throwable) {
-            }
-            throw $exception;
-        }
-        if (! $claimed) {
-            throw new VisionProviderException('vision_wire_replay_forbidden');
-        }
     }
 
     private function retryableStatus(int $status): bool

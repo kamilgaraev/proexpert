@@ -56,7 +56,7 @@ final readonly class FailureContext
         if (($expectedSessionStateVersion === null) !== ($expectedSessionStatus === null)
             || ($expectedSessionStateVersion !== null && $expectedSessionStateVersion < 0)
             || ($expectedSessionStatus !== null && preg_match('/\A[a-z][a-z0-9_]{0,39}\z/', $expectedSessionStatus) !== 1)) {
-            throw new InvalidArgumentException('Failure workflow fence is incomplete or invalid.');
+            throw new InvalidArgumentException('Failure session snapshot is incomplete or invalid.');
         }
     }
 

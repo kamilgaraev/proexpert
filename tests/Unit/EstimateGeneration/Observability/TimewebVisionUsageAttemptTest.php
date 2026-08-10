@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients\TimewebVisionOcrClient;
@@ -55,40 +53,6 @@ final class TimewebVisionUsageAttemptTest extends TestCase
         $this->configure(['model-a'], 1);
         $this->expectException(OcrConfigurationException::class);
         (new TimewebVisionOcrClient(runtimeEnvironment: new FixedOcrRuntimeEnvironment(true)))->recognize($this->input());
-    }
-
-    #[Test]
-    public function replay_without_claim_never_calls_ocr_wire(): void
-    {
-        $this->configure(['model-a'], 1);
-        Http::fake();
-        $store = $this->store();
-        $authorizer = new RejectingOcrWireClaimAuthorizer;
-        $client = new TimewebVisionOcrClient($store, null, $authorizer);
-
-        try {
-            $client->recognize($this->input());
-            self::fail('Replay without claim reached OCR wire.');
-        } catch (OcrProviderException $exception) {
-            self::assertSame('wire_replay_forbidden', $exception->providerCode);
-        }
-
-        Http::assertNothingSent();
-        self::assertSame([], $store->rows);
-        self::assertSame(0, $authorizer->releases);
-
-        $authorizer->claimGranted = true;
-        Http::swap(new Factory);
-        Http::fake(fn () => Http::response($this->successPayload('model-a'), 200));
-        $result = $client->recognize($this->input());
-
-        self::assertSame('model-a', $result->model);
-        self::assertCount(1, $store->rows);
-        self::assertSame('succeeded', $store->rows[0]->status);
-        self::assertSame('measured', $store->rows[0]->usageStatus);
-        self::assertSame($authorizer->attemptIds[0], $authorizer->attemptIds[1]);
-        self::assertSame($authorizer->attemptIds[0], $store->rows[0]->context->attemptId);
-        self::assertSame(0, $authorizer->releases);
     }
 
     #[Test]
@@ -228,39 +192,5 @@ final class RecordingAiUsageStore implements AiUsageStore
     public function record(AiUsageData $data): void
     {
         $this->rows[] = $data;
-    }
-}
-
-final class RejectingOcrWireClaimAuthorizer implements AiAttemptAuthorizer
-{
-    public bool $claimGranted = false;
-
-    public int $releases = 0;
-
-    /** @var list<string> */
-    public array $attemptIds = [];
-
-    public function authorize(
-        AiOperationContext $context,
-        string $provider,
-        string $model,
-        int $maxInputTokens,
-        int $maxOutputTokens,
-        int $imageCount = 0,
-        int $pageCount = 0,
-    ): AiPriceSnapshot {
-        return AiPriceSnapshot::fromArray([]);
-    }
-
-    public function claimWire(string $attemptId): bool
-    {
-        $this->attemptIds[] = $attemptId;
-
-        return $this->claimGranted;
-    }
-
-    public function releaseBeforeWire(string $attemptId): void
-    {
-        $this->releases++;
     }
 }

@@ -7,10 +7,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
@@ -34,7 +34,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
     public function __construct(
         private readonly ?AiUsageStore $usageStore = null,
         private readonly ?EffectiveSettingsResolver $settingsResolver = null,
-        private readonly ?AiAttemptAuthorizer $budgetAuthorizer = null,
+        private readonly ?AiPriceSnapshotResolver $priceResolver = null,
         private readonly ?DocumentRuntimeLimits $documentLimits = null,
         private readonly ?OcrRuntimeEnvironment $runtimeEnvironment = null,
     ) {}
@@ -113,23 +113,16 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             : max(1, (int) config('estimate-generation.ocr.retry_attempts', 3));
         for ($wireAttempt = 1; $wireAttempt <= $retryAttempts; $wireAttempt++) {
             $physicalContext = $this->physicalContext($input, $model, $attempt, $wireAttempt, $retryAttempts);
-            $priceSnapshot = $this->budgetAuthorizer?->authorize(
+            $priceSnapshot = $this->priceResolver?->resolve(
                 $physicalContext,
                 self::PROVIDER,
                 $model,
-                max(1, (int) config('estimate-generation.ocr.max_input_tokens', 2_000_000)),
-                max(512, (int) config('estimate-generation.ocr.max_tokens', 4096)),
-                $this->isImage($input) ? 1 : 0,
-                max(0, $input->pageCount ?? 0),
             ) ?? AiPriceSnapshot::fromArray([]);
             $startedAt = hrtime(true);
             $status = 'connection_failed';
             $httpCode = null;
             $payload = [];
-            $wireClaimed = false;
             try {
-                $this->claimWireOrFail($physicalContext->attemptId);
-                $wireClaimed = true;
                 $response = Http::timeout($effective?->timeoutSeconds('classification') ?? (int) config('estimate-generation.ocr.timeout_seconds', 60))
                     ->acceptJson()->asJson()->withToken($apiKey)
                     ->post($baseUri.'/chat/completions', $requestPayload);
@@ -173,20 +166,18 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                     previous: $exception
                 );
             } finally {
-                if ($wireClaimed) {
-                    $this->recordAttempt(
-                        $input,
-                        $model,
-                        $attempt,
-                        $wireAttempt,
-                        $status,
-                        $httpCode,
-                        $payload,
-                        (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
-                        $physicalContext,
-                        $priceSnapshot,
-                    );
-                }
+                $this->recordAttempt(
+                    $input,
+                    $model,
+                    $attempt,
+                    $wireAttempt,
+                    $status,
+                    $httpCode,
+                    $payload,
+                    (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
+                    $physicalContext,
+                    $priceSnapshot,
+                );
             }
 
             if ($status === 'succeeded') {
@@ -249,29 +240,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                 'requires_review' => $requiresReview,
             ],
         );
-    }
-
-    private function claimWireOrFail(string $attemptId): void
-    {
-        if ($this->budgetAuthorizer === null) {
-            return;
-        }
-        try {
-            $claimed = $this->budgetAuthorizer->claimWire($attemptId);
-        } catch (Throwable $exception) {
-            try {
-                $this->budgetAuthorizer->releaseBeforeWire($attemptId);
-            } catch (Throwable) {
-            }
-            throw $exception;
-        }
-        if (! $claimed) {
-            throw new OcrProviderException(
-                'estimate_generation.ocr_wire_replay_forbidden',
-                409,
-                'wire_replay_forbidden',
-            );
-        }
     }
 
     private function retryableStatus(int $status): bool

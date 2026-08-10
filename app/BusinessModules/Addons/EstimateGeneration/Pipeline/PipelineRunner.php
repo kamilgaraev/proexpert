@@ -9,7 +9,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationConte
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use Closure;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -34,7 +33,6 @@ final class PipelineRunner
         private readonly PipelineRegistry $registry,
         private readonly PipelineCheckpointStore $checkpointStore,
         private readonly FailureRecorder $failureRecorder,
-        private readonly FailureWorkflowHandler $failureWorkflowHandler,
         callable $clock,
         private readonly int $leaseSeconds = self::DEFAULT_LEASE_SECONDS,
         ?PipelineFailureObserver $failureObserver = null,
@@ -96,14 +94,8 @@ final class PipelineRunner
 
             return $result;
         } catch (Throwable $error) {
-            $failure = $this->failureRecorder->capture($error, $this->failureContext($claim));
-            $recorded = $this->recordFailureWithoutMasking($claim, $error);
-            if ($recorded) {
-                try {
-                    $this->failureWorkflowHandler->handle($failure, $claim->context->stateVersion);
-                } catch (Throwable) {
-                }
-            }
+            $this->failureRecorder->capture($error, $this->failureContext($claim));
+            $this->recordFailureWithoutMasking($claim, $error);
 
             throw $error;
         }

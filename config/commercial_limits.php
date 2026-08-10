@@ -5,6 +5,9 @@ declare(strict_types=1);
 return [
     'quote_version' => 1,
     'currency' => 'RUB',
+    'ai_estimates' => [
+        'included_monthly' => 10,
+    ],
     'free' => [
         'users' => 3,
         'projects' => 2,
@@ -12,7 +15,6 @@ return [
         'contractors' => 10,
         'holding_organizations' => 1,
         'ai_requests_month' => 50,
-        'ai_estimates_month' => 0,
         'document_pages_month' => 0,
         'exports_month' => 0,
         'commercial_proposals_month' => 0,

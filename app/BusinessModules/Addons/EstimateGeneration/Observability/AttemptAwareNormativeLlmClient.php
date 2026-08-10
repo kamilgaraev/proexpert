@@ -25,7 +25,7 @@ final readonly class AttemptAwareNormativeLlmClient
         private ?array $configuredPrices = null,
         private ?NormativeRerankerModelSet $modelSet = null,
         private ?EffectiveSettingsResolver $settingsResolver = null,
-        private ?AiAttemptAuthorizer $budgetAuthorizer = null,
+        private ?AiPriceSnapshotResolver $priceResolver = null,
     ) {}
 
     /**
@@ -79,21 +79,16 @@ final readonly class AttemptAwareNormativeLlmClient
                 'rerank',
                 $index + 1,
             );
-            $priceSnapshot = $this->budgetAuthorizer?->authorize(
+            $priceSnapshot = $this->priceResolver?->resolve(
                 $attemptContext,
                 $this->wire->provider(),
                 $model,
-                max(1, (int) config('estimate-generation.normative_matching.reranker.max_input_tokens', 64_000)),
-                max(1, (int) ($options['max_tokens'] ?? 800)),
             ) ?? AiPriceSnapshot::fromArray($this->price($model));
             $started = hrtime(true);
             $status = 'connection_failed';
             $httpCode = null;
             $response = [];
-            $wireClaimed = false;
             try {
-                $this->claimWireOrFail($attemptContext->attemptId);
-                $wireClaimed = true;
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
                 $content = $this->normalizedContent(
@@ -130,39 +125,15 @@ final readonly class AttemptAwareNormativeLlmClient
                 $status = $exception->attemptStatus;
                 $httpCode = $exception->httpCode;
                 $last = $exception;
-                if ($exception->attemptStatus === 'wire_replay_forbidden') {
-                    throw $exception;
-                }
             } catch (Throwable $exception) {
                 $last = $exception;
             } finally {
-                if ($wireClaimed) {
-                    $this->record($attemptContext, $model, $status, $httpCode, $response, $started, $priceSnapshot);
-                }
+                $this->record($attemptContext, $model, $status, $httpCode, $response, $started, $priceSnapshot);
                 $heartbeat?->__invoke();
             }
         }
 
         throw $last ?? new InvalidArgumentException('No reranker models configured.');
-    }
-
-    private function claimWireOrFail(string $attemptId): void
-    {
-        if ($this->budgetAuthorizer === null) {
-            return;
-        }
-        try {
-            $claimed = $this->budgetAuthorizer->claimWire($attemptId);
-        } catch (Throwable $exception) {
-            try {
-                $this->budgetAuthorizer->releaseBeforeWire($attemptId);
-            } catch (Throwable) {
-            }
-            throw $exception;
-        }
-        if (! $claimed) {
-            throw new RerankWireException('wire_replay_forbidden');
-        }
     }
 
     /** @param array<string, mixed> $response */

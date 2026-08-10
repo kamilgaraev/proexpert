@@ -23,8 +23,6 @@ class EstimateGenerationTrainingDataset extends Model
 
     public const STATUS_DRAFT = 'draft';
 
-    public const STATUS_PROCESSING = 'processing';
-
     public const STATUS_REVIEW_REQUIRED = 'review_required';
 
     public const STATUS_APPROVED = 'approved';
@@ -33,7 +31,7 @@ class EstimateGenerationTrainingDataset extends Model
 
     public const STATUS_ARCHIVED = 'archived';
 
-    public const STATUSES = [self::STATUS_DRAFT, self::STATUS_PROCESSING, self::STATUS_REVIEW_REQUIRED, self::STATUS_APPROVED, self::STATUS_REJECTED, self::STATUS_ARCHIVED];
+    public const STATUSES = [self::STATUS_DRAFT, self::STATUS_REVIEW_REQUIRED, self::STATUS_APPROVED, self::STATUS_REJECTED, self::STATUS_ARCHIVED];
 
     public const TRUSTED_REVIEW_DRAFT = 'draft';
 
@@ -69,9 +67,6 @@ class EstimateGenerationTrainingDataset extends Model
         'notes',
         'stats',
         'processing_payload',
-        'processing_token',
-        'processing_lease_expires_at',
-        'processing_attempt',
         'error_message',
         'queued_at',
         'processed_at',
@@ -96,8 +91,6 @@ class EstimateGenerationTrainingDataset extends Model
         'stats' => 'array',
         'processing_payload' => 'array',
         'queued_at' => 'datetime',
-        'processing_lease_expires_at' => 'immutable_datetime',
-        'processing_attempt' => 'integer',
         'processed_at' => 'datetime',
         'accepted_at' => 'datetime',
         'approved_at' => 'immutable_datetime',

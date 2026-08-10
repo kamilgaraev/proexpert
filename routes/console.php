@@ -1,6 +1,5 @@
 <?php
 
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ExpireReportSubscriptionExecutionsJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\PruneReportSubscriptionDeliveriesJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ScheduleDueReportSubscriptionsJob;
@@ -51,10 +50,6 @@ Schedule::command('commercial:reconcile --limit=100')
     ->timezone('Europe/Moscow')
     ->withoutOverlapping(120)
     ->onOneServer();
-
-Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
-    ->everyFiveMinutes()
-    ->withoutOverlapping();
 
 Schedule::job(new RecoverLegalDocumentOutboxMessages)
     ->everyMinute()

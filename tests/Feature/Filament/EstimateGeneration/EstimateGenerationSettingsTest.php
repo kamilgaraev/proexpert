@@ -119,7 +119,10 @@ final class EstimateGenerationSettingsTest extends TestCase
         self::assertStringContainsString('EstimateGenerationSettingsData::fromArray', $source);
         self::assertStringContainsString('EstimateGenerationSettingsService::class', $source);
         self::assertStringContainsString('FilamentPermission::ESTIMATE_GENERATION_SETTINGS', $source);
-        self::assertStringContainsString('FilamentPermission::ESTIMATE_GENERATION_BUDGETS', $source);
+        self::assertStringNotContainsString('FilamentPermission::ESTIMATE_GENERATION_BUDGETS', $source);
+        self::assertStringNotContainsString('budgets.daily', $source);
+        self::assertStringNotContainsString('budgets.monthly', $source);
+        self::assertStringNotContainsString('budgets.currency', $source);
         foreach (['api_key', 'secret', 'credential', 'endpoint', 'raw_prompt', 'password', 'token'] as $forbidden) {
             self::assertStringNotContainsString($forbidden, strtolower($source));
         }

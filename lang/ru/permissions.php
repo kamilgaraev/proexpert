@@ -273,7 +273,6 @@ return [
         'estimate_generation.datasets' => 'Управление наборами данных AI-сметчика',
         'estimate_generation.benchmarks' => 'Запуск проверок качества AI-сметчика',
         'estimate_generation.settings' => 'Управление настройками AI-сметчика',
-        'estimate_generation.budgets' => 'Управление бюджетными лимитами AI-сметчика',
         'budgeting.budgets.view' => 'Просмотр бюджетов',
         'budgeting.budgets.create' => 'Создание бюджетов',
         'budgeting.budgets.edit' => 'Редактирование бюджетов',

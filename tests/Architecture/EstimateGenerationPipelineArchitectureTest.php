@@ -44,7 +44,7 @@ final class EstimateGenerationPipelineArchitectureTest extends TestCase
 
         foreach ($this->phpSources($root.'/Jobs') as $path => $source) {
             self::assertDoesNotMatchRegularExpression(
-                '/Pipeline\\\\Stages\\\\|GenerationPipelineDataGateway|PipelineCheckpointStore|FailureRecorder|FailureWorkflowHandler|CreateDocumentProcessingUnits/',
+                '/Pipeline\\\\Stages\\\\|GenerationPipelineDataGateway|PipelineCheckpointStore|FailureRecorder|CreateDocumentProcessingUnits/',
                 $source,
                 $path,
             );

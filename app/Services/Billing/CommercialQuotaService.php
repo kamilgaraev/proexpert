@@ -49,7 +49,7 @@ class CommercialQuotaService
             return [];
         }
 
-        $baseLimit = (float) config('commercial_limits.free.ai_estimates_month', 0);
+        $baseLimit = (float) config('commercial_limits.ai_estimates.included_monthly', 10);
         $limits = array_fill_keys($organizationIds, $baseLimit);
         $packageLimits = array_fill_keys($organizationIds, 0.0);
         $resourceLimits = array_fill_keys($organizationIds, 0.0);
@@ -113,23 +113,10 @@ class CommercialQuotaService
             $limit = array_key_exists($organizationId, $corporateOverrides)
                 ? $corporateOverrides[$organizationId]
                 : $limits[$organizationId] + $packageLimits[$organizationId] + $resourceLimits[$organizationId];
-            $limits[$organizationId] = $limit === null ? null : max(0, (int) $limit);
+            $limits[$organizationId] = $limit === null ? null : max((int) $baseLimit, (int) $limit);
         }
 
         return $limits;
-    }
-
-    /** @return array{limit: int|null, used: int} */
-    public function getAiEstimateQuota(Organization $organization): array
-    {
-        $limits = $this->getEffectiveLimits($organization);
-        $usage = $this->getUsage($organization);
-        $limit = $limits['ai_estimates_month'] ?? null;
-
-        return [
-            'limit' => $limit === null ? null : max(0, (int) $limit),
-            'used' => max(0, (int) ($usage['ai_estimates_month'] ?? 0)),
-        ];
     }
 
     public function getUsage(Organization $organization): array
@@ -200,8 +187,7 @@ class CommercialQuotaService
         Organization $organization,
         array $requestedResources,
         ?array $packageSlugs = null,
-    ): array
-    {
+    ): array {
         $resources = $this->configuredResources();
         $availablePackageSlugs = $packageSlugs === null
             ? $this->activePackageSlugs((int) $organization->getKey())
@@ -278,7 +264,9 @@ class CommercialQuotaService
         $limits = [];
 
         foreach ($metadata as $key => $definition) {
-            $base = $this->number((float) ($free[$key] ?? 0));
+            $base = $this->number((float) ($key === 'ai_estimates_month'
+                ? config('commercial_limits.ai_estimates.included_monthly', 10)
+                : ($free[$key] ?? 0)));
             $fromPackages = $this->number((float) ($packageLimits[$key] ?? 0));
             $fromPaid = $this->number((float) (($paidAddons[$key] ?? 0) + ($manualGrants[$key] ?? 0)));
             $overrideExists = array_key_exists($key, $corporateOverrides);

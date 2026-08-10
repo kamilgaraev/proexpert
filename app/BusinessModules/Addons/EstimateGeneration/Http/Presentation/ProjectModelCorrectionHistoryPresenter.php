@@ -36,11 +36,13 @@ final class ProjectModelCorrectionHistoryPresenter
                 'created_at' => (string) ($row['created_at'] ?? ''),
             ];
         }
+        $indexById = [];
         foreach ($items as $index => $item) {
-            if ($item['revert'] && is_int($item['reverted_correction_id'])) {
-                foreach ($items as $targetIndex => $target) {
-                    if ($target['id'] === $item['reverted_correction_id']) $items[$targetIndex]['reverted'] = true;
-                }
+            $indexById[$item['id']] = $index;
+        }
+        foreach ($items as $index => $item) {
+            if ($item['revert'] && is_int($item['reverted_correction_id']) && isset($indexById[$item['reverted_correction_id']])) {
+                $items[$indexById[$item['reverted_correction_id']]]['reverted'] = true;
             }
             $items[$index]['active'] = $index === array_key_last($items) && ! $item['revert'];
         }

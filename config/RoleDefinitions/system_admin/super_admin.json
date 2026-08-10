@@ -17,8 +17,7 @@
       "estimate_generation.operate",
       "estimate_generation.datasets",
       "estimate_generation.benchmarks",
-      "estimate_generation.settings",
-      "estimate_generation.budgets"
+      "estimate_generation.settings"
     ]
   },
   "interface_access": [

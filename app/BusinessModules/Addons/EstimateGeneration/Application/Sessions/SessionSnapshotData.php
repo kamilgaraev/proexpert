@@ -38,9 +38,10 @@ final readonly class SessionSnapshotData
         public array $objectInput = [],
         public array $scopeSummary = [],
         public array $aiEstimateQuota = [
-            'limit' => null,
+            'included' => 10,
+            'purchased' => 0,
             'used' => 0,
-            'available' => null,
+            'available' => 10,
             'reservation_status' => null,
         ],
     ) {}

@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ConfirmedProject
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelAssertion;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelAssertionList;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrection;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionList;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEntity;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEntityList;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceBinding;
@@ -89,7 +88,7 @@ final class ProjectModelMergerTest extends TestCase
         return (new ProjectModelMerger)->merge(
             ProjectModelEntityList::of($entity),
             ProjectModelAssertionList::of(...$assertions),
-            ProjectModelCorrectionList::of(...$corrections),
+            $corrections,
             ProjectModelEvidenceBindingList::of(...$bindings),
         );
     }

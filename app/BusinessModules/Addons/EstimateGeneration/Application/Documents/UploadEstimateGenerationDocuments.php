@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -21,11 +22,13 @@ final class UploadEstimateGenerationDocuments
         private DocumentParsingService $parsing,
         private DocumentGenerationReadinessService $readiness,
         private EffectiveSettingsResolver $settingsResolver,
+        private EstimateGenerationActionAuthorizer $authorizer,
     ) {}
 
     /** @param list<UploadedFile> $files */
     public function handle(EstimateGenerationSession $session, int $expectedVersion, array $files, User $user): UploadDocumentsResult
     {
+        $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
         $this->policy->documents($session, $expectedVersion);
         $settings = $this->settingsResolver->forOperation(
             AiOperationContext::deterministicId("upload|{$session->id}|{$expectedVersion}"),

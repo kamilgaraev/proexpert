@@ -5,20 +5,15 @@ declare(strict_types=1);
 namespace App\Filament\Resources\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFailure;
-use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionCommand;
-use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionResult;
-use App\BusinessModules\Addons\EstimateGeneration\Operations\ResolveEstimateGenerationFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\Filament\Resources\EstimateGeneration\FailureResource\Pages;
 use App\Filament\Support\EstimateGeneration\FailureDiagnosticsPresenter;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
-use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Infolists\Components\TextEntry;
-use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -27,7 +22,6 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Expression;
-use Illuminate\Support\Str;
 
 class FailureResource extends Resource
 {
@@ -152,7 +146,6 @@ class FailureResource extends Resource
             ])
             ->recordActions([
                 ViewAction::make(),
-                self::resolveAction(),
             ]);
     }
 
@@ -197,31 +190,6 @@ class FailureResource extends Resource
     public static function canDeleteAny(): bool
     {
         return false;
-    }
-
-    private static function resolveAction(): Action
-    {
-        return Action::make('mark_resolved')
-            ->label(trans_message('estimate_generation.failures.mark_resolved'))
-            ->requiresConfirmation()
-            ->visible(static fn (EstimateGenerationFailure $record): bool => $record->resolved_at === null
-                && SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_OPERATE))
-            ->action(static function (EstimateGenerationFailure $record): void {
-                $actor = SystemAdminAccess::user();
-                $result = $actor === null
-                    ? AdminFailureResolutionResult::failure('estimate_generation.admin_operation_forbidden')
-                    : app(ResolveEstimateGenerationFailure::class)->handle(new AdminFailureResolutionCommand(
-                        (int) $actor->getKey(),
-                        (string) $record->getKey(),
-                        (int) $record->organization_id,
-                        (int) $record->project_id,
-                        (int) $record->session_id,
-                        (int) $record->latest_occurrence_sequence,
-                        (string) Str::ulid(),
-                    ));
-                $notification = Notification::make()->title(trans_message($result->messageKey));
-                ($result->successful ? $notification->success() : $notification->danger())->send();
-            });
     }
 
     /** @return list<string> */

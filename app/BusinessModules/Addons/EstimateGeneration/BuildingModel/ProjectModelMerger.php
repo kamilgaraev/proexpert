@@ -20,7 +20,7 @@ final class ProjectModelMerger
     public function merge(
         ProjectModelEntityList $entities,
         ProjectModelAssertionList $assertions,
-        ProjectModelCorrectionList $corrections,
+        array $corrections,
         ProjectModelEvidenceBindingList $evidenceBindings,
     ): ProjectModelMergeResult
     {
@@ -144,7 +144,7 @@ final class ProjectModelMerger
         return $candidates;
     }
 
-    private function appendCorrectionCandidates(array &$candidatesBySubject, ProjectModelCorrectionList $corrections, array $assertionIndex, ProjectModelEvidenceBindingList $evidenceBindings): void
+    private function appendCorrectionCandidates(array &$candidatesBySubject, array $corrections, array $assertionIndex, ProjectModelEvidenceBindingList $evidenceBindings): void
     {
         $keys = [];
         foreach ($corrections as $correction) {

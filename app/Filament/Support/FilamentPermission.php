@@ -126,8 +126,6 @@ final class FilamentPermission
 
     public const ESTIMATE_GENERATION_SETTINGS = 'estimate_generation.settings';
 
-    public const ESTIMATE_GENERATION_BUDGETS = 'estimate_generation.budgets';
-
     public const NOTIFICATIONS_TEMPLATES_VIEW = 'system_admin.notifications.templates.view';
 
     public const NOTIFICATIONS_TEMPLATES_CREATE = 'system_admin.notifications.templates.create';

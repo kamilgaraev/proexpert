@@ -11,5 +11,7 @@ interface DocumentUnitAdapter
     public function supports(EstimateGenerationDocument $document): bool;
 
     /** @return list<DocumentUnitData> */
-    public function detect(EstimateGenerationDocument $document, string $sourceVersion): array;
+    public function createUnits(EstimateGenerationDocument $document, string $sourceVersion): array;
+
+    public function representation(DocumentUnitData $unit): DocumentRepresentation;
 }

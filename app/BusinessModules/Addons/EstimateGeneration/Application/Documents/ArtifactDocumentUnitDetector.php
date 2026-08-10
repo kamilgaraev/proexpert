@@ -28,7 +28,7 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
 
         foreach ($this->adapters as $adapter) {
             if ($adapter->supports($document)) {
-                return $adapter->detect($document, $sourceVersion);
+                return $adapter->createUnits($document, $sourceVersion);
             }
         }
 

@@ -24,7 +24,7 @@ use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
-    public const QUERY_BUDGET = 14;
+    public const QUERY_BUDGET = 13;
 
     private const CHECKPOINT_STATUS_VALUES = [
         CheckpointStatus::Running->value,
@@ -69,7 +69,6 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             $evidence = $this->evidence($connection, $organizationId, $projectId, $sessionId);
             $usage = $this->usage($connection, $organizationId, $projectId, $sessionId);
             $failures = $this->failures($connection, $organizationId, $projectId, $sessionId);
-            $finalization = $this->finalization($connection, $organizationId, $projectId, $sessionId);
             $estimate = $this->estimate($connection, $organizationId, $projectId, $sessionId);
             $sources = $this->sourceWatermarks($connection, $organizationId, $projectId, $sessionId);
 
@@ -83,7 +82,6 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 $evidence,
                 $usage,
                 $failures,
-                $finalization,
                 $estimate,
                 $sources,
             );
@@ -261,25 +259,6 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
     }
 
     /** @return array<string, mixed> */
-    private function finalization(Connection $connection, int $organizationId, int $projectId, int $sessionId): array
-    {
-        $row = $connection->selectOne(<<<'SQL'
-            SELECT
-                (SELECT COUNT(*) FROM estimate_generation_finalization_outbox WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS outbox_total,
-                (SELECT COALESCE(MAX(id), 0) FROM estimate_generation_finalization_outbox WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS outbox_max_id,
-                (SELECT COALESCE(SUM(attempt_count), 0) FROM estimate_generation_finalization_outbox WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS outbox_attempts,
-                (SELECT COUNT(*) FROM estimate_generation_finalization_outbox WHERE organization_id = ? AND project_id = ? AND session_id = ? AND status <> 'delivered') AS outbox_pending,
-                (SELECT MAX(updated_at) FROM estimate_generation_finalization_outbox WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS outbox_max_updated_at,
-                (SELECT COUNT(*) FROM estimate_generation_finalization_deliveries WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS deliveries_total,
-                (SELECT COALESCE(MAX(id), 0) FROM estimate_generation_finalization_deliveries WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS deliveries_max_id,
-                (SELECT COUNT(*) FROM estimate_generation_finalization_deliveries WHERE organization_id = ? AND project_id = ? AND session_id = ? AND status = 'pending') AS deliveries_pending,
-                (SELECT MAX(updated_at) FROM estimate_generation_finalization_deliveries WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS deliveries_max_updated_at
-            SQL, array_merge(...array_fill(0, 9, [$organizationId, $projectId, $sessionId])));
-
-        return $row instanceof stdClass ? $this->row($row) : [];
-    }
-
-    /** @return array<string, mixed> */
     private function estimate(Connection $connection, int $organizationId, int $projectId, int $sessionId): array
     {
         return $this->aggregate($connection->table('estimate_generation_packages AS packages')
@@ -348,7 +327,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
      */
     private function assemble(array $session, array $permissions, array ...$parts): SessionSnapshotData
     {
-        [$documents, $checkpoint, $checkpoints, $units, $evidence, $usage, $failures, $finalization, $estimate, $sources] = $parts;
+        [$documents, $checkpoint, $checkpoints, $units, $evidence, $usage, $failures, $estimate, $sources] = $parts;
         $model = new EstimateGenerationSession;
         $model->forceFill([
             ...$session,
@@ -371,7 +350,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ? DocumentProcessingProgress::fromSummary($documents, $base->processingProgress)
             : $base->processingProgress;
         $quota = $base->aiEstimateQuota;
-        $revisionSources = compact('session', 'documents', 'checkpoint', 'checkpoints', 'units', 'evidence', 'usage', 'failures', 'finalization', 'estimate', 'sources', 'quota');
+        $revisionSources = compact('session', 'documents', 'checkpoint', 'checkpoints', 'units', 'evidence', 'usage', 'failures', 'estimate', 'sources', 'quota');
         $operationalVersion = OperationalSnapshotRevision::fromSources($revisionSources);
 
         return new SessionSnapshotData(
@@ -407,13 +386,13 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             canApply: (bool) $readiness['can_apply'],
             currentCheckpoint: $this->checkpointSummary($checkpoint),
             queueSummary: [
-                'pending' => $this->number($checkpoints, 'pending') + $this->number($units, 'pending') + $this->number($finalization, 'outbox_pending'),
+                'pending' => $this->number($checkpoints, 'pending') + $this->number($units, 'pending'),
                 'running' => $this->number($checkpoints, 'running') + $this->number($units, 'running'),
             ],
             recoverySummary: [
                 'recoverable' => $this->number($failures, 'recoverable'),
                 'expired_claims' => $this->number($checkpoints, 'expired') + $this->number($units, 'expired'),
-                'pending_deliveries' => $this->number($finalization, 'deliveries_pending'),
+                'pending_deliveries' => 0,
             ],
             evidenceSummary: [
                 'active' => $this->number($evidence, 'active'),

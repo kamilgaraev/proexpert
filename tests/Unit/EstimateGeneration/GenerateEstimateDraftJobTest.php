@@ -46,7 +46,7 @@ final class GenerateEstimateDraftJobTest extends TestCase
         $this->job()->handle($generation);
     }
 
-    public function test_failed_does_not_start_failure_workflow_for_stale_state(): void
+    public function test_failed_does_not_start_failure_recovery_for_stale_state(): void
     {
         $failureHandler = new class
         {
@@ -57,7 +57,7 @@ final class GenerateEstimateDraftJobTest extends TestCase
                 $this->calls++;
             }
         };
-        $container = new Container();
+        $container = new Container;
         $container->instance(HandleEstimateGenerationDraftFailure::class, $failureHandler);
         Container::setInstance($container);
 
@@ -66,7 +66,7 @@ final class GenerateEstimateDraftJobTest extends TestCase
         self::assertSame(0, $failureHandler->calls);
     }
 
-    public function test_failed_starts_failure_workflow_for_regular_error(): void
+    public function test_failed_starts_failure_recovery_for_regular_error(): void
     {
         $failureHandler = new class
         {
@@ -77,7 +77,7 @@ final class GenerateEstimateDraftJobTest extends TestCase
                 $this->calls++;
             }
         };
-        $container = new Container();
+        $container = new Container;
         $container->instance(HandleEstimateGenerationDraftFailure::class, $failureHandler);
         Container::setInstance($container);
 

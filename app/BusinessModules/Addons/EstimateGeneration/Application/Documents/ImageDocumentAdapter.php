@@ -16,7 +16,7 @@ final class ImageDocumentAdapter implements DocumentUnitAdapter
             || in_array($this->extension($document), self::EXTENSIONS, true);
     }
 
-    public function detect(EstimateGenerationDocument $document, string $sourceVersion): array
+    public function createUnits(EstimateGenerationDocument $document, string $sourceVersion): array
     {
         $meta = is_array($document->meta) ? $document->meta : [];
         $type = ($meta['is_sketch'] ?? false) === true ? DocumentUnitType::Sketch : DocumentUnitType::RasterImage;
@@ -33,6 +33,19 @@ final class ImageDocumentAdapter implements DocumentUnitAdapter
         }
 
         return $units;
+    }
+
+    public function representation(DocumentUnitData $unit): DocumentRepresentation
+    {
+        $provenance = $unit->provenance();
+
+        return new DocumentRepresentation(
+            DocumentSourceVersion::fromString($unit->sourceVersion),
+            [],
+            $provenance->artifactPath,
+            $provenance->coordinateSpace,
+            ['raster' => 'available', 'ocr' => 'available'],
+        );
     }
 
     private function extension(EstimateGenerationDocument $document): string

@@ -27,7 +27,6 @@ final class EstimateGenerationFilamentAuthorizationTest extends TestCase
         'estimate_generation.datasets',
         'estimate_generation.benchmarks',
         'estimate_generation.settings',
-        'estimate_generation.budgets',
     ];
 
     protected function setUp(): void
@@ -58,7 +57,7 @@ final class EstimateGenerationFilamentAuthorizationTest extends TestCase
             'support_operator' => ['monitor', 'operate'],
             'qa_engineer' => ['monitor', 'datasets', 'benchmarks'],
             'security_auditor' => ['monitor'],
-            'super_admin' => ['monitor', 'operate', 'datasets', 'benchmarks', 'settings', 'budgets'],
+            'super_admin' => ['monitor', 'operate', 'datasets', 'benchmarks', 'settings'],
         ];
 
         foreach ($matrix as $role => $allowedActions) {
@@ -90,7 +89,7 @@ final class EstimateGenerationFilamentAuthorizationTest extends TestCase
             || in_array($permission, $grantedPermissions, true));
     }
 
-    public function test_filament_declares_exactly_six_ai_estimator_permissions(): void
+    public function test_filament_declares_exactly_five_ai_estimator_permissions(): void
     {
         $permissions = array_values(array_filter(
             (new ReflectionClass(FilamentPermission::class))->getConstants(),

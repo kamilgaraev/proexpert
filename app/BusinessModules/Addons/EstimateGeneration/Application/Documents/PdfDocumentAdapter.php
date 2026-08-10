@@ -22,7 +22,7 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
             || strtolower((string) pathinfo((string) $document->filename, PATHINFO_EXTENSION)) === 'pdf';
     }
 
-    public function detect(EstimateGenerationDocument $document, string $sourceVersion): array
+    public function createUnits(EstimateGenerationDocument $document, string $sourceVersion): array
     {
         $source = $this->storage->open($document, $sourceVersion);
 
@@ -124,5 +124,21 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
         } finally {
             $source->close();
         }
+    }
+
+    public function representation(DocumentUnitData $unit): DocumentRepresentation
+    {
+        $provenance = $unit->provenance();
+
+        return new DocumentRepresentation(
+            DocumentSourceVersion::fromString($unit->sourceVersion),
+            [
+                'geometry_artifact_path' => $unit->locator['geometry_artifact_path'] ?? null,
+                'geometry_artifact_sha256' => $unit->locator['geometry_artifact_sha256'] ?? null,
+            ],
+            $provenance->artifactPath,
+            $provenance->coordinateSpace,
+            ['text_layer' => 'available', 'geometry' => 'available', 'render' => 'available'],
+        );
     }
 }

@@ -37,33 +37,31 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\EloquentG
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryRegenerationIntentStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\NoopGeometryConfirmationFaultInjector;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EloquentRetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\AdvanceTargetedPackageReviewUpdater;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\CommitTargetedPackageRebuild;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageCommitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageRebuildOperationStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageRebuildSessionSource;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\RunTargetedPackageRebuildOperation;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobScheduler;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobHandler;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildSessionSource;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildExecutor;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuilder;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildCommitter;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\CommitTargetedPackageRebuild;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageCommitStore;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageCommitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageDraftWriter;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageReviewUpdater;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\AdvanceTargetedPackageReviewUpdater;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildCommitter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildExecutor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationService;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationStore;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\TargetedPackageRebuildReviewer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildSessionSource;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageReviewUpdater;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
@@ -92,18 +90,20 @@ use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectCadRun
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCaseCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEvaluationReleaseGateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EloquentSessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceDocumentSourceReplacementInvalidator;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\DeliverEstimateGenerationFinalizationsJob;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EloquentEvaluationCorpusRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationCorpus;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationCorpusRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationReleaseGate;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\LaravelTargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\ReconcileAiBudgetReservationsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\BackfillNormativeRetrievalCommand;
@@ -151,19 +151,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentFinalizationDeliveryStore;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentFinalizationOutbox;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineExecutionPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineOutputRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationDeliveryStore;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationOutbox;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPublishDraftOnce;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
@@ -173,6 +168,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineExecutionPlan
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineOutputRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishDraftOnce;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishValidatedDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\S3PipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\AssembleResourcesStage;
@@ -184,8 +180,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ResolvePricesS
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandDocumentsStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandObjectStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
-use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
@@ -213,6 +209,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrPreflightServi
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrQualityAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\TargetedPackageRebuildReviewer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
@@ -247,16 +245,16 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(EffectiveSettingsResolver::class);
         $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptBudgetAuthorizer::class,
-        );
-        $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class,
             \App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimitsGuard::class,
         );
         $this->app->singleton(AiPricingCatalog::class, static fn (): AiPricingCatalog => new AiPricingCatalog(
             is_array(config('estimate-generation.ai_pricing_catalog')) ? config('estimate-generation.ai_pricing_catalog') : [],
         ));
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Observability\CatalogAiPriceSnapshotResolver::class,
+        );
         $this->app->singleton(AttemptAwareNormativeLlmClient::class, static fn ($app): AttemptAwareNormativeLlmClient => new AttemptAwareNormativeLlmClient(
             $app->make(RerankWireClient::class),
             $app->make(AiUsageStore::class),
@@ -264,7 +262,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             null,
             $app->make(NormativeRerankerModelSet::class),
             $app->make(EffectiveSettingsResolver::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
         ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter::class,
@@ -280,7 +278,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\AttemptAwareCompletenessArbiter(
                     $app->make(RerankWireClient::class),
                     $app->make(AiUsageStore::class),
-                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
                     $model,
                     $promptVersion,
                     trim((string) ($settings['schema_version'] ?? 'completeness-arbiter:v1')),
@@ -371,9 +369,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(AiUsageStore::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader::class),
             $app->make(EffectiveSettingsResolver::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
-            new \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\FixedOcrRuntimeEnvironment($app->environment('production')),
         ));
         $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);
         $this->app->singleton(CadRuntimeConfiguration::class, fn (): CadRuntimeConfiguration => CadRuntimeConfiguration::fromArray(
@@ -487,7 +484,17 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\BuildingModelReadDataSource::class,
             \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EloquentBuildingModelReadDataSource::class,
         );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionRepository::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EloquentEstimateDecisionRepository::class,
+        );
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
+        $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
+            $app->make('db')->connection(),
+        ));
+        $this->app->singleton(EvaluationCorpusRepository::class, EloquentEvaluationCorpusRepository::class);
+        $this->app->singleton(EvaluationCorpus::class);
+        $this->app->singleton(EvaluationReleaseGate::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentNormativeContextPinSource::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver::class, \App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentSessionBaseInputVersionResolver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver::class, fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver(
@@ -512,20 +519,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(OcrClientInterface::class, static fn ($app): TimewebVisionOcrClient => new TimewebVisionOcrClient(
             $app->make(AiUsageStore::class),
             $app->make(EffectiveSettingsResolver::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
         ));
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
-        $this->app->singleton(FailureWorkflowHandler::class, fn ($app) => new EloquentFailureWorkflowHandler(
-            $app->make(AdvanceEstimateGeneration::class),
-            $app->make(FailureWorkflowFence::class),
-            $app->make(AiEstimateQuotaService::class),
-            $app->make('db')->connection(),
-        ));
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
-        $this->app->singleton(FinalizationOutbox::class, fn ($app) => new EloquentFinalizationOutbox($app->make('db')->connection()));
-        $this->app->singleton(FinalizationDeliveryStore::class, fn ($app) => new EloquentFinalizationDeliveryStore($app->make('db')->connection()));
+        $this->app->singleton(PublishDraftOnce::class, EloquentPublishDraftOnce::class);
         $this->app->singleton(PipelineDefinitionGraph::class, static fn (): PipelineDefinitionGraph => PipelineDefinitionGraph::standard());
         $this->app->singleton(PipelineArtifactStore::class, S3PipelineArtifactStore::class);
         $this->app->singleton(PipelineCheckpointStore::class, fn ($app) => new EloquentPipelineCheckpointStore(
@@ -556,7 +556,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             registry: $app->make(PipelineRegistry::class),
             checkpointStore: $app->make(PipelineCheckpointStore::class),
             failureRecorder: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder::class),
-            failureWorkflowHandler: $app->make(FailureWorkflowHandler::class),
             clock: static fn (): \DateTimeImmutable => new \DateTimeImmutable,
             leaseSeconds: max(self::MINIMUM_PIPELINE_LEASE_SECONDS, (int) config(
                 'estimate-generation.generation.pipeline_lease_seconds',
@@ -597,14 +596,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminSessionOperationExecutor::class,
             \App\BusinessModules\Addons\EstimateGeneration\Operations\ApplicationAdminSessionOperationExecutor::class,
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionAuthorizer::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Operations\SystemAdminFailureResolutionAuthorizer::class,
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionTransaction::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Operations\EloquentAdminFailureResolutionTransaction::class,
         );
         $this->app->singleton(GeometryRegenerationIntentStore::class, EloquentGeometryRegenerationIntentStore::class);
         $this->app->singleton(GeometryConfirmationFaultInjector::class, NoopGeometryConfirmationFaultInjector::class);
@@ -681,14 +672,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                     ->job(new RecoverEstimateGenerationPipelinesJob)
                     ->everyMinute()
                     ->withoutOverlapping();
-                $this->app->make(Schedule::class)
-                    ->job(new DeliverEstimateGenerationFinalizationsJob)
-                    ->everyMinute()
-                    ->withoutOverlapping();
-                $this->app->make(Schedule::class)
-                    ->job(new ReconcileAiBudgetReservationsJob)
-                    ->everyMinute()
-                    ->withoutOverlapping();
             });
             $this->commands([
                 BootstrapEstimateGenerationLearningCommand::class,
@@ -696,6 +679,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 InspectCadRuntimeReadinessCommand::class,
                 RunEstimateGenerationBenchmarkCommand::class,
                 RunEstimateGenerationBenchmarkCaseCommand::class,
+                RunEvaluationReleaseGateCommand::class,
                 ClassifyEstimateNormativesCommand::class,
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,
@@ -732,12 +716,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ->by($key);
         });
 
-        RateLimiter::for('estimate-generation-training-datasets', static function (object $job): Limit {
-            $key = $job instanceof ProcessEstimateGenerationTrainingDatasetJob ? $job->rateLimitKey() : 'global';
-
-            return Limit::perMinute(max(1, (int) config('estimate-generation.training.max_dataset_jobs_per_minute', 2)))
-                ->by($key);
-        });
     }
 
     private function repositoryReplayEnabled(): bool

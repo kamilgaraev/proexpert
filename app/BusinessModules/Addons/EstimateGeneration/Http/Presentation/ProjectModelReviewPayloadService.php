@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionChainProjector;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -25,7 +24,6 @@ final readonly class ProjectModelReviewPayloadService
     public function __construct(
         private DatabaseManager $database,
         private EstimateGenerationDocumentPreviewService $previews,
-        private ProjectModelCorrectionChainProjector $correctionChain = new ProjectModelCorrectionChainProjector,
         private ProjectModelReviewPayloadSanitizer $sanitizer = new ProjectModelReviewPayloadSanitizer,
         private ProjectModelViewerAnchorNormalizer $anchorNormalizer = new ProjectModelViewerAnchorNormalizer,
         private ProjectModelReviewCursorPaginator $paginator = new ProjectModelReviewCursorPaginator,
@@ -59,6 +57,7 @@ final readonly class ProjectModelReviewPayloadService
         $entityIds = $entityRows->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
         $assertions = $this->assertions($model, $scope, $entityIds);
         $corrections = $this->corrections($model, $scope, $entityIds);
+        $currentCorrections = $this->currentCorrections($model, $scope, $entityIds);
         $evidence = $this->evidence($model, $scope, $entityIds);
         $references = $this->sourcePinning->references($evidence);
         $documents = $this->documents($scope, $references, $filters);
@@ -69,7 +68,7 @@ final readonly class ProjectModelReviewPayloadService
         $byAssertion = $this->group($assertions, 'entity_id');
         $byCorrection = $this->group($corrections, 'assertion_id');
         $byEvidence = $this->group($evidence, 'entity_id');
-        $effective = $this->effectiveCorrections($corrections);
+        $effective = $this->effectiveCorrections($currentCorrections);
         $entities = [];
         foreach ($entityRows as $entity) {
             $entityAssertions = $byAssertion[(int) $entity->id] ?? [];
@@ -116,12 +115,23 @@ final readonly class ProjectModelReviewPayloadService
     private function effectiveCorrections(array $corrections): array
     {
         if ($corrections === []) return [];
-        $rows = [];
-        foreach ($corrections as $row) {
-            $rows[] = ['correction_stable_key' => (string) $row->stable_key, 'correction_payload' => $this->json($row->payload), 'assertion_stable_key' => (string) $row->assertion_stable_key, 'assertion_type' => (string) $row->assertion_type, 'assertion_payload' => $this->json($row->assertion_payload), 'entity_stable_key' => (string) $row->entity_stable_key];
-        }
         $result = [];
-        foreach ($this->correctionChain->project($rows) as $value) $result[$value['assertion_stable_key']] = $value;
+        foreach ($corrections as $row) {
+            $payload = $this->json($row->payload);
+            $audit = is_array($payload['audit'] ?? null) ? $payload['audit'] : [];
+            if (($audit['operation'] ?? null) === 'revert') continue;
+            $value = $audit['new_canonical_value'] ?? $payload['canonical_value'] ?? null;
+            if (($audit['operation'] ?? null) !== 'apply' || ! is_array($value) || array_is_list($value)) {
+                throw new \UnexpectedValueException('Project model correction history is invalid.');
+            }
+            $result[(string) $row->assertion_stable_key] = [
+                'entity_stable_key' => (string) $row->entity_stable_key,
+                'assertion_stable_key' => (string) $row->assertion_stable_key,
+                'assertion_type' => (string) $row->assertion_type,
+                'value' => $this->sanitizer->assertionValue((string) $row->assertion_type, $value),
+                'correction_stable_key' => (string) $row->stable_key,
+            ];
+        }
         return $result;
     }
 
@@ -133,9 +143,9 @@ final readonly class ProjectModelReviewPayloadService
         unset($payload['source']);
         $active = $effective[(string) $row->stable_key] ?? null;
         $history = $this->correctionHistory->present($corrections);
-        $current = is_array($history['current_value'] ?? null)
-            ? $this->sanitizer->assertionValue((string) $row->assertion_type, $history['current_value'])
-            : (is_array($active['value'] ?? null) ? $active['value'] : $this->sanitizer->assertionValue((string) $row->assertion_type, $payload));
+        $current = is_array($active['value'] ?? null)
+            ? $active['value']
+            : $this->sanitizer->assertionValue((string) $row->assertion_type, $payload);
         $candidates = [[
             'stable_key' => (string) $row->stable_key, 'source' => $source, 'source_display' => $this->sourceLabel($source),
             'value' => $this->sanitizer->assertionValue((string) $row->assertion_type, $payload), 'confidence' => $this->confidence($row->confidence), 'confirmed' => $this->hasEvidence($evidence, (int) $row->id, null),
@@ -168,6 +178,8 @@ final readonly class ProjectModelReviewPayloadService
     /** @return list<stdClass> */
     private function corrections(stdClass $model, array $scope, array $entityIds): array { if ($entityIds === []) return []; return $this->database->table('estimate_generation_project_model_corrections as c')->join('estimate_generation_project_model_assertions as a', 'a.id', '=', 'c.assertion_id')->join('estimate_generation_project_model_entities as e', 'e.id', '=', 'a.entity_id')->where('c.building_model_id', $model->id)->where('c.organization_id', $scope[0])->where('c.project_id', $scope[1])->where('c.session_id', $scope[2])->where('c.source_version', $model->content_version)->whereIn('a.entity_id', $entityIds)->orderBy('c.id')->get(['c.*', 'a.stable_key as assertion_stable_key', 'a.assertion_type', 'a.payload as assertion_payload', 'e.stable_key as entity_stable_key'])->all(); }
     /** @return list<stdClass> */
+    private function currentCorrections(stdClass $model, array $scope, array $entityIds): array { if ($entityIds === []) return []; return $this->database->table('estimate_generation_project_model_corrections as c')->join('estimate_generation_project_model_assertions as a', 'a.id', '=', 'c.assertion_id')->join('estimate_generation_project_model_entities as e', 'e.id', '=', 'a.entity_id')->where('c.building_model_id', $model->id)->where('c.organization_id', $scope[0])->where('c.project_id', $scope[1])->where('c.session_id', $scope[2])->where('c.source_version', $model->content_version)->whereIn('a.entity_id', $entityIds)->whereRaw('c.id = (select max(current_correction.id) from estimate_generation_project_model_corrections as current_correction where current_correction.assertion_id = c.assertion_id)')->orderBy('a.stable_key')->get(['c.*', 'a.stable_key as assertion_stable_key', 'a.assertion_type', 'e.stable_key as entity_stable_key'])->all(); }
+    /** @return list<stdClass> */
     private function evidence(stdClass $model, array $scope, array $entityIds): array { if ($entityIds === []) return []; return $this->database->table('estimate_generation_project_model_evidence_bindings as b')->join('estimate_generation_evidence as ev', 'ev.id', '=', 'b.evidence_id')->where('b.building_model_id', $model->id)->where('b.organization_id', $scope[0])->where('b.project_id', $scope[1])->where('b.session_id', $scope[2])->where('b.source_version', $model->content_version)->whereIn('b.entity_id', $entityIds)->whereNull('ev.invalidated_at')->orderBy('b.id')->get(['b.entity_id', 'b.assertion_id', 'b.correction_id', 'b.evidence_id', 'b.candidate_source', 'b.evidence_source_version', 'ev.locator'])->all(); }
     /** @param array<int,array{source_version:string,pages:array<int,true>}> $references */
     private function documents(array $scope, array $references, array $filters): Collection { if ($references === []) return collect(); $query = $this->database->table('estimate_generation_documents')->where('organization_id', $scope[0])->where('project_id', $scope[1])->where('session_id', $scope[2])->whereIn('id', array_keys($references))->orderBy('id'); if (isset($filters['document_id'])) $query->where('id', (int) $filters['document_id']); return collect($this->sourcePinning->documents($query->limit(100)->get(['id','filename','mime_type','status','source_version'])->all(), $references)); }
@@ -178,7 +190,7 @@ final readonly class ProjectModelReviewPayloadService
     private function entityStatus(array $assertions): string { if ($assertions===[]) return 'unconfirmed'; if (array_filter($assertions, static fn(array $a): bool=>$a['status']==='needs_action')!==[]) return 'needs_action'; if (array_filter($assertions, static fn(array $a): bool=>$a['status']==='unconfirmed')!==[]) return 'unconfirmed'; return 'confirmed'; }
     private function matches(string $status,array $assertions,array $filters): bool { if (($filters['status']??null)!==$status && isset($filters['status'])) return false; if (isset($filters['needs_action']) && (bool)$filters['needs_action']!==($status!=='confirmed')) return false; if (isset($filters['document_id']) || isset($filters['sheet_id'])) { $anchors=[]; foreach($assertions as $assertion) foreach($assertion['viewer_anchors'] as $anchor) $anchors[]=$anchor; if (isset($filters['document_id']) && array_filter($anchors, fn(array $anchor):bool=>(int)$anchor['document_id']===(int)$filters['document_id'])===[]) return false; if (isset($filters['sheet_id']) && array_filter($anchors, fn(array $anchor):bool=>(int)($anchor['sheet_id']??0)===(int)$filters['sheet_id'])===[]) return false; } return true; }
     private function conflicts(array $assertions): array { $byType=[]; foreach($assertions as $assertion) if($assertion['status']==='confirmed') $byType[$assertion['type']][]=$assertion; $conflicts=[]; foreach($byType as $type=>$items){$values=[]; foreach($items as $item)$values[json_encode($item['current_value'],JSON_THROW_ON_ERROR)][]=$item['stable_key']; if(count($values)>1){$keys=[];foreach($values as $itemKeys)foreach($itemKeys as $key)$keys[]=$key;sort($keys,SORT_STRING);$conflicts[]=['code'=>$type.'_conflict','type'=>$type,'type_display'=>self::TYPE_LABELS[$type]??'Свойство','assertion_stable_keys'=>$keys];}} return $conflicts; }
-    private function impacts(stdClass $model,array $scope,int $entityId): array { return $this->database->table('estimate_generation_project_model_relations as r')->join('estimate_generation_project_model_entities as target', function($join) use($entityId){$join->on('target.id','=','r.to_entity_id')->orOn('target.id','=','r.from_entity_id');})->where('r.building_model_id',$model->id)->where('r.organization_id',$scope[0])->where('r.project_id',$scope[1])->where('r.session_id',$scope[2])->where('r.source_version',$model->content_version)->where(function($q) use($entityId){$q->where('r.from_entity_id',$entityId)->orWhere('r.to_entity_id',$entityId);})->where('target.id','<>',$entityId)->limit(100)->get(['target.stable_key','target.entity_kind','r.relation_type'])->map(fn(stdClass $row):array=>['stable_key'=>(string)$row->stable_key,'kind'=>(string)$row->entity_kind,'kind_display'=>self::TYPE_LABELS[(string)$row->entity_kind]??'Элемент','relation_type'=>(string)$row->relation_type])->all(); }
+    private function impacts(stdClass $model,array $scope,int $entityId): array { return $this->database->table('estimate_generation_project_model_relations as r')->join('estimate_generation_project_model_entities as target', function($join){$join->on('target.id','=','r.to_entity_id')->orOn('target.id','=','r.from_entity_id');})->where('r.building_model_id',$model->id)->where('r.organization_id',$scope[0])->where('r.project_id',$scope[1])->where('r.session_id',$scope[2])->where('r.source_version',$model->content_version)->where(function($q) use($entityId){$q->where('r.from_entity_id',$entityId)->orWhere('r.to_entity_id',$entityId);})->where('target.id','<>',$entityId)->limit(100)->get(['target.stable_key','target.entity_kind','r.relation_type'])->map(fn(stdClass $row):array=>['stable_key'=>(string)$row->stable_key,'kind'=>(string)$row->entity_kind,'kind_display'=>self::TYPE_LABELS[(string)$row->entity_kind]??'Элемент','relation_type'=>(string)$row->relation_type])->all(); }
     private function document(stdClass $row, ?string $previewUrl): array { return ['id'=>(int)$row->id,'filename'=>(string)$row->filename,'mime_type'=>(string)$row->mime_type,'status'=>(string)$row->status,'source_version'=>(string)$row->source_version,'viewer'=>['preview_available'=>$previewUrl!==null,'preview_url'=>$previewUrl]]; }
     /** @param list<int> $documentIds @return array<int,string|null> */ private function previewUrls(EstimateGenerationSession $session,array $documentIds,User $user): array { if($documentIds===[])return []; return EstimateGenerationDocument::query()->with('session')->where('organization_id',$session->organization_id)->where('project_id',$session->project_id)->where('session_id',$session->getKey())->whereIn('id',$documentIds)->get()->mapWithKeys(fn(EstimateGenerationDocument $document):array=>[(int)$document->getKey()=> $this->previews->forDocument($document,$user)])->all(); }
     private function sheet(stdClass $row): array { return ['id'=>(int)$row->id,'document_id'=>(int)$row->document_id,'page_number'=>(int)$row->page_number,'status'=>(string)$row->status]; }

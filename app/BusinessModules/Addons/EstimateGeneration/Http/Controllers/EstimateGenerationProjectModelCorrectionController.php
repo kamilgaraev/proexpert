@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ApplyProjectModelCorrection;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionConflict;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionNotFound;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionUndoUnavailable;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ApplyEstimateDecision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionConflict;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionUndoUnavailable;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\RevertEstimateDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\EstimateGeneration\ApplyProjectModelCorrectionRequest;
@@ -22,25 +25,37 @@ use function trans_message;
 
 final class EstimateGenerationProjectModelCorrectionController extends Controller
 {
-    public function __construct(private readonly ApplyProjectModelCorrection $corrections) {}
+    public function __construct(
+        private readonly ApplyEstimateDecision $applyDecision,
+        private readonly RevertEstimateDecision $revertDecision,
+        private readonly EstimateDecisionRepository $decisions,
+    ) {}
 
     public function store(ApplyProjectModelCorrectionRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         try {
             $organizationId = $this->guard($request, $project, $session);
             $data = $request->validated();
-            $result = $this->corrections->apply(
-                $organizationId,
-                (int) $project->getKey(),
-                (int) $session->getKey(),
-                (int) $request->user()->getKey(),
-                (string) $data['expected_source_version'],
-                (string) $data['expected_value_fingerprint'],
-                (string) $data['assertion_stable_key'],
+            $sessionId = (string) $session->getKey();
+            $decisionKey = (string) $data['assertion_stable_key'];
+            $latest = $this->decisions->latest($sessionId, $decisionKey);
+            $decision = $this->applyDecision->handle(
+                $sessionId,
+                $decisionKey,
+                $latest?->version ?? 0,
+                $latest?->after ?? [],
                 $data['value'],
                 (string) $data['reason'],
-                (string) $data['idempotency_key'],
+                new ActorContext(
+                    $organizationId,
+                    (int) $project->getKey(),
+                    (int) $request->user()->getKey(),
+                    (string) $data['idempotency_key'],
+                    (string) $data['expected_source_version'],
+                    (string) $data['expected_value_fingerprint'],
+                ),
             );
+            $result = $decision->toArray();
 
             return AdminResponse::success(
                 $result,
@@ -49,7 +64,7 @@ final class EstimateGenerationProjectModelCorrectionController extends Controlle
             );
         } catch (NotFoundHttpException|ProjectModelCorrectionNotFound) {
             return AdminResponse::error(trans_message('estimate_generation.project_model_correction_not_found'), 404);
-        } catch (ProjectModelCorrectionConflict) {
+        } catch (EstimateDecisionConflict) {
             return AdminResponse::error(trans_message('estimate_generation.project_model_correction_conflict'), 409);
         } catch (InvalidArgumentException) {
             return AdminResponse::error(trans_message('estimate_generation.project_model_correction_invalid'), 422);
@@ -65,17 +80,24 @@ final class EstimateGenerationProjectModelCorrectionController extends Controlle
         try {
             $organizationId = $this->guard($request, $project, $session);
             $data = $request->validated();
-            $result = $this->corrections->revert(
-                $organizationId,
-                (int) $project->getKey(),
-                (int) $session->getKey(),
-                (int) $request->user()->getKey(),
-                (string) $data['expected_source_version'],
-                (string) $data['expected_value_fingerprint'],
-                (string) $data['assertion_stable_key'],
+            $sessionId = (string) $session->getKey();
+            $decisionKey = (string) $data['assertion_stable_key'];
+            $latest = $this->decisions->latest($sessionId, $decisionKey);
+            $decision = $this->revertDecision->handle(
+                $sessionId,
+                $decisionKey,
+                $latest?->version ?? 0,
                 (string) $data['reason'],
-                (string) $data['idempotency_key'],
+                new ActorContext(
+                    $organizationId,
+                    (int) $project->getKey(),
+                    (int) $request->user()->getKey(),
+                    (string) $data['idempotency_key'],
+                    (string) $data['expected_source_version'],
+                    (string) $data['expected_value_fingerprint'],
+                ),
             );
+            $result = $decision->toArray();
 
             return AdminResponse::success(
                 $result,
@@ -84,9 +106,9 @@ final class EstimateGenerationProjectModelCorrectionController extends Controlle
             );
         } catch (NotFoundHttpException|ProjectModelCorrectionNotFound) {
             return AdminResponse::error(trans_message('estimate_generation.project_model_correction_not_found'), 404);
-        } catch (ProjectModelCorrectionConflict) {
+        } catch (EstimateDecisionConflict) {
             return AdminResponse::error(trans_message('estimate_generation.project_model_correction_conflict'), 409);
-        } catch (ProjectModelCorrectionUndoUnavailable) {
+        } catch (EstimateDecisionUndoUnavailable) {
             return AdminResponse::error(trans_message('estimate_generation.project_model_correction_undo_unavailable'), 422);
         } catch (InvalidArgumentException) {
             return AdminResponse::error(trans_message('estimate_generation.project_model_correction_invalid'), 422);

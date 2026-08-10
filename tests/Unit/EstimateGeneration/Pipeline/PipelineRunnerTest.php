@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
@@ -435,7 +434,6 @@ final class PipelineRunnerTest extends TestCase
             new PipelineRegistry($stages),
             $this->store,
             new FailureRecorder(new NullPipelineFailureStore),
-            new NullPipelineFailureWorkflowHandler,
             fn (): DateTimeImmutable => $this->clock->now,
             60,
             $observer,
@@ -481,11 +479,6 @@ final class NullPipelineFailureStore implements FailureStore
     {
         return 0;
     }
-}
-
-final class NullPipelineFailureWorkflowHandler implements FailureWorkflowHandler
-{
-    public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
 }
 
 final class MutableClock

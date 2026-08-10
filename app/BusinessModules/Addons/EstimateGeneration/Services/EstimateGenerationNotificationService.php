@@ -6,8 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationDeliveryReceipt;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationDeliveryStore;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +19,6 @@ class EstimateGenerationNotificationService
 
     public function __construct(
         private readonly NotificationService $notificationService,
-        private readonly ?FinalizationDeliveryStore $deliveries = null,
     ) {}
 
     public function notifyFinished(EstimateGenerationSession $session, ?string $idempotencyKey = null): bool
@@ -87,7 +84,7 @@ class EstimateGenerationNotificationService
         $projectName = $session->project?->name;
 
         try {
-            $deliver = fn () => $this->notificationService->send(
+            $this->notificationService->send(
                 $session->user,
                 $type,
                 [
@@ -126,11 +123,6 @@ class EstimateGenerationNotificationService
                 requiredPermissions: ['budget-estimates.view'],
                 interfaces: ['admin'],
             );
-            if (is_string($context['idempotency_key'] ?? null)) {
-                $this->deliverOnce($session, $type, $context['idempotency_key'], $deliver);
-            } else {
-                $deliver();
-            }
 
             return true;
         } catch (Throwable $exception) {
@@ -143,19 +135,4 @@ class EstimateGenerationNotificationService
         }
     }
 
-    private function deliverOnce(EstimateGenerationSession $session, string $eventType, string $businessKey, callable $deliver): void
-    {
-        ($this->deliveries ?? app(FinalizationDeliveryStore::class))->deliverOnce(
-            new FinalizationDeliveryReceipt(
-                organizationId: (int) $session->organization_id,
-                projectId: (int) $session->project_id,
-                sessionId: (int) $session->getKey(),
-                generationAttemptId: (string) ($session->input_payload['generation_attempt_id'] ?? ''),
-                eventType: $eventType,
-                recipientId: (int) $session->user->getKey(),
-                businessKey: $businessKey,
-            ),
-            $deliver,
-        );
-    }
 }

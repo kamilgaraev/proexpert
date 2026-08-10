@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter;
 
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
@@ -22,7 +22,7 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
     public function __construct(
         private RerankWireClient $wire,
         private AiUsageStore $usageStore,
-        private AiAttemptAuthorizer $budgetAuthorizer,
+        private AiPriceSnapshotResolver $priceResolver,
         private string $configuredModel,
         private string $configuredPromptVersion,
         private string $schemaVersion,
@@ -87,23 +87,16 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
             'completeness_review',
             $operation->attemptOrdinal,
         );
-        $price = $this->budgetAuthorizer->authorize(
+        $price = $this->priceResolver->resolve(
             $attempt,
             $this->wire->provider(),
             $this->configuredModel,
-            $this->maxInputTokens,
-            $this->maxOutputTokens,
         );
         $started = hrtime(true);
         $status = 'connection_failed';
         $httpCode = null;
         $response = [];
-        $wireClaimed = false;
         try {
-            if (! $this->budgetAuthorizer->claimWire($attempt->attemptId)) {
-                throw new RerankWireException('wire_replay_forbidden');
-            }
-            $wireClaimed = true;
             $response = $this->wire->call($this->configuredModel, [
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $payload],
@@ -126,13 +119,11 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
 
             return [...$decoded, 'input_tokens' => $inputTokens, 'output_tokens' => $outputTokens];
         } catch (RerankWireException $exception) {
-            $status = $exception->attemptStatus === 'wire_replay_forbidden' ? 'connection_failed' : $exception->attemptStatus;
+            $status = $exception->attemptStatus;
             $httpCode = $exception->httpCode;
             throw $exception;
         } finally {
-            if ($wireClaimed) {
-                $this->record($attempt, $status, $httpCode, $response, $started, $price);
-            }
+            $this->record($attempt, $status, $httpCode, $response, $started, $price);
         }
     }
 

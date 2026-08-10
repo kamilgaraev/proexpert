@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understa
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationJournal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
-use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadDocumentAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
@@ -35,6 +35,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private BoundedVersionedS3ObjectReader $reader,
         private ?SheetAnalysisRouter $sheetAnalysisRouter = null,
         private ?SheetAnalysisOperationJournal $sheetAnalysisJournal = null,
+        private CadStructureExtractor $cadStructure = new CadStructureExtractor,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -82,7 +83,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'source_kind' => $provenance->sourceKind,
                 'source' => $provenance->toArray(),
                 'vector_geometry' => $payload,
-                ...(new CadDocumentAdapter)->extract($geometry),
+                ...$this->cadStructure->extract($geometry),
                 'provenance' => [
                     'provider' => 'cad_geometry',
                     'runtime_version' => $geometry->runtimeVersion,

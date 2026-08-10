@@ -190,8 +190,7 @@ final class EstimateGenerationSettingsService
     {
         $actor = SystemAdmin::query()->find($actorId);
         if (! $actor instanceof SystemAdmin
-            || ! $actor->hasSystemPermission(FilamentPermission::ESTIMATE_GENERATION_SETTINGS)
-            || ! $actor->hasSystemPermission(FilamentPermission::ESTIMATE_GENERATION_BUDGETS)) {
+            || ! $actor->hasSystemPermission(FilamentPermission::ESTIMATE_GENERATION_SETTINGS)) {
             throw new DomainException('estimate_generation_settings_forbidden');
         }
     }

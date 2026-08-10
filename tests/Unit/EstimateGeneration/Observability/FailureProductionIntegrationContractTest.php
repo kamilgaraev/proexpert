@@ -7,7 +7,6 @@ namespace Tests\Unit\EstimateGeneration\Observability;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
@@ -26,9 +25,7 @@ final class FailureProductionIntegrationContractTest extends TestCase
             foreach ($parameters as $parameter) {
                 $byType[(string) $parameter->getType()] = $parameter;
             }
-            $dependencies = $class === ProcessDocumentUnit::class
-                ? [FailureRecorder::class]
-                : [FailureRecorder::class, FailureWorkflowHandler::class];
+            $dependencies = [FailureRecorder::class];
             foreach ($dependencies as $dependency) {
                 self::assertArrayHasKey($dependency, $byType, $class);
                 self::assertFalse($byType[$dependency]->allowsNull(), $class.' '.$dependency);
@@ -87,7 +84,7 @@ final class FailureProductionIntegrationContractTest extends TestCase
         $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
         $checkpoint = file_get_contents($root.'/Pipeline/EloquentPipelineCheckpointStore.php');
         $documentEntrypoint = file_get_contents($root.'/Application/Documents/ProcessEstimateGenerationDocument.php');
-        $publication = file_get_contents($root.'/Pipeline/DocumentManifestPublicationFence.php');
+        $publication = file_get_contents($root.'/Application/Documents/CreateDocumentProcessingUnits.php');
         $draftPublication = file_get_contents($root.'/Pipeline/PublishValidatedDraft.php');
         foreach ([$checkpoint, $documentEntrypoint, $publication, $draftPublication] as $source) {
             self::assertIsString($source);
