@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\BuildingModelSchema;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionConflict;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionUndoUnavailable;
 use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use RuntimeException;
@@ -25,6 +27,7 @@ final readonly class ApplyProjectModelCorrection
         array $value,
         string $reason,
         string $idempotencyKey,
+        int $expectedDecisionVersion = 0,
     ): array {
         return $this->execute(
             $organizationId,
@@ -38,6 +41,7 @@ final readonly class ApplyProjectModelCorrection
             $reason,
             $idempotencyKey,
             'apply',
+            $expectedDecisionVersion,
         );
     }
 
@@ -51,6 +55,7 @@ final readonly class ApplyProjectModelCorrection
         string $assertionStableKey,
         string $reason,
         string $idempotencyKey,
+        int $expectedDecisionVersion = 0,
     ): array {
         return $this->execute(
             $organizationId,
@@ -64,6 +69,7 @@ final readonly class ApplyProjectModelCorrection
             $reason,
             $idempotencyKey,
             'revert',
+            $expectedDecisionVersion,
         );
     }
 
@@ -79,37 +85,35 @@ final readonly class ApplyProjectModelCorrection
         string $reason,
         string $idempotencyKey,
         string $operation,
+        int $expectedDecisionVersion,
     ): array {
-        $this->assertCommand($organizationId, $projectId, $sessionId, $actorId, $expectedSourceVersion, $expectedValueFingerprint, $assertionStableKey, $value, $reason, $idempotencyKey, $operation);
+        $this->assertCommand($organizationId, $projectId, $sessionId, $actorId, $expectedSourceVersion, $expectedValueFingerprint, $assertionStableKey, $value, $reason, $idempotencyKey, $operation, $expectedDecisionVersion);
 
-        return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $actorId, $expectedSourceVersion, $expectedValueFingerprint, $assertionStableKey, $value, $reason, $idempotencyKey, $operation): array {
+        return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $actorId, $expectedSourceVersion, $expectedValueFingerprint, $assertionStableKey, $value, $reason, $idempotencyKey, $operation, $expectedDecisionVersion): array {
             $this->lockSession($organizationId, $projectId, $sessionId);
             $model = $this->model($organizationId, $projectId, $sessionId, $expectedSourceVersion);
             $requestHash = $this->requestHash($operation, $expectedSourceVersion, $expectedValueFingerprint, $assertionStableKey, $value, $reason);
             $idempotencyHash = hash('sha256', $idempotencyKey);
-            $modelCorrections = $this->modelCorrections($model, $organizationId, $projectId, $sessionId);
-            $existing = $this->idempotentCorrection($modelCorrections, $idempotencyHash, $requestHash);
+            $existing = $this->idempotentCorrection($model, $organizationId, $projectId, $sessionId, $idempotencyHash, $requestHash);
             if ($existing !== null) {
                 return $this->result($existing, true);
             }
             $assertion = $this->assertion($model, $organizationId, $projectId, $sessionId, $expectedSourceVersion, $assertionStableKey);
-            $corrections = array_values(array_filter(
-                $modelCorrections,
-                static fn (stdClass $correction): bool => (int) ($correction->assertion_id ?? 0) === (int) $assertion->id,
-            ));
-
-            $previous = $this->currentValue($assertion, $corrections);
-            if (! hash_equals(ProjectModelValueFingerprint::for($previous), $expectedValueFingerprint)) {
-                throw new ProjectModelCorrectionConflict('project_model_correction_stale');
+            $latest = $this->latestCorrection($model, $organizationId, $projectId, $sessionId, (int) $assertion->id);
+            if ($this->decisionVersion($model, $organizationId, $projectId, $sessionId, (int) $assertion->id) !== $expectedDecisionVersion) {
+                throw new EstimateDecisionConflict('project_model_correction_stale');
             }
-            $latest = $corrections === [] ? null : $corrections[array_key_last($corrections)];
+            $previous = $this->currentValue($assertion, $latest);
+            if (! hash_equals(ProjectModelValueFingerprint::for($previous), $expectedValueFingerprint)) {
+                throw new EstimateDecisionConflict('project_model_correction_stale');
+            }
             if ($operation === 'revert') {
                 if ($latest === null || ($this->audit($latest)['operation'] ?? null) !== 'apply') {
-                    throw new ProjectModelCorrectionUndoUnavailable('project_model_correction_undo_unavailable');
+                    throw new EstimateDecisionUndoUnavailable('project_model_correction_undo_unavailable');
                 }
                 $next = $this->audit($latest)['previous_canonical_value'] ?? null;
                 if (! is_array($next)) {
-                    throw new ProjectModelCorrectionUndoUnavailable('project_model_correction_undo_unavailable');
+                    throw new EstimateDecisionUndoUnavailable('project_model_correction_undo_unavailable');
                 }
                 $revertedCorrectionId = (int) $latest->id;
             } else {
@@ -158,7 +162,7 @@ final readonly class ApplyProjectModelCorrection
         }, 3);
     }
 
-    private function assertCommand(int $organizationId, int $projectId, int $sessionId, int $actorId, string $expectedSourceVersion, string $expectedValueFingerprint, string $assertionStableKey, ?array $value, string $reason, string $idempotencyKey, string $operation): void
+    private function assertCommand(int $organizationId, int $projectId, int $sessionId, int $actorId, string $expectedSourceVersion, string $expectedValueFingerprint, string $assertionStableKey, ?array $value, string $reason, string $idempotencyKey, string $operation, int $expectedDecisionVersion): void
     {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1 || $actorId < 1
             || preg_match('/^sha256:[a-f0-9]{64}$/', $expectedSourceVersion) !== 1
@@ -167,6 +171,7 @@ final readonly class ApplyProjectModelCorrection
             || trim($reason) === '' || mb_strlen($reason) > 1000
             || preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/', $idempotencyKey) !== 1
             || ! in_array($operation, ['apply', 'revert'], true)
+            || $expectedDecisionVersion < 0
             || ($operation === 'apply' && ! is_array($value))
             || ($operation === 'revert' && $value !== null)) {
             throw new InvalidArgumentException('Project model correction command is invalid.');
@@ -196,7 +201,7 @@ final readonly class ApplyProjectModelCorrection
             ->lockForUpdate()
             ->first(['id', 'content_version']);
         if (! $model instanceof stdClass || ! hash_equals($expectedSourceVersion, (string) $model->content_version)) {
-            throw new ProjectModelCorrectionConflict('project_model_correction_stale');
+            throw new EstimateDecisionConflict('project_model_correction_stale');
         }
 
         return $model;
@@ -220,24 +225,25 @@ final readonly class ApplyProjectModelCorrection
         return $assertion;
     }
 
-    private function modelCorrections(stdClass $model, int $organizationId, int $projectId, int $sessionId): array
+    private function latestCorrection(stdClass $model, int $organizationId, int $projectId, int $sessionId, int $assertionId): ?stdClass
     {
-        return $this->database->table('estimate_generation_project_model_corrections')
+        $correction = $this->database->table('estimate_generation_project_model_corrections')
             ->where('building_model_id', (int) $model->id)
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('session_id', $sessionId)
             ->where('source_version', (string) $model->content_version)
-            ->orderBy('id')
+            ->where('assertion_id', $assertionId)
+            ->latest('id')
             ->lockForUpdate()
-            ->get(['id', 'stable_key', 'assertion_id', 'payload', 'reason', 'actor_id', 'created_at'])
-            ->all();
+            ->first(['id', 'stable_key', 'assertion_id', 'payload', 'reason', 'actor_id', 'created_at']);
+
+        return $correction instanceof stdClass ? $correction : null;
     }
 
-    private function currentValue(stdClass $assertion, array $corrections): array
+    private function currentValue(stdClass $assertion, ?stdClass $latest): array
     {
-        if ($corrections !== []) {
-            $latest = $corrections[array_key_last($corrections)];
+        if ($latest !== null) {
             $audit = $this->audit($latest);
             $value = $audit['new_canonical_value'] ?? $this->canonicalValue($latest);
             if (is_array($value)) {
@@ -251,21 +257,38 @@ final readonly class ApplyProjectModelCorrection
         return $value;
     }
 
-    private function idempotentCorrection(array $corrections, string $idempotencyHash, string $requestHash): ?stdClass
+    private function decisionVersion(stdClass $model, int $organizationId, int $projectId, int $sessionId, int $assertionId): int
     {
-        foreach ($corrections as $correction) {
-            $audit = $this->audit($correction);
-            if (! hash_equals((string) ($audit['idempotency_key_hash'] ?? ''), $idempotencyHash)) {
-                continue;
-            }
-            if (! hash_equals((string) ($audit['request_hash'] ?? ''), $requestHash)) {
-                throw new ProjectModelCorrectionConflict('project_model_correction_idempotency_conflict');
-            }
+        return $this->database->table('estimate_generation_project_model_corrections')
+            ->where('building_model_id', (int) $model->id)
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('source_version', (string) $model->content_version)
+            ->where('assertion_id', $assertionId)
+            ->count();
+    }
 
-            return $correction;
+    private function idempotentCorrection(stdClass $model, int $organizationId, int $projectId, int $sessionId, string $idempotencyHash, string $requestHash): ?stdClass
+    {
+        $correction = $this->database->table('estimate_generation_project_model_corrections')
+            ->where('building_model_id', (int) $model->id)
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('source_version', (string) $model->content_version)
+            ->where('stable_key', $this->stableKey($idempotencyHash))
+            ->lockForUpdate()
+            ->first(['id', 'stable_key', 'assertion_id', 'payload', 'reason', 'actor_id', 'created_at']);
+        if (! $correction instanceof stdClass) {
+            return null;
+        }
+        $audit = $this->audit($correction);
+        if (! hash_equals((string) ($audit['request_hash'] ?? ''), $requestHash)) {
+            throw new EstimateDecisionConflict('project_model_correction_idempotency_conflict');
         }
 
-        return null;
+        return $correction;
     }
 
     private function dependencyImpacts(stdClass $model, int $organizationId, int $projectId, int $sessionId, string $sourceVersion, int $entityId): array

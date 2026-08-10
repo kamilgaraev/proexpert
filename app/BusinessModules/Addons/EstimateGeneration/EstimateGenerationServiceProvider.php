@@ -479,6 +479,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\BuildingModelReadDataSource::class,
             \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EloquentBuildingModelReadDataSource::class,
         );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionRepository::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EloquentEstimateDecisionRepository::class,
+        );
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentNormativeContextPinSource::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver::class, \App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentSessionBaseInputVersionResolver::class);

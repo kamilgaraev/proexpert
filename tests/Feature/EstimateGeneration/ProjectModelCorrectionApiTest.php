@@ -42,10 +42,12 @@ final class ProjectModelCorrectionApiTest extends TestCase
         $source = file_get_contents(dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/BuildingModel/ApplyProjectModelCorrection.php');
 
         self::assertIsString($source);
-        self::assertStringContainsString('$modelCorrections = $this->modelCorrections(', $source);
+        self::assertStringNotContainsString('$modelCorrections = $this->modelCorrections(', $source);
+        self::assertStringContainsString('$latest = $this->latestCorrection(', $source);
+        self::assertStringContainsString("->where('stable_key', \$this->stableKey(\$idempotencyHash))", $source);
         self::assertLessThan(
             strpos($source, '$assertion = $this->assertion('),
-            strpos($source, '$existing = $this->idempotentCorrection($modelCorrections'),
+            strpos($source, '$existing = $this->idempotentCorrection($model'),
         );
         self::assertStringContainsString("return 'correction:'.\$idempotencyHash;", $source);
         self::assertStringNotContainsString("->where('content_version', \$expectedSourceVersion)\n            ->latest('id')", $source);

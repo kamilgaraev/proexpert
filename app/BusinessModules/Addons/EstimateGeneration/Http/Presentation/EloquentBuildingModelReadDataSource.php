@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DocumentTotalAreaConstraintResolver;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrectionChainProjector;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentConfirmedProjectModelValues;
 use Illuminate\Database\DatabaseManager;
 use stdClass;
@@ -15,7 +14,6 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
     public function __construct(
         private DatabaseManager $database,
         private DocumentTotalAreaConstraintResolver $areaConstraints = new DocumentTotalAreaConstraintResolver,
-        private ProjectModelCorrectionChainProjector $corrections = new ProjectModelCorrectionChainProjector,
         private ?EloquentConfirmedProjectModelValues $confirmedValues = null,
     ) {}
 
@@ -177,7 +175,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
     }
 
     /** @return list<array<string, mixed>> */
-    private function correctionRows(stdClass $model): array
+    private function currentDecisionRows(stdClass $model): array
     {
         return $this->database->table('estimate_generation_project_model_corrections as correction')
             ->join('estimate_generation_project_model_assertions as assertion', 'assertion.id', '=', 'correction.assertion_id')
@@ -187,31 +185,39 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
             ->where('correction.project_id', $model->project_id ?? null)
             ->where('correction.session_id', $model->session_id ?? null)
             ->where('correction.source_version', (string) $model->content_version)
-            ->orderBy('correction.id')
+            ->whereRaw('correction.id = (select max(current_correction.id) from estimate_generation_project_model_corrections as current_correction where current_correction.assertion_id = correction.assertion_id)')
+            ->orderBy('assertion.stable_key')
             ->get([
                 'correction.stable_key as correction_stable_key',
                 'correction.payload as correction_payload',
                 'assertion.stable_key as assertion_stable_key',
                 'assertion.assertion_type',
-                'assertion.payload as assertion_payload',
                 'entity.stable_key as entity_stable_key',
             ])
-            ->map(function (stdClass $row): array {
+            ->map(function (stdClass $row): ?array {
                 $correction = $this->json($row->correction_payload);
-                $assertion = $this->json($row->assertion_payload);
-                if ($correction === null || $assertion === null) {
+                $audit = is_array($correction['audit'] ?? null) ? $correction['audit'] : null;
+                if ($correction === null || $audit === null) {
+                    throw new \UnexpectedValueException('Project model correction history is invalid.');
+                }
+                if (($audit['operation'] ?? null) === 'revert') {
+                    return null;
+                }
+                $value = $audit['new_canonical_value'] ?? $correction['canonical_value'] ?? null;
+                if (($audit['operation'] ?? null) !== 'apply' || ! is_array($value) || array_is_list($value)) {
                     throw new \UnexpectedValueException('Project model correction history is invalid.');
                 }
 
                 return [
                     'correction_stable_key' => (string) $row->correction_stable_key,
-                    'correction_payload' => $correction,
                     'assertion_stable_key' => (string) $row->assertion_stable_key,
                     'assertion_type' => (string) $row->assertion_type,
-                    'assertion_payload' => $assertion,
                     'entity_stable_key' => (string) $row->entity_stable_key,
+                    'value' => $value,
                 ];
             })
+            ->filter()
+            ->values()
             ->all();
     }
 
@@ -219,7 +225,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
     private function effectiveValues(stdClass $model): array
     {
         $confirmed = ($this->confirmedValues ?? new EloquentConfirmedProjectModelValues($this->database))->forModel($model);
-        $corrections = $this->corrections->project($this->correctionRows($model));
+        $corrections = $this->currentDecisionRows($model);
         $byAssertion = [];
         foreach ($confirmed as $value) $byAssertion[(string) $value['assertion_stable_key']] = $value;
         foreach ($corrections as $value) $byAssertion[(string) $value['assertion_stable_key']] = $value;

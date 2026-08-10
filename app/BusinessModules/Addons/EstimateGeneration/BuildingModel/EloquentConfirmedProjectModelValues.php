@@ -52,7 +52,7 @@ final readonly class EloquentConfirmedProjectModelValues
         // Corrections are a chronological reversible chain and are overlaid by the caller.
         // Feeding that history to the candidate merger would incorrectly make a reverted
         // manual value look current.
-        $projection = $this->projector->project($this->merger->merge(ProjectModelEntityList::of(...$entities), ProjectModelAssertionList::of(...$assertions), ProjectModelCorrectionList::of(), ProjectModelEvidenceBindingList::of(...$bindings)));
+        $projection = $this->projector->project($this->merger->merge(ProjectModelEntityList::of(...$entities), ProjectModelAssertionList::of(...$assertions), [], ProjectModelEvidenceBindingList::of(...$bindings)));
         return array_map(static fn (ProjectModelResolvedValue $value): array => ['entity_stable_key' => $value->entityStableKey, 'assertion_stable_key' => $value->assertionStableKey, 'assertion_type' => $value->assertionType, 'value' => $value->value, 'source' => $value->source, 'correction_stable_key' => $value->correctionStableKey], iterator_to_array($projection->values));
     }
 
