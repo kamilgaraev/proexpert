@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Evaluation;
 
 use DateTimeImmutable;
+use DateTimeZone;
 use DomainException;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Query\Builder;
@@ -54,6 +55,8 @@ final readonly class EloquentEvaluationCorpusRepository implements EvaluationCor
         string $sourceVersion,
         EvaluationReviewDecision $decision,
     ): EvaluationExample {
+        $decision = $this->canonicalReviewDecision($decision);
+
         return $this->database->transaction(function () use (
             $organizationId,
             $sourceVersion,
@@ -66,7 +69,7 @@ final readonly class EloquentEvaluationCorpusRepository implements EvaluationCor
 
             $example = $this->hydrate($row);
             if ($example->reviewDecision !== null) {
-                if ($example->reviewDecision == $decision) {
+                if ($this->canonicalReviewDecision($example->reviewDecision) == $decision) {
                     return $example;
                 }
 
@@ -79,7 +82,7 @@ final readonly class EloquentEvaluationCorpusRepository implements EvaluationCor
                     'trust_status' => $decision->trustStatus->value,
                     'review_actor_type' => $decision->actorType,
                     'review_actor_id' => $decision->actorId,
-                    'review_reason' => trim($decision->reason),
+                    'review_reason' => $decision->reason,
                     'reviewed_at' => $decision->decidedAt->format('Y-m-d H:i:sP'),
                     'updated_at' => now(),
                 ]);
@@ -89,6 +92,23 @@ final readonly class EloquentEvaluationCorpusRepository implements EvaluationCor
 
             return $example->withReviewDecision($decision);
         }, 3);
+    }
+
+    private function canonicalReviewDecision(EvaluationReviewDecision $decision): EvaluationReviewDecision
+    {
+        $decidedAt = $decision->decidedAt->setTimezone(new DateTimeZone('UTC'));
+
+        return new EvaluationReviewDecision(
+            $decision->trustStatus,
+            $decision->actorType,
+            $decision->actorId,
+            trim($decision->reason),
+            $decidedAt->setTime(
+                (int) $decidedAt->format('H'),
+                (int) $decidedAt->format('i'),
+                (int) $decidedAt->format('s'),
+            ),
+        );
     }
 
     public function reviewed(int $organizationId): array

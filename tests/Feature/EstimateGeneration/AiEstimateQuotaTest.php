@@ -23,6 +23,7 @@ use App\Models\OrganizationResourceAllocation;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
@@ -383,6 +384,46 @@ final class AiEstimateQuotaTest extends TestCase
             ->where('organization_id', $session->organization_id)
             ->where('session_id', $session->id)
             ->count());
+    }
+
+    public function test_detail_snapshot_does_not_mix_status_and_usage_across_a_concurrent_release(): void
+    {
+        $session = $this->createSession();
+        $quota = app(AiEstimateQuotaService::class);
+        $quota->reserve($session);
+        $listQuota = $quota->snapshots([$session->fresh()])[(int) $session->id];
+        $reservationReadObserved = false;
+
+        DB::listen(function (QueryExecuted $query) use ($session, &$reservationReadObserved): void {
+            if (
+                $reservationReadObserved
+                || ! str_starts_with(strtolower(ltrim($query->sql)), 'select')
+                || ! str_contains($query->sql, 'estimate_generation_ai_estimate_quota_reservations')
+            ) {
+                return;
+            }
+
+            $reservationReadObserved = true;
+            DB::table('estimate_generation_ai_estimate_quota_reservations')
+                ->where('organization_id', $session->organization_id)
+                ->where('session_id', $session->id)
+                ->update([
+                    'status' => 'released',
+                    'released_at' => now(),
+                ]);
+        });
+
+        $detailQuota = $quota->sessionSnapshot(
+            (string) $session->organization_id,
+            (string) $session->id,
+        )->toArray();
+
+        $this->assertTrue($reservationReadObserved);
+        $this->assertSame('confirmed', $listQuota['reservation_status']);
+        $this->assertSame(1, $listQuota['used']);
+        $this->assertSame($listQuota['reservation_status'], $detailQuota['reservation_status']);
+        $this->assertSame($listQuota['used'], $detailQuota['used']);
+        $this->assertSame('released', $this->reservationStatus($session));
     }
 
     private function createSession(?Organization $organization = null): EstimateGenerationSession

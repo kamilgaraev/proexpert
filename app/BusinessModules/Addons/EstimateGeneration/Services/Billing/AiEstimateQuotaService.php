@@ -292,12 +292,14 @@ final readonly class AiEstimateQuotaService
 
     private function snapshotForSession(int $organizationId, int $sessionId): QuotaSnapshot
     {
-        $status = $this->database->table(self::TABLE)
-            ->where('organization_id', $organizationId)
-            ->where('session_id', $sessionId)
-            ->value('status');
+        $summary = $this->currentMonthReservationSummaries([$organizationId], [$sessionId])[$organizationId]
+            ?? ['used' => 0, 'statuses' => []];
 
-        return $this->organizationSnapshot($organizationId, is_string($status) ? $status : null);
+        return $this->makeSnapshot(
+            $this->limit($organizationId),
+            max(0, (int) $summary['used']),
+            $summary['statuses'][$sessionId] ?? null,
+        );
     }
 
     private function organizationSnapshot(int $organizationId, ?string $status): QuotaSnapshot
