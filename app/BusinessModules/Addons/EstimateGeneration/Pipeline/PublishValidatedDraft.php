@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
 use DateTimeImmutable;
@@ -20,8 +21,8 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private EstimateGenerationPackagePersistenceService $packages,
         private EstimateGenerationAuditService $audit,
         private AdvanceEstimateGeneration $advance,
-        private PipelineArtifactStore $artifacts,
-        private FinalizationOutbox $finalizations,
+        private PublishDraftOnce $publishDraftOnce,
+        private EstimateGenerationNotificationService $notifications,
         private DraftReadinessInspector $readiness,
         private TargetedPackageRebuildOperationService $targetedRebuilds,
     ) {}
@@ -70,11 +71,21 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             'last_error' => null,
         ]);
         $this->targetedRebuilds->scheduleAfterPublishedDraft($published, $draft);
-        $this->finalizations->enqueue(FinalizationEvent::completed(
-            $claim->context->organizationId,
-            $claim->context->projectId,
+        $artifactHash = $result->output?->artifact->contentVersion ?? $result->outputVersion;
+        $idempotencyKey = hash('sha256', implode('|', [
             $claim->context->sessionId,
-            (string) $claim->context->generationAttemptId,
-        ), $completedAt);
+            $claim->context->inputVersion,
+            $artifactHash,
+        ]));
+        if (! $requiresReview) {
+            $publication = $this->publishDraftOnce->publish(
+                (string) $claim->context->sessionId,
+                $claim->context->inputVersion,
+                $artifactHash,
+            );
+            $idempotencyKey = $publication->idempotencyKey();
+            $published->refresh();
+        }
+        $this->notifications->notifyFinished($published, $idempotencyKey);
     }
 }

@@ -267,7 +267,6 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $attemptId = (string) Str::uuid();
         $this->assertSourceMutation($session, 'checkpoint insert', static fn () => DB::table('estimate_generation_pipeline_checkpoints')->insert([...$scope, 'generation_attempt_id' => $attemptId, 'base_input_version' => 'sha256:'.str_repeat('a', 64), 'stage' => 'understand_documents', 'input_version' => 'sha256:'.str_repeat('b', 64), 'status' => 'running', 'claim_token' => (string) Str::uuid(), 'lease_expires_at' => now()->addHour(), 'started_at' => now(), 'created_at' => now(), 'updated_at' => now()]));
         $this->assertSourceMutation($session, 'processing unit insert', static fn () => DB::table('estimate_generation_processing_units')->insert([...$scope, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1, 'source_version' => 'sha256:'.str_repeat('c', 64), 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]));
-        $this->assertSourceMutation($session, 'finalization outbox insert', static fn () => DB::table('estimate_generation_finalization_outbox')->insert([...$scope, 'generation_attempt_id' => $attemptId, 'event_type' => 'completed', 'idempotency_key' => hash('sha256', 'snapshot-matrix'), 'status' => 'pending', 'available_at' => now(), 'created_at' => now(), 'updated_at' => now()]));
     }
 
     private function route(Project $project, EstimateGenerationSession $session): void

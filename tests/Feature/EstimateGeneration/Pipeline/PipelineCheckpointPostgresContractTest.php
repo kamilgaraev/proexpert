@@ -85,58 +85,6 @@ final class PipelineCheckpointPostgresContractTest extends TestCase
         }, 'checkpoint_is_immutable');
     }
 
-    public function test_delivery_receipt_allows_one_exact_transition_rejects_mutation_and_cascades_with_parent(): void
-    {
-        $scope = [
-            'organization_id' => (int) getenv('EG_TEST_ORGANIZATION_ID'),
-            'project_id' => (int) getenv('EG_TEST_PROJECT_ID'),
-            'session_id' => (int) getenv('EG_TEST_SESSION_ID'),
-        ];
-        $attempt = '018f4a20-3f4c-7a11-8a22-'.bin2hex(random_bytes(6));
-        $recipient = (int) DB::table('estimate_generation_sessions')->where('id', $scope['session_id'])->value('user_id');
-        $id = (int) DB::table('estimate_generation_finalization_deliveries')->insertGetId([
-            ...$scope, 'generation_attempt_id' => $attempt, 'event_type' => 'estimate_generation_completed',
-            'recipient_id' => $recipient, 'business_key' => hash('sha256', $attempt), 'status' => 'pending',
-            'created_at' => now(), 'updated_at' => now(),
-        ]);
-        $this->assertRejected(function () use ($id): void {
-            DB::table('estimate_generation_finalization_deliveries')->where('id', $id)->delete();
-        }, 'finalization_delivery_delete_forbidden');
-        $this->assertRejected(function () use ($id): void {
-            DB::table('estimate_generation_finalization_deliveries')->where('id', $id)->update(['recipient_id' => -1]);
-        }, 'finalization_delivery_is_immutable');
-        self::assertSame(1, DB::table('estimate_generation_finalization_deliveries')->where('id', $id)->update([
-            'status' => 'delivered', 'notification_id' => '018f4a20-3f4c-7a11-8a22-123456789abc',
-            'delivered_at' => now(), 'updated_at' => now(),
-        ]));
-        $this->assertRejected(function () use ($id): void {
-            DB::table('estimate_generation_finalization_deliveries')->where('id', $id)->update(['notification_id' => null]);
-        }, 'finalization_delivery_is_immutable');
-
-        $parent = DB::table('estimate_generation_sessions')->insertGetId([
-            'organization_id' => $scope['organization_id'], 'project_id' => $scope['project_id'], 'user_id' => $recipient,
-            'status' => 'draft', 'processing_stage' => 'draft', 'processing_progress' => 0,
-            'input_payload' => '{}', 'problem_flags' => '[]', 'state_version' => 0,
-            'created_at' => now(), 'updated_at' => now(),
-        ]);
-        $cascadeAttempt = '018f4a20-3f4c-7a11-8a22-'.bin2hex(random_bytes(6));
-        DB::table('estimate_generation_finalization_outbox')->insert([
-            'organization_id' => $scope['organization_id'], 'project_id' => $scope['project_id'], 'session_id' => $parent,
-            'generation_attempt_id' => $cascadeAttempt, 'event_type' => 'estimate_generation_completed',
-            'idempotency_key' => hash('sha256', 'outbox'.$cascadeAttempt), 'status' => 'pending', 'attempt_count' => 0,
-            'available_at' => now(), 'created_at' => now(), 'updated_at' => now(),
-        ]);
-        DB::table('estimate_generation_finalization_deliveries')->insert([
-            'organization_id' => $scope['organization_id'], 'project_id' => $scope['project_id'], 'session_id' => $parent,
-            'generation_attempt_id' => $cascadeAttempt, 'event_type' => 'estimate_generation_completed',
-            'recipient_id' => $recipient, 'business_key' => hash('sha256', 'receipt'.$cascadeAttempt), 'status' => 'pending',
-            'created_at' => now(), 'updated_at' => now(),
-        ]);
-        DB::table('estimate_generation_sessions')->where('id', $parent)->delete();
-        self::assertSame(0, DB::table('estimate_generation_finalization_outbox')->where('session_id', $parent)->count());
-        self::assertSame(0, DB::table('estimate_generation_finalization_deliveries')->where('session_id', $parent)->count());
-    }
-
     /** @param array{organization_id:int,project_id:int,session_id:int} $scope */
     private function completed(array $scope, string $attempt, string $stage, int $bytes, string $salt): array
     {

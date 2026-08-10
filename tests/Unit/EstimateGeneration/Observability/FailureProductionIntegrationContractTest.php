@@ -84,7 +84,7 @@ final class FailureProductionIntegrationContractTest extends TestCase
         $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
         $checkpoint = file_get_contents($root.'/Pipeline/EloquentPipelineCheckpointStore.php');
         $documentEntrypoint = file_get_contents($root.'/Application/Documents/ProcessEstimateGenerationDocument.php');
-        $publication = file_get_contents($root.'/Pipeline/DocumentManifestPublicationFence.php');
+        $publication = file_get_contents($root.'/Application/Documents/CreateDocumentProcessingUnits.php');
         $draftPublication = file_get_contents($root.'/Pipeline/PublishValidatedDraft.php');
         foreach ([$checkpoint, $documentEntrypoint, $publication, $draftPublication] as $source) {
             self::assertIsString($source);

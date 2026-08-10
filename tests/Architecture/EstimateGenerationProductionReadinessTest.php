@@ -20,10 +20,10 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         foreach (['estimate-generation', 'estimate-generation-units', 'estimate-generation-unit-maintenance'] as $queue) {
             self::assertStringContainsString("'{$queue}'", $horizon);
         }
-        foreach (['RecoverEstimateGenerationUnitsJob', 'RecoverEstimateGenerationPipelinesJob', 'DeliverEstimateGenerationFinalizationsJob'] as $job) {
+        foreach (['RecoverEstimateGenerationUnitsJob', 'RecoverEstimateGenerationPipelinesJob'] as $job) {
             self::assertStringContainsString("->job(new {$job})", $provider);
         }
-        self::assertGreaterThanOrEqual(3, substr_count($provider, '->withoutOverlapping()'));
+        self::assertGreaterThanOrEqual(2, substr_count($provider, '->withoutOverlapping()'));
     }
 
     #[Test]
