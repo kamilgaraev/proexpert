@@ -119,6 +119,11 @@ final class EstimateGenerationUsageResourceTest extends TestCase
         self::assertStringNotContainsString('DeleteAction::make', $source);
         self::assertStringNotContainsString('BulkAction', $source);
         self::assertStringNotContainsString('price_snapshot', strtolower($source));
+        self::assertStringContainsString("'ambiguous'", $source);
+        self::assertSame(
+            'Исход запроса не подтверждён',
+            trans_message('estimate_generation.usage.statuses.ambiguous'),
+        );
     }
 
     public function test_checkpoint_resource_is_allowlisted_paginated_and_delegates_actions(): void

@@ -122,7 +122,26 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $claimNow,
                 $claimNow->modify('+'.$leaseTtl.' seconds'),
             );
-            if ($snapshot->state === 'ambiguous' || $snapshot->state === 'reserved') {
+            if ($snapshot->state === 'ambiguous') {
+                if (! $snapshot->usageRecorded) {
+                    $usageRecorded = $this->recordAttempt(
+                        $input,
+                        $model,
+                        $snapshot->reportedModel,
+                        'ambiguous',
+                        $snapshot->httpCode,
+                        [],
+                        $snapshot->durationMs ?? 0,
+                        $physicalContext,
+                        AiPriceSnapshot::fromArray($snapshot->priceSnapshot ?? []),
+                    );
+                    if ($usageRecorded) {
+                        $this->physicalAttempts->markUsageRecorded($physicalContext->attemptId, $requestFingerprint);
+                    }
+                }
+                throw new VisionProviderException('vision_wire_outcome_ambiguous');
+            }
+            if ($snapshot->state === 'reserved') {
                 throw new VisionProviderException('vision_wire_outcome_ambiguous');
             }
             if (in_array($snapshot->state, ['pre_wire', 'wire_started'], true)
@@ -271,6 +290,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $status = 'connection_failed';
                 $lastException = new VisionProviderException('vision_request_failed', retryable: false, previous: $exception);
             } finally {
+                $durationMs = $replayed
+                    ? (int) $snapshot->durationMs
+                    : (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000));
                 if ($wireStarted && ! $hasPersistedResponse && ! $invariantFailure) {
                     $this->physicalAttempts->markAmbiguous(
                         $physicalContext->attemptId,
@@ -278,19 +300,20 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         $ownerToken,
                         'provider_request_outcome_unknown',
                         new DateTimeImmutable,
+                        $durationMs,
+                        $httpCode,
+                        $reportedModel,
+                        $priceSnapshot->toArray(),
                     );
                     $status = 'ambiguous';
                     $lastException = new VisionProviderException('vision_wire_outcome_ambiguous');
                 }
                 if (! $replayed || ! $snapshot->usageRecorded) {
-                    $durationMs = $replayed
-                        ? (int) $snapshot->durationMs
-                        : (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000));
                     $usageRecorded = $this->recordAttempt(
                         $input, $model, $reportedModel, $status, $httpCode, $responsePayload,
                         $durationMs, $physicalContext, $priceSnapshot,
                     );
-                    if ($usageRecorded && $hasPersistedResponse) {
+                    if ($usageRecorded && ($hasPersistedResponse || $status === 'ambiguous')) {
                         $this->physicalAttempts->markUsageRecorded($physicalContext->attemptId, $requestFingerprint);
                     }
                 }
@@ -529,14 +552,15 @@ final readonly class TimewebVisionProvider implements VisionProvider
     private function recordAttempt(VisionDocumentInput $input, string $model, ?string $reportedModel, string $status, ?int $httpCode, array $payload, int $durationMs, AiOperationContext $physicalContext, AiPriceSnapshot $priceSnapshot): bool
     {
         $usage = $this->usage($payload);
+        $measurement = new AiUsageData(
+            context: $physicalContext, provider: self::PROVIDER, requestedModel: $model, reportedModel: $reportedModel,
+            status: $status, durationMs: $durationMs, usageStatus: $usage['status'], inputTokens: $usage['input'] ?? 0,
+            outputTokens: $usage['output'] ?? 0, imageCount: 1 + count($input->supplementalEvidence), imageDetail: $input->imageDetail, httpCode: $httpCode,
+            priceSnapshot: $priceSnapshot,
+            requestContext: $input->recheckScope?->toSafeUsageContext() ?? [],
+        );
         try {
-            $this->usageStore->record(new AiUsageData(
-                context: $physicalContext, provider: self::PROVIDER, requestedModel: $model, reportedModel: $reportedModel,
-                status: $status, durationMs: $durationMs, usageStatus: $usage['status'], inputTokens: $usage['input'] ?? 0,
-                outputTokens: $usage['output'] ?? 0, imageCount: 1 + count($input->supplementalEvidence), imageDetail: $input->imageDetail, httpCode: $httpCode,
-                priceSnapshot: $priceSnapshot,
-                requestContext: $input->recheckScope?->toSafeUsageContext() ?? [],
-            ));
+            $this->usageStore->record($measurement);
 
             return true;
         } catch (UsageInvariantViolation $exception) {

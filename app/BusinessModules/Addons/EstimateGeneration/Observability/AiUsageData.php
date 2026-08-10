@@ -30,7 +30,7 @@ final readonly class AiUsageData
         /** @var array<string, mixed> */
         public array $requestContext = [],
     ) {
-        if (! in_array($status, ['succeeded', 'http_failed', 'connection_failed', 'malformed_response'], true)
+        if (! in_array($status, ['succeeded', 'http_failed', 'connection_failed', 'malformed_response', 'ambiguous'], true)
             || $durationMs < 0) {
             throw new InvalidArgumentException('Invalid usage measurement.');
         }
@@ -48,11 +48,19 @@ final readonly class AiUsageData
         if ($cachedInputTokens > $inputTokens) {
             throw new InvalidArgumentException('Cached input cannot exceed input tokens.');
         }
+        if ($usageStatus === 'unavailable'
+            && ($inputTokens !== 0 || $cachedInputTokens !== 0 || $outputTokens !== 0 || $reasoningTokens !== 0)) {
+            throw new InvalidArgumentException('Unavailable usage cannot contain token measurements.');
+        }
         if (($imageCount === 0) !== ($imageDetail === null)) {
             throw new InvalidArgumentException('Image detail must match image count.');
         }
         if ($httpCode !== null && ($httpCode < 100 || $httpCode > 599)) {
             throw new InvalidArgumentException('Invalid HTTP status.');
+        }
+        if ($status === 'ambiguous' && ($usageStatus !== 'unavailable'
+            || ($httpCode !== null && ($httpCode < 200 || $httpCode > 299)))) {
+            throw new InvalidArgumentException('Ambiguous usage must remain unmeasured.');
         }
         if (! self::validRequestContext($requestContext)) {
             throw new InvalidArgumentException('Invalid usage request context.');

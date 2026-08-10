@@ -29,4 +29,21 @@ final class RequestContextForwardOnlyMigrationTest extends TestCase
         $migration->down();
         self::addToAssertionCount(1);
     }
+
+    #[Test]
+    public function ambiguous_usage_status_constraint_is_additive_and_forward_only(): void
+    {
+        $path = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000500_allow_ambiguous_ai_usage_status.php';
+        $source = file_get_contents($path);
+        $migration = require $path;
+
+        self::assertInstanceOf(Migration::class, $migration);
+        self::assertIsString($source);
+        self::assertStringContainsString("'ambiguous'", $source);
+        self::assertStringContainsString('eg_usage_status_ck', $source);
+        self::assertStringContainsString('eg_usage_status_http_ck', $source);
+        self::assertStringNotContainsString('DROP TABLE', strtoupper($source));
+        $migration->down();
+        self::addToAssertionCount(1);
+    }
 }

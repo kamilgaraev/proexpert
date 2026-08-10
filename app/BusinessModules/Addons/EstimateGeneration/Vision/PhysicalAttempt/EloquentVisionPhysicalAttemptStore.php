@@ -79,10 +79,20 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
                     'terminal_reason' => $snapshot->state === 'reserved'
                         ? 'legacy_reserved_outcome_unknown'
                         : 'wire_outcome_unknown_after_lease_expiry',
+                    'status' => 'ambiguous',
+                    'duration_ms' => 0,
+                    'price_snapshot' => '{}',
                     'updated_at' => $now,
                 ]);
 
-                return new VisionPhysicalAttemptSnapshot(false, 'ambiguous', terminalReason: 'wire_outcome_unknown');
+                return new VisionPhysicalAttemptSnapshot(
+                    false,
+                    'ambiguous',
+                    status: 'ambiguous',
+                    durationMs: 0,
+                    priceSnapshot: [],
+                    terminalReason: 'wire_outcome_unknown',
+                );
             }
 
             return $snapshot;
@@ -158,6 +168,10 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         string $ownerToken,
         string $reason,
         DateTimeImmutable $now,
+        int $durationMs,
+        ?int $httpCode,
+        ?string $reportedModel,
+        array $priceSnapshot,
     ): void {
         $updated = $this->database->table(self::TABLE)
             ->where('attempt_id', $attemptId)
@@ -170,6 +184,11 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
                 'lease_expires_at' => null,
                 'ambiguous_at' => $now,
                 'terminal_reason' => $reason,
+                'status' => 'ambiguous',
+                'http_code' => $httpCode,
+                'duration_ms' => $durationMs,
+                'reported_model' => $reportedModel,
+                'price_snapshot' => json_encode($priceSnapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
                 'updated_at' => $now,
             ]);
         if ($updated !== 1) {
@@ -182,9 +201,13 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         $updated = $this->database->table(self::TABLE)
             ->where('attempt_id', $attemptId)
             ->where('request_fingerprint', $requestFingerprint)
-            ->where('state', 'response_received')
+            ->whereIn('state', ['response_received', 'ambiguous'])
             ->where('usage_recorded', false)
-            ->update(['state' => 'completed', 'usage_recorded' => true, 'updated_at' => new DateTimeImmutable]);
+            ->update([
+                'state' => $this->database->raw("CASE WHEN state = 'response_received' THEN 'completed' ELSE state END"),
+                'usage_recorded' => true,
+                'updated_at' => new DateTimeImmutable,
+            ]);
         if ($updated !== 1) {
             throw new UsageInvariantViolation('Vision physical attempt usage state collision.');
         }

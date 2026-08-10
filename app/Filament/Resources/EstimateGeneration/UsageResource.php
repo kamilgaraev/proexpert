@@ -170,9 +170,9 @@ class UsageResource extends Resource
     private static function statusOptions(): array
     {
         return array_combine(
-            ['succeeded', 'http_failed', 'connection_failed', 'malformed_response'],
+            ['succeeded', 'http_failed', 'connection_failed', 'malformed_response', 'ambiguous'],
             array_map(static fn (string $status): string => trans_message('estimate_generation.usage.statuses.'.$status), [
-                'succeeded', 'http_failed', 'connection_failed', 'malformed_response',
+                'succeeded', 'http_failed', 'connection_failed', 'malformed_response', 'ambiguous',
             ]),
         );
     }

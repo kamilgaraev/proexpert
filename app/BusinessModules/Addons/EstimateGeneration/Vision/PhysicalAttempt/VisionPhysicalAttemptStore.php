@@ -38,12 +38,17 @@ interface VisionPhysicalAttemptStore
         array $priceSnapshot,
     ): void;
 
+    /** @param array<string, mixed> $priceSnapshot */
     public function markAmbiguous(
         string $attemptId,
         string $requestFingerprint,
         string $ownerToken,
         string $reason,
         DateTimeImmutable $now,
+        int $durationMs,
+        ?int $httpCode,
+        ?string $reportedModel,
+        array $priceSnapshot,
     ): void;
 
     public function markUsageRecorded(string $attemptId, string $requestFingerprint): void;
