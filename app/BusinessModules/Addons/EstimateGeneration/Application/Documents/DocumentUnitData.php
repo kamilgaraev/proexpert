@@ -10,7 +10,7 @@ final readonly class DocumentUnitData
 {
     public const MAX_INDEX = 100000;
 
-    /** @param array<string, scalar|null> $locator */
+    /** @param array<string, mixed> $locator */
     public function __construct(
         public DocumentUnitType $type,
         public int $index,

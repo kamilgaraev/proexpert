@@ -452,6 +452,7 @@ return [
             'http_failed' => 'Ошибка ответа поставщика',
             'connection_failed' => 'Ошибка подключения',
             'malformed_response' => 'Некорректный ответ',
+            'ambiguous' => 'Исход запроса не подтверждён',
         ],
     ],
     'failures' => [

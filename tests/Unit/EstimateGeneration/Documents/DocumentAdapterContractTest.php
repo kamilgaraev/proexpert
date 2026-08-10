@@ -66,6 +66,8 @@ final class DocumentAdapterContractTest extends TestCase
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle('Смета');
             $sheet->fromArray([['Наименование', 'Количество', 'Стоимость'], ['Бетон', 3, '=B2*100']]);
+            $sheet->mergeCells('A3:C3');
+            $sheet->setCellValue('A3', 'Итого');
             (new Xlsx($spreadsheet))->save($xlsxPath);
 
             $document = new EstimateGenerationDocument([
@@ -80,11 +82,14 @@ final class DocumentAdapterContractTest extends TestCase
             self::assertSame('spreadsheet', $payload['source_kind']);
             self::assertSame($page->rawPayload['native_structure'], $payload['native_structure']);
             self::assertSame(['A1', 'B1', 'C1'], $page->rawPayload['native_structure']['headings']);
+            self::assertSame(['A3:C3'], $page->rawPayload['native_structure']['merges']);
+            self::assertSame(3, $page->rawPayload['native_structure']['rows']);
+            self::assertSame(3, $page->rawPayload['native_structure']['columns']);
             self::assertSame([
                 ['address' => 'A2', 'value' => 'Бетон', 'formula' => null],
                 ['address' => 'B2', 'value' => '3', 'formula' => null],
-                ['address' => 'C2', 'value' => '300', 'formula' => '=B2*100'],
-            ], array_slice($page->rawPayload['native_structure']['cells'], 3));
+                ['address' => 'C2', 'value' => '=B2*100', 'formula' => '=B2*100'],
+            ], array_slice($page->rawPayload['native_structure']['cells'], 3, 3));
         } finally {
             $spreadsheet->disconnectWorksheets();
             @unlink($xlsxPath);

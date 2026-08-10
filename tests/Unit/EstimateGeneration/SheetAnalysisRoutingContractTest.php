@@ -14,6 +14,15 @@ use PHPUnit\Framework\TestCase;
 final class SheetAnalysisRoutingContractTest extends TestCase
 {
     #[Test]
+    public function role_router_has_only_the_six_stage_three_roles(): void
+    {
+        self::assertSame(
+            ['plan', 'section', 'facade', 'explication', 'specification', 'unknown'],
+            array_map(static fn (SheetRole $role): string => $role->value, SheetRole::cases()),
+        );
+    }
+
+    #[Test]
     public function targeted_operation_identity_is_stable_across_unit_lease_retries_and_changes_for_a_new_target(): void
     {
         $routing = ['role' => 'plan', 'reanalysis_reason' => 'sheet_role_insufficient_evidence'];

@@ -5,26 +5,28 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSheetAnalysisOperation;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use DateTimeImmutable;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use LogicException;
 use Throwable;
 
 final class SheetAnalysisOperationJournal
 {
+    private const LEASE_SECONDS = 1860;
+
     /**
      * The journal is deliberately written before the provider call. A completed entry contains
      * the provider result, so a lost worker can publish it on the next leased unit attempt.
      *
-     * @param array<string, mixed> $routing
-     * @param callable(): VisionAnalysisData $wire
+     * @param  array<string, mixed>  $routing
+     * @param  callable(): VisionAnalysisData  $wire
      */
     public function run(string $operationId, string $kind, DocumentSheetOperationScope $scope, array $routing, callable $wire): SheetAnalysisOperationRun
     {
@@ -220,21 +222,39 @@ final class SheetAnalysisOperationJournal
     /** @param array<string, mixed> $payload */
     private function analysis(array $payload): VisionAnalysisData
     {
-        $provider = $payload['provider'] ?? null; $requested = $payload['requested_model'] ?? null;
-        $reported = $payload['reported_model'] ?? null; $version = $payload['model_version'] ?? null; $usage = $payload['usage'] ?? null;
-        if (!is_string($provider) || !is_string($requested) || !is_string($reported) || !is_string($version) || !is_array($usage)) {
+        $provider = $payload['provider'] ?? null;
+        $requested = $payload['requested_model'] ?? null;
+        $reported = $payload['reported_model'] ?? null;
+        $version = $payload['model_version'] ?? null;
+        $usage = $payload['usage'] ?? null;
+        if (! is_string($provider) || ! is_string($requested) || ! is_string($reported) || ! is_string($version) || ! is_array($usage)) {
             throw new LogicException('Persisted sheet analysis is invalid.');
         }
-        $raw = $payload; unset($raw['provider'], $raw['requested_model'], $raw['reported_model'], $raw['model_version'], $raw['usage']);
+        $raw = $payload;
+        unset($raw['provider'], $raw['requested_model'], $raw['reported_model'], $raw['model_version'], $raw['usage']);
+        $nativeReferences = [];
+        $facts = $raw['project_sheet_analysis']['facts'] ?? [];
+        foreach (is_array($facts) ? $facts : [] as $fact) {
+            $reference = is_array($fact) ? ($fact['sourcePolygonOrNativeRef'] ?? null) : null;
+            if (is_string($reference)) {
+                $nativeReferences[] = $reference;
+            }
+        }
+
         return VisionAnalysisData::fromProviderArray($raw, $provider, $requested, $reported, $version,
             (string) ($usage['status'] ?? ''), is_int($usage['input_tokens'] ?? null) ? $usage['input_tokens'] : null,
-            is_int($usage['output_tokens'] ?? null) ? $usage['output_tokens'] : null, 500, 500);
+            is_int($usage['output_tokens'] ?? null) ? $usage['output_tokens'] : null, 500, 500,
+            array_values(array_unique($nativeReferences)));
     }
 
     /** @param mixed $stored @param array<string, mixed> $fallback @return array<string, mixed> */
-    private function routing(mixed $stored, array $fallback): array { return is_array($stored) && $stored !== [] ? $stored : $fallback; }
+    private function routing(mixed $stored, array $fallback): array
+    {
+        return is_array($stored) && $stored !== [] ? $stored : $fallback;
+    }
+
     private function leaseExpiry(): DateTimeImmutable
     {
-        return (new SheetAnalysisLeasePolicy)->renewedJournalLease(new DateTimeImmutable);
+        return (new DateTimeImmutable)->modify('+'.self::LEASE_SECONDS.' seconds');
     }
 }

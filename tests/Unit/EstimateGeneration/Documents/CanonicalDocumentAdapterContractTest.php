@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitData;
@@ -51,10 +52,36 @@ final class CanonicalDocumentAdapterContractTest extends TestCase
 
         self::assertInstanceOf(DocumentRepresentation::class, $representation);
         self::assertSame($unit->sourceVersion, $representation->source->value);
-        self::assertSame($unit->locator['artifact_path'], $representation->visualArtifactPath);
+        self::assertSame($unit->locator['visual_artifact_path'] ?? $unit->locator['artifact_path'], $representation->visualArtifactPath);
         self::assertSame($unit->locator['coordinate_space'], $representation->coordinateSpace);
-        self::assertSame($expectedCapabilities, $representation->capabilities);
+        self::assertSame($expectedCapabilities, $representation->capabilities->toArray());
         self::assertIsArray($representation->nativeStructure);
+    }
+
+    #[Test]
+    public function truncated_spreadsheet_representation_exposes_typed_unavailable_capabilities(): void
+    {
+        $unit = self::unit(
+            DocumentUnitType::SpreadsheetSheet,
+            'sha256:'.str_repeat('a', 64),
+            'spreadsheet_cells',
+            [
+                'artifact_kind' => 'spreadsheet_sheet',
+                'artifact_schema_version' => 1,
+                'native_structure_artifact_path' => 'org-1/xlsx/native.json',
+                'visual_artifact_path' => 'org-1/xlsx/render.svg',
+                'source_bounds' => [0, 0, 80, 2000],
+                'representation_limitations' => ['xlsx_rows_truncated', 'xlsx_render_truncated'],
+            ],
+        );
+
+        $representation = (new ReflectionClass(SpreadsheetDocumentAdapter::class))
+            ->newInstanceWithoutConstructor()->representation($unit);
+
+        self::assertSame('unavailable:xlsx_rows_truncated', $representation->capabilities->toArray()['cells']);
+        self::assertSame('unavailable:xlsx_render_truncated', $representation->capabilities->toArray()['table_render']);
+        $this->expectException(DocumentManifestNeedsReview::class);
+        $representation->capabilities->assertAvailable('cells');
     }
 
     public static function representationMatrix(): iterable
@@ -66,26 +93,39 @@ final class CanonicalDocumentAdapterContractTest extends TestCase
             self::unit(DocumentUnitType::PdfPage, $version, 'pdf_page_pixels', [
                 'geometry_artifact_path' => 'org-1/pdf/geometry.json',
                 'geometry_artifact_sha256' => 'sha256:'.str_repeat('b', 64),
+                'text_layer_status' => 'available',
+                'source_bounds' => [0, 0, 200, 100],
             ]),
-            ['text_layer' => 'available', 'geometry' => 'available', 'render' => 'available'],
+            ['text_spans' => 'available', 'vectors' => 'available', 'page_render' => 'available', 'source_coordinates' => 'available'],
         ];
         yield 'image' => [
             ImageDocumentAdapter::class,
-            self::unit(DocumentUnitType::RasterImage, $version, 'image_pixels'),
-            ['raster' => 'available', 'ocr' => 'available'],
+            self::unit(DocumentUnitType::RasterImage, $version, 'image_pixels', [
+                'ocr_spans_artifact_path' => 'org-1/image/ocr.json',
+                'source_bounds' => [0, 0, 640, 480],
+            ]),
+            ['original_raster' => 'available', 'ocr_spans' => 'available', 'image_coordinates' => 'available'],
         ];
         yield 'CAD' => [
             CadDocumentAdapter::class,
-            self::unit(DocumentUnitType::CadDrawing, $version, 'cad_model'),
-            ['layers' => 'extractable', 'blocks' => 'extractable', 'polylines' => 'extractable', 'texts' => 'extractable', 'dimensions' => 'extractable'],
+            self::unit(DocumentUnitType::CadDrawing, $version, 'cad_model', [
+                'native_structure_artifact_path' => 'org-1/cad/native.json',
+                'visual_artifact_path' => 'org-1/cad/render.png',
+                'source_bounds' => [0, 0, 1000, 1000],
+                'native_capabilities' => array_fill_keys(['layers', 'blocks', 'polylines', 'dimensions', 'texts'], 'available'),
+            ]),
+            ['layers' => 'available', 'blocks' => 'available', 'polylines' => 'available', 'dimensions' => 'available', 'texts' => 'available', 'sheet_render' => 'available', 'source_coordinates' => 'available'],
         ];
         yield 'XLSX' => [
             SpreadsheetDocumentAdapter::class,
             self::unit(DocumentUnitType::SpreadsheetSheet, $version, 'spreadsheet_cells', [
                 'artifact_kind' => 'spreadsheet_sheet',
                 'artifact_schema_version' => 1,
+                'native_structure_artifact_path' => 'org-1/xlsx/native.json',
+                'visual_artifact_path' => 'org-1/xlsx/render.svg',
+                'source_bounds' => [1, 1, 80, 2000],
             ]),
-            ['cells' => 'available', 'formulas' => 'available', 'headings' => 'available'],
+            ['sheets' => 'available', 'cells' => 'available', 'formulas' => 'available', 'merges' => 'available', 'table_render' => 'available', 'source_coordinates' => 'available'],
         ];
     }
 

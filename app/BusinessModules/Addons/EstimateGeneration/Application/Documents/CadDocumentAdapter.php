@@ -33,19 +33,35 @@ final class CadDocumentAdapter implements DocumentUnitAdapter
 
     public function representation(DocumentUnitData $unit): DocumentRepresentation
     {
-        $provenance = $unit->provenance();
+        $native = is_array($unit->locator['native_capabilities'] ?? null)
+            ? $unit->locator['native_capabilities']
+            : [];
+        $status = static fn (string $capability): string => ($native[$capability] ?? null) === 'available'
+            ? 'available'
+            : 'unavailable:cad_'.$capability.'_missing';
 
-        return new DocumentRepresentation(
-            DocumentSourceVersion::fromString($unit->sourceVersion),
-            [],
-            $provenance->artifactPath,
-            $provenance->coordinateSpace,
+        return (new DocumentRepresentationBuilder)->build(
+            'cad',
+            $unit,
             [
-                'layers' => 'extractable',
-                'blocks' => 'extractable',
-                'polylines' => 'extractable',
-                'texts' => 'extractable',
-                'dimensions' => 'extractable',
+                'native_structure_artifact_path' => $unit->locator['native_structure_artifact_path'] ?? null,
+                'native_structure_artifact_sha256' => $unit->locator['native_structure_artifact_sha256'] ?? null,
+                'native_reference_registry' => is_array($unit->locator['native_reference_registry'] ?? null)
+                    ? $unit->locator['native_reference_registry']
+                    : [],
+            ],
+            [
+                'layers' => $status('layers'),
+                'blocks' => $status('blocks'),
+                'polylines' => $status('polylines'),
+                'dimensions' => $status('dimensions'),
+                'texts' => $status('texts'),
+                'sheet_render' => isset($unit->locator['visual_artifact_path'])
+                    ? 'available'
+                    : 'unavailable:cad_sheet_render_missing',
+                'source_coordinates' => isset($unit->locator['source_bounds'])
+                    ? 'available'
+                    : 'unavailable:cad_source_bounds_missing',
             ],
         );
     }

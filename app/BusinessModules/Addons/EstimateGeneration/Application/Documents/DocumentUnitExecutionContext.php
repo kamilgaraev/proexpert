@@ -8,7 +8,7 @@ use LogicException;
 
 final readonly class DocumentUnitExecutionContext
 {
-    /** @param array<string, scalar|null> $locator */
+    /** @param array<string, mixed> $locator */
     public function __construct(
         public int $unitId,
         public int $organizationId,

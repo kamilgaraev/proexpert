@@ -611,13 +611,13 @@ CAD   → layers + blocks + polylines + dimensions + texts + sheet render
 XLSX  → sheets + cells + formulas + merges + table render
 ```
 
-- [ ] Подготовить по одному минимальному и одному production-sized fixture каждого формата без персональных данных.
-- [ ] Написать RED matrix test capability contracts и source-coordinate roundtrip.
-- [ ] Реализовать representation builders с лимитами памяти, страниц, объектов и безопасным S3 workspace.
-- [ ] Не скрывать деградацию: отсутствующая native capability возвращает typed limitation и попадает в review exception.
-- [ ] Проверить, что замена одного файла инвалидирует только его units/evidence/dependants.
-- [ ] Запустить document contract tests и PHPStan; тяжёлые production fixtures вынести в CI gate, если локальный набор превышает пять минут.
-- [ ] Commit: `feat[backend]: унифицировано понимание проектных документов`.
+- [x] Подготовить по одному минимальному и одному production-sized fixture каждого формата без персональных данных.
+- [x] Написать RED matrix test capability contracts и source-coordinate roundtrip.
+- [x] Реализовать representation builders с лимитами памяти, страниц, объектов и безопасным S3 workspace.
+- [x] Не скрывать деградацию: отсутствующая native capability возвращает typed limitation и попадает в review exception.
+- [x] Проверить, что замена одного файла инвалидирует только его units/evidence/dependants.
+- [x] Запустить document contract tests и PHPStan; тяжёлые production fixtures вынести в CI gate, если локальный набор превышает пять минут.
+- [x] Commit: `feat[backend]: унифицировано понимание проектных документов`.
 
 ### Task 11: Маршрутизировать мультимодальный анализ по роли листа
 
@@ -629,13 +629,13 @@ XLSX  → sheets + cells + formulas + merges + table render
 
 **Interfaces:** каждый найденный факт содержит `entityKey`, `factType`, `value`, `unit`, `evidenceRef`, `sourcePolygonOrNativeRef`, `confidence`, `contractVersion`.
 
-- [ ] Написать RED-тесты плана, разреза, фасада, экспликации, спецификации и неизвестного листа.
-- [ ] Ограничить каждый AI-вызов одной ролью и одним типизированным контрактом.
-- [ ] Реализовать targeted recheck только для конфликтной сущности или пары листов.
-- [ ] Записать reason и source set каждой повторной проверки в usage ledger.
-- [ ] Отклонять неизвестные ключи, битые координаты и факты без evidence.
-- [ ] Запустить contract tests, privacy tests, provider payload tests и PHPStan.
-- [ ] Commit: `feat[backend]: добавлен ролевой анализ листов проекта`.
+- [x] Написать RED-тесты плана, разреза, фасада, экспликации, спецификации и неизвестного листа.
+- [x] Ограничить каждый AI-вызов одной ролью и одним типизированным контрактом.
+- [x] Реализовать targeted recheck только для конфликтной сущности или пары листов.
+- [x] Записать reason и source set каждой повторной проверки в usage ledger.
+- [x] Отклонять неизвестные ключи, битые координаты и факты без evidence.
+- [x] Запустить contract tests, privacy tests, provider payload tests и PHPStan.
+- [x] Commit: `feat[backend]: добавлен ролевой анализ листов проекта`.
 
 ---
 

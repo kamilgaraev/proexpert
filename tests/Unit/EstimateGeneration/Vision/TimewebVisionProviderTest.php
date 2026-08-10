@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
@@ -20,9 +21,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionRespons
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
+use DateTimeImmutable;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -34,6 +40,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     private array $attempts = [];
 
     private TestAiPriceSnapshotResolver $priceResolver;
+
+    private InMemoryVisionPhysicalAttemptStore $physicalAttempts;
 
     protected function setUp(): void
     {
@@ -52,9 +60,21 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
 
             public function record(AiUsageData $usage): void
             {
+                foreach ($this->attempts as $existing) {
+                    if ($existing->context->attemptId !== $usage->context->attemptId) {
+                        continue;
+                    }
+                    if (! hash_equals($existing->immutableFingerprint, $usage->immutableFingerprint)) {
+                        throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+                    }
+
+                    return;
+                }
                 $this->attempts[] = $usage;
             }
         });
+        $this->physicalAttempts = new InMemoryVisionPhysicalAttemptStore;
+        $this->app->instance(VisionPhysicalAttemptStore::class, $this->physicalAttempts);
         $snapshot = [
             'schema_version' => 2,
             'models' => ['vision' => 'vision/model-v1', 'classification' => 'classification/model-v1', 'normative_matching' => 'normative/model-v1'],
@@ -100,7 +120,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     {
         Http::fake(['*' => Http::response($this->response())]);
 
-        $analysis = $this->provider()->analyze($this->input());
+        $analysis = $this->provider()->analyze($this->input(nativeReferences: ['cad:object:2F']));
 
         self::assertSame('floor_plan', $analysis->sheetType);
         self::assertSame('room-1', $analysis->elements[0]->key);
@@ -121,7 +141,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'schema_version must equal integer 3')
                 && str_contains($system, 'visual_attributes')
                 && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown')
-                && str_contains($system, 'room, wall, opening, axis, dimension_chain, sanitary_fixture, furniture, structural_element, table or cross_sheet_link')
+                && str_contains($system, 'PlanSheetAnalysis')
+                && str_contains($system, 'entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion')
                 && str_contains($system, 'dimension_text, scale_notation, known_object, manual_reference')
                 && str_contains($system, 'scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain')
                 && str_contains($system, 'meters_per_unit is finite in (0, 1000000]')
@@ -129,7 +150,11 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'Exactly 2 distinct points with nonzero length are allowed only for dimension, axis, engineering_element and text')
                 && str_contains($system, 'Opening elements additionally have exactly geometry')
                 && $user['contract_version'] === TimewebVisionProvider::PROMPT_VERSION
-                && $user['contract_sha256'] === TimewebVisionProvider::promptHash()
+                && $user['contract_sha256'] === TimewebVisionProvider::promptHash(sheetRole: 'plan')
+                && $user['sheet_role'] === 'plan'
+                && $user['role_contract'] === 'PlanSheetAnalysis'
+                && $user['native_reference_registry'] === ['cad:object:2F']
+                && ! array_key_exists('native_reference_registry_truncated', $user)
                 && $user['evidence_locator']['processing_unit_id'] === 19;
         });
     }
@@ -215,7 +240,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
 
                 return str_contains($system, "0..{$maxElements} elements")
-                    && $user['contract_sha256'] === TimewebVisionProvider::promptHash($maxElements);
+                    && $user['contract_sha256'] === TimewebVisionProvider::promptHash($maxElements, sheetRole: 'plan');
             });
         }
     }
@@ -228,7 +253,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         $analysis = json_decode($response['choices'][0]['message']['content'], true, 16, JSON_THROW_ON_ERROR);
         $fact = $analysis['project_sheet_analysis']['facts'][0];
         $secondFact = $fact;
-        $secondFact['key'] = 'room-2';
+        $secondFact['entityKey'] = 'room-2';
         $analysis['project_sheet_analysis']['facts'] = [$fact, $secondFact];
         $response['choices'][0]['message']['content'] = json_encode($analysis, JSON_THROW_ON_ERROR);
         Http::fake(['*' => Http::response($response)]);
@@ -252,10 +277,10 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     public function element_limits_outside_one_to_five_hundred_fail_before_wire_call(): void
     {
         Http::fake();
-        foreach ([0, 501] as $invalid) {
+        foreach ([0, 501] as $index => $invalid) {
             config()->set('estimate-generation.vision.max_elements', $invalid);
             try {
-                $this->provider()->analyze($this->input());
+                $this->provider()->analyze($this->input(claim: $index + 1));
                 self::fail('Invalid element limit was accepted.');
             } catch (VisionProviderException $exception) {
                 self::assertSame('vision_max_elements_invalid', $exception->reason);
@@ -310,11 +335,114 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function it_retries_connections(): void
+    public function connection_failure_after_wire_start_is_terminal_ambiguous_without_second_charge(): void
     {
         Http::fakeSequence()->pushFailedConnection('network')->push($this->response());
-        $this->provider()->analyze($this->input());
-        self::assertSame(['connection_failed', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $this->attempts));
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Ambiguous provider outcome was retried.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_wire_outcome_ambiguous', $exception->reason);
+        }
+
+        self::assertCount(1, $this->attempts);
+        self::assertSame('ambiguous', $this->attempts[0]->status);
+        self::assertSame('unavailable', $this->attempts[0]->usageStatus);
+        self::assertSame(0, $this->attempts[0]->inputTokens);
+        self::assertSame(0, $this->attempts[0]->outputTokens);
+        self::assertNull($this->attempts[0]->httpCode);
+        self::assertSame(7, $this->attempts[0]->context->organizationId);
+        self::assertSame(11, $this->attempts[0]->context->sessionId);
+        self::assertTrue($this->physicalAttempts->onlySnapshot()->usageRecorded);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Ambiguous provider outcome was charged again.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_wire_outcome_ambiguous', $exception->reason);
+        }
+
+        Http::assertSentCount(1);
+        self::assertCount(1, $this->attempts);
+    }
+
+    #[Test]
+    public function ambiguous_attempt_repairs_a_transient_ledger_failure_without_a_second_http_call(): void
+    {
+        $store = new class implements AiUsageStore
+        {
+            public bool $fail = true;
+
+            /** @var array<string, AiUsageData> */
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                if ($this->fail) {
+                    throw new \RuntimeException('ledger temporarily unavailable');
+                }
+                $this->rows[$data->context->attemptId] ??= $data;
+            }
+        };
+        $this->app->instance(AiUsageStore::class, $store);
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fakeSequence()->pushFailedConnection('network')->push($this->response());
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Ambiguous provider outcome was accepted.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_wire_outcome_ambiguous', $exception->reason);
+        }
+        self::assertSame([], $store->rows);
+
+        $store->fail = false;
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Ambiguous provider outcome was retried.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_wire_outcome_ambiguous', $exception->reason);
+        }
+
+        Http::assertSentCount(1);
+        self::assertCount(1, $store->rows);
+        self::assertSame('ambiguous', array_values($store->rows)[0]->status);
+    }
+
+    #[Test]
+    public function pre_wire_claim_failure_is_not_recorded_as_a_potential_charge(): void
+    {
+        $this->app->instance(VisionPhysicalAttemptStore::class, new class implements VisionPhysicalAttemptStore
+        {
+            public function claim(AiOperationContext $context, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): VisionPhysicalAttemptSnapshot
+            {
+                return new VisionPhysicalAttemptSnapshot(true, 'pre_wire', ownerToken: $ownerToken, leaseExpiresAt: $leaseExpiresAt);
+            }
+
+            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void
+            {
+                throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation('pre-wire claim lost');
+            }
+
+            public function storeResponse(string $attemptId, string $requestFingerprint, string $ownerToken, array $responsePayload, string $status, ?int $httpCode, int $durationMs, ?string $reportedModel, array $priceSnapshot): void {}
+
+            public function markAmbiguous(string $attemptId, string $requestFingerprint, string $ownerToken, string $reason, DateTimeImmutable $now, int $durationMs, ?int $httpCode, ?string $reportedModel, array $priceSnapshot): void {}
+
+            public function markUsageRecorded(string $attemptId, string $requestFingerprint): void {}
+        });
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake();
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Lost pre-wire claim was accepted.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation) {
+        }
+
+        Http::assertNothingSent();
+        self::assertCount(1, $this->attempts);
+        self::assertSame('connection_failed', $this->attempts[0]->status);
+        self::assertNotSame('ambiguous', $this->attempts[0]->status);
     }
 
     #[Test]
@@ -326,7 +454,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         });
         for ($i = 0; $i < 4; $i++) {
             try {
-                $this->provider()->analyze($this->input());
+                $this->provider()->analyze($this->input(claim: $i + 1));
             } catch (VisionProviderException) {
             }
         }
@@ -360,16 +488,20 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function it_retries_invalid_json_from_the_provider(): void
+    public function persisted_invalid_json_is_not_retried_with_a_second_charge(): void
     {
         $invalid = $this->response();
         $invalid['choices'][0]['message']['content'] = '{invalid-json';
         Http::fakeSequence()->push($invalid)->push($this->response());
 
-        $analysis = $this->provider()->analyze($this->input());
-
-        self::assertSame('floor_plan', $analysis->sheetType);
-        self::assertSame(['malformed_response', 'succeeded'], array_map(
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Persisted malformed response was charged twice.');
+        } catch (VisionContractException $exception) {
+            self::assertSame('vision_json_invalid', $exception->reason);
+        }
+        Http::assertSentCount(1);
+        self::assertSame(['malformed_response'], array_map(
             fn (AiUsageData $row): string => $row->status,
             $this->attempts,
         ));
@@ -389,14 +521,15 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             $this->response(['elements' => [['key' => 'room-1', 'type' => 'room', 'label' => null, 'polygon' => [[0, 0], [1, 1], [1, 0], [0, 1]], 'confidence' => 0.8, 'evidence_ref' => 'missing']]]),
         ];
 
-        foreach ($invalid as $response) {
-            $this->attempts = [];
-            Http::fake(['*' => Http::response($response)]);
+        Http::fake(function () use (&$invalid) {
+            return Http::response(array_shift($invalid));
+        });
+        for ($index = 0; $index < 5; $index++) {
             try {
-                $this->provider()->analyze($this->input());
+                $this->provider()->analyze($this->input(claim: $index + 1));
                 self::fail('Invalid response was accepted.');
             } catch (VisionContractException) {
-                self::assertSame('malformed_response', $this->attempts[0]->status);
+                self::assertSame('malformed_response', $this->attempts[$index]->status);
             }
         }
     }
@@ -433,7 +566,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         });
         for ($i = 0; $i < 2; $i++) {
             try {
-                $this->provider()->analyze($this->input());
+                $this->provider()->analyze($this->input(claim: $i + 1));
                 self::fail('Invalid geometry accepted.');
             } catch (VisionContractException) {
             }
@@ -463,7 +596,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         });
         for ($i = 0; $i < 3; $i++) {
             try {
-                $this->provider()->analyze($this->input());
+                $this->provider()->analyze($this->input(claim: $i + 1));
                 self::fail('Invalid provenance was accepted.');
             } catch (VisionContractException) {
                 self::assertSame('malformed_response', $this->attempts[$i]->status);
@@ -472,13 +605,18 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function it_rejects_oversized_response_before_json_decode(): void
+    public function oversized_unpersisted_response_is_terminal_ambiguous(): void
     {
         config()->set('estimate-generation.vision.max_response_bytes', 1024);
         Http::fake(['*' => Http::response(str_repeat('x', 2048), 200, ['Content-Type' => 'application/json'])]);
 
-        $this->expectException(VisionContractException::class);
-        $this->provider()->analyze($this->input());
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Unpersisted provider response must not be retried.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_wire_outcome_ambiguous', $exception->reason);
+        }
+        Http::assertSentCount(1);
     }
 
     #[Test]
@@ -497,13 +635,145 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function exact_provider_replay_keeps_the_same_physical_attempt_id(): void
+    public function exact_provider_replay_uses_the_durable_response_without_a_second_charge(): void
     {
         Http::fake(fn () => Http::response($this->response()));
         $this->provider()->analyze($this->input());
         $this->provider()->analyze($this->input());
 
-        self::assertSame($this->attempts[0]->context->attemptId, $this->attempts[1]->context->attemptId);
+        Http::assertSentCount(1);
+        self::assertCount(1, $this->attempts);
+        self::assertSame('succeeded', $this->attempts[0]->status);
+    }
+
+    #[Test]
+    public function provider_publishes_the_exact_registry_at_the_2000_boundary(): void
+    {
+        $references = array_map(static fn (int $index): string => 'cad:object:'.$index, range(1, 2000));
+        Http::fake(fn () => Http::response($this->response()));
+
+        $this->provider()->analyze($this->input(nativeReferences: $references));
+
+        Http::assertSent(function ($request) use ($references): bool {
+            $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
+
+            return $user['native_reference_registry'] === $references
+                && ! array_key_exists('native_reference_registry_truncated', $user);
+        });
+    }
+
+    #[Test]
+    public function registry_above_provider_capacity_requires_review_before_http(): void
+    {
+        $references = array_map(static fn (int $index): string => 'cad:object:'.$index, range(1, 2001));
+        Http::fake();
+
+        try {
+            $this->provider()->analyze($this->input(nativeReferences: $references));
+            self::fail('Partial provider registry was silently published.');
+        } catch (DocumentManifestNeedsReview $exception) {
+            self::assertSame('document_native_registry_provider_limit_exceeded', $exception->safeCode);
+            self::assertSame(2001, $exception->safeContext['actual']);
+            self::assertSame(2000, $exception->safeContext['limit']);
+        }
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function response_survives_a_usage_completion_failure_and_retry_does_not_call_provider_again(): void
+    {
+        $store = new class implements AiUsageStore
+        {
+            public bool $fail = true;
+
+            /** @var list<AiUsageData> */
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                if ($this->fail) {
+                    throw new \RuntimeException('ledger temporarily unavailable');
+                }
+                $this->rows[] = $data;
+            }
+        };
+        $this->app->instance(AiUsageStore::class, $store);
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake(fn () => Http::response($this->response()));
+
+        $this->provider()->analyze($this->input());
+        $store->fail = false;
+        $this->provider()->analyze($this->input());
+
+        Http::assertSentCount(1);
+        self::assertCount(1, $store->rows);
+    }
+
+    #[Test]
+    public function ambiguous_crashed_attempt_fails_closed_before_http(): void
+    {
+        $this->app->instance(VisionPhysicalAttemptStore::class, new class implements VisionPhysicalAttemptStore
+        {
+            public function claim(AiOperationContext $context, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): VisionPhysicalAttemptSnapshot
+            {
+                return new VisionPhysicalAttemptSnapshot(false, 'ambiguous');
+            }
+
+            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void
+            {
+                throw new \LogicException;
+            }
+
+            public function storeResponse(string $attemptId, string $requestFingerprint, string $ownerToken, array $responsePayload, string $status, ?int $httpCode, int $durationMs, ?string $reportedModel, array $priceSnapshot): void
+            {
+                throw new \LogicException;
+            }
+
+            public function markAmbiguous(string $attemptId, string $requestFingerprint, string $ownerToken, string $reason, DateTimeImmutable $now, int $durationMs, ?int $httpCode, ?string $reportedModel, array $priceSnapshot): void
+            {
+                throw new \LogicException;
+            }
+
+            public function markUsageRecorded(string $attemptId, string $requestFingerprint): void {}
+        });
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake();
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Reserved physical attempt was charged again.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_wire_outcome_ambiguous', $exception->reason);
+        }
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function physical_response_collision_is_never_wrapped_or_silently_ignored(): void
+    {
+        $this->app->instance(VisionPhysicalAttemptStore::class, new class implements VisionPhysicalAttemptStore
+        {
+            public function claim(AiOperationContext $context, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): VisionPhysicalAttemptSnapshot
+            {
+                return new VisionPhysicalAttemptSnapshot(true, 'pre_wire', ownerToken: $ownerToken, leaseExpiresAt: $leaseExpiresAt);
+            }
+
+            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void {}
+
+            public function storeResponse(string $attemptId, string $requestFingerprint, string $ownerToken, array $responsePayload, string $status, ?int $httpCode, int $durationMs, ?string $reportedModel, array $priceSnapshot): void
+            {
+                throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation('collision');
+            }
+
+            public function markAmbiguous(string $attemptId, string $requestFingerprint, string $ownerToken, string $reason, DateTimeImmutable $now, int $durationMs, ?int $httpCode, ?string $reportedModel, array $priceSnapshot): void {}
+
+            public function markUsageRecorded(string $attemptId, string $requestFingerprint): void {}
+        });
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake(fn () => Http::response($this->response()));
+
+        $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation::class);
+        $this->provider()->analyze($this->input());
     }
 
     #[Test]
@@ -514,7 +784,10 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertTrue($this->attempts[0]->priceSnapshot?->available);
 
         $this->priceResolver->available = false;
-        $this->provider()->analyze($this->input());
+        $this->physicalAttempts = new InMemoryVisionPhysicalAttemptStore;
+        $this->app->instance(VisionPhysicalAttemptStore::class, $this->physicalAttempts);
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        $this->provider()->analyze($this->input(claim: 2));
         self::assertCount(2, $this->attempts);
         self::assertFalse($this->attempts[1]->priceSnapshot?->available);
     }
@@ -525,13 +798,74 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertInstanceOf(TimewebVisionProvider::class, app(VisionProvider::class));
     }
 
+    #[Test]
+    public function targeted_provider_call_contains_only_one_role_contract_and_records_safe_scope(): void
+    {
+        $scope = TargetedSheetRecheckScope::forSheetPair(
+            'facade',
+            'sheet_role_conflict',
+            'document:13/sheet:17',
+            'document:13/sheet:18',
+        );
+        Http::fake(['*' => Http::response($this->response([
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'facade',
+                'facts' => [[
+                    'entityKey' => 'facade-1', 'factType' => 'structural_element',
+                    'value' => ['type' => 'unknown', 'data' => null], 'unit' => null,
+                    'evidenceRef' => 'page-1', 'sourcePolygonOrNativeRef' => $this->responsePolygon(),
+                    'confidence' => 0.95, 'contractVersion' => 'sheet-analysis:v2',
+                ]],
+            ],
+        ]))]);
+
+        $primary = $this->input();
+        $supplemental = new TargetedSheetEvidence(
+            7, 9, 11, 13, 18, 3, 20,
+            'sha256:'.str_repeat('b', 64),
+            'sha256:'.hash('sha256', $primary->imageContent),
+            'image/png',
+            $primary->imageContent,
+        );
+        $analysis = $this->provider()->analyze($this->input(
+            sheetRole: 'facade',
+            recheckScope: $scope,
+            supplementalEvidence: [$supplemental],
+        ));
+
+        self::assertSame('facade', $analysis->projectSheetAnalysis?->sheetRole);
+        self::assertSame($scope->toSafeUsageContext(), $this->attempts[0]->requestContext);
+        Http::assertSent(function ($request): bool {
+            $system = (string) $request['messages'][0]['content'];
+            $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
+            $images = array_values(array_filter(
+                $request['messages'][1]['content'],
+                static fn (array $item): bool => ($item['type'] ?? null) === 'image_url',
+            ));
+
+            return str_contains($system, 'role facade and contract FacadeSheetAnalysis')
+                && ! str_contains($system, 'PlanSheetAnalysis')
+                && $user['targeted_recheck']['reason'] === 'sheet_role_conflict'
+                && $user['targeted_recheck']['source_set'] === ['document:13/sheet:17', 'document:13/sheet:18']
+                && $user['supplemental_evidence'][0]['page_id'] === 18
+                && count($images) === 2;
+        });
+    }
+
     private function provider(): TimewebVisionProvider
     {
         return app(TimewebVisionProvider::class);
     }
 
-    private function input(?\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData $transform = null): VisionDocumentInput
-    {
+    private function input(
+        ?\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData $transform = null,
+        string $sheetRole = 'plan',
+        ?TargetedSheetRecheckScope $recheckScope = null,
+        array $supplementalEvidence = [],
+        int $claim = 1,
+        array $nativeReferences = [],
+    ): VisionDocumentInput {
         $image = imagecreatetruecolor(2, 2);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
         ob_start();
@@ -544,11 +878,15 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             sourceVersion: 'sha256:'.str_repeat('a', 64),
             contentType: 'image/png', imageContent: $imageContent, imageDetail: 'high',
             operationContext: new AiOperationContext(
-                '11111111-1111-5111-8111-111111111111', '22222222-2222-5222-8222-222222222222',
+                '11111111-1111-5111-8111-111111111111', AiOperationContext::deterministicId('vision-test-claim:'.$claim),
                 7, 9, 11, 'understand_documents', 'vision', 1, 13, 17, 19,
             ),
             sourceTransform: $transform ?? (new ProjectiveTransformFactory)->identity(),
             derivativeHash: 'sha256:'.hash('sha256', $imageContent),
+            sheetRole: $sheetRole,
+            recheckScope: $recheckScope,
+            nativeReferences: $nativeReferences,
+            supplementalEvidence: $supplementalEvidence,
         );
     }
 
@@ -571,11 +909,13 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 'roof_type' => ['value' => 'pitched', 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
             ],
             'project_sheet_analysis' => [
-                'schema_version' => 1,
-                'sheet_role' => 'plan',
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'plan',
                 'facts' => [[
-                    'key' => 'room-1', 'type' => 'room', 'evidence_ref' => 'page-1', 'polygon' => $this->responsePolygon(), 'confidence' => 0.95,
-                    'value' => ['type' => 'unknown', 'data' => null], 'unit' => null,
+                    'entityKey' => 'room-1', 'factType' => 'room',
+                    'value' => ['type' => 'unknown', 'data' => null], 'unit' => null, 'evidenceRef' => 'page-1',
+                    'sourcePolygonOrNativeRef' => $this->responsePolygon(), 'confidence' => 0.95,
+                    'contractVersion' => 'sheet-analysis:v2',
                 ]],
             ],
         ], $analysisOverrides);
@@ -591,6 +931,105 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     private function responsePolygon(): array
     {
         return [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
+    }
+}
+
+final class InMemoryVisionPhysicalAttemptStore implements VisionPhysicalAttemptStore
+{
+    /** @var array<string, array{fingerprint: string, snapshot: VisionPhysicalAttemptSnapshot}> */
+    private array $attempts = [];
+
+    public function onlySnapshot(): VisionPhysicalAttemptSnapshot
+    {
+        if (count($this->attempts) !== 1) {
+            throw new \LogicException('Expected exactly one physical attempt.');
+        }
+
+        return array_values($this->attempts)[0]['snapshot'];
+    }
+
+    public function claim(AiOperationContext $context, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): VisionPhysicalAttemptSnapshot
+    {
+        $row = $this->attempts[$context->attemptId] ?? null;
+        if ($row !== null) {
+            if (! hash_equals($row['fingerprint'], $requestFingerprint)) {
+                throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+            }
+
+            return $row['snapshot'];
+        }
+        $snapshot = new VisionPhysicalAttemptSnapshot(true, 'pre_wire', ownerToken: $ownerToken, leaseExpiresAt: $leaseExpiresAt);
+        $this->attempts[$context->attemptId] = ['fingerprint' => $requestFingerprint, 'snapshot' => $snapshot];
+
+        return $snapshot;
+    }
+
+    public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void
+    {
+        $row = $this->attempts[$attemptId] ?? null;
+        if ($row === null || ! hash_equals($row['fingerprint'], $requestFingerprint)
+            || $row['snapshot']->state !== 'pre_wire' || $row['snapshot']->ownerToken !== $ownerToken) {
+            throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+        }
+        $this->attempts[$attemptId]['snapshot'] = new VisionPhysicalAttemptSnapshot(
+            false, 'wire_started', usageRecorded: false, ownerToken: $ownerToken, leaseExpiresAt: $leaseExpiresAt,
+        );
+    }
+
+    public function storeResponse(
+        string $attemptId,
+        string $requestFingerprint,
+        string $ownerToken,
+        array $responsePayload,
+        string $status,
+        ?int $httpCode,
+        int $durationMs,
+        ?string $reportedModel,
+        array $priceSnapshot,
+    ): void {
+        $row = $this->attempts[$attemptId] ?? null;
+        if ($row === null || ! hash_equals($row['fingerprint'], $requestFingerprint)
+            || $row['snapshot']->state !== 'wire_started' || $row['snapshot']->ownerToken !== $ownerToken) {
+            throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+        }
+        $this->attempts[$attemptId]['snapshot'] = new VisionPhysicalAttemptSnapshot(
+            false, 'response_received', $responsePayload, $status, $httpCode, $durationMs,
+            $reportedModel, $priceSnapshot, $row['snapshot']->usageRecorded,
+        );
+    }
+
+    public function markAmbiguous(string $attemptId, string $requestFingerprint, string $ownerToken, string $reason, DateTimeImmutable $now, int $durationMs, ?int $httpCode, ?string $reportedModel, array $priceSnapshot): void
+    {
+        $row = $this->attempts[$attemptId] ?? null;
+        if ($row === null || ! hash_equals($row['fingerprint'], $requestFingerprint)
+            || $row['snapshot']->state !== 'wire_started' || $row['snapshot']->ownerToken !== $ownerToken) {
+            throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+        }
+        $this->attempts[$attemptId]['snapshot'] = new VisionPhysicalAttemptSnapshot(
+            false,
+            'ambiguous',
+            status: 'ambiguous',
+            httpCode: $httpCode,
+            durationMs: $durationMs,
+            reportedModel: $reportedModel,
+            priceSnapshot: $priceSnapshot,
+            terminalReason: $reason,
+        );
+    }
+
+    public function markUsageRecorded(string $attemptId, string $requestFingerprint): void
+    {
+        $row = $this->attempts[$attemptId] ?? null;
+        if ($row === null || ! hash_equals($row['fingerprint'], $requestFingerprint)) {
+            throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+        }
+        $snapshot = $row['snapshot'];
+        $this->attempts[$attemptId]['snapshot'] = new VisionPhysicalAttemptSnapshot(
+            false, $snapshot->state === 'response_received' ? 'completed' : $snapshot->state,
+            $snapshot->responsePayload, $snapshot->status, $snapshot->httpCode,
+            $snapshot->durationMs, $snapshot->reportedModel, $snapshot->priceSnapshot, true,
+            terminalReason: $snapshot->terminalReason,
+        );
     }
 }
 

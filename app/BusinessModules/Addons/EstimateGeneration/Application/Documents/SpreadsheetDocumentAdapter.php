@@ -37,13 +37,22 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
             $units = [];
 
             foreach ($recognition->pages as $page) {
+                $structure = $this->structureExtractor->extract($page);
                 $artifact = $this->storage->put(
                     $document,
                     $sourceVersion,
                     DocumentUnitType::SpreadsheetSheet,
                     $page->pageNumber,
-                    json_encode($this->structureExtractor->extract($page), JSON_THROW_ON_ERROR),
+                    json_encode($structure, JSON_THROW_ON_ERROR),
                     'application/json',
+                );
+                $visual = $this->storage->put(
+                    $document,
+                    $sourceVersion,
+                    DocumentUnitType::Sketch,
+                    $page->pageNumber,
+                    $this->tableRender($structure),
+                    'image/svg+xml',
                 );
                 $units[] = new DocumentUnitData(
                     DocumentUnitType::SpreadsheetSheet,
@@ -58,6 +67,19 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                         'artifact_kind' => 'spreadsheet_sheet',
                         'artifact_schema_version' => 1,
                         'sheet' => $page->pageNumber,
+                        'native_structure_artifact_path' => $artifact->path,
+                        'visual_artifact_path' => $visual->path,
+                        'source_bounds' => [
+                            0,
+                            0,
+                            max(1, (int) ($structure['native_structure']['columns'] ?? 1)),
+                            max(1, (int) ($structure['native_structure']['rows'] ?? 1)),
+                        ],
+                        'object_count' => count($structure['native_structure']['cells'] ?? []),
+                        'representation_bytes' => $artifact->bytes + $visual->bytes,
+                        'representation_limitations' => is_array($structure['native_structure']['limitations'] ?? null)
+                            ? $structure['native_structure']['limitations']
+                            : [],
                     ],
                 );
             }
@@ -74,18 +96,73 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
 
     public function representation(DocumentUnitData $unit): DocumentRepresentation
     {
-        $provenance = $unit->provenance();
+        $nativeAvailable = isset($unit->locator['native_structure_artifact_path']);
+        $limitations = is_array($unit->locator['representation_limitations'] ?? null)
+            ? $unit->locator['representation_limitations']
+            : [];
 
-        return new DocumentRepresentation(
-            DocumentSourceVersion::fromString($unit->sourceVersion),
+        return (new DocumentRepresentationBuilder)->build(
+            'xlsx',
+            $unit,
             [
                 'artifact_kind' => $unit->locator['artifact_kind'] ?? null,
                 'artifact_schema_version' => $unit->locator['artifact_schema_version'] ?? null,
+                'native_structure_artifact_path' => $unit->locator['native_structure_artifact_path'] ?? null,
             ],
-            $provenance->artifactPath,
-            $provenance->coordinateSpace,
-            ['cells' => 'available', 'formulas' => 'available', 'headings' => 'available'],
+            [
+                'sheets' => $this->status($nativeAvailable, $limitations, ['xlsx_sheets_truncated'], 'xlsx_sheets_missing'),
+                'cells' => $this->status($nativeAvailable, $limitations, [
+                    'xlsx_rows_truncated', 'xlsx_columns_truncated', 'xlsx_cells_truncated',
+                ], 'xlsx_cells_missing'),
+                'formulas' => $this->status($nativeAvailable, $limitations, [
+                    'xlsx_rows_truncated', 'xlsx_columns_truncated', 'xlsx_cells_truncated',
+                ], 'xlsx_formulas_missing'),
+                'merges' => $this->status($nativeAvailable, $limitations, [
+                    'xlsx_rows_truncated', 'xlsx_columns_truncated', 'xlsx_cells_truncated', 'xlsx_merges_truncated',
+                ], 'xlsx_merges_missing'),
+                'table_render' => $this->status(
+                    isset($unit->locator['visual_artifact_path']),
+                    $limitations,
+                    ['xlsx_render_truncated'],
+                    'xlsx_table_render_missing',
+                ),
+                'source_coordinates' => isset($unit->locator['source_bounds'])
+                    ? 'available'
+                    : 'unavailable:xlsx_source_bounds_missing',
+            ],
         );
+    }
+
+    /** @param list<mixed> $limitations @param list<string> $blocking */
+    private function status(bool $available, array $limitations, array $blocking, string $missing): string
+    {
+        if (! $available) {
+            return 'unavailable:'.$missing;
+        }
+        foreach ($blocking as $reason) {
+            if (in_array($reason, $limitations, true)) {
+                return 'unavailable:'.$reason;
+            }
+        }
+
+        return 'available';
+    }
+
+    private function tableRender(array $structure): string
+    {
+        $cells = array_slice($structure['native_structure']['cells'] ?? [], 0, 400);
+        $labels = [];
+        foreach ($cells as $cell) {
+            if (! is_array($cell)) {
+                continue;
+            }
+            $address = htmlspecialchars((string) ($cell['address'] ?? ''), ENT_XML1 | ENT_QUOTES, 'UTF-8');
+            $value = htmlspecialchars((string) ($cell['value'] ?? ''), ENT_XML1 | ENT_QUOTES, 'UTF-8');
+            $labels[] = '<text x="10" y="'.(20 + (count($labels) * 18)).'">'.$address.' '.$value.'</text>';
+        }
+        $height = max(40, 30 + (count($labels) * 18));
+
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="'.$height.'"><rect width="100%" height="100%" fill="white"/><g font-family="sans-serif" font-size="14">'.implode('', $labels).'</g></svg>';
     }
 
     private function extension(EstimateGenerationDocument $document): string
