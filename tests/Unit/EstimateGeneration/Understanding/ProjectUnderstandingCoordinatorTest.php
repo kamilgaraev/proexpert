@@ -76,7 +76,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
     }
 
     #[Test]
-    public function decision_invalidation_reactivates_an_identical_persisted_run_without_calling_provider_again(): void
+    public function decision_version_changes_exact_snapshot_and_prevents_stale_reactivation(): void
     {
         $models = new InMemoryProjectModelRepository;
         $factory = new RecordingArbitratorFactory('fact:right-2');
@@ -94,7 +94,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
 
         $replayed = $coordinator->refresh(1, 2, 3, $this->token(), 2);
 
-        self::assertSame(1, $factory->calls);
+        self::assertSame(2, $factory->calls);
         self::assertSame($first->links, $replayed->links);
         self::assertSame($first->links, $models->currentUnderstanding(1, 2, 3)['links']);
     }
@@ -228,6 +228,84 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         $scoped = $models->understandingPreflight(1, 2, 3, 2, 2, 1, 10_000, 10_000);
         self::assertSame($baseline['fact_count'], $scoped['fact_count']);
         self::assertSame($baseline['evidence_count'], $scoped['evidence_count']);
+    }
+
+    #[Test]
+    public function exact_snapshot_fence_rejects_equal_size_fact_replacement_after_processing(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $factory = new RecordingArbitratorFactory('fact:right-2');
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
+        $models->beforeUnderstandingSave = function () use ($models): void {
+            $models->saveSourceModel(
+                [new Entity('entity:right-2', 1, 2, 3, $this->modelSource(), 'room', 'entity:right-2', ['document_role' => 'room_schedule', 'room_number' => '101'])],
+                [new Fact('fact:right-9', 1, 2, 3, $this->modelSource(), 'entity:right-2', 'area', '19.4', 'm2', 0.95, 'document', 'confirmed', ['evidence:9'])],
+                [$this->evidence('evidence:9')],
+            );
+        };
+
+        $result = $this->coordinator($models, $factory)->refresh(1, 2, 3, $this->token(), 1);
+
+        self::assertNull($models->currentUnderstanding(1, 2, 3));
+        self::assertSame([], $result->links);
+        self::assertNotSame([], $result->limitations);
+        self::assertSame(1, $factory->calls);
+    }
+
+    #[Test]
+    public function exact_snapshot_fence_rejects_decision_and_source_invalidation_before_save(): void
+    {
+        foreach (['decision', 'source'] as $mutation) {
+            $models = new InMemoryProjectModelRepository;
+            $factory = new RecordingArbitratorFactory('fact:right-2');
+            $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+            $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
+            $models->beforeUnderstandingSave = function () use ($models, $mutation): void {
+                if ($mutation === 'source') {
+                    $models->invalidateSourceVersion(1, 2, 3, $this->evidenceSource(), 'sha256:'.str_repeat('c', 64));
+
+                    return;
+                }
+                $fact = $models->fact(1, 2, 3, 'fact:right-2');
+                self::assertInstanceOf(Fact::class, $fact);
+                $models->applyDecision(new Decision(
+                    'decision:concurrent', 1, 2, 3, $this->modelSource(), 'fact', 'fact:right-2',
+                    'fact:right-2', 'user', '42', 'Параллельное решение', 2,
+                ), $fact);
+            };
+
+            $result = $this->coordinator($models, $factory)->refresh(1, 2, 3, $this->token(), 1);
+
+            self::assertNull($models->currentUnderstanding(1, 2, 3), $mutation);
+            self::assertSame([], $result->links, $mutation);
+            self::assertNotSame([], $result->limitations, $mutation);
+            self::assertSame(1, $factory->calls, $mutation);
+        }
+    }
+
+    #[Test]
+    public function stale_result_without_links_is_not_activated_while_unchanged_snapshot_is_saved(): void
+    {
+        $stale = new InMemoryProjectModelRepository;
+        $stale->saveSourceModel(
+            [new Entity('entity:single', 1, 2, 3, $this->modelSource(), 'room', 'entity:single', ['document_role' => 'plan'])],
+            [$this->fact('fact:single', 'entity:single', 'evidence:1')],
+            [$this->evidence('evidence:1')],
+        );
+        $stale->beforeUnderstandingSave = fn () => $stale->removeProjection('fact:single');
+
+        $staleResult = $this->coordinator($stale, new RecordingArbitratorFactory)->refresh(1, 2, 3, $this->token(), 1);
+
+        self::assertSame([], $staleResult->links);
+        self::assertNull($stale->currentUnderstanding(1, 2, 3));
+        self::assertNotSame([], $staleResult->limitations);
+
+        $unchanged = new InMemoryProjectModelRepository;
+        $this->seedPair($unchanged, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $result = $this->coordinator($unchanged, new RecordingArbitratorFactory)->refresh(1, 2, 3, $this->token(), 1);
+        self::assertNotNull($unchanged->currentUnderstanding(1, 2, 3));
+        self::assertSame($result->links, $unchanged->currentUnderstanding(1, 2, 3)['links']);
     }
 
     private function coordinator(InMemoryProjectModelRepository $models, RecordingArbitratorFactory $factory, ?ProjectUnderstandingBudget $budget = null): ProjectUnderstandingCoordinator

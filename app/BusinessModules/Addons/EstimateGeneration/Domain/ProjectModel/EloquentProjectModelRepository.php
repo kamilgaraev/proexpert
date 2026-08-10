@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingInputFingerprint;
 use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use JsonException;
@@ -50,7 +51,10 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             }
         }
 
-        $this->database->connection()->transaction(function () use ($entities, $facts, $conflicts): void {
+        $this->database->connection()->transaction(function () use ($entities, $facts, $conflicts, $scope): void {
+            if ($scope !== null) {
+                $this->lockUnderstandingScope($scope->organizationId, $scope->projectId, $scope->sessionId);
+            }
             $this->appendEntities($entities);
             $this->appendFacts($facts);
             $this->appendConflicts($conflicts);
@@ -64,6 +68,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             throw new InvalidArgumentException('Project model decision does not select the supplied fact.');
         }
         $this->database->connection()->transaction(function () use ($decision, $selectedFact): void {
+            $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
             $this->appendFacts([$selectedFact]);
             $this->appendDecisions([$decision]);
             $this->database->table('estimate_generation_project_understanding_runs')
@@ -148,6 +153,18 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             $evidence,
             $this->currentConflicts($organizationId, $projectId, $sessionId),
         );
+    }
+
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    {
+        return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $factLimit): array {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+
+            return [
+                'snapshot' => $this->snapshot($organizationId, $projectId, $sessionId, $factLimit),
+                'token' => $this->understandingSnapshotToken($organizationId, $projectId, $sessionId),
+            ];
+        }, 3);
     }
 
     public function understandingPreflight(
@@ -417,6 +434,12 @@ SQL, [
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void
     {
         $this->assertChunkSize($chunkSize);
+        foreach ($quantities as $quantity) {
+            if (! $quantity instanceof DerivedQuantity) {
+                throw new InvalidArgumentException('Derived quantity batch is invalid.');
+            }
+            DerivedQuantity::assertRoundingScale($quantity->value, $quantity->status, $quantity->roundingScale);
+        }
         foreach (array_chunk($quantities, $chunkSize) as $chunk) {
             $this->database->connection()->transaction(function () use ($chunk): void {
                 $this->assertDerivedOperands($chunk);
@@ -785,7 +808,7 @@ SQL, [
         array $questions,
         array $limitations,
         int $providerCalls,
-    ): void {
+    ): bool {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         if ($providerCalls < 0 || preg_match('/^[a-f0-9]{64}$/D', $inputFingerprint) !== 1
             || ! array_is_list($questions) || ! array_is_list($limitations)) {
@@ -800,7 +823,8 @@ SQL, [
         ];
         $encodedPayload = $this->json($payload);
         $fingerprint = hash('sha256', $inputFingerprint."\0".$encodedPayload);
-        $this->database->connection()->transaction(function () use (
+
+        return $this->database->connection()->transaction(function () use (
             $organizationId,
             $projectId,
             $sessionId,
@@ -813,8 +837,11 @@ SQL, [
             $providerCalls,
             $fingerprint,
             $encodedPayload,
-        ): void {
+        ): bool {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+                return false;
+            }
             $existing = $this->database->table('estimate_generation_project_understanding_runs')
                 ->where('organization_id', $organizationId)
                 ->where('project_id', $projectId)
@@ -835,7 +862,7 @@ SQL, [
                 }
                 $this->activateUnderstandingRun($existing, $links);
 
-                return;
+                return true;
             }
             $this->deactivateUnderstanding($organizationId, $projectId, $sessionId);
             $this->appendCrossDocumentLinks($links);
@@ -863,6 +890,8 @@ SQL, [
                 'is_current' => true,
                 'created_at' => now(),
             ]);
+
+            return true;
         }, 3);
     }
 
@@ -886,6 +915,9 @@ SQL, [
             $inputFingerprint,
         ): ?array {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+                return null;
+            }
             $row = $this->database->table('estimate_generation_project_understanding_runs')
                 ->where('organization_id', $organizationId)
                 ->where('project_id', $projectId)
@@ -910,6 +942,139 @@ SQL, [
 
             return $this->currentUnderstanding($organizationId, $projectId, $sessionId);
         }, 3);
+    }
+
+    private function understandingSnapshotToken(int $organizationId, int $projectId, int $sessionId): string
+    {
+        $facts = $this->database->table('estimate_generation_project_model_fact_projections as projection')
+            ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
+            ->where('projection.organization_id', $organizationId)
+            ->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)
+            ->where('projection.is_current', true)
+            ->orderBy('fact.id')
+            ->get([
+                'projection.id as projection_id', 'projection.projection_version',
+                'projection.entity_stable_key', 'fact.id', 'fact.stable_key', 'fact.source_version',
+                'fact.fact_version', 'fact.fact_status', 'fact.fact_value', 'fact.assertion_type',
+                'fact.fact_unit', 'fact.confidence', 'fact.fact_origin',
+            ]);
+        $factIds = $facts->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+        $bindings = $factIds === [] ? collect() : $this->database
+            ->table('estimate_generation_project_model_fact_evidence as binding')
+            ->join('estimate_generation_evidence as evidence', function ($join): void {
+                $join->on('evidence.id', '=', 'binding.evidence_id')
+                    ->on('evidence.organization_id', '=', 'binding.organization_id')
+                    ->on('evidence.project_id', '=', 'binding.project_id')
+                    ->on('evidence.session_id', '=', 'binding.session_id')
+                    ->on('evidence.source_version', '=', 'binding.evidence_source_version')
+                    ->on('evidence.invalidation_version', '=', 'binding.evidence_invalidation_version');
+            })
+            ->whereIn('binding.fact_id', $factIds)
+            ->where('binding.organization_id', $organizationId)
+            ->where('binding.project_id', $projectId)
+            ->where('binding.session_id', $sessionId)
+            ->whereNull('evidence.invalidated_at')
+            ->orderBy('binding.fact_id')->orderBy('binding.evidence_id')
+            ->get([
+                'binding.fact_id', 'binding.evidence_id', 'binding.source_version',
+                'binding.evidence_source_version', 'binding.evidence_invalidation_version',
+                'evidence.source_ref', 'evidence.source_type', 'evidence.locator',
+            ]);
+        $stableKeys = $facts->pluck('stable_key')->map(static fn ($key): string => (string) $key)->all();
+        $entityKeys = $facts->pluck('entity_stable_key')->unique()->values()->all();
+        $entityRows = $entityKeys === [] ? collect() : $this->database
+            ->table('estimate_generation_project_model_entities')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->whereIn('stable_key', $entityKeys)
+            ->orderBy('stable_key')->orderByDesc('id')->get();
+        $decisions = $stableKeys === [] ? collect() : $this->database
+            ->table('estimate_generation_project_model_corrections')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->whereIn('selected_fact_stable_key', $stableKeys)
+            ->groupBy('selected_fact_stable_key')
+            ->orderBy('selected_fact_stable_key')
+            ->selectRaw('selected_fact_stable_key, max(id) as id, max(decision_version) as version')
+            ->get();
+        $evidence = [];
+        $bindingRecords = [];
+        $sourceVersions = [];
+        foreach ($bindings as $binding) {
+            $bindingRecords[] = [
+                'fact_id' => (int) $binding->fact_id,
+                'evidence_id' => (int) $binding->evidence_id,
+                'source_version' => (string) $binding->source_version,
+                'evidence_source_version' => (string) $binding->evidence_source_version,
+                'evidence_invalidation_version' => (int) $binding->evidence_invalidation_version,
+            ];
+            $evidence[(int) $binding->evidence_id] = [
+                'id' => (int) $binding->evidence_id,
+                'source_version' => (string) $binding->evidence_source_version,
+                'invalidation_version' => (int) $binding->evidence_invalidation_version,
+                'locator_hash' => hash('sha256', $this->json([
+                    'source_ref' => $binding->source_ref,
+                    'source_type' => $binding->source_type,
+                    'locator' => $this->decode($binding->locator),
+                ])),
+            ];
+            $sourceVersions[] = (string) $binding->evidence_source_version;
+        }
+        $factRecords = [];
+        foreach ($facts as $fact) {
+            $factRecords[] = [
+                'id' => (int) $fact->id,
+                'stable_key' => (string) $fact->stable_key,
+                'version' => (int) $fact->fact_version,
+                'projection_id' => (int) $fact->projection_id,
+                'projection_version' => (int) $fact->projection_version,
+                'status' => (string) $fact->fact_status,
+                'value_hash' => hash('sha256', $this->json($this->decode($fact->fact_value))),
+                'semantic_hash' => hash('sha256', $this->json([
+                    'entity_stable_key' => $fact->entity_stable_key,
+                    'type' => $fact->assertion_type,
+                    'value' => $this->decode($fact->fact_value),
+                    'unit' => $fact->fact_unit,
+                    'confidence' => $fact->confidence,
+                    'origin' => $fact->fact_origin,
+                ])),
+            ];
+            $sourceVersions[] = (string) $fact->source_version;
+        }
+        $entities = [];
+        foreach ($entityRows as $entity) {
+            $stableKey = (string) $entity->stable_key;
+            if (isset($entities[$stableKey])) {
+                continue;
+            }
+            $entities[$stableKey] = [
+                'id' => (int) $entity->id,
+                'stable_key' => $stableKey,
+                'source_version' => (string) $entity->source_version,
+                'content_hash' => hash('sha256', $this->json([
+                    'kind' => $entity->entity_kind,
+                    'payload' => $this->decode($entity->payload),
+                ])),
+            ];
+            $sourceVersions[] = (string) $entity->source_version;
+        }
+
+        return ProjectUnderstandingInputFingerprint::fromExactState([
+            'scope' => ['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId],
+            'source_versions' => array_values(array_unique($sourceVersions)),
+            'entities' => array_values($entities),
+            'facts' => $factRecords,
+            'bindings' => $bindingRecords,
+            'evidence' => array_values($evidence),
+            'decisions' => $decisions->map(static fn ($decision): array => [
+                'id' => (int) $decision->id,
+                'selected_fact_id' => (string) $decision->selected_fact_stable_key,
+                'version' => (int) $decision->version,
+            ])->all(),
+        ]);
     }
 
     private function lockUnderstandingScope(int $organizationId, int $projectId, int $sessionId): void
@@ -1076,6 +1241,7 @@ SQL, [
             $sourceVersion,
             $replacementSourceVersion,
         ): void {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
             $scope = static fn ($query) => $query
                 ->where('organization_id', $organizationId)
                 ->where('project_id', $projectId)
@@ -1274,13 +1440,10 @@ SQL, [
                 $decision->source_version,
                 $decision->selected_fact_stable_key,
             ]);
-            $lineage = array_values(array_filter(array_map(
-                static fn (mixed $item): ?string => is_string($item)
-                    ? $item
-                    : (is_array($item) && is_string($item['evidence_id'] ?? null) ? $item['evidence_id'] : null),
+            if (! DecisionEvidenceLineage::isTrusted(
                 $this->decode($decision->evidence_lineage),
-            )));
-            if ($lineage === [] || array_diff($lineage, $evidenceByStableKey[$key] ?? []) !== []) {
+                $evidenceByStableKey[$key] ?? [],
+            )) {
                 continue;
             }
             $decisionByFact[$key][] = (string) $decision->stable_key;

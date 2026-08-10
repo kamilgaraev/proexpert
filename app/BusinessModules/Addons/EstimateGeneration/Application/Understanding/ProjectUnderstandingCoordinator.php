@@ -35,14 +35,16 @@ final readonly class ProjectUnderstandingCoordinator
             $this->budget->maxEvidenceBytesPerItem,
         );
         if (! ($preflight['within_budget'] ?? false)) {
-            return $this->persistBudgetLimitation($organizationId, $projectId, $sessionId, $preflight);
+            return $this->budgetLimitation();
         }
-        $snapshot = $this->models->snapshot(
+        $capture = $this->models->snapshotForUnderstanding(
             $organizationId,
             $projectId,
             $sessionId,
             $this->budget->maxFacts + 1,
         );
+        $snapshot = $capture['snapshot'];
+        $inputFingerprint = $capture['token'];
         $verified = $this->models->understandingPreflight(
             $organizationId,
             $projectId,
@@ -54,7 +56,7 @@ final readonly class ProjectUnderstandingCoordinator
             $this->budget->maxEvidenceBytesPerItem,
         );
         if (! ($verified['within_budget'] ?? false) || $this->preflightVersion($preflight) !== $this->preflightVersion($verified)) {
-            return $this->persistBudgetLimitation($organizationId, $projectId, $sessionId, $verified);
+            return $this->budgetLimitation();
         }
         if ($snapshot->facts === []) {
             return new ProjectUnderstandingResult([], [], [], [$this->conflicts->insufficientEvidence()], 0);
@@ -67,18 +69,6 @@ final readonly class ProjectUnderstandingCoordinator
             throw new InvalidArgumentException('Current project model contains mixed source versions.');
         }
         $sourceVersion = $sourceVersions[0];
-        $inputFingerprint = ProjectUnderstandingInputFingerprint::fromSnapshot($snapshot);
-        $stored = $this->models->currentUnderstanding($organizationId, $projectId, $sessionId);
-        if (($stored['source_version'] ?? null) === $sourceVersion
-            && ($stored['input_fingerprint'] ?? null) === $inputFingerprint) {
-            return new ProjectUnderstandingResult(
-                $stored['links'] ?? [],
-                $stored['conflicts'] ?? [],
-                $stored['questions'] ?? [],
-                $stored['limitations'] ?? [],
-                (int) ($stored['provider_calls'] ?? 0),
-            );
-        }
         $replayed = $this->models->replayUnderstanding(
             $organizationId,
             $projectId,
@@ -108,7 +98,7 @@ final readonly class ProjectUnderstandingCoordinator
             $this->budget,
         );
         $result = $linker->link($snapshot->entities, $snapshot->facts, $snapshot->evidence);
-        $this->models->replaceUnderstanding(
+        $saved = $this->models->replaceUnderstanding(
             $organizationId,
             $projectId,
             $sessionId,
@@ -120,34 +110,16 @@ final readonly class ProjectUnderstandingCoordinator
             $result->limitations,
             $result->providerCalls,
         );
+        if (! $saved) {
+            return new ProjectUnderstandingResult([], [], [], [$this->conflicts->staleSnapshot()], $result->providerCalls);
+        }
 
         return $result;
     }
 
-    private function persistBudgetLimitation(
-        int $organizationId,
-        int $projectId,
-        int $sessionId,
-        array $preflight,
-    ): ProjectUnderstandingResult {
-        $result = new ProjectUnderstandingResult([], [], [], [$this->conflicts->budgetExceeded()], 0);
-        $sourceVersion = $preflight['source_version'] ?? null;
-        if (is_string($sourceVersion)) {
-            $this->models->replaceUnderstanding(
-                $organizationId,
-                $projectId,
-                $sessionId,
-                $sourceVersion,
-                hash('sha256', json_encode($preflight, JSON_THROW_ON_ERROR)),
-                [],
-                [],
-                [],
-                $result->limitations,
-                0,
-            );
-        }
-
-        return $result;
+    private function budgetLimitation(): ProjectUnderstandingResult
+    {
+        return new ProjectUnderstandingResult([], [], [], [$this->conflicts->budgetExceeded()], 0);
     }
 
     private function preflightVersion(array $preflight): string

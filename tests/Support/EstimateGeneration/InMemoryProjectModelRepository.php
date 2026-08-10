@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Support\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
@@ -12,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
+use Closure;
 use InvalidArgumentException;
 
 final class InMemoryProjectModelRepository implements ProjectModelRepository
@@ -39,6 +41,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
     public array $links = [];
 
     public array $understanding = [];
+
+    public ?Closure $beforeUnderstandingSave = null;
 
     private array $projection = [];
 
@@ -152,6 +156,14 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return new ProjectModelSnapshot($entities, $facts, $evidence, $conflicts);
     }
 
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    {
+        return [
+            'snapshot' => $this->snapshot($organizationId, $projectId, $sessionId, $factLimit),
+            'token' => $this->understandingSnapshotToken($organizationId, $projectId, $sessionId),
+        ];
+    }
+
     public function understandingPreflight(
         int $organizationId,
         int $projectId,
@@ -258,7 +270,15 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         array $questions,
         array $limitations,
         int $providerCalls,
-    ): void {
+    ): bool {
+        if ($this->beforeUnderstandingSave !== null) {
+            $hook = $this->beforeUnderstandingSave;
+            $this->beforeUnderstandingSave = null;
+            $hook();
+        }
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return false;
+        }
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
         $encoded = json_encode([$links, $conflicts, $questions, $limitations, $providerCalls], JSON_THROW_ON_ERROR);
         $fingerprint = hash('sha256', $inputFingerprint."\0".$encoded);
@@ -290,6 +310,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             'provider_calls' => $providerCalls,
             'is_current' => true,
         ];
+
+        return true;
     }
 
     public function replayUnderstanding(
@@ -299,6 +321,9 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         string $sourceVersion,
         string $inputFingerprint,
     ): ?array {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return null;
+        }
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
         $match = null;
         $matchKey = null;
@@ -409,5 +434,81 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
     private function scope(object $record): array
     {
         return [$record->organizationId, $record->projectId, $record->sessionId];
+    }
+
+    private function understandingSnapshotToken(int $organizationId, int $projectId, int $sessionId): string
+    {
+        $facts = $this->currentFacts($organizationId, $projectId, $sessionId);
+        $factRecords = [];
+        $bindings = [];
+        $evidence = [];
+        $sourceVersions = [];
+        $entities = [];
+        foreach ($this->entities as $entity) {
+            if ($this->scope($entity) !== [$organizationId, $projectId, $sessionId]) {
+                continue;
+            }
+            $entities[] = [
+                'id' => $entity->id,
+                'stable_key' => $entity->stableKey,
+                'source_version' => $entity->sourceVersion,
+                'content_hash' => hash('sha256', json_encode(get_object_vars($entity), JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)),
+            ];
+            $sourceVersions[] = $entity->sourceVersion;
+        }
+        foreach ($facts as $fact) {
+            $factRecords[] = [
+                'id' => $fact->id,
+                'stable_key' => $fact->id,
+                'version' => $fact->version,
+                'projection_version' => $fact->version,
+                'status' => $fact->status,
+                'value_hash' => hash('sha256', json_encode($fact->value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)),
+                'semantic_hash' => hash('sha256', json_encode(get_object_vars($fact), JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)),
+            ];
+            $sourceVersions[] = $fact->sourceVersion;
+            foreach ($fact->evidenceIds as $evidenceId) {
+                foreach ($this->evidence as $item) {
+                    if ($item->id !== $evidenceId || $this->scope($item) !== [$organizationId, $projectId, $sessionId]) {
+                        continue;
+                    }
+                    $bindings[] = [
+                        'fact_id' => $fact->id,
+                        'evidence_id' => $item->id,
+                        'source_version' => $fact->sourceVersion,
+                        'evidence_source_version' => $item->sourceVersion,
+                        'evidence_invalidation_version' => 1,
+                    ];
+                    $evidence[$item->id] = [
+                        'id' => $item->id,
+                        'source_version' => $item->sourceVersion,
+                        'invalidation_version' => 1,
+                        'locator_hash' => hash('sha256', json_encode(get_object_vars($item), JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)),
+                    ];
+                    $sourceVersions[] = $item->sourceVersion;
+                }
+            }
+        }
+        $decisions = [];
+        foreach ($this->decisions as $decision) {
+            if ($this->scope($decision) === [$organizationId, $projectId, $sessionId]) {
+                $decisions[] = [
+                    'id' => $decision->id,
+                    'stable_key' => $decision->id,
+                    'selected_fact_id' => $decision->selectedFactId,
+                    'version' => $decision->version,
+                ];
+            }
+        }
+
+        return ProjectUnderstandingInputFingerprint::fromExactState([
+            'scope' => compact('organizationId', 'projectId', 'sessionId'),
+            'source_versions' => array_values(array_unique($sourceVersions)),
+            'entities' => $entities,
+            'facts' => $factRecords,
+            'bindings' => $bindings,
+            'evidence' => array_values($evidence),
+            'decisions' => $decisions,
+        ]);
     }
 }

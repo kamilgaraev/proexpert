@@ -99,6 +99,27 @@ final class ProjectModelReviewPresentationContractsTest extends TestCase
     }
 
     #[Test]
+    public function historical_conflict_association_is_exposed_only_when_proven(): void
+    {
+        $payload = ['canonical_value' => ['value' => 12.0]];
+        $presenter = new ProjectModelCorrectionHistoryPresenter;
+        $ambiguous = $presenter->present([[
+            'id' => 1, 'stable_key' => 'correction:a', 'payload' => $payload,
+            'target_conflict_key' => null,
+            'evidence_lineage' => [['limitation_code' => 'historical_conflict_ambiguous']],
+        ]]);
+        $proven = $presenter->present([[
+            'id' => 2, 'stable_key' => 'correction:b', 'payload' => $payload,
+            'target_conflict_key' => 'conflict:exact', 'evidence_lineage' => [['evidence_id' => 'evidence:1']],
+        ]]);
+
+        self::assertNull($ambiguous['items'][0]['target_conflict_key']);
+        self::assertSame('ambiguous', $ambiguous['items'][0]['conflict_association']);
+        self::assertSame('conflict:exact', $proven['items'][0]['target_conflict_key']);
+        self::assertSame('proven', $proven['items'][0]['conflict_association']);
+    }
+
+    #[Test]
     public function it_exposes_only_documents_and_sheets_pinned_to_evidence_source_versions(): void
     {
         $pinning = new ProjectModelSourceVersionPinning;

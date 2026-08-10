@@ -89,11 +89,24 @@ final readonly class DerivedQuantity
         $this->value = $this->status === 'unresolved'
             ? null
             : ($value === null ? throw new InvalidArgumentException('Derived quantity value is required.') : DecimalValue::canonical($value));
+        self::assertRoundingScale($this->value, $this->status, $roundingScale);
         $this->evidenceIds = ProjectModelInvariant::uniqueIds(
             $evidenceIds,
             'Derived quantity evidence',
             $this->status === 'unresolved' || $this->hasDecisionLineage($normalizedOperands),
         );
+    }
+
+    public static function assertRoundingScale(?string $value, string $status, int $roundingScale): void
+    {
+        if ($status !== 'confirmed' || $value === null) {
+            return;
+        }
+        $canonical = DecimalValue::canonical($value);
+        $fraction = explode('.', ltrim($canonical, '-'), 2)[1] ?? '';
+        if (strlen($fraction) > $roundingScale) {
+            throw new InvalidArgumentException('Confirmed derived quantity value exceeds its rounding scale.');
+        }
     }
 
     private function hasDecisionLineage(array $operands): bool

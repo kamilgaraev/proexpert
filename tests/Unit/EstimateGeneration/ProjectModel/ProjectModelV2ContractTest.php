@@ -7,9 +7,11 @@ namespace Tests\Unit\EstimateGeneration\ProjectModel;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -261,6 +263,39 @@ final class ProjectModelV2ContractTest extends TestCase
                 self::assertTrue(true);
             }
         }
+    }
+
+    #[Test]
+    public function confirmed_derived_quantity_must_already_match_declared_rounding_scale(): void
+    {
+        foreach ([['1.23', 2], ['1.2', 2], ['-1.23', 2], ['1.2300', 2], ['1.123456789012', 12]] as [$value, $scale]) {
+            self::assertSame(rtrim(rtrim($value, '0'), '.'), $this->quantityWithValue($value, $scale)->value);
+        }
+
+        foreach ([['1.234', 2], ['1.1', 0], ['-1.234', 2], ['1.1234567890123', 12]] as [$value, $scale]) {
+            try {
+                $this->quantityWithValue($value, $scale);
+                self::fail($value.' was accepted with rounding scale '.$scale.'.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
+
+    #[Test]
+    public function repository_rechecks_rounding_scale_before_any_persistence_access(): void
+    {
+        $reflection = new \ReflectionClass(DerivedQuantity::class);
+        /** @var DerivedQuantity $quantity */
+        $quantity = $reflection->newInstanceWithoutConstructor();
+        foreach (['value' => '1.234', 'status' => 'confirmed', 'roundingScale' => 2] as $property => $value) {
+            $reflection->getProperty($property)->setValue($quantity, $value);
+        }
+        $repository = new EloquentProjectModelRepository($this->createMock(DatabaseManager::class));
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('rounding scale');
+        $repository->appendDerivedQuantities([$quantity]);
     }
 
     #[Test]

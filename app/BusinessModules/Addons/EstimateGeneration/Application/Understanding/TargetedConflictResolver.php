@@ -53,6 +53,11 @@ final readonly class TargetedConflictResolver
         return ($this->translator)('estimate_generation.project_model.arbitration_unavailable', []);
     }
 
+    public function staleSnapshot(): string
+    {
+        return ($this->translator)('estimate_generation.project_model.stale_snapshot', []);
+    }
+
     public function unresolvedQuestion(string $id, array $facts = [], array $evidenceById = []): array
     {
         $options = array_map(fn (Fact $fact): array => [

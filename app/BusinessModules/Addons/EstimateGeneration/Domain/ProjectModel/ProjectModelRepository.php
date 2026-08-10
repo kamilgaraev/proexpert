@@ -14,6 +14,9 @@ interface ProjectModelRepository
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot;
 
+    /** @return array{snapshot:ProjectModelSnapshot,token:string} */
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit): array;
+
     public function understandingPreflight(
         int $organizationId,
         int $projectId,
@@ -53,7 +56,7 @@ interface ProjectModelRepository
         array $questions,
         array $limitations,
         int $providerCalls,
-    ): void;
+    ): bool;
 
     public function replayUnderstanding(
         int $organizationId,

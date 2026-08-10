@@ -226,14 +226,24 @@ WITH workset AS (
 ), lineage AS (
     SELECT correction.id,
            'fact:decision:' || substring(correction.stable_key from 12 for 48) AS selected_fact_stable_key,
-           conflict.stable_key AS target_conflict_key,
+           CASE WHEN conflict.match_count = 1 THEN conflict.stable_key END AS target_conflict_key,
            COALESCE(jsonb_agg(DISTINCT jsonb_build_object(
                'evidence_id', 'evidence:' || binding.evidence_id,
                'source_version', binding.evidence_source_version,
                'invalidation_version', binding.evidence_invalidation_version
-           )) FILTER (WHERE binding.evidence_id IS NOT NULL), jsonb_build_array(jsonb_build_object(
+           )) FILTER (WHERE binding.evidence_id IS NOT NULL), '[]'::jsonb)
+           || CASE WHEN count(binding.evidence_id) = 0 THEN jsonb_build_array(jsonb_build_object(
                'limitation_code', 'historical_evidence_unproven'
-           ))) AS evidence_lineage
+           )) ELSE '[]'::jsonb END
+           || CASE
+               WHEN conflict.match_count = 0 THEN jsonb_build_array(jsonb_build_object(
+                   'limitation_code', 'historical_conflict_unproven'
+               ))
+               WHEN conflict.match_count > 1 THEN jsonb_build_array(jsonb_build_object(
+                   'limitation_code', 'historical_conflict_ambiguous'
+               ))
+               ELSE '[]'::jsonb
+           END AS evidence_lineage
     FROM workset
     JOIN estimate_generation_project_model_corrections correction ON correction.id = workset.id
     JOIN estimate_generation_project_model_assertions original ON original.id = correction.assertion_id
@@ -241,18 +251,56 @@ WITH workset AS (
       AND binding.organization_id = correction.organization_id
       AND binding.project_id = correction.project_id AND binding.session_id = correction.session_id
     LEFT JOIN LATERAL (
-        SELECT candidate.stable_key
-        FROM estimate_generation_project_model_conflict_facts conflict_fact
-        JOIN estimate_generation_project_model_conflicts candidate ON candidate.id = conflict_fact.conflict_id
-        WHERE conflict_fact.fact_id = original.id
-          AND candidate.organization_id = correction.organization_id
-          AND candidate.project_id = correction.project_id
-          AND candidate.session_id = correction.session_id
-          AND candidate.source_version = correction.source_version
-        ORDER BY candidate.conflict_version DESC, candidate.id DESC
-        LIMIT 1
+        SELECT min(candidate.stable_key) AS stable_key, count(*) AS match_count
+        FROM estimate_generation_project_model_conflicts candidate
+        WHERE EXISTS (
+              SELECT 1
+              FROM estimate_generation_project_model_conflict_facts conflict_fact
+              WHERE conflict_fact.conflict_id = candidate.id
+                AND conflict_fact.fact_id = original.id
+          )
+           AND candidate.organization_id = correction.organization_id
+           AND candidate.project_id = correction.project_id
+           AND candidate.session_id = correction.session_id
+           AND candidate.source_version = correction.source_version
+          AND NOT EXISTS (
+              SELECT 1
+              FROM estimate_generation_project_model_conflict_facts participant
+              JOIN estimate_generation_project_model_assertions participant_fact ON participant_fact.id = participant.fact_id
+              WHERE participant.conflict_id = candidate.id
+                AND (participant_fact.entity_id <> original.entity_id
+                     OR participant_fact.assertion_type <> original.assertion_type
+                     OR participant_fact.source_version <> original.source_version
+                     OR NOT EXISTS (
+                         SELECT 1
+                         FROM estimate_generation_project_model_fact_evidence participant_lineage
+                         JOIN estimate_generation_evidence participant_evidence ON participant_evidence.id = participant_lineage.evidence_id
+                           AND participant_evidence.organization_id = participant_lineage.organization_id
+                           AND participant_evidence.project_id = participant_lineage.project_id
+                           AND participant_evidence.session_id = participant_lineage.session_id
+                           AND participant_evidence.source_version = participant_lineage.evidence_source_version
+                           AND participant_evidence.invalidation_version = participant_lineage.evidence_invalidation_version
+                           AND participant_evidence.invalidated_at IS NULL
+                         WHERE participant_lineage.fact_id = participant_fact.id
+                     ))
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM estimate_generation_project_model_fact_evidence original_lineage
+              JOIN estimate_generation_evidence evidence ON evidence.id = original_lineage.evidence_id
+                AND evidence.organization_id = original_lineage.organization_id
+                AND evidence.project_id = original_lineage.project_id
+                AND evidence.session_id = original_lineage.session_id
+                AND evidence.source_version = original_lineage.evidence_source_version
+                AND evidence.invalidation_version = original_lineage.evidence_invalidation_version
+                AND evidence.invalidated_at IS NULL
+              WHERE original_lineage.fact_id = original.id
+                AND original_lineage.organization_id = correction.organization_id
+                AND original_lineage.project_id = correction.project_id
+                AND original_lineage.session_id = correction.session_id
+          )
     ) conflict ON true
-    GROUP BY correction.id, correction.stable_key, conflict.stable_key
+    GROUP BY correction.id, correction.stable_key, conflict.stable_key, conflict.match_count
 )
 UPDATE estimate_generation_project_model_corrections correction
 SET selected_fact_stable_key = lineage.selected_fact_stable_key,

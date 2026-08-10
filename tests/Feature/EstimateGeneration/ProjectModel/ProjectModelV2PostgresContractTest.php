@@ -189,6 +189,7 @@ final class ProjectModelV2PostgresContractTest extends TestCase
             ]);
             $createdAt = now();
             $historicalFactId = null;
+            $historicalFactIds = [];
             foreach ([7.94, 8.10] as $index => $value) {
                 $factValue = ['value' => $value, 'unit' => 'm2'];
                 $factId = DB::table('estimate_generation_project_model_assertions')->insertGetId([
@@ -206,6 +207,7 @@ final class ProjectModelV2PostgresContractTest extends TestCase
                     'created_at' => $createdAt,
                 ]);
                 $historicalFactId ??= $factId;
+                $historicalFactIds[] = $factId;
                 $locator = is_string($evidence->locator) ? json_decode($evidence->locator, true, 512, JSON_THROW_ON_ERROR) : $evidence->locator;
                 DB::table('estimate_generation_project_model_evidence_bindings')->insert([
                     'building_model_id' => $model->id,
@@ -278,6 +280,56 @@ final class ProjectModelV2PostgresContractTest extends TestCase
                 ->where('session_id', $model->session_id)->where('status', 'unresolved')->count());
             self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
                 ->where('stable_key', $decision->selected_fact_stable_key)->count());
+
+            $duplicateConflictId = DB::table('estimate_generation_project_model_conflicts')->insertGetId([
+                'organization_id' => $model->organization_id,
+                'project_id' => $model->project_id,
+                'session_id' => $model->session_id,
+                'source_version' => $model->content_version,
+                'stable_key' => 'conflict:ambiguous:'.$decisionHash,
+                'reason' => 'historical_value_mismatch',
+                'status' => 'unresolved',
+                'conflict_version' => 1,
+                'created_at' => now(),
+            ]);
+            foreach ($historicalFactIds as $factId) {
+                DB::table('estimate_generation_project_model_conflict_facts')->insert([
+                    'conflict_id' => $duplicateConflictId,
+                    'fact_id' => $factId,
+                    'organization_id' => $model->organization_id,
+                    'project_id' => $model->project_id,
+                    'session_id' => $model->session_id,
+                    'source_version' => $model->content_version,
+                ]);
+            }
+            $ambiguousHash = hash('sha256', 'historical-decision-ambiguous-contract');
+            $ambiguousKey = 'correction:'.$ambiguousHash;
+            DB::table('estimate_generation_project_model_corrections')->insert([
+                'building_model_id' => $model->id,
+                'organization_id' => $model->organization_id,
+                'project_id' => $model->project_id,
+                'session_id' => $model->session_id,
+                'source_version' => $model->content_version,
+                'stable_key' => $ambiguousKey,
+                'assertion_id' => $historicalFactId,
+                'correction_type' => 'manual',
+                'payload' => json_encode(['canonical_value' => ['value' => 8.30, 'unit' => 'm2']], JSON_THROW_ON_ERROR),
+                'reason' => 'Неоднозначное историческое подтверждение',
+                'actor_id' => $actorId,
+                'created_at' => $createdAt,
+            ]);
+
+            $migration->up();
+            $ambiguous = DB::table('estimate_generation_project_model_corrections')->where('stable_key', $ambiguousKey)->first();
+            self::assertNotNull($ambiguous);
+            self::assertNull($ambiguous->target_conflict_key);
+            $ambiguousLineage = is_string($ambiguous->evidence_lineage)
+                ? json_decode($ambiguous->evidence_lineage, true, 512, JSON_THROW_ON_ERROR)
+                : (array) $ambiguous->evidence_lineage;
+            self::assertContains(['limitation_code' => 'historical_conflict_ambiguous'], $ambiguousLineage);
+            $migration->up();
+            self::assertSame($ambiguous->evidence_lineage, DB::table('estimate_generation_project_model_corrections')
+                ->where('stable_key', $ambiguousKey)->value('evidence_lineage'));
         } finally {
             DB::rollBack();
         }
