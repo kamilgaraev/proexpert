@@ -172,6 +172,75 @@ final class SpreadsheetDocumentExtractorTest extends TestCase
         }
     }
 
+    #[Test]
+    public function xlsx_content_with_csv_metadata_cannot_bypass_zip_preflight(): void
+    {
+        config()->set('estimate-generation.ocr.max_spreadsheet_zip_entries', 1);
+        $workbook = new Spreadsheet;
+        $workbook->getActiveSheet()->setCellValue('A1', 'Смета');
+        $path = tempnam(sys_get_temp_dir(), 'renamed-xlsx-');
+
+        try {
+            self::assertIsString($path);
+            (new Xlsx($workbook))->save($path);
+            $document = new EstimateGenerationDocument([
+                'filename' => 'смета.csv',
+                'mime_type' => 'text/csv',
+                'meta' => ['original_extension' => 'csv'],
+            ]);
+
+            try {
+                (new SpreadsheetDocumentExtractor)->extractFile($document, $path);
+                self::fail('XLSX content must pass ZIP preflight regardless of filename and MIME metadata.');
+            } catch (OcrProviderException $exception) {
+                self::assertSame('spreadsheet_container_limit_exceeded', $exception->providerCode);
+            }
+        } finally {
+            $workbook->disconnectWorksheets();
+            if (is_string($path) && is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    #[Test]
+    public function cell_budget_is_global_across_all_loaded_sheets_and_merges_remain_native(): void
+    {
+        config()->set('estimate-generation.ocr.max_spreadsheet_rows', 10);
+        config()->set('estimate-generation.ocr.max_spreadsheet_columns', 10);
+        config()->set('estimate-generation.ocr.max_spreadsheet_cells', 4);
+        $workbook = new Spreadsheet;
+        $first = $workbook->getActiveSheet()->setTitle('Первая');
+        $first->fromArray([['A1', 'B1'], ['A2', 'B2']]);
+        $first->mergeCells('A1:B1');
+        $second = $workbook->createSheet()->setTitle('Вторая');
+        $second->fromArray([['C1', 'D1'], ['C2', 'D2']]);
+        $path = tempnam(sys_get_temp_dir(), 'multi-sheet-budget-');
+
+        try {
+            self::assertIsString($path);
+            (new Xlsx($workbook))->save($path);
+            $result = (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path);
+            $native = array_map(
+                static fn ($page): array => $page->rawPayload['native_structure'],
+                $result->pages,
+            );
+
+            self::assertLessThanOrEqual(4, array_sum(array_map(
+                static fn (array $sheet): int => count($sheet['cells']),
+                $native,
+            )));
+            self::assertContains('A1:B1', $native[0]['merges']);
+            self::assertContains('xlsx_cells_truncated', $native[0]['limitations']);
+            self::assertContains('xlsx_cells_truncated', $native[1]['limitations']);
+        } finally {
+            $workbook->disconnectWorksheets();
+            if (is_string($path) && is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
     private function document(): EstimateGenerationDocument
     {
         return new EstimateGenerationDocument([

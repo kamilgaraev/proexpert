@@ -21,6 +21,8 @@ class SpreadsheetDocumentExtractor
 
     public const MODEL = 'spreadsheet_text_v1';
 
+    public function __construct(private XlsxContainerInspector $containerInspector = new XlsxContainerInspector) {}
+
     public function extract(EstimateGenerationDocument $document, string $content): OcrRecognitionResult
     {
         $extension = strtolower((string) ($document->meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
@@ -67,29 +69,42 @@ class SpreadsheetDocumentExtractor
         $extension = strtolower((string) ($document->meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
 
         try {
-            if ($extension === 'xlsx') {
-                $this->assertSafeXlsxContainer($path);
+            $mime = strtolower((string) $document->mime_type);
+            $xlsxExpected = $extension === 'xlsx'
+                || str_contains($mime, 'openxmlformats-officedocument.spreadsheetml')
+                || $this->isXlsxPackage($path);
+            $containerMetadata = $xlsxExpected
+                ? $this->containerInspector->inspect($path)
+                : new XlsxContainerMetadata([]);
+            $readerType = IOFactory::identify($path);
+            if ($readerType === IOFactory::READER_XLSX && ! $xlsxExpected) {
+                $containerMetadata = $this->containerInspector->inspect($path);
             }
-            $reader = IOFactory::createReaderForFile($path);
+            $reader = IOFactory::createReader($readerType);
             $maxRows = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_rows', 2000));
             $maxColumns = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_columns', 80));
             $maxSheets = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_sheets', 32));
+            $maxCells = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_cells', 20_000));
             $worksheetInfo = $reader->listWorksheetInfo($path);
+            $loadedSheetCount = min(count($worksheetInfo), $maxSheets, $maxCells);
+            $selectedInfo = array_slice($worksheetInfo, 0, $loadedSheetCount);
             $sheetNames = array_values(array_filter(array_map(
                 static fn (array $sheet): mixed => $sheet['worksheetName'] ?? null,
-                array_slice($worksheetInfo, 0, $maxSheets),
+                $selectedInfo,
             ), 'is_string'));
-            $reader->setReadFilter(new BoundedSpreadsheetReadFilter($maxRows, $maxColumns));
-            if (count($worksheetInfo) > $maxSheets) {
-                $reader->setLoadSheetsOnly($sheetNames);
-            }
+            $readBounds = $this->readBounds($selectedInfo, $maxRows, $maxColumns, $maxCells);
+            $reader->setReadDataOnly(true);
+            $reader->setReadFilter(new BoundedSpreadsheetReadFilter($readBounds));
+            $reader->setLoadSheetsOnly($sheetNames);
             $spreadsheet = $reader->load($path);
 
             try {
                 $pages = $this->pagesFromSpreadsheet(
                     $spreadsheet,
-                    array_slice($worksheetInfo, 0, $maxSheets),
-                    count($worksheetInfo) > $maxSheets,
+                    $selectedInfo,
+                    count($worksheetInfo) > $loadedSheetCount,
+                    $readBounds,
+                    $containerMetadata,
                 );
             } finally {
                 $spreadsheet->disconnectWorksheets();
@@ -122,12 +137,14 @@ class SpreadsheetDocumentExtractor
     /**
      * @return array<int, OcrPageResult>
      */
-    private function pagesFromSpreadsheet(Spreadsheet $spreadsheet, array $worksheetInfo, bool $sheetsTruncated): array
-    {
+    private function pagesFromSpreadsheet(
+        Spreadsheet $spreadsheet,
+        array $worksheetInfo,
+        bool $sheetsTruncated,
+        array $readBounds,
+        XlsxContainerMetadata $containerMetadata,
+    ): array {
         $pages = [];
-        $maxRows = (int) config('estimate-generation.ocr.max_spreadsheet_rows', 2000);
-        $maxColumns = (int) config('estimate-generation.ocr.max_spreadsheet_columns', 80);
-        $maxCells = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_cells', 20_000));
         $maxRenderCells = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_render_cells', 400));
         $languages = array_values((array) config('estimate-generation.ocr.languages', ['ru', 'en']));
 
@@ -135,23 +152,24 @@ class SpreadsheetDocumentExtractor
             $info = is_array($worksheetInfo[$index] ?? null) ? $worksheetInfo[$index] : [];
             $sourceRows = max(0, (int) ($info['totalRows'] ?? $worksheet->getHighestDataRow()));
             $sourceColumns = max(0, (int) ($info['totalColumns'] ?? Coordinate::columnIndexFromString($worksheet->getHighestDataColumn())));
+            $bounds = $readBounds[$worksheet->getTitle()] ?? ['rows' => 0, 'columns' => 0, 'cells' => 0];
             $limitations = [];
             if ($sheetsTruncated) {
                 $limitations[] = 'xlsx_sheets_truncated';
             }
-            if ($sourceRows > $maxRows) {
+            if ($sourceRows > $bounds['rows']) {
                 $limitations[] = 'xlsx_rows_truncated';
             }
-            if ($sourceColumns > $maxColumns) {
+            if ($sourceColumns > $bounds['columns']) {
                 $limitations[] = 'xlsx_columns_truncated';
             }
-            if ($sourceRows * $sourceColumns > $maxCells) {
+            if ($sourceRows * $sourceColumns > $bounds['cells']) {
                 $limitations[] = 'xlsx_cells_truncated';
             }
-            $highestRow = min($worksheet->getHighestDataRow(), $maxRows);
+            $highestRow = min($worksheet->getHighestDataRow(), $bounds['rows']);
             $highestColumnIndex = min(
                 Coordinate::columnIndexFromString($worksheet->getHighestDataColumn()),
-                $maxColumns,
+                $bounds['columns'],
             );
             $highestColumn = Coordinate::stringFromColumnIndex($highestColumnIndex);
             $lines = ['Sheet: '.$worksheet->getTitle()];
@@ -165,12 +183,6 @@ class SpreadsheetDocumentExtractor
                 $cellIterator->setIterateOnlyExistingCells(true);
 
                 foreach ($cellIterator as $cell) {
-                    if (count($cells) >= $maxCells) {
-                        if (! in_array('xlsx_cells_truncated', $limitations, true)) {
-                            $limitations[] = 'xlsx_cells_truncated';
-                        }
-                        break 2;
-                    }
                     $value = trim($this->cellValue($cell));
 
                     if ($value !== '') {
@@ -196,6 +208,14 @@ class SpreadsheetDocumentExtractor
             if (count($cells) > $maxRenderCells) {
                 $limitations[] = 'xlsx_render_truncated';
             }
+            [$merges, $mergesTruncated] = $this->boundedMerges(
+                $containerMetadata->mergesBySheet[$worksheet->getTitle()] ?? [],
+                $bounds,
+            );
+            if ($mergesTruncated
+                || in_array('xlsx_merges_truncated', $containerMetadata->mergeLimitationsBySheet[$worksheet->getTitle()] ?? [], true)) {
+                $limitations[] = 'xlsx_merges_truncated';
+            }
             $limitations = array_values(array_unique($limitations));
             $nativeReferences = array_values(array_unique(array_merge(
                 array_map(
@@ -208,7 +228,7 @@ class SpreadsheetDocumentExtractor
                 ),
                 array_map(
                     static fn (string $range): string => sprintf('xlsx:sheet:%s!%s', $worksheet->getTitle(), $range),
-                    array_values($worksheet->getMergeCells()),
+                    $merges,
                 ),
             )));
 
@@ -232,7 +252,7 @@ class SpreadsheetDocumentExtractor
                             $cells,
                             static fn (array $cell): bool => $cell['formula'] !== null,
                         )),
-                        'merges' => array_values($worksheet->getMergeCells()),
+                        'merges' => $merges,
                         'native_reference_registry' => $nativeReferences,
                         'rows' => $highestRow,
                         'columns' => $highestColumnIndex,
@@ -257,52 +277,69 @@ class SpreadsheetDocumentExtractor
         return '';
     }
 
-    private function assertSafeXlsxContainer(string $path): void
+    /** @return array<string, array{rows: int, columns: int, cells: int}> */
+    private function readBounds(array $worksheetInfo, int $maxRows, int $maxColumns, int $maxCells): array
     {
-        $maxEntries = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_zip_entries', 2048));
-        $maxUncompressed = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_uncompressed_bytes', 20_000_000));
-        $maxRatio = max(1, (int) config('estimate-generation.ocr.max_spreadsheet_compression_ratio', 100));
-        $zip = new ZipArchive;
-        if ($zip->open($path, ZipArchive::RDONLY) !== true) {
-            throw new OcrProviderException(
-                'estimate_generation.spreadsheet_parse_error',
-                providerCode: 'spreadsheet_container_invalid',
-            );
+        $bounds = [];
+        $remainingCells = $maxCells;
+        $remainingSheets = count($worksheetInfo);
+        foreach ($worksheetInfo as $sheet) {
+            $quota = max(1, intdiv($remainingCells, max(1, $remainingSheets)));
+            $sourceRows = max(1, (int) ($sheet['totalRows'] ?? 1));
+            $sourceColumns = max(1, (int) ($sheet['totalColumns'] ?? 1));
+            $columns = min($maxColumns, $sourceColumns, $quota);
+            $rows = min($maxRows, $sourceRows, max(1, (int) ceil($quota / $columns)));
+            $used = min($quota, $rows * $columns);
+            $name = $sheet['worksheetName'] ?? null;
+            if (is_string($name)) {
+                $bounds[$name] = ['rows' => $rows, 'columns' => $columns, 'cells' => $used];
+            }
+            $remainingCells -= $used;
+            $remainingSheets--;
         }
 
+        return $bounds;
+    }
+
+    /** @param list<string> $ranges @param array{rows: int, columns: int, cells: int} $bounds @return array{list<string>, bool} */
+    private function boundedMerges(array $ranges, array $bounds): array
+    {
+        $included = [];
+        $truncated = false;
+        foreach ($ranges as $range) {
+            [$start, $end] = Coordinate::rangeBoundaries($range);
+            $endOrdinal = (($end[1] - 1) * $bounds['columns']) + $end[0];
+            if ($start[0] < 1 || $start[1] < 1 || $end[0] > $bounds['columns'] || $end[1] > $bounds['rows']
+                || $endOrdinal > $bounds['cells']) {
+                $truncated = true;
+
+                continue;
+            }
+            $included[] = $range;
+        }
+
+        return [$included, $truncated];
+    }
+
+    private function isXlsxPackage(string $path): bool
+    {
+        $handle = fopen($path, 'rb');
+        if ($handle === false) {
+            return false;
+        }
         try {
-            if ($zip->numFiles < 1 || $zip->numFiles > $maxEntries) {
-                throw new OcrProviderException(
-                    'estimate_generation.spreadsheet_parse_error',
-                    providerCode: 'spreadsheet_container_limit_exceeded',
-                );
+            if (fread($handle, 4) !== "PK\x03\x04") {
+                return false;
             }
-            $total = 0;
-            for ($index = 0; $index < $zip->numFiles; $index++) {
-                $stat = $zip->statIndex($index, ZipArchive::FL_UNCHANGED);
-                if (! is_array($stat)) {
-                    throw new OcrProviderException(
-                        'estimate_generation.spreadsheet_parse_error',
-                        providerCode: 'spreadsheet_container_invalid',
-                    );
-                }
-                $name = (string) ($stat['name'] ?? '');
-                $normalizedName = str_replace('\\', '/', $name);
-                $size = max(0, (int) ($stat['size'] ?? 0));
-                $compressed = max(0, (int) ($stat['comp_size'] ?? 0));
-                $total += $size;
-                $ratio = $compressed === 0 ? ($size === 0 ? 1.0 : INF) : $size / $compressed;
-                if ($name === '' || str_contains($name, "\0")
-                    || in_array('..', explode('/', $normalizedName), true)
-                    || str_starts_with($normalizedName, '/')
-                    || preg_match('/^[A-Za-z]:\//', $normalizedName) === 1
-                    || $total > $maxUncompressed || $ratio > $maxRatio) {
-                    throw new OcrProviderException(
-                        'estimate_generation.spreadsheet_parse_error',
-                        providerCode: 'spreadsheet_container_limit_exceeded',
-                    );
-                }
-            }
+        } finally {
+            fclose($handle);
+        }
+        $zip = new ZipArchive;
+        if ($zip->open($path, ZipArchive::RDONLY) !== true) {
+            return false;
+        }
+        try {
+            return $zip->locateName('[Content_Types].xml', ZipArchive::FL_NOCASE) !== false;
         } finally {
             $zip->close();
         }
