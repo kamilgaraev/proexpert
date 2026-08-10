@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitData;
@@ -55,6 +56,32 @@ final class CanonicalDocumentAdapterContractTest extends TestCase
         self::assertSame($unit->locator['coordinate_space'], $representation->coordinateSpace);
         self::assertSame($expectedCapabilities, $representation->capabilities->toArray());
         self::assertIsArray($representation->nativeStructure);
+    }
+
+    #[Test]
+    public function truncated_spreadsheet_representation_exposes_typed_unavailable_capabilities(): void
+    {
+        $unit = self::unit(
+            DocumentUnitType::SpreadsheetSheet,
+            'sha256:'.str_repeat('a', 64),
+            'spreadsheet_cells',
+            [
+                'artifact_kind' => 'spreadsheet_sheet',
+                'artifact_schema_version' => 1,
+                'native_structure_artifact_path' => 'org-1/xlsx/native.json',
+                'visual_artifact_path' => 'org-1/xlsx/render.svg',
+                'source_bounds' => [0, 0, 80, 2000],
+                'representation_limitations' => ['xlsx_rows_truncated', 'xlsx_render_truncated'],
+            ],
+        );
+
+        $representation = (new ReflectionClass(SpreadsheetDocumentAdapter::class))
+            ->newInstanceWithoutConstructor()->representation($unit);
+
+        self::assertSame('unavailable:xlsx_rows_truncated', $representation->capabilities->toArray()['cells']);
+        self::assertSame('unavailable:xlsx_render_truncated', $representation->capabilities->toArray()['table_render']);
+        $this->expectException(DocumentManifestNeedsReview::class);
+        $representation->capabilities->assertAvailable('cells');
     }
 
     public static function representationMatrix(): iterable

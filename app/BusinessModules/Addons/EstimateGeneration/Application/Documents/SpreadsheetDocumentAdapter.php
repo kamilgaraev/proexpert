@@ -77,6 +77,9 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                         ],
                         'object_count' => count($structure['native_structure']['cells'] ?? []),
                         'representation_bytes' => $artifact->bytes + $visual->bytes,
+                        'representation_limitations' => is_array($structure['native_structure']['limitations'] ?? null)
+                            ? $structure['native_structure']['limitations']
+                            : [],
                     ],
                 );
             }
@@ -94,6 +97,9 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
     public function representation(DocumentUnitData $unit): DocumentRepresentation
     {
         $nativeAvailable = isset($unit->locator['native_structure_artifact_path']);
+        $limitations = is_array($unit->locator['representation_limitations'] ?? null)
+            ? $unit->locator['representation_limitations']
+            : [];
 
         return (new DocumentRepresentationBuilder)->build(
             'xlsx',
@@ -104,18 +110,42 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                 'native_structure_artifact_path' => $unit->locator['native_structure_artifact_path'] ?? null,
             ],
             [
-                'sheets' => $nativeAvailable ? 'available' : 'unavailable:xlsx_sheets_missing',
-                'cells' => $nativeAvailable ? 'available' : 'unavailable:xlsx_cells_missing',
-                'formulas' => $nativeAvailable ? 'available' : 'unavailable:xlsx_formulas_missing',
-                'merges' => $nativeAvailable ? 'available' : 'unavailable:xlsx_merges_missing',
-                'table_render' => isset($unit->locator['visual_artifact_path'])
-                    ? 'available'
-                    : 'unavailable:xlsx_table_render_missing',
+                'sheets' => $this->status($nativeAvailable, $limitations, ['xlsx_sheets_truncated'], 'xlsx_sheets_missing'),
+                'cells' => $this->status($nativeAvailable, $limitations, [
+                    'xlsx_rows_truncated', 'xlsx_columns_truncated', 'xlsx_cells_truncated',
+                ], 'xlsx_cells_missing'),
+                'formulas' => $this->status($nativeAvailable, $limitations, [
+                    'xlsx_rows_truncated', 'xlsx_columns_truncated', 'xlsx_cells_truncated',
+                ], 'xlsx_formulas_missing'),
+                'merges' => $this->status($nativeAvailable, $limitations, [
+                    'xlsx_rows_truncated', 'xlsx_columns_truncated', 'xlsx_cells_truncated', 'xlsx_merges_truncated',
+                ], 'xlsx_merges_missing'),
+                'table_render' => $this->status(
+                    isset($unit->locator['visual_artifact_path']),
+                    $limitations,
+                    ['xlsx_render_truncated'],
+                    'xlsx_table_render_missing',
+                ),
                 'source_coordinates' => isset($unit->locator['source_bounds'])
                     ? 'available'
                     : 'unavailable:xlsx_source_bounds_missing',
             ],
         );
+    }
+
+    /** @param list<mixed> $limitations @param list<string> $blocking */
+    private function status(bool $available, array $limitations, array $blocking, string $missing): string
+    {
+        if (! $available) {
+            return 'unavailable:'.$missing;
+        }
+        foreach ($blocking as $reason) {
+            if (in_array($reason, $limitations, true)) {
+                return 'unavailable:'.$reason;
+            }
+        }
+
+        return 'available';
     }
 
     private function tableRender(array $structure): string

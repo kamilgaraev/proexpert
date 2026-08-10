@@ -123,6 +123,9 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
             self::assertMatchesRegularExpression('/^org-10\//', $unit->locator['artifact_path']);
             self::assertMatchesRegularExpression('/^sha256:[a-f0-9]{64}$/', $unit->locator['artifact_sha256']);
             self::assertGreaterThan(0, $unit->locator['artifact_bytes']);
+            self::assertIsArray($unit->locator['document_representation'] ?? null);
+            self::assertSame(1, $unit->locator['document_representation']['schema_version'] ?? null);
+            self::assertSame($sourceVersion, $unit->locator['document_representation']['source_version'] ?? null);
             if ($type === DocumentUnitType::SpreadsheetSheet) {
                 self::assertSame('application/json', $unit->locator['content_type']);
                 self::assertSame('spreadsheet_sheet', $unit->locator['artifact_kind']);

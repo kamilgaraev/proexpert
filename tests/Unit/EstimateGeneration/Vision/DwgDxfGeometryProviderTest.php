@@ -28,6 +28,9 @@ final class DwgDxfGeometryProviderTest extends TestCase
     #[Test]
     public function real_synthetic_dwg_is_decoded_by_libredwg_runtime(): void
     {
+        if (getenv('MOST_CI_REAL_DWG_GATE') !== '1') {
+            self::markTestSkipped('CI-only: set MOST_CI_REAL_DWG_GATE=1 and provide pinned LibreDWG.');
+        }
         $binary = getenv('LIBREDWG_DWGREAD_BINARY');
         if (! is_string($binary) || ! is_file($binary)) {
             self::fail('Required gate: задайте LIBREDWG_DWGREAD_BINARY с LibreDWG 0.13.4.');

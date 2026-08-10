@@ -59,6 +59,8 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
             $units = [];
 
             foreach ($geometry->pages as $page) {
+                $pageGeometry = $page->toArray();
+                $nativeReferences = $this->nativeReferences($pageGeometry);
                 $preview = $page->preview;
                 $artifactPath = $preview['artifact_path'] ?? null;
                 $artifactSha256 = $preview['artifact_sha256'] ?? null;
@@ -73,7 +75,8 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                 $payload = [
                     'schema_version' => 1,
                     'source_kind' => DocumentUnitType::PdfPage->sourceKind(),
-                    'geometry' => $page->toArray(),
+                    'geometry' => $pageGeometry,
+                    'native_reference_registry' => $nativeReferences,
                     'text' => $textByPage[$page->pageNumber] ?? $page->text(),
                     'sources' => [
                         'text_layer' => ['status' => isset($textByPage[$page->pageNumber]) ? 'available' : 'unavailable'],
@@ -114,8 +117,9 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                         'geometry_artifact_sha256' => $geometryArtifact->sha256,
                         'text_layer_status' => isset($textByPage[$page->pageNumber]) ? 'available' : 'unavailable',
                         'source_bounds' => [0, 0, max(1, (int) ($preview['width'] ?? 1)), max(1, (int) ($preview['height'] ?? 1))],
-                        'object_count' => count($page->toArray()['vector_elements'] ?? [])
-                            + count($page->toArray()['text_blocks'] ?? []),
+                        'native_reference_registry' => $nativeReferences,
+                        'object_count' => count($pageGeometry['vector_elements'] ?? [])
+                            + count($pageGeometry['text_blocks'] ?? []),
                         'representation_bytes' => $artifactBytes + $geometryArtifact->bytes,
                     ],
                 );
@@ -143,6 +147,9 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                     ? ($unit->locator['geometry_artifact_path'] ?? null)
                     : null,
                 'vector_artifact_path' => $unit->locator['geometry_artifact_path'] ?? null,
+                'native_reference_registry' => is_array($unit->locator['native_reference_registry'] ?? null)
+                    ? $unit->locator['native_reference_registry']
+                    : [],
             ],
             [
                 'text_spans' => ($unit->locator['text_layer_status'] ?? null) === 'available'
@@ -155,5 +162,21 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                 'source_coordinates' => 'available',
             ],
         );
+    }
+
+    /** @param array<string, mixed> $geometry @return list<string> */
+    private function nativeReferences(array $geometry): array
+    {
+        $references = [];
+        foreach (['vector_elements', 'text_blocks'] as $collection) {
+            foreach (is_array($geometry[$collection] ?? null) ? $geometry[$collection] : [] as $object) {
+                $identity = is_array($object) ? ($object['handle'] ?? $object['id'] ?? $object['key'] ?? null) : null;
+                if (is_string($identity) && $identity !== '' && strlen($identity) <= 180) {
+                    $references[] = 'pdf:object:'.$identity;
+                }
+            }
+        }
+
+        return array_values(array_unique($references));
     }
 }

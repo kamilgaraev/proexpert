@@ -21,6 +21,7 @@ final class CadStructureExtractor
                 'unit_status' => $geometry->unitStatus,
                 'layers' => $geometry->layers,
                 'blocks' => $geometry->blocks,
+                'objects' => $geometry->entities,
                 'polylines' => array_values(array_filter(
                     $geometry->entities,
                     static fn (array $entity): bool => in_array($entity['type'] ?? null, ['lwpolyline', 'polyline'], true),

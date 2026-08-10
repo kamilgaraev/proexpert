@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\DTO;
 
-use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
 
 final readonly class VisionAnalysisData
 {
@@ -106,8 +106,8 @@ final readonly class VisionAnalysisData
         }
     }
 
-    /** @param array<string, mixed> $data */
-    public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements, ?int $maxFacts = null): self
+    /** @param array<string, mixed> $data @param list<string> $nativeReferences */
+    public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements, ?int $maxFacts = null, array $nativeReferences = []): self
     {
         $maxFacts ??= $maxElements;
         $schemaVersion = $data['schema_version'] ?? null;
@@ -132,7 +132,7 @@ final readonly class VisionAnalysisData
         $elements = array_map(static fn (mixed $item): VisionElementData => is_array($item) ? VisionElementData::fromArray($item) : throw new VisionContractException('invalid_element'), $data['elements']);
         $scales = array_map(static fn (mixed $item): VisionScaleCandidateData => is_array($item) ? VisionScaleCandidateData::fromArray($item) : throw new VisionContractException('invalid_scale_candidate'), $data['scale_candidates']);
         $projectSheetAnalysis = $schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION
-            ? ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence), $maxFacts)
+            ? ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence), $maxFacts, $nativeReferences)
             : null;
         foreach ($data['warnings'] as $warning) {
             if (! is_string($warning)) {

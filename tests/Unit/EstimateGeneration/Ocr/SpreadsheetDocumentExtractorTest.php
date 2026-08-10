@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -12,6 +13,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use ZipArchive;
 
 final class SpreadsheetDocumentExtractorTest extends TestCase
 {
@@ -27,6 +29,11 @@ final class SpreadsheetDocumentExtractorTest extends TestCase
                 'ocr' => [
                     'max_spreadsheet_rows' => 2000,
                     'max_spreadsheet_columns' => 80,
+                    'max_spreadsheet_cells' => 20_000,
+                    'max_spreadsheet_sheets' => 32,
+                    'max_spreadsheet_zip_entries' => 2048,
+                    'max_spreadsheet_uncompressed_bytes' => 20_000_000,
+                    'max_spreadsheet_compression_ratio' => 100,
                     'languages' => ['ru', 'en'],
                 ],
             ],
@@ -77,5 +84,100 @@ final class SpreadsheetDocumentExtractorTest extends TestCase
                 unlink($xlsxPath);
             }
         }
+    }
+
+    #[Test]
+    public function bounded_reader_reports_row_column_and_render_truncation_without_calculating_formulas(): void
+    {
+        config()->set('estimate-generation.ocr.max_spreadsheet_rows', 2);
+        config()->set('estimate-generation.ocr.max_spreadsheet_columns', 2);
+        config()->set('estimate-generation.ocr.max_spreadsheet_cells', 3);
+        config()->set('estimate-generation.ocr.max_spreadsheet_render_cells', 2);
+        $workbook = new Spreadsheet;
+        $sheet = $workbook->getActiveSheet();
+        $sheet->setCellValue('A1', '=1+1');
+        $sheet->setCellValue('B1', 'B1');
+        $sheet->setCellValue('C1', 'C1');
+        $sheet->setCellValue('A2', 'A2');
+        $sheet->setCellValue('B2', 'B2');
+        $sheet->setCellValue('A3', 'A3');
+        $path = tempnam(sys_get_temp_dir(), 'bounded-xlsx-');
+
+        try {
+            self::assertIsString($path);
+            (new Xlsx($workbook))->save($path);
+            $result = (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path);
+            $native = $result->pages[0]->rawPayload['native_structure'];
+
+            self::assertSame('partial', $native['status']);
+            self::assertEqualsCanonicalizing(
+                ['xlsx_rows_truncated', 'xlsx_columns_truncated', 'xlsx_cells_truncated', 'xlsx_render_truncated'],
+                $native['limitations'],
+            );
+            self::assertSame('=1+1', $native['cells'][0]['value']);
+            self::assertSame('=1+1', $native['cells'][0]['formula']);
+            self::assertCount(3, $native['cells']);
+            self::assertContains('xlsx:sheet:Worksheet!A1', $native['native_reference_registry']);
+        } finally {
+            $workbook->disconnectWorksheets();
+            if (is_string($path) && is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    #[Test]
+    public function xlsx_zip_container_is_rejected_before_workbook_loading_when_uncompressed_budget_is_exceeded(): void
+    {
+        config()->set('estimate-generation.ocr.max_spreadsheet_uncompressed_bytes', 128);
+        $path = tempnam(sys_get_temp_dir(), 'unsafe-xlsx-');
+        self::assertIsString($path);
+        $zip = new ZipArchive;
+        self::assertTrue($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE));
+        $zip->addFromString('[Content_Types].xml', str_repeat('x', 1024));
+        $zip->close();
+
+        try {
+            try {
+                (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path);
+                self::fail('Unsafe XLSX container must be rejected before workbook loading.');
+            } catch (OcrProviderException $exception) {
+                self::assertSame('spreadsheet_container_limit_exceeded', $exception->providerCode);
+            }
+        } finally {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    #[Test]
+    public function xlsx_zip_container_rejects_parent_path_entries_before_parser_loading(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'unsafe-xlsx-path-');
+        self::assertIsString($path);
+        $zip = new ZipArchive;
+        self::assertTrue($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE));
+        $zip->addFromString('../workbook.xml', '<workbook/>');
+        $zip->close();
+
+        try {
+            $this->expectException(OcrProviderException::class);
+            $this->expectExceptionMessage('estimate_generation.spreadsheet_parse_error');
+            (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path);
+        } finally {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    private function document(): EstimateGenerationDocument
+    {
+        return new EstimateGenerationDocument([
+            'filename' => 'смета.xlsx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'meta' => ['original_extension' => 'xlsx'],
+        ]);
     }
 }

@@ -15,12 +15,14 @@ final class SheetAnalysisOperationIdentity
         ]));
     }
 
-    /** @param array{role: string, reanalysis_reason: ?string} $routing */
+    /** @param array{role: string, reanalysis_reason: ?string, targeted_scope?: array<string, mixed>} $routing */
     public static function targeted(int $sessionId, int $documentId, int $unitId, string $sourceVersion, string $derivativeHash, array $routing): string
     {
         return AiOperationContext::deterministicId(implode('|', [
             'sheet-targeted', $sessionId, $documentId, $unitId, $sourceVersion, $derivativeHash,
-            'sheet-routing:v1', $routing['role'], $routing['reanalysis_reason'] ?? '', 'vision-contract:v3',
+            'sheet-routing:v1', $routing['role'], $routing['reanalysis_reason'] ?? '',
+            hash('sha256', json_encode($routing['targeted_scope'] ?? [], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)),
+            'vision-contract:v3',
         ]));
     }
 }

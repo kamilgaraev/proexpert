@@ -28,7 +28,24 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
 
         foreach ($this->adapters as $adapter) {
             if ($adapter->supports($document)) {
-                return $adapter->createUnits($document, $sourceVersion);
+                return array_map(
+                    static function (DocumentUnitData $unit) use ($adapter): DocumentUnitData {
+                        $representation = $adapter->representation($unit);
+                        if ($representation->capabilities->format === 'xlsx') {
+                            foreach (['sheets', 'cells', 'formulas', 'merges', 'table_render', 'source_coordinates'] as $capability) {
+                                $representation->capabilities->assertAvailable($capability);
+                            }
+                        }
+
+                        return new DocumentUnitData(
+                            $unit->type,
+                            $unit->index,
+                            $unit->sourceVersion,
+                            [...$unit->locator, 'document_representation' => $representation->toArray()],
+                        );
+                    },
+                    $adapter->createUnits($document, $sourceVersion),
+                );
             }
         }
 

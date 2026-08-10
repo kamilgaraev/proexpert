@@ -46,6 +46,12 @@ final readonly class DocumentCoordinateTransform
         return [$this->minX + ($x * $this->width), $this->minY + ($y * $this->height)];
     }
 
+    /** @return array{float, float, float, float} */
+    public function bounds(): array
+    {
+        return [$this->minX, $this->minY, $this->minX + $this->width, $this->minY + $this->height];
+    }
+
     private function point(array $point): array
     {
         if (count($point) !== 2 || (! is_int($point[0] ?? null) && ! is_float($point[0] ?? null))

@@ -93,13 +93,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGe
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEvaluationReleaseGateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EloquentSessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceDocumentSourceReplacementInvalidator;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EloquentEvaluationCorpusRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationCorpus;
 use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationCorpusRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationReleaseGate;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceDocumentSourceReplacementInvalidator;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\LaravelTargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
@@ -368,6 +368,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(TimewebVisionProvider::class, static fn ($app): TimewebVisionProvider => new TimewebVisionProvider(
             $app->make(AiUsageStore::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class),
             $app->make(EffectiveSettingsResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
@@ -468,6 +469,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentUnitContentReader::class, S3DocumentUnitContentReader::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetRoleClassifier::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\TargetedSheetEvidenceResolver::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\EloquentTargetedSheetEvidenceResolver::class,
+        );
         $this->app->singleton(DocumentUnitProcessor::class, ProductionDocumentUnitProcessor::class);
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);
@@ -523,6 +528,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
         ));
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,
+        );
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
         $this->app->singleton(PublishDraftOnce::class, EloquentPublishDraftOnce::class);

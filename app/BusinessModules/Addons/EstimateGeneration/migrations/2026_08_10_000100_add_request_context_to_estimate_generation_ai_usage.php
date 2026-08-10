@@ -49,13 +49,5 @@ return new class extends Migration
         }
     }
 
-    public function down(): void
-    {
-        if (DB::getDriverName() === 'pgsql') {
-            DB::statement('ALTER TABLE estimate_generation_ai_usage DROP CONSTRAINT IF EXISTS eg_usage_request_context_ck');
-        }
-        Schema::table('estimate_generation_ai_usage', function (Blueprint $table): void {
-            $table->dropColumn('request_context');
-        });
-    }
+    public function down(): void {}
 };

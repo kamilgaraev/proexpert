@@ -13,7 +13,8 @@ final class SpreadsheetStructureExtractor
     {
         $nativeStructure = $page->rawPayload['native_structure'] ?? null;
 
-        if (! is_array($nativeStructure) || ($nativeStructure['status'] ?? null) !== 'available') {
+        if (! is_array($nativeStructure)
+            || ! in_array($nativeStructure['status'] ?? null, ['available', 'partial'], true)) {
             throw new InvalidArgumentException('spreadsheet_native_structure_unavailable');
         }
 

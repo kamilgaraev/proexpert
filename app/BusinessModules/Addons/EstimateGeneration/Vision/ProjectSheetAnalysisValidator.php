@@ -17,8 +17,8 @@ final class ProjectSheetAnalysisValidator
         'unknown' => [],
     ];
 
-    /** @param array<string, mixed> $data @param list<string> $evidenceKeys */
-    public static function assertValid(array $data, array $evidenceKeys, int $maxFacts = 500): void
+    /** @param array<string, mixed> $data @param list<string> $evidenceKeys @param list<string> $nativeReferences */
+    public static function assertValid(array $data, array $evidenceKeys, int $maxFacts = 500, array $nativeReferences = []): void
     {
         if ($maxFacts < 1 || $maxFacts > 500
             || ! self::hasExactKeys($data, ['contractVersion', 'role', 'facts'])
@@ -34,7 +34,7 @@ final class ProjectSheetAnalysisValidator
             if (! is_array($fact)) {
                 throw new VisionContractException('invalid_project_sheet_fact');
             }
-            self::assertFact($fact, $data['role'], $evidenceKeys);
+            self::assertFact($fact, $data['role'], $evidenceKeys, $nativeReferences);
             $entities[] = $fact['entityKey'];
         }
         if (count($entities) !== count(array_unique($entities))) {
@@ -42,8 +42,8 @@ final class ProjectSheetAnalysisValidator
         }
     }
 
-    /** @param array<string, mixed> $fact @param list<string> $evidenceKeys */
-    private static function assertFact(array $fact, string $role, array $evidenceKeys): void
+    /** @param array<string, mixed> $fact @param list<string> $evidenceKeys @param list<string> $nativeReferences */
+    private static function assertFact(array $fact, string $role, array $evidenceKeys, array $nativeReferences): void
     {
         if (! self::hasExactKeys($fact, ['entityKey', 'factType', 'value', 'unit', 'evidenceRef', 'sourcePolygonOrNativeRef', 'confidence', 'contractVersion'])
             || ! is_string($fact['entityKey'] ?? null) || preg_match('~^[a-z0-9][a-z0-9._:-]{0,79}$~', $fact['entityKey']) !== 1
@@ -56,16 +56,21 @@ final class ProjectSheetAnalysisValidator
             throw new VisionContractException('invalid_project_sheet_fact');
         }
 
-        self::assertSourceReference($fact['sourcePolygonOrNativeRef'] ?? null);
+        self::assertSourceReference($fact['sourcePolygonOrNativeRef'] ?? null, $nativeReferences);
         self::assertTypedValue($fact['value'], $fact['unit']);
     }
 
-    private static function assertSourceReference(mixed $source): void
+    /** @param list<string> $nativeReferences */
+    private static function assertSourceReference(mixed $source, array $nativeReferences): void
     {
         if (is_string($source)) {
             if (mb_strlen($source) > 240 || preg_match('~^(?:pdf|image|cad|xlsx):(?!.*\\\\)[^\x00-\x1F]{1,220}$~u', $source) !== 1) {
                 throw new VisionContractException('invalid_project_sheet_geometry');
             }
+            if (! in_array($source, $nativeReferences, true)) {
+                throw new VisionContractException('invalid_project_sheet_native_reference');
+            }
+
             return;
         }
         if (! is_array($source) || count($source) < 2 || count($source) > 64) {
@@ -96,6 +101,7 @@ final class ProjectSheetAnalysisValidator
             if ($value['data'] !== null || $unit !== null) {
                 throw new VisionContractException('invalid_unknown_project_sheet_value');
             }
+
             return;
         }
         $valid = match ($value['type']) {

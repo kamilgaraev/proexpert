@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understa
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationJournal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\TargetedSheetEvidenceResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
@@ -19,10 +20,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryPr
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckPlanner;
 use App\Models\Organization;
 use Throwable;
 
@@ -37,6 +38,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private ?SheetAnalysisRouter $sheetAnalysisRouter = null,
         private ?SheetAnalysisOperationJournal $sheetAnalysisJournal = null,
         private CadStructureExtractor $cadStructure = new CadStructureExtractor,
+        private ?CadRepresentationPublisher $cadRepresentationPublisher = null,
+        private ?TargetedSheetEvidenceResolver $targetedEvidenceResolver = null,
+        private TargetedSheetRecheckPlanner $targetedRecheckPlanner = new TargetedSheetRecheckPlanner,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -50,7 +54,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 default => $this->ocr->process($context),
             };
 
-            return $this->withSourceProvenance($output, $provenance);
+            return $this->withSourceProvenance($this->withCanonicalRepresentation($output, $context), $provenance);
         } catch (DocumentUnitProcessingException $exception) {
             throw $exception;
         } catch (S3ObjectLocatorException $exception) {
@@ -59,6 +63,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
         } catch (GeometryExtractionException $exception) {
             throw new DocumentUnitProcessingException($exception->reason, $exception);
+        } catch (DocumentManifestNeedsReview $exception) {
+            throw new DocumentUnitProcessingException($exception->safeCode, $exception);
         } catch (Throwable $exception) {
             throw new DocumentUnitProcessingException('document_geometry_processing_failed', $exception);
         }
@@ -70,6 +76,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $organization->id = $context->organizationId;
         $geometry = $this->cad->extract($provenance, $organization);
         $payload = $geometry->toArray();
+        $representation = $this->cadRepresentationPublisher?->publish($geometry, $context);
+        if ($representation !== null) {
+            foreach (['layers', 'blocks', 'polylines', 'dimensions', 'texts', 'sheet_render', 'source_coordinates'] as $capability) {
+                $representation->capabilities->assertAvailable($capability);
+            }
+        }
         $text = implode("\n", array_values(array_filter(array_map(
             static fn (mixed $item): string => is_array($item) ? trim((string) ($item['text'] ?? '')) : '',
             $payload['texts'],
@@ -85,6 +97,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'source' => $provenance->toArray(),
                 'vector_geometry' => $payload,
                 ...$this->cadStructure->extract($geometry),
+                ...($representation === null ? [] : ['document_representation' => $representation->toArray()]),
                 'provenance' => [
                     'provider' => 'cad_geometry',
                     'runtime_version' => $geometry->runtimeVersion,
@@ -140,6 +153,13 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $correlationId = SheetAnalysisOperationIdentity::primary(
             $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
         );
+        $serializedRepresentation = $context->locator['document_representation'] ?? null;
+        $nativeReferences = [];
+        if (is_array($serializedRepresentation)) {
+            $representation = DocumentRepresentation::fromArray($serializedRepresentation);
+            $registry = $representation->nativeStructure['native_reference_registry'] ?? null;
+            $nativeReferences = is_array($registry) ? array_values(array_filter($registry, 'is_string')) : [];
+        }
         $input = new VisionDocumentInput(
             organizationId: $context->organizationId,
             projectId: $context->projectId,
@@ -167,20 +187,21 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 unitId: $context->unitId,
             ),
             sourceTransform: $preprocessed->transform,
+            nativeReferences: $nativeReferences,
         );
         $scope = new DocumentSheetOperationScope($context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $context->claimToken);
         $primaryRouting = ['role' => 'unknown', 'needs_review' => false, 'outcome' => 'not_applicable'];
         $primaryRun = $this->sheetAnalysisJournal?->run($correlationId, 'primary', $scope, $primaryRouting,
-            function () use ($context, $input, $preprocessed) {
+            function () use ($context, $input) {
                 $context->renewLeaseOrFail();
 
-                return $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
+                return $this->vision->analyze($input);
             });
         if ($primaryRun !== null) {
             $analysis = $primaryRun->analysis;
         } else {
             $context->renewLeaseOrFail();
-            $analysis = $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
+            $analysis = $this->vision->analyze($input);
         }
         if ($analysis === null) {
             throw new DocumentUnitProcessingException('sheet_analysis_requires_review');
@@ -219,6 +240,33 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $targetedRouting = null;
         if ($routing?->classification->requiresTargetedReanalysis()) {
             $targetedRouting = $routing->toArray();
+            $peerEvidence = $routing->classification->reanalysisReason === 'sheet_role_conflict'
+                ? $this->targetedEvidenceResolver?->resolvePeer($context, $routing->classification->role->value)
+                : null;
+            $targetedPlan = $this->targetedRecheckPlanner->plan(
+                $context->documentId,
+                $context->pageId,
+                $routing,
+                $analysis,
+                $peerEvidence,
+            );
+            if ($targetedPlan === null) {
+                $targetedRouting['outcome'] = 'needs_review';
+                $targetedRouting['needs_review'] = true;
+
+                return $this->rasterOutput(
+                    $context,
+                    $input,
+                    $preprocessed,
+                    $analysis,
+                    $nativePdfText,
+                    $pdfGeometry,
+                    $targetedRouting,
+                    $provenance,
+                    $routing,
+                );
+            }
+            $targetedRouting['targeted_scope'] = $targetedPlan->scope->toSafeUsageContext();
             $targetedOperation = SheetAnalysisOperationIdentity::targeted(
                 $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
                 $targetedRouting,
@@ -252,31 +300,35 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     ),
                     sourceTransform: $input->sourceTransform,
                     sheetRole: $routing->classification->role->value,
-                    recheckScope: TargetedSheetRecheckScope::forEntity(
-                        $routing->classification->role->value,
-                        (string) $routing->classification->reanalysisReason,
-                        'sheet-role:'.$routing->classification->role->value,
-                        sprintf('document:%d/sheet:%d', $input->documentId, $input->pageId),
-                    ),
+                    recheckScope: $targetedPlan->scope,
+                    nativeReferences: $input->nativeReferences,
+                    supplementalEvidence: $targetedPlan->supplementalEvidence === null
+                        ? []
+                        : [$targetedPlan->supplementalEvidence],
                 );
-                $targetedRun = $this->sheetAnalysisJournal?->run($targetedOperation, 'targeted', $scope, $targetedRouting,
-                    function () use ($context, $targetedInput, $preprocessed) {
+                $targetedRun = $this->sheetAnalysisJournal?->run(
+                    $targetedOperation,
+                    'targeted',
+                    $scope,
+                    $targetedRouting,
+                    function () use ($context, $targetedInput) {
                         $context->renewLeaseOrFail();
 
-                        return $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform);
-                    });
-                if ($targetedRun?->analysis === null) {
+                        return $this->vision->analyze($targetedInput);
+                    },
+                );
+                if ($this->sheetAnalysisJournal !== null && $targetedRun?->analysis === null) {
                     $targetedRouting['outcome'] = 'needs_review';
                     $targetedRouting['needs_review'] = true;
                 } else {
-                    if ($targetedRun !== null) {
-                        $analysis = $targetedRun->analysis;
-                    } else {
+                    if ($targetedRun === null) {
                         $context->renewLeaseOrFail();
-                        $analysis = $this->vision->analyze($targetedInput)->mapPolygonsToSource($preprocessed->transform);
+                        $analysis = $this->vision->analyze($targetedInput);
+                    } else {
+                        $analysis = $targetedRun->analysis;
                     }
                     $final = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
-                    $targetedRouting = $final?->toArray() ?? $targetedRouting;
+                    $targetedRouting = [...$targetedRouting, ...($final?->toArray() ?? [])];
                     $targetedRouting['outcome'] = $targetedRun?->outcome ?? 'succeeded';
                     $this->sheetAnalysisJournal?->persistFinalRouting($targetedOperation, $scope, $targetedRouting);
                 }
@@ -291,7 +343,42 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 }
             }
         }
+
+        return $this->rasterOutput(
+            $context,
+            $input,
+            $preprocessed,
+            $analysis,
+            $nativePdfText,
+            $pdfGeometry,
+            $targetedRouting,
+            $provenance,
+            $routing,
+        );
+    }
+
+    /** @param array<string, mixed>|null $pdfGeometry @param array<string, mixed>|null $targetedRouting */
+    private function rasterOutput(
+        DocumentUnitExecutionContext $context,
+        VisionDocumentInput $input,
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult $preprocessed,
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData $analysis,
+        ?string $nativePdfText,
+        ?array $pdfGeometry,
+        ?array $targetedRouting,
+        DocumentUnitProvenance $provenance,
+        ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRoutingResult $routing,
+    ): DocumentUnitOutput {
         $payload = $analysis->toArray();
+        $rasterRepresentation = null;
+        if (in_array($context->type, [DocumentUnitType::RasterImage, DocumentUnitType::Sketch], true)) {
+            $rasterRepresentation = (new ImageDocumentAdapter)->representation(new DocumentUnitData(
+                $context->type,
+                $context->index,
+                $context->sourceVersion,
+                [...$context->locator, 'source_bounds' => [0, 0, $preprocessed->sourceWidth, $preprocessed->sourceHeight]],
+            ));
+        }
         $geometryConfidence = $analysis->elements === []
             ? null
             : min(array_map(static fn ($element): float => $element->confidence, $analysis->elements));
@@ -329,9 +416,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
                     'derivative_hash' => $preprocessed->derivativeHash,
+                    'derivative_storage_key' => $preprocessed->derivativeStorageKey,
+                    'derivative_bytes' => $preprocessed->derivativeBytes,
                     'perspective_status' => $preprocessed->perspectiveStatus,
                     'warnings' => $preprocessed->warnings,
                 ],
+                ...($rasterRepresentation === null ? [] : ['document_representation' => $rasterRepresentation->toArray()]),
                 'provenance' => [
                     'provider' => $analysis->provider,
                     'model' => $analysis->reportedModel,
@@ -355,6 +445,37 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     'hard_blockers' => $hardGeometryWarnings,
                 ],
             ],
+        );
+    }
+
+    private function withCanonicalRepresentation(
+        DocumentUnitOutput $output,
+        DocumentUnitExecutionContext $context,
+    ): DocumentUnitOutput {
+        if (isset($output->normalizedPayload['document_representation'])) {
+            return $output;
+        }
+        $serialized = $context->locator['document_representation'] ?? null;
+        if (! is_array($serialized)) {
+            return $output;
+        }
+        $representation = DocumentRepresentation::fromArray($serialized);
+        if ($representation->source->value !== $context->sourceVersion) {
+            throw new DocumentUnitProcessingException('document_representation_source_mismatch');
+        }
+
+        return new DocumentUnitOutput(
+            version: $output->version,
+            text: $output->text,
+            confidence: $output->confidence,
+            normalizedPayload: [...$output->normalizedPayload, 'document_representation' => $representation->toArray()],
+            width: $output->width,
+            height: $output->height,
+            rotation: $output->rotation,
+            unitType: $output->unitType,
+            unitIndex: $output->unitIndex,
+            sourceVersion: $output->sourceVersion,
+            qualitySignals: $output->qualitySignals,
         );
     }
 

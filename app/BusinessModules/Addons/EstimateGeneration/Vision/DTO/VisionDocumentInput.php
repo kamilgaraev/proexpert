@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\DTO;
 
-use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use InvalidArgumentException;
 
 final readonly class VisionDocumentInput
@@ -27,6 +28,10 @@ final readonly class VisionDocumentInput
         public ProjectiveTransformData $sourceTransform,
         public string $sheetRole = 'unknown',
         public ?TargetedSheetRecheckScope $recheckScope = null,
+        /** @var list<string> */
+        public array $nativeReferences = [],
+        /** @var list<TargetedSheetEvidence> */
+        public array $supplementalEvidence = [],
     ) {
         $dimensions = @getimagesizefromstring($imageContent);
         $detectedMime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
@@ -40,6 +45,12 @@ final readonly class VisionDocumentInput
             || ! in_array($imageDetail, ['low', 'high', 'auto'], true)
             || ! in_array($sheetRole, ['plan', 'section', 'facade', 'explication', 'specification', 'unknown'], true)
             || ($recheckScope !== null && $recheckScope->role !== $sheetRole)
+            || count($nativeReferences) > 20_000
+            || count($nativeReferences) !== count(array_unique($nativeReferences))
+            || count($supplementalEvidence) > 1
+            || ($recheckScope === null && $supplementalEvidence !== [])
+            || ($recheckScope?->entityKey !== null && $supplementalEvidence !== [])
+            || ($recheckScope !== null && $recheckScope->entityKey === null && count($supplementalEvidence) !== 1)
             || $operationContext->organizationId !== $organizationId
             || $operationContext->projectId !== $projectId
             || $operationContext->sessionId !== $sessionId
@@ -48,6 +59,22 @@ final readonly class VisionDocumentInput
             || $operationContext->unitId !== $processingUnitId
             || $operationContext->operation !== 'vision') {
             throw new InvalidArgumentException('Invalid vision document input.');
+        }
+        foreach ($nativeReferences as $nativeReference) {
+            if (! is_string($nativeReference) || mb_strlen($nativeReference) > 240
+                || preg_match('~^(?:pdf|image|cad|xlsx):(?!.*\\\\)[^\x00-\x1F]{1,220}$~u', $nativeReference) !== 1) {
+                throw new InvalidArgumentException('Invalid vision native reference registry.');
+            }
+        }
+        foreach ($supplementalEvidence as $evidence) {
+            if (! $evidence instanceof TargetedSheetEvidence
+                || $evidence->organizationId !== $organizationId
+                || $evidence->projectId !== $projectId
+                || $evidence->sessionId !== $sessionId
+                || $evidence->source() === sprintf('document:%d/sheet:%d', $documentId, $pageId)
+                || ! in_array($evidence->source(), $recheckScope?->sourceSet ?? [], true)) {
+                throw new InvalidArgumentException('Invalid supplemental sheet evidence.');
+            }
         }
     }
 

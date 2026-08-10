@@ -95,9 +95,51 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
         $native['facts'][0]['sourcePolygonOrNativeRef'] = 'xlsx:sheet:Спецификация!A2:D8';
         self::assertSame(
             'xlsx:sheet:Спецификация!A2:D8',
-            ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'])
+            ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, ['xlsx:sheet:Спецификация!A2:D8'])
                 ->mapPolygonsToSource($transform)->facts[0]['sourcePolygonOrNativeRef'],
         );
+    }
+
+    #[Test]
+    public function it_rejects_a_well_formed_native_reference_that_is_absent_from_the_published_registry(): void
+    {
+        $native = $this->payload('specification', 'table');
+        $native['facts'][0]['sourcePolygonOrNativeRef'] = 'xlsx:sheet:Спецификация!Z999';
+
+        $this->expectException(VisionContractException::class);
+        $this->expectExceptionMessage('invalid_project_sheet_native_reference');
+
+        ProjectSheetAnalysisData::fromProviderArray(
+            $native,
+            ['page-1'],
+            500,
+            ['xlsx:sheet:Спецификация!A2:D8'],
+        );
+    }
+
+    #[Test]
+    #[DataProvider('nativeReferenceRegistries')]
+    public function native_reference_must_match_the_exact_published_object(string $published, string $hallucinated): void
+    {
+        $native = $this->payload();
+        $native['facts'][0]['sourcePolygonOrNativeRef'] = $published;
+        self::assertSame(
+            $published,
+            ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$published])
+                ->facts[0]['sourcePolygonOrNativeRef'],
+        );
+
+        $native['facts'][0]['sourcePolygonOrNativeRef'] = $hallucinated;
+        $this->expectException(VisionContractException::class);
+        $this->expectExceptionMessage('invalid_project_sheet_native_reference');
+        ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$published]);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function nativeReferenceRegistries(): iterable
+    {
+        yield 'cad' => ['cad:object:2F', 'cad:object:30'];
+        yield 'xlsx' => ['xlsx:sheet:Лист1!A2', 'xlsx:sheet:Лист1!A3'];
     }
 
     /** @return iterable<string, array{string, string, class-string}> */

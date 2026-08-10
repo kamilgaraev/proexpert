@@ -24,10 +24,14 @@ final readonly class ProjectSheetAnalysisData
         public SheetAnalysisContract $roleAnalysis,
     ) {}
 
-    /** @param array<string, mixed> $data @param list<string> $evidenceKeys */
-    public static function fromProviderArray(array $data, array $evidenceKeys, int $maxFacts = 500): self
-    {
-        ProjectSheetAnalysisValidator::assertValid($data, $evidenceKeys, $maxFacts);
+    /** @param array<string, mixed> $data @param list<string> $evidenceKeys @param list<string> $nativeReferences */
+    public static function fromProviderArray(
+        array $data,
+        array $evidenceKeys,
+        int $maxFacts = 500,
+        array $nativeReferences = [],
+    ): self {
+        ProjectSheetAnalysisValidator::assertValid($data, $evidenceKeys, $maxFacts, $nativeReferences);
         $facts = array_map(SheetAnalysisFact::fromValidatedArray(...), $data['facts']);
 
         return self::fromTyped($data['role'], $facts);

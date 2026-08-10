@@ -43,7 +43,13 @@ final class CadDocumentAdapter implements DocumentUnitAdapter
         return (new DocumentRepresentationBuilder)->build(
             'cad',
             $unit,
-            ['native_structure_artifact_path' => $unit->locator['native_structure_artifact_path'] ?? null],
+            [
+                'native_structure_artifact_path' => $unit->locator['native_structure_artifact_path'] ?? null,
+                'native_structure_artifact_sha256' => $unit->locator['native_structure_artifact_sha256'] ?? null,
+                'native_reference_registry' => is_array($unit->locator['native_reference_registry'] ?? null)
+                    ? $unit->locator['native_reference_registry']
+                    : [],
+            ],
             [
                 'layers' => $status('layers'),
                 'blocks' => $status('blocks'),
