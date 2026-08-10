@@ -126,6 +126,14 @@ final class ArtifactDocumentUnitDetectorTest extends TestCase
             self::assertIsArray($unit->locator['document_representation'] ?? null);
             self::assertSame(1, $unit->locator['document_representation']['schema_version'] ?? null);
             self::assertSame($sourceVersion, $unit->locator['document_representation']['source_version'] ?? null);
+            $usage = $unit->locator['document_representation']['resource_usage'] ?? [];
+            $measurement = $unit->locator['document_representation']['native_structure']['resource_measurement'] ?? [];
+            self::assertGreaterThan(0, $usage['duration_ms'] ?? 0);
+            self::assertSame('incremental_process_peak_delta', $measurement['memory_metric'] ?? null);
+            self::assertTrue(
+                ($usage['peak_memory_bytes'] ?? 0) > 0
+                || in_array('incremental_process_peak_not_observed', $measurement['limitations'] ?? [], true),
+            );
             if ($type === DocumentUnitType::SpreadsheetSheet) {
                 self::assertSame('application/json', $unit->locator['content_type']);
                 self::assertSame('spreadsheet_sheet', $unit->locator['artifact_kind']);

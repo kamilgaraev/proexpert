@@ -4,28 +4,41 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadRepresentationPublisher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProvenance;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ImageDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PdfDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProductionDocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetRoleClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\TargetedSheetEvidenceResolver;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\RasterPreprocessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\Models\Organization;
@@ -35,6 +48,140 @@ use Tests\Support\DatabaseLessTestCase;
 
 final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
 {
+    #[Test]
+    public function png_runs_detector_representation_and_production_processor_as_one_path(): void
+    {
+        $source = $this->png(12, 8);
+        $sourceVersion = 'sha256:'.hash('sha256', $source);
+        $document = new EstimateGenerationDocument([
+            'id' => 4,
+            'organization_id' => 2,
+            'project_id' => 3,
+            'session_id' => 5,
+            'filename' => 'source.png',
+            'mime_type' => 'image/png',
+            'storage_path' => 'org-2/source.png',
+            'file_size_bytes' => strlen($source),
+            'meta' => ['storage_sha256' => substr($sourceVersion, 7)],
+        ]);
+        $storage = $this->createMock(DocumentSourceManifestStorage::class);
+        $detector = new ArtifactDocumentUnitDetector(
+            new PdfDocumentAdapter(
+                $storage,
+                $this->createMock(PdfTextLayerExtractor::class),
+                new PdfGeometryExtractor($this->createMock(PdfGeometryWorker::class)),
+            ),
+            new ImageDocumentAdapter,
+            new CadDocumentAdapter,
+            new SpreadsheetDocumentAdapter($storage, new SpreadsheetDocumentExtractor),
+        );
+        $unit = $detector->detect($document, $sourceVersion)[0];
+        $objects = ['org-2/source.png' => ['body' => $source, 'content_type' => 'image/png']];
+        $files = $this->createMock(FileService::class);
+        $files->method('describeCurrent')->willReturnCallback(static function (string $path) use (&$objects): array {
+            $object = $objects[$path];
+
+            return [
+                'path' => $path,
+                'body' => $object['body'],
+                'content_type' => $object['content_type'],
+                'size' => strlen($object['body']),
+                'sha256' => hash('sha256', $object['body']),
+                'etag' => hash('md5', $object['body']),
+            ];
+        });
+        $files->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use (&$objects): array {
+            $objects[$path] = ['body' => $body, 'content_type' => $contentType];
+
+            return ['path' => $path, 'body' => $body, 'content_type' => $contentType, 'size' => strlen($body), 'sha256' => hash('sha256', $body), 'etag' => hash('md5', $body), 'created' => true];
+        });
+        $vision = new class($this->sheetAnalysis('floor_plan')) implements VisionProvider
+        {
+            public function __construct(private VisionAnalysisData $analysis) {}
+
+            public function analyze(VisionDocumentInput $input): VisionAnalysisData
+            {
+                return $this->analysis;
+            }
+        };
+        $reader = new BoundedVersionedS3ObjectReader($files);
+        $processor = new ProductionDocumentUnitProcessor(
+            new OcrDocumentUnitProcessor(
+                $this->createMock(DocumentUnitContentReader::class),
+                $this->createMock(OcrClientInterface::class),
+            ),
+            $vision,
+            $this->createMock(CadGeometryProvider::class),
+            new RasterPreprocessor($files, $reader),
+            $reader,
+        );
+        $output = $processor->process(new DocumentUnitExecutionContext(
+            1,
+            2,
+            3,
+            5,
+            4,
+            $unit->type,
+            $unit->index,
+            $sourceVersion,
+            $unit->locator,
+            'org-2/source.png',
+            'image/png',
+            'source.png',
+            'claim',
+            1,
+            1,
+            'processing_documents',
+            17,
+            static fn (): bool => true,
+        ));
+
+        self::assertSame('image', $output->normalizedPayload['document_representation']['format']);
+        self::assertSame($sourceVersion, $output->normalizedPayload['document_representation']['source_version']);
+        self::assertGreaterThan(0, $output->normalizedPayload['document_representation']['resource_usage']['duration_ms']);
+        self::assertSame(
+            ['adapter_representation', 'processor'],
+            $output->normalizedPayload['document_representation']['native_structure']['resource_measurement']['phases'],
+        );
+        self::assertSame('image_pixels', $output->normalizedPayload['document_representation']['coordinate_space']);
+    }
+
+    #[Test]
+    public function generated_png_dimension_boundary_rejects_before_pixel_decode(): void
+    {
+        $small = $this->png(1, 1);
+        $ihdr = pack('NN', 50_000, 50_000).substr($small, 24, 5);
+        $chunk = static fn (string $type, string $body): string => pack('N', strlen($body))
+            .$type.$body.pack('N', crc32($type.$body));
+        $bytes = substr($small, 0, 8).$chunk('IHDR', $ihdr).substr($small, 33);
+        $version = 'sha256:'.hash('sha256', $bytes);
+        $files = $this->createMock(FileService::class);
+        $files->method('describeCurrent')->willReturn([
+            'path' => 'org-2/source.png',
+            'body' => $bytes,
+            'content_type' => 'image/png',
+            'size' => strlen($bytes),
+            'sha256' => substr($version, 7),
+            'etag' => hash('md5', $bytes),
+        ]);
+        $preprocessor = new RasterPreprocessor($files, new BoundedVersionedS3ObjectReader($files));
+
+        $this->expectException(RasterPreprocessingException::class);
+        $this->expectExceptionMessage('unsafe_image_dimensions');
+        $preprocessor->preprocess(new RasterPreprocessInput(
+            2,
+            3,
+            4,
+            1,
+            $version,
+            'org-2/source.png',
+            'image/png',
+            strlen($bytes),
+            $version,
+            maxPixels: 20_000_000,
+        ));
+    }
+
     #[Test]
     public function legacy_pending_spreadsheet_unit_uses_native_payload_without_ocr_retry(): void
     {

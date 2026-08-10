@@ -41,20 +41,18 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private ?CadRepresentationPublisher $cadRepresentationPublisher = null,
         private ?TargetedSheetEvidenceResolver $targetedEvidenceResolver = null,
         private TargetedSheetRecheckPlanner $targetedRecheckPlanner = new TargetedSheetRecheckPlanner,
+        private DocumentRepresentationResourceMeter $resourceMeter = new SystemDocumentRepresentationResourceMeter,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
     {
         try {
-            $provenance = DocumentUnitProvenance::fromLocator($context->type, $context->sourceVersion, $context->locator);
-            $output = match (true) {
-                $context->type === DocumentUnitType::PdfPage && ($context->locator['content_type'] ?? null) === 'image/png' => $this->processRaster($context, $provenance),
-                $context->type === DocumentUnitType::CadDrawing => $this->processCad($context, $provenance),
-                $context->type === DocumentUnitType::RasterImage, $context->type === DocumentUnitType::Sketch => $this->processRaster($context, $provenance),
-                default => $this->ocr->process($context),
-            };
+            $measurement = $this->resourceMeter->measure(fn (): DocumentUnitOutput => $this->processMeasured($context));
+            if (! $measurement->result instanceof DocumentUnitOutput) {
+                throw new DocumentUnitProcessingException('document_representation_measurement_invalid');
+            }
 
-            return $this->withSourceProvenance($this->withCanonicalRepresentation($output, $context), $provenance);
+            return $this->withMeasuredRepresentation($measurement->result, $measurement);
         } catch (DocumentUnitProcessingException $exception) {
             throw $exception;
         } catch (S3ObjectLocatorException $exception) {
@@ -68,6 +66,64 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         } catch (Throwable $exception) {
             throw new DocumentUnitProcessingException('document_geometry_processing_failed', $exception);
         }
+    }
+
+    private function processMeasured(DocumentUnitExecutionContext $context): DocumentUnitOutput
+    {
+        $provenance = DocumentUnitProvenance::fromLocator($context->type, $context->sourceVersion, $context->locator);
+        $output = match (true) {
+            $context->type === DocumentUnitType::PdfPage && ($context->locator['content_type'] ?? null) === 'image/png' => $this->processRaster($context, $provenance),
+            $context->type === DocumentUnitType::CadDrawing => $this->processCad($context, $provenance),
+            $context->type === DocumentUnitType::RasterImage, $context->type === DocumentUnitType::Sketch => $this->processRaster($context, $provenance),
+            default => $this->ocr->process($context),
+        };
+
+        return $this->withSourceProvenance($this->withCanonicalRepresentation($output, $context), $provenance);
+    }
+
+    private function withMeasuredRepresentation(
+        DocumentUnitOutput $output,
+        DocumentRepresentationMeasurement $measurement,
+    ): DocumentUnitOutput {
+        $serialized = $output->normalizedPayload['document_representation'] ?? null;
+        if (! is_array($serialized)) {
+            return $output;
+        }
+        $previousUsage = is_array($serialized['resource_usage'] ?? null) ? $serialized['resource_usage'] : [];
+        $serialized['resource_usage']['duration_ms'] = max(0, (int) ($previousUsage['duration_ms'] ?? 0))
+            + $measurement->durationMs;
+        $serialized['resource_usage']['peak_memory_bytes'] = max(
+            max(0, (int) ($previousUsage['peak_memory_bytes'] ?? 0)),
+            $measurement->incrementalPeakMemoryBytes,
+        );
+        $native = is_array($serialized['native_structure'] ?? null) ? $serialized['native_structure'] : [];
+        $previousMeasurement = is_array($native['resource_measurement'] ?? null)
+            ? $native['resource_measurement']
+            : [];
+        $native['resource_measurement'] = [
+            'memory_metric' => $measurement->memoryMetric,
+            'limitations' => array_values(array_unique(array_merge(
+                is_array($previousMeasurement['limitations'] ?? null) ? $previousMeasurement['limitations'] : [],
+                $measurement->limitations,
+            ))),
+            'phases' => ['adapter_representation', 'processor'],
+        ];
+        $serialized['native_structure'] = $native;
+        $representation = DocumentRepresentation::fromArray($serialized);
+
+        return new DocumentUnitOutput(
+            version: $output->version,
+            text: $output->text,
+            confidence: $output->confidence,
+            normalizedPayload: [...$output->normalizedPayload, 'document_representation' => $representation->toArray()],
+            width: $output->width,
+            height: $output->height,
+            rotation: $output->rotation,
+            unitType: $output->unitType,
+            unitIndex: $output->unitIndex,
+            sourceVersion: $output->sourceVersion,
+            qualitySignals: $output->qualitySignals,
+        );
     }
 
     private function processCad(DocumentUnitExecutionContext $context, DocumentUnitProvenance $provenance): DocumentUnitOutput

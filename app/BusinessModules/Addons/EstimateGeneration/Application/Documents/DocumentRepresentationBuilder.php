@@ -12,6 +12,12 @@ final class DocumentRepresentationBuilder
         array $nativeStructure,
         array $capabilities,
     ): DocumentRepresentation {
+        $nativeStructure['resource_measurement'] = is_array($unit->locator['resource_measurement'] ?? null)
+            ? $unit->locator['resource_measurement']
+            : [
+                'memory_metric' => 'unavailable',
+                'limitations' => ['resource_measurement_missing'],
+            ];
         $provenance = $unit->provenance();
         $visualArtifactPath = $unit->locator['visual_artifact_path'] ?? $provenance->artifactPath;
         $bounds = $unit->locator['source_bounds'] ?? [

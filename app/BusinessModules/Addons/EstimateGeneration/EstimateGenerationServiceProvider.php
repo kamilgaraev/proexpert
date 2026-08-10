@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGener
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentationResourceMeter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceReplacementPageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceReplacementTransaction;
@@ -33,6 +34,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Producti
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverStalledEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SystemDocumentRepresentationResourceMeter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\EloquentGeometryRegenerationIntentStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryRegenerationIntentStore;
@@ -462,6 +464,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(MetadataDocumentUnitDetector::class);
         $this->app->singleton(DocumentSourceManifestStorage::class, S3DocumentSourceManifestStorage::class);
         $this->app->singleton(DocumentUnitDetector::class, ArtifactDocumentUnitDetector::class);
+        $this->app->singleton(DocumentRepresentationResourceMeter::class, SystemDocumentRepresentationResourceMeter::class);
         $this->app->singleton(DocumentProcessingUnitStore::class, EloquentDocumentProcessingUnitStore::class);
         $this->app->singleton(DocumentUnitDispatchStore::class, EloquentDocumentUnitDispatchStore::class);
         $this->app->singleton(EstimateGenerationUnitJobDispatcher::class, LaravelEstimateGenerationUnitJobDispatcher::class);

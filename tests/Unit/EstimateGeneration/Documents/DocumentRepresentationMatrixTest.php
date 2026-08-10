@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentationCapabilities;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentationResourceLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadConversionRuntime;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -43,6 +44,24 @@ final class DocumentRepresentationMatrixTest extends DatabaseLessTestCase
 
         self::assertNotEmpty($result->entities);
         self::assertMatchesRegularExpression('/^sha256:[a-f0-9]{64}$/', $result->sourceFingerprint);
+    }
+
+    #[Test]
+    public function generated_dxf_size_boundary_rejects_before_external_runtime(): void
+    {
+        $base = tempnam(sys_get_temp_dir(), 'most-dxf-boundary-');
+        self::assertIsString($base);
+        $path = $base.'.dxf';
+        self::assertTrue(rename($base, $path));
+        file_put_contents($path, "0\nSECTION\n".str_repeat("0\nLINE\n", 32));
+
+        try {
+            $this->expectException(GeometryExtractionException::class);
+            $this->expectExceptionMessage('cad_size_invalid');
+            (new CadConversionRuntime(maxInputBytes: 64))->extract($path);
+        } finally {
+            @unlink($path);
+        }
     }
 
     #[Test]
