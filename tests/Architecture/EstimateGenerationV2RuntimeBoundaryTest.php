@@ -28,6 +28,7 @@ final class EstimateGenerationV2RuntimeBoundaryTest extends TestCase
     public static function forbiddenRuntimeContracts(): iterable
     {
         yield 'internal AI attempt budget authorizer' => ['AiAttemptBudgetAuthorizer'];
+        yield 'internal AI attempt authorizer' => ['AiAttemptAuthorizer'];
         yield 'internal AI budget guard' => ['AiBudgetGuard'];
         yield 'internal AI budget reconciliation job' => ['ReconcileAiBudgetReservationsJob'];
         yield 'mutating admin failure command' => ['AdminFailureResolutionCommand'];
@@ -40,9 +41,18 @@ final class EstimateGenerationV2RuntimeBoundaryTest extends TestCase
         yield 'training dataset review state machine' => ['TrainingDatasetReviewStateMachine'];
         yield 'training dataset action policy' => ['TrainingDatasetActionPolicy'];
         yield 'finalization outbox' => ['FinalizationOutbox'];
+        yield 'finalization outbox table' => ['estimate_generation_finalization_outbox'];
         yield 'finalization delivery store' => ['FinalizationDeliveryStore'];
+        yield 'finalization delivery table' => ['estimate_generation_finalization_deliveries'];
+        yield 'finalization delivery command' => ['DeliverFinalization'];
+        yield 'finalization claim' => ['FinalizationClaim'];
+        yield 'finalization delivery receipt' => ['FinalizationDeliveryReceipt'];
         yield 'document manifest publication fence' => ['DocumentManifestPublicationFence'];
         yield 'project model correction chain projector' => ['ProjectModelCorrectionChainProjector'];
+        yield 'project model correction list' => ['ProjectModelCorrectionList'];
+        yield 'project model correction conflict' => ['ProjectModelCorrectionConflict'];
+        yield 'legacy CAD adapter namespace' => ['Documents\\Cad\\CadDocumentAdapter'];
+        yield 'legacy spreadsheet adapter namespace' => ['Documents\\Spreadsheet\\SpreadsheetDocumentAdapter'];
     }
 
     public function test_product_contracts_survive_runtime_cleanup(): void
@@ -76,6 +86,18 @@ final class EstimateGenerationV2RuntimeBoundaryTest extends TestCase
         ] as $contract) {
             self::assertStringContainsString($contract, $routes, $contract.' must survive cleanup.');
         }
+    }
+
+    public function test_training_dataset_model_has_no_processing_lease_state(): void
+    {
+        $source = (string) file_get_contents(
+            dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/Models/EstimateGenerationTrainingDataset.php',
+        );
+
+        self::assertStringNotContainsString('processing_token', $source);
+        self::assertStringNotContainsString('processing_lease_expires_at', $source);
+        self::assertStringNotContainsString('processing_attempt', $source);
+        self::assertStringNotContainsString("STATUS_PROCESSING = 'processing'", $source);
     }
 
     /** @return array<string, string> */

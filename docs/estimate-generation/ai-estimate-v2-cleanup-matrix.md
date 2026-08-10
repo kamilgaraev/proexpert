@@ -15,8 +15,8 @@
 | Журнал фактического AI-usage | KEEP | `AiUsageStore` | Одна запись фактической попытки, токены, стоимость, длительность и результат |
 | Каталог AI-цен и расчёт фактической стоимости | KEEP | `AiPricingCatalog`, `AiCostCalculator` | Используется только для наблюдаемости и экономики |
 | `estimate_generation_ai_operations` | KEEP | `EloquentEffectiveSettingsOperationStore` | Хранит неизменяемый snapshot эффективных настроек операции; не участвует в reserve/claim/settle |
-| `estimate_generation_ai_budget_reservations` | DELETE | — | Нет runtime-callers; таблица удаляется forward-only migration |
-| SQL-функции `eg_*_ai_budget` | DELETE | — | Нет runtime-callers; функции удаляются forward-only migration |
+| `estimate_generation_ai_budget_reservations` | DELETE | — | Runtime-callers отсутствуют; удаляется `2026_08_10_000100_drop_internal_ai_budget_accounting.php` |
+| SQL-функции `eg_*_ai_budget` | DELETE | — | Runtime-callers отсутствуют; удаляются `2026_08_10_000100_drop_internal_ai_budget_accounting.php` |
 | `AiAttemptBudgetAuthorizer`, `AiBudgetGuard` | DELETE | — | Классы и container bindings отсутствуют |
 | `ReconcileAiBudgetReservationsJob` | DELETE | — | Job, schedule, binding и тесты удалены |
 | Безопасная запись технической ошибки | KEEP | `FailureRecorder` | Ошибка нормализуется и не содержит чувствительных данных |
@@ -26,16 +26,16 @@
 | Read-only история сбоев | KEEP | `FailureRecorder` / read model | Не изменяет pipeline или сессию |
 | Доверенный evaluation corpus | KEEP | `EvaluationCorpus` | Только reviewed examples участвуют в release gate |
 | Версии AI-контрактов, моделей и промптов | KEEP | Evaluation metadata | Версия входит в benchmark result |
-| Training lease recovery | DELETE | — | Scheduled recovery и lease processor отсутствуют |
+| Training lease recovery | DELETE | — | Scheduled recovery и lease processor отсутствуют; trigger, index и lease-поля удаляются `2026_08_10_000200_drop_obsolete_runtime_state.php` |
 | Training online migration runtime | DELETE | — | Нет runtime migration orchestration |
 | Автоматическое признание исправления разметкой | DELETE | — | Исправление создаёт только candidate example |
 | Канонический `DocumentUnitAdapter` | KEEP | `Application/Documents` | Определяет units и единый `DocumentRepresentation` |
 | Native CAD/XLSX readers | REPLACE | `CadStructureExtractor`, `SpreadsheetStructureExtractor` | Не публикуют второй document contract |
 | `PipelineRunner` | KEEP | `Pipeline` | Единственный исполняемый pipeline |
 | `EloquentPipelineCheckpointStore` | KEEP | `Pipeline` | Единственный durable checkpoint store |
-| Finalization outbox/delivery abstractions | DELETE | — | Заменены `PublishDraftOnce` поверх natural key `estimate_generation_sessions.applied_estimate_id` |
+| Finalization outbox/delivery abstractions | DELETE | — | Заменены `PublishDraftOnce` поверх natural key `estimate_generation_sessions.applied_estimate_id`; таблицы удаляются `2026_08_10_000200_drop_obsolete_runtime_state.php` |
 | Обычный writer сметы МОСТ | KEEP | `GeneratedEstimateWriter` | Единственная граница записи обычной сметы |
-| Correction chain projector | DELETE | — | Текущее состояние читается напрямую, история — append-only decisions |
+| Correction chain projector | DELETE | — | Текущее состояние читается последней записью утверждения, история — append-only decisions; runtime-символы запрещены architecture test |
 | Журнал решений и отмена | REPLACE | `EstimateDecisionRepository` | Apply/revert используют optimistic version и idempotency key |
 
 ## Оставшиеся claims и leases

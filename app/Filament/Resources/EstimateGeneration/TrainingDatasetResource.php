@@ -264,7 +264,6 @@ class TrainingDatasetResource extends Resource
     {
         return [
             EstimateGenerationTrainingDataset::STATUS_DRAFT => trans_message('estimate_generation.training_status_uploaded'),
-            EstimateGenerationTrainingDataset::STATUS_PROCESSING => trans_message('estimate_generation.training_status_processing'),
             EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED => trans_message('estimate_generation.training_status_processed'),
             EstimateGenerationTrainingDataset::STATUS_APPROVED => trans_message('estimate_generation.training_status_processed'),
             EstimateGenerationTrainingDataset::STATUS_REJECTED => trans_message('estimate_generation.training_status_failed'),

@@ -434,30 +434,30 @@ interface PublishDraftOnce
 
 Publication выполняется в транзакции с unique key `(session_id, pipeline_version, artifact_hash)` и повторно возвращает существующий result.
 
-- [ ] **Step 1: Написать RED contract test повторной финализации**
+- [x] **Step 1: Написать RED contract test повторной финализации**
 
 Два последовательных и два конкурентных вызова с одним ключом создают ровно одну обычную смету; сбой до commit не оставляет publication marker; повтор после сбоя безопасен.
 
-- [ ] **Step 2: Реализовать PublishDraftOnce поверх обычного Estimate writer**
+- [x] **Step 2: Реализовать PublishDraftOnce поверх обычного Estimate writer**
 
 Не вводить новый outbox. Если существующий Estimate writer уже транзакционен и имеет natural unique key, использовать его; иначе добавить минимальный publication marker в forward-only migration.
 
-- [ ] **Step 3: Перевести DeliverFinalization и PublishValidatedDraft на один service**
+- [x] **Step 3: Перевести DeliverFinalization и PublishValidatedDraft на один service**
 
 После переноса удалить outbox/delivery interfaces, implementations, bindings и тесты их внутренней механики.
 
-- [ ] **Step 4: Упростить claims и leases**
+- [x] **Step 4: Упростить claims и leases**
 
 Оставить lease только там, где один и тот же queue unit реально может исполняться конкурентно дольше visibility timeout. Claims, не защищающие доказанный race, удалить. Зафиксировать оставшиеся claims в cleanup matrix с конкретным race-test.
 
-- [ ] **Step 5: Запустить pipeline contract tests**
+- [x] **Step 5: Запустить pipeline contract tests**
 
 ```powershell
 vendor\bin\phpunit tests\Feature\EstimateGeneration\Pipeline\SinglePipelineRuntimeContractTest.php tests\Feature\EstimateGeneration\Pipeline\PipelineCheckpointPostgresContractTest.php tests\Unit\EstimateGeneration\Pipeline
 vendor\bin\phpstan analyse app\BusinessModules\Addons\EstimateGeneration\Pipeline --memory-limit=1G
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 refactor[backend]: оставлен единый pipeline AI-смет
@@ -491,30 +491,30 @@ ApplyEstimateDecision::handle(
 ): EstimateDecision;
 ```
 
-- [ ] **Step 1: Написать RED-тест apply/revert/version conflict**
+- [x] **Step 1: Написать RED-тест apply/revert/version conflict**
 
 Проверить optimistic locking, idempotency key, неизменяемый audit, revert как новую запись и отсутствие полного replay correction chain для чтения текущего состояния.
 
-- [ ] **Step 2: Реализовать current projection + append-only audit**
+- [x] **Step 2: Реализовать current projection + append-only audit**
 
 Текущее значение хранится в канонической проекции. Журнал содержит before/after, actor, reason, source command и timestamp. Revert применяет обратное изменение через тот же service.
 
-- [ ] **Step 3: Сохранить совместимость HTTP-контракта**
+- [x] **Step 3: Сохранить совместимость HTTP-контракта**
 
 Существующие клиенты получают прежние бизнес-поля истории, но backend больше не использует chain projector. Технические legacy-поля не возвращать в UI.
 
-- [ ] **Step 4: Удалить legacy chain и его bindings/tests**
+- [x] **Step 4: Удалить legacy chain и его bindings/tests**
 
 Архитектурный тест должен запрещать `ProjectModelCorrectionChainProjector` в production runtime.
 
-- [ ] **Step 5: Запустить decision tests и PHPStan**
+- [x] **Step 5: Запустить decision tests и PHPStan**
 
 ```powershell
 vendor\bin\phpunit tests\Feature\EstimateGeneration\DecisionJournalApiTest.php tests\Feature\EstimateGeneration\ProjectModelCorrectionApiTest.php
 vendor\bin\phpstan analyse app\BusinessModules\Addons\EstimateGeneration\Domain\Decisions app\BusinessModules\Addons\EstimateGeneration\Http --memory-limit=1G
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 refactor[backend]: упрощен журнал решений AI-сметы
@@ -527,11 +527,11 @@ refactor[backend]: упрощен журнал решений AI-сметы
 - Modify: `tests/Architecture/EstimateGenerationV2RuntimeBoundaryTest.php`
 - Create: `docs/estimate-generation/ai-estimate-v2-cleanup-evidence.md`
 
-- [ ] **Step 1: Повторно построить caller map**
+- [x] **Step 1: Повторно построить caller map**
 
 Для каждого `DELETE` убедиться, что отсутствуют production callers, routes, schedules, bindings, frontend constants и изменяющие Filament actions.
 
-- [ ] **Step 2: Проверить runtime-запреты**
+- [x] **Step 2: Проверить runtime-запреты**
 
 ```powershell
 vendor\bin\phpunit tests\Architecture\EstimateGenerationV2RuntimeBoundaryTest.php tests\Architecture\EstimateGenerationOrdinaryEstimateBoundaryTest.php
@@ -539,15 +539,15 @@ vendor\bin\phpunit tests\Architecture\EstimateGenerationV2RuntimeBoundaryTest.ph
 
 Expected: PASS; исторические миграции разрешены только explicit allowlist.
 
-- [ ] **Step 3: Проверить migration safety статически**
+- [x] **Step 3: Проверить migration safety статически**
 
 В evidence перечислить forward-only cleanup migrations, порядок deploy (`deploy code without callers` → `observe` → `run schema cleanup in controlled deploy`) и rollback boundary. Миграции локально не запускать.
 
-- [ ] **Step 4: Выполнить один самостоятельный review-pass**
+- [x] **Step 4: Выполнить один самостоятельный review-pass**
 
 Основной агент перечитывает staged diff как reviewer: ищет оставшиеся параллельные runtime, dangling bindings, schedule references, удалённые API imports и потерю пользовательской квоты. Результат записывает в evidence без субагента.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 docs[backend]: подтверждена очистка AI-сметчика

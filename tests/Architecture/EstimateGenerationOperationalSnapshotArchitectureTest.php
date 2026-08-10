@@ -42,8 +42,8 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
         self::assertStringContainsString('review_input_version', $source);
         self::assertStringContainsString('actionRequiredSql()', $source);
         self::assertStringContainsString('facts_summary->', $this->source('Services/Quality/DocumentReadinessClassifier.php'));
-        self::assertStringContainsString('outbox_max_updated_at', $source);
-        self::assertStringContainsString('deliveries_max_updated_at', $source);
+        self::assertStringNotContainsString('estimate_generation_finalization_outbox', $source);
+        self::assertStringNotContainsString('estimate_generation_finalization_deliveries', $source);
         foreach ([
             'pages_max_updated_at',
             'facts_max_updated_at',
@@ -58,7 +58,7 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
             self::assertStringContainsString($watermark, $source);
         }
         self::assertStringNotContainsString('CURRENT_TIMESTAMP - lease_expires_at', $source);
-        self::assertStringContainsString('public const QUERY_BUDGET = 14;', $source);
+        self::assertStringContainsString('public const QUERY_BUDGET = 13;', $source);
     }
 
     #[Test]

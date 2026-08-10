@@ -5,19 +5,13 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
-use App\BusinessModules\Features\BudgetEstimates\Services\Normative\NormativeSearchService;
 use App\Models\NormativeRate;
 use App\Models\NormativeRateResource;
-use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 
 final class LegacyNormativeRateCatalogAdapter
 {
     private const VERSION_KEY = 'normative-rates-v1';
-
-    public function __construct(
-        private readonly ?NormativeSearchService $searchService = null,
-    ) {}
 
     /** @return array<string, mixed>|null */
     public function search(array $workItem, array $context = [], int $limit = 10): ?array
@@ -27,17 +21,19 @@ final class LegacyNormativeRateCatalogAdapter
             return null;
         }
 
-        $service = $this->searchService ?? app(NormativeSearchService::class);
-        $paginator = $service->search($query, ['per_page' => max(1, min($limit * 2, 40))]);
-        if ($paginator->isEmpty()) {
-            $paginator = $service->fuzzySearch($query, ['per_page' => max(1, min($limit * 2, 40))]);
+        $resultLimit = max(1, min($limit * 2, 40));
+        $rates = NormativeRate::query()
+            ->with(['collection', 'section', 'resources'])
+            ->search($query)
+            ->limit($resultLimit)
+            ->get();
+        if ($rates->isEmpty()) {
+            $rates = NormativeRate::query()
+                ->with(['collection', 'section', 'resources'])
+                ->fuzzySearch($query)
+                ->limit($resultLimit)
+                ->get();
         }
-
-        $rates = new EloquentCollection(collect($paginator->items())
-            ->filter(static fn (mixed $rate): bool => $rate instanceof NormativeRate)
-            ->values()
-            ->all());
-        $rates->loadMissing(['collection', 'section', 'resources']);
 
         return $this->matchPayload($rates, $workItem, $context, $limit);
     }
