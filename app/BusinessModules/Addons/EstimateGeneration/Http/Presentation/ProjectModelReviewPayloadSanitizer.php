@@ -24,7 +24,17 @@ final class ProjectModelReviewPayloadSanitizer
             default => [],
         };
 
-        return $this->shape($payload, $keys);
+        $result = $this->shape($payload, $keys);
+        if ($kind === 'room' && array_key_exists('polygon', $result)) {
+            $polygon = $this->polygon($result['polygon']);
+            if ($polygon === null) {
+                unset($result['polygon']);
+            } else {
+                $result['polygon'] = $polygon;
+            }
+        }
+
+        return $result;
     }
 
     /** @param array<string,mixed> $value @return array<string,mixed> */
@@ -84,6 +94,31 @@ final class ProjectModelReviewPayloadSanitizer
         return null;
     }
 
+    private function polygon(mixed $value): ?array
+    {
+        if (! is_array($value) || ! array_is_list($value) || count($value) < 3 || count($value) > 200) {
+            return null;
+        }
+
+        $polygon = [];
+        foreach ($value as $point) {
+            if (! is_array($point) || ! array_is_list($point) || count($point) !== 2
+                || ! is_numeric($point[0]) || ! is_numeric($point[1])) {
+                return null;
+            }
+
+            $x = (float) $point[0];
+            $y = (float) $point[1];
+            if (! is_finite($x) || ! is_finite($y)) {
+                return null;
+            }
+
+            $polygon[] = [$x, $y];
+        }
+
+        return $polygon;
+    }
+
     /** @param array<string,mixed> $payload @return array<string,mixed> */
     private function table(array $payload): array
     {
@@ -94,12 +129,18 @@ final class ProjectModelReviewPayloadSanitizer
         $columns = array_values(array_filter($columns, static fn (mixed $column): bool => is_string($column) && $column !== ''));
         $rows = [];
         foreach (is_array($payload['rows'] ?? null) ? array_slice($payload['rows'], 0, 200) : [] as $row) {
-            if (! is_array($row) || array_is_list($row)) continue;
+            if (! is_array($row) || array_is_list($row)) {
+                continue;
+            }
             $safe = [];
             foreach ($columns as $column) {
-                if (! array_key_exists($column, $row)) continue;
+                if (! array_key_exists($column, $row)) {
+                    continue;
+                }
                 $value = $this->value($row[$column]);
-                if ($value !== null && ! is_array($value)) $safe[$column] = $value;
+                if ($value !== null && ! is_array($value)) {
+                    $safe[$column] = $value;
+                }
             }
             $rows[] = $safe;
         }

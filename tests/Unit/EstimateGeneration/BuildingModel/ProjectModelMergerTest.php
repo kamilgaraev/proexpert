@@ -71,6 +71,38 @@ final class ProjectModelMergerTest extends TestCase
     }
 
     #[Test]
+    public function source_priority_never_hides_incompatible_evidenced_facts(): void
+    {
+        $entity = $this->entity('room-1', 'room');
+        $cad = $this->assertion('assertion:room-1:area:cad', 'room-1', 'area', ['value' => 18, 'unit' => 'm2', 'source' => 'cad']);
+        $reconciled = new ProjectModelCorrection(
+            10,
+            1,
+            2,
+            3,
+            $this->sourceVersion(),
+            'correction:room-1:area:reconciled',
+            $cad->stableKey,
+            'source_reconciliation',
+            ['value' => 21, 'unit' => 'm2'],
+            'Получено из связанного листа',
+            42,
+        );
+
+        $merged = $this->merge($entity, [$cad], [$reconciled], [
+            $this->binding($entity->stableKey, $cad, null, 'cad', ['value' => 18, 'unit' => 'm2']),
+            $this->binding($entity->stableKey, $cad, $reconciled, 'reconciled_geometry', ['value' => 21, 'unit' => 'm2']),
+        ]);
+
+        self::assertCount(0, $merged->resolved);
+        self::assertCount(1, $merged->conflicts);
+        self::assertSame(
+            ['assertion:room-1:area:cad', 'correction:room-1:area:reconciled'],
+            iterator_to_array($merged->conflicts, false)[0]->candidateStableKeys,
+        );
+    }
+
+    #[Test]
     public function resolved_values_cannot_be_fabricated_and_projection_requires_canonical_proof(): void
     {
         self::assertFalse((new \ReflectionMethod(ProjectModelResolvedValue::class, '__construct'))->isPublic());
@@ -124,5 +156,8 @@ final class ProjectModelMergerTest extends TestCase
         return new ProjectModelEvidenceBinding(10, 1, 2, 3, $this->sourceVersion(), $entityStableKey, $assertion->stableKey, $correction?->stableKey, 17, $source, ProjectModelValueFingerprint::for($value), 'sha256:'.str_repeat('c', 64), 0);
     }
 
-    private function sourceVersion(): string { return 'sha256:'.str_repeat('b', 64); }
+    private function sourceVersion(): string
+    {
+        return 'sha256:'.str_repeat('b', 64);
+    }
 }

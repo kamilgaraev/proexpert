@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\BuildingModelSchema;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionConflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionUndoUnavailable;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision;
 use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use RuntimeException;
@@ -14,7 +15,10 @@ use stdClass;
 
 final readonly class ApplyProjectModelCorrection
 {
-    public function __construct(private DatabaseManager $database) {}
+    public function __construct(
+        private DatabaseManager $database,
+        private ApplyProjectModelDecision $projectModelDecision,
+    ) {}
 
     public function apply(
         int $organizationId,
@@ -96,6 +100,17 @@ final readonly class ApplyProjectModelCorrection
             $idempotencyHash = hash('sha256', $idempotencyKey);
             $existing = $this->idempotentCorrection($model, $organizationId, $projectId, $sessionId, $idempotencyHash, $requestHash);
             if ($existing !== null) {
+                $this->syncDecision(
+                    $existing,
+                    $organizationId,
+                    $projectId,
+                    $sessionId,
+                    $expectedSourceVersion,
+                    $assertionStableKey,
+                    $actorId,
+                    $reason,
+                );
+
                 return $this->result($existing, true);
             }
             $assertion = $this->assertion($model, $organizationId, $projectId, $sessionId, $expectedSourceVersion, $assertionStableKey);
@@ -139,24 +154,44 @@ final readonly class ApplyProjectModelCorrection
                     'reverted_correction_id' => $revertedCorrectionId,
                 ],
             ];
+            $correctionStableKey = $this->stableKey($idempotencyHash);
+            $selectedFactStableKey = 'fact:decision:'.substr($idempotencyHash, 0, 48);
             $id = $this->database->table('estimate_generation_project_model_corrections')->insertGetId([
                 'building_model_id' => (int) $model->id,
                 'organization_id' => $organizationId,
                 'project_id' => $projectId,
                 'session_id' => $sessionId,
                 'source_version' => $expectedSourceVersion,
-                'stable_key' => $this->stableKey($idempotencyHash),
+                'stable_key' => $correctionStableKey,
                 'assertion_id' => (int) $assertion->id,
                 'correction_type' => 'manual',
                 'payload' => BuildingModelSchema::canonicalJson($payload),
                 'reason' => trim($reason),
                 'actor_id' => $actorId,
+                'decision_actor_type' => 'user',
+                'system_actor_key' => null,
+                'decision_version' => $expectedDecisionVersion + 1,
+                'target_conflict_key' => null,
+                'selected_fact_stable_key' => $selectedFactStableKey,
+                'evidence_lineage' => BuildingModelSchema::canonicalJson(
+                    $this->decisionEvidence($organizationId, $projectId, $sessionId, (int) $assertion->id),
+                ),
                 'created_at' => $occurredAt,
             ]);
             $created = $this->database->table('estimate_generation_project_model_corrections')->where('id', $id)->first();
             if (! $created instanceof stdClass) {
                 throw new RuntimeException('project_model_correction_persist_failed');
             }
+            $this->syncDecision(
+                $created,
+                $organizationId,
+                $projectId,
+                $sessionId,
+                $expectedSourceVersion,
+                $assertionStableKey,
+                $actorId,
+                $reason,
+            );
 
             return $this->result($created, false);
         }, 3);
@@ -352,6 +387,48 @@ final readonly class ApplyProjectModelCorrection
     private function stableKey(string $idempotencyHash): string
     {
         return 'correction:'.$idempotencyHash;
+    }
+
+    private function syncDecision(
+        stdClass $correction,
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $factId,
+        int $actorId,
+        string $reason,
+    ): void {
+        $audit = $this->audit($correction);
+        $value = $audit['new_canonical_value'] ?? null;
+        if (! is_array($value) || array_is_list($value)) {
+            throw new RuntimeException('project_model_correction_decision_invalid');
+        }
+        $this->projectModelDecision->apply(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            sessionId: $sessionId,
+            sourceVersion: $sourceVersion,
+            factId: $factId,
+            value: $value['value'] ?? $value,
+            unit: is_string($value['unit'] ?? null) ? $value['unit'] : null,
+            actorId: (string) $actorId,
+            reason: $reason,
+            decisionId: (string) $correction->stable_key,
+        );
+    }
+
+    private function decisionEvidence(int $organizationId, int $projectId, int $sessionId, int $assertionId): array
+    {
+        return $this->database->table('estimate_generation_project_model_fact_evidence')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('fact_id', $assertionId)
+            ->orderBy('evidence_id')
+            ->pluck('evidence_id')
+            ->map(static fn ($id): string => 'evidence:'.$id)
+            ->all();
     }
 
     private function result(stdClass $correction, bool $idempotent): array

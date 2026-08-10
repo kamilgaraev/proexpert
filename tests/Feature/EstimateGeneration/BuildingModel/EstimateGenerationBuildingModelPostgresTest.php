@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRep
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceInvalidator;
@@ -330,7 +331,11 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
 
     private function repository(Connection $connection): BuildingModelRepository
     {
-        return new BuildingModelRepository(new EloquentBuildingModelStore($connection), new EloquentEvidenceRepository($connection));
+        return new BuildingModelRepository(
+            new EloquentBuildingModelStore($connection),
+            new EloquentEvidenceRepository($connection),
+            new EloquentProjectModelRepository(app('db')),
+        );
     }
 
     private function model(int $evidenceId, float $height): NormalizedBuildingModelData

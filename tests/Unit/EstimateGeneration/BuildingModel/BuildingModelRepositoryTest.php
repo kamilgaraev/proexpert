@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepos
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class BuildingModelRepositoryTest extends TestCase
 {
@@ -77,7 +78,11 @@ final class BuildingModelRepositoryTest extends TestCase
         ));
         $context = new BuildingModelOperationContext($organizationId, 2, 3, 'sha256:'.str_repeat('b', 64));
 
-        return [new BuildingModelRepository(new InMemoryBuildingModelStore, $evidence), $context, $evidence];
+        return [
+            new BuildingModelRepository(new InMemoryBuildingModelStore, $evidence, new InMemoryProjectModelRepository),
+            $context,
+            $evidence,
+        ];
     }
 
     private function model(float $height): NormalizedBuildingModelData

@@ -11,10 +11,11 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBu
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\Organization;
 use App\Models\Project;
@@ -211,6 +212,7 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
         $model = (new BuildingModelRepository(
             new EloquentBuildingModelStore(DB::connection()),
             new EloquentEvidenceRepository(DB::connection()),
+            new EloquentProjectModelRepository(app('db')),
         ))->store($context, new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
             new FloorData('floor-1', 0, 2.8, [], [], [], [], [$evidence->id], 1, 'confirmed'),
         ], [], 'building-model:v1'));

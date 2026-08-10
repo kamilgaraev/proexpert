@@ -9,7 +9,17 @@ use JsonException;
 
 final readonly class ProjectModelEntity
 {
-    public const KINDS = ['room', 'wall', 'opening', 'dimension', 'table', 'structural_element', 'quantity'];
+    public const KINDS = [
+        'room',
+        'wall',
+        'opening',
+        'dimension',
+        'material',
+        'equipment',
+        'quantity',
+        'table',
+        'structural_element',
+    ];
 
     public function __construct(
         public int $buildingModelId,
@@ -96,6 +106,8 @@ final readonly class ProjectModelEntity
                 && in_array($payload['type'] ?? null, ['door', 'window', 'gate'], true)
                 && $hasPositiveNumber('width_m') && $hasPositiveNumber('height_m'),
             'dimension', 'quantity' => $hasUnitValue(),
+            'material' => is_string($payload['name'] ?? null) && trim($payload['name']) !== '',
+            'equipment' => is_string($payload['position'] ?? null) && trim($payload['position']) !== '',
             'table' => is_array($payload['columns'] ?? null)
                 && array_is_list($payload['columns'])
                 && $payload['columns'] !== []

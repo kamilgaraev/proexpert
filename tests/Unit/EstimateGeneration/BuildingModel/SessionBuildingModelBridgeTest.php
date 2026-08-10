@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOpe
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\InMemoryBuildingModelStore;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelBridge;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelUnitData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
@@ -18,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomAnnotationFloor
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class SessionBuildingModelBridgeTest extends TestCase
 {
@@ -536,13 +538,15 @@ final class SessionBuildingModelBridgeTest extends TestCase
     private function bridge(): array
     {
         $evidence = new InMemoryEvidenceRepository;
-        $repository = new BuildingModelRepository(new InMemoryBuildingModelStore, $evidence);
+        $projectModel = new InMemoryProjectModelRepository;
+        $repository = new BuildingModelRepository(new InMemoryBuildingModelStore, $evidence, $projectModel);
 
         return [new SessionBuildingModelBridge(
             $evidence,
             new GeometryBuildingModelInputMapper,
             new BuildingModelAssembler,
             $repository,
+            new ProjectModelEvidenceWriter($projectModel, $evidence),
         ), $repository, $evidence];
     }
 

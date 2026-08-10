@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+
 final readonly class DocumentSourceReplacementCoordinator
 {
     public function __construct(
         private DocumentSourceReplacementTransaction $transaction,
         private EvidenceSourceReplacementInvalidator $invalidator,
         private DocumentSourceReplacementPageStore $pages,
+        private ProjectModelRepository $projectModel,
     ) {}
 
     public function commit(
@@ -45,6 +48,13 @@ final readonly class DocumentSourceReplacementCoordinator
                         $sessionId,
                         $documentId,
                         $previousSourceVersion,
+                    );
+                    $this->projectModel->invalidateSourceVersion(
+                        $organizationId,
+                        $projectId,
+                        $sessionId,
+                        $previousSourceVersion,
+                        $acceptedSourceVersion,
                     );
                 }
             }

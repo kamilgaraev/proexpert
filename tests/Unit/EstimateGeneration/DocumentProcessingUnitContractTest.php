@@ -766,6 +766,14 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString("->where('source_version', \$sourceVersion)", $finalizer);
         self::assertStringContainsString("whereNotIn('processing_unit_id', \$currentUnitIds)", $finalizer);
         self::assertStringContainsString("'units_finalized_source_version' => \$sourceVersion", $finalizer);
+        $rebuild = strpos($finalizer, '$this->buildingModels->rebuild');
+        $marker = strpos($finalizer, "'units_reconciled_source_version' => \$sourceVersion");
+        $readiness = strpos($finalizer, '$this->sessions->reconcile');
+        self::assertIsInt($rebuild);
+        self::assertIsInt($marker);
+        self::assertIsInt($readiness);
+        self::assertLessThan($marker, $rebuild);
+        self::assertLessThan($readiness, $marker);
         self::assertIsString($provider);
         self::assertStringContainsString('RecoverEstimateGenerationUnitsJob', $provider);
         self::assertStringContainsString('->everyMinute()', $provider);

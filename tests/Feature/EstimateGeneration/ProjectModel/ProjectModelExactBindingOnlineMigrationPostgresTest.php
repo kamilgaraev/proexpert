@@ -9,15 +9,16 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRep
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentConfirmedProjectModelValues;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelUnitData;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\ProjectModelReadProjection;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\Organization;
 use App\Models\Project;
@@ -180,8 +181,19 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
         foreach (['2026_08_01_000225_add_project_model_correction_scope_unique.php', '2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php', '2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php'] as $migration) {
             (require EstimateGenerationContractDatabaseProvisioner::subjectMigration('project-model', $migration, $root))->up();
         }
+        foreach ([
+            '2026_08_10_000600_consolidate_estimate_project_model_v2.php',
+            '2026_08_10_000610_secure_estimate_project_model_v2_schema.php',
+            '2026_08_10_000620_backfill_estimate_project_model_v2.php',
+            '2026_08_10_000630_finalize_estimate_project_model_v2_constraints.php',
+        ] as $migration) {
+            (require EstimateGenerationContractDatabaseProvisioner::subjectMigration('project-model', $migration, $root))->up();
+        }
         $fixture = $this->fixture();
-        (new ProjectModelEvidenceWriter(DB::connection()))->write($fixture['stored_model'], [new SessionBuildingModelUnitData(
+        (new ProjectModelEvidenceWriter(
+            new EloquentProjectModelRepository(app('db')),
+            new EloquentEvidenceRepository(DB::connection()),
+        ))->write($fixture['stored_model'], [new SessionBuildingModelUnitData(
             1,
             1,
             2,
@@ -194,12 +206,15 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
                 'assertion' => ['type' => 'dimension', 'source' => 'cad', 'value' => ['value' => 7.94, 'unit' => 'm2']],
                 'locator' => ['handle' => 'cad:room:1', 'page' => 2, 'unit_index' => 2, 'document_id' => 1],
             ]]],
-        )]);
+        )], [$fixture['evidence_id']]);
 
-        $model = DB::table('estimate_generation_building_models')->where('id', $fixture['building_model_id'])->first();
-        $values = (new EloquentConfirmedProjectModelValues(app('db')))->forModel($model);
+        $values = (new ProjectModelReadProjection(new EloquentProjectModelRepository(app('db'))))->forScope(
+            $fixture['organization_id'],
+            $fixture['project_id'],
+            $fixture['session_id'],
+        )['effective_values'];
         self::assertCount(1, $values);
-        self::assertSame(['value' => 7.94, 'unit' => 'm2'], $values[0]['value']);
+        self::assertSame(['value' => '7.94', 'unit' => 'm2'], $values[0]['value']);
     }
 
     private function addFirstAuditColumn(): void
@@ -265,6 +280,7 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
         $model = (new BuildingModelRepository(
             new EloquentBuildingModelStore(DB::connection()),
             new EloquentEvidenceRepository(DB::connection()),
+            new EloquentProjectModelRepository(app('db')),
         ))->store($context, new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
             new FloorData('floor-1', 0, 2.8, [], [], [], [], [$evidence->id], 1, 'confirmed'),
         ], [], 'building-model:v1'));
