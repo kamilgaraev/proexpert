@@ -106,26 +106,6 @@ final readonly class EffectiveEstimateGenerationSettings
         return $this->boundedInt('limits', 'max_total_pages', 1, 10000);
     }
 
-    public function dailyBudget(): string
-    {
-        return $this->money('daily');
-    }
-
-    public function monthlyBudget(): string
-    {
-        return $this->money('monthly');
-    }
-
-    public function currency(): string
-    {
-        $currency = $this->boundedString('budgets', 'currency');
-        if (preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
-            throw new DomainException('estimate_generation_effective_currency_invalid');
-        }
-
-        return $currency;
-    }
-
     public function requiresManualReview(string $reason): bool
     {
         $value = $this->snapshot['manual_review'][$reason] ?? null;
@@ -171,13 +151,4 @@ final readonly class EffectiveEstimateGenerationSettings
         return $value;
     }
 
-    private function money(string $key): string
-    {
-        $value = $this->boundedString('budgets', $key);
-        if (preg_match('/^(?:0|[1-9]\d{0,17})\.\d{2}$/', $value) !== 1) {
-            throw new DomainException('estimate_generation_effective_budget_invalid');
-        }
-
-        return $value;
-    }
 }

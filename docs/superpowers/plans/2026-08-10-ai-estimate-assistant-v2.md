@@ -185,7 +185,7 @@ test[backend]: зафиксирована граница очистки AI-см�
 - Produces: `AiUsageStore::record(AiUsageData $usage): void` без reserve/claim/settle/reconcile.
 - Preserves: пользовательскую квоту `AiEstimateQuotaService`; она не относится к удаляемому внутреннему бюджету.
 
-- [ ] **Step 1: Написать RED unit-тест простого журнала стоимости**
+- [x] **Step 1: Написать RED unit-тест простого журнала стоимости**
 
 Проверить один физический provider result:
 
@@ -208,7 +208,7 @@ self::assertSame(184, $store->forSession('session-1')->totalCostMinor());
 
 Повтор того же `operationId` не создаёт вторую запись, но не требует отдельной budget reservation.
 
-- [ ] **Step 2: Упростить исполнение AI-попытки**
+- [x] **Step 2: Упростить исполнение AI-попытки**
 
 `AiUsageAttemptExecutor` должен выполнять только:
 
@@ -222,17 +222,17 @@ return typed provider result
 
 Удалить reserve, wire claim, settle, release и reconciliation branches.
 
-- [ ] **Step 3: Удалить bindings и schedule**
+- [x] **Step 3: Удалить bindings и schedule**
 
 Из `EstimateGenerationServiceProvider` удалить binding `AiAttemptBudgetAuthorizer`, schedule `ReconcileAiBudgetReservationsJob` и связанные настройки. Оставить provider safety caps как обычную конфигурацию максимального размера запроса, а не финансовый ledger.
 
-- [ ] **Step 4: Добавить forward-only cleanup migration**
+- [x] **Step 4: Добавить forward-only cleanup migration**
 
 Migration `up()` должна удалить SQL-функции `eg_reserve_ai_budget`, `eg_claim_ai_budget_wire`, `eg_mark_ai_budget_sent`, `eg_settle_ai_budget`, `eg_release_ai_budget`, `eg_mark_ai_budget_reconciliation`, `eg_reconcile_expired_ai_budgets`, затем таблицы `estimate_generation_ai_budget_reservations` и `estimate_generation_ai_operations`, если последняя больше не используется журналом фактического usage.
 
 Migration `down()` должна бросать `RuntimeException` с техническим сообщением о необратимой cleanup migration; восстанавливать удалённую архитектуру запрещено.
 
-- [ ] **Step 5: Проверить отсутствие связи с пользовательской квотой**
+- [x] **Step 5: Проверить отсутствие связи с пользовательской квотой**
 
 Run:
 
@@ -243,7 +243,7 @@ vendor\bin\phpstan analyse app\BusinessModules\Addons\EstimateGeneration\Observa
 
 Expected: quota tests проходят; PHPStan command корректируется до существующих изменённых файлов после удаления job.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 refactor[backend]: удалена внутренняя бухгалтерия AI-вызовов

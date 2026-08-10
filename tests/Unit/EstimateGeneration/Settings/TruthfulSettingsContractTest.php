@@ -93,7 +93,6 @@ final class TruthfulSettingsContractTest extends TestCase
             'confidence' => ['classification' => '0.6100', 'geometry' => '0.6200', 'normative_matching' => '0.6300'],
             'enabled_formats' => ['pdf'],
             'manual_review' => ['low_confidence' => false],
-            'budgets' => ['daily' => '200.00', 'monthly' => '2000.00', 'currency' => 'USD'],
         ]))->snapshot();
 
         $before = EffectiveEstimateGenerationSettings::fromRecord($this->record($base), 17);
@@ -112,9 +111,6 @@ final class TruthfulSettingsContractTest extends TestCase
         self::assertNotSame($before->maxTotalPages(), $after->maxTotalPages());
         self::assertNotSame($before->allowsFormat('png'), $after->allowsFormat('png'));
         self::assertNotSame($before->requiresManualReview('low_confidence'), $after->requiresManualReview('low_confidence'));
-        self::assertNotSame($before->dailyBudget(), $after->dailyBudget());
-        self::assertNotSame($before->monthlyBudget(), $after->monthlyBudget());
-        self::assertNotSame($before->currency(), $after->currency());
     }
 
     #[Test]
@@ -130,7 +126,6 @@ final class TruthfulSettingsContractTest extends TestCase
                 'BusinessModules/Addons/EstimateGeneration/Services/Quality/EstimateGenerationQualityReviewPolicy.php',
                 'BusinessModules/Addons/EstimateGeneration/Application/Documents/UploadEstimateGenerationDocuments.php',
                 'BusinessModules/Addons/EstimateGeneration/Settings/DocumentRuntimeLimitsGuard.php',
-                'BusinessModules/Addons/EstimateGeneration/Observability/AiBudgetGuard.php',
                 'BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001150_enforce_exactly_once_ai_budget_wire_claims.php',
             ],
         ));
@@ -141,7 +136,7 @@ final class TruthfulSettingsContractTest extends TestCase
             "retryAttempts('vision')", "retryAttempts('classification')", "retryAttempts('normative_matching')",
             "confidence('classification')", "confidence('geometry')", "confidence('normative_matching')",
             "requiresManualReview('low_confidence')", 'maxFiles()', 'maxPagesPerFile()', 'maxTotalPages()',
-            'allowsFormat(', 'daily_budget', 'monthly_budget', 'currency()',
+            'allowsFormat(',
         ] as $consumer) {
             self::assertStringContainsString($consumer, $consumers, "Missing runtime consumer: {$consumer}");
         }
@@ -153,6 +148,9 @@ final class TruthfulSettingsContractTest extends TestCase
         self::assertStringContainsString("config('estimate-generation.vision.model')", $page);
         self::assertStringContainsString("config('estimate-generation.ocr.model')", $page);
         self::assertStringContainsString('NormativeRerankerModelSet', $page);
+        foreach (['budgets.daily', 'budgets.monthly', 'budgets.currency'] as $removedBudgetControl) {
+            self::assertStringNotContainsString($removedBudgetControl, $page);
+        }
     }
 
     #[Test]

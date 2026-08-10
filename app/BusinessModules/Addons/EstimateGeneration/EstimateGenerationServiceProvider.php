@@ -103,7 +103,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\LaravelTargetedPackageReb
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\ReconcileAiBudgetReservationsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\BackfillNormativeRetrievalCommand;
@@ -153,6 +152,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageS
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowFence;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
@@ -247,16 +247,16 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(EffectiveSettingsResolver::class);
         $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptBudgetAuthorizer::class,
-        );
-        $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class,
             \App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimitsGuard::class,
         );
         $this->app->singleton(AiPricingCatalog::class, static fn (): AiPricingCatalog => new AiPricingCatalog(
             is_array(config('estimate-generation.ai_pricing_catalog')) ? config('estimate-generation.ai_pricing_catalog') : [],
         ));
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Observability\CatalogAiPriceSnapshotResolver::class,
+        );
         $this->app->singleton(AttemptAwareNormativeLlmClient::class, static fn ($app): AttemptAwareNormativeLlmClient => new AttemptAwareNormativeLlmClient(
             $app->make(RerankWireClient::class),
             $app->make(AiUsageStore::class),
@@ -264,7 +264,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             null,
             $app->make(NormativeRerankerModelSet::class),
             $app->make(EffectiveSettingsResolver::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
         ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter::class,
@@ -280,7 +280,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\AttemptAwareCompletenessArbiter(
                     $app->make(RerankWireClient::class),
                     $app->make(AiUsageStore::class),
-                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
                     $model,
                     $promptVersion,
                     trim((string) ($settings['schema_version'] ?? 'completeness-arbiter:v1')),
@@ -371,9 +371,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(AiUsageStore::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader::class),
             $app->make(EffectiveSettingsResolver::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
-            new \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\FixedOcrRuntimeEnvironment($app->environment('production')),
         ));
         $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);
         $this->app->singleton(CadRuntimeConfiguration::class, fn (): CadRuntimeConfiguration => CadRuntimeConfiguration::fromArray(
@@ -512,7 +511,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(OcrClientInterface::class, static fn ($app): TimewebVisionOcrClient => new TimewebVisionOcrClient(
             $app->make(AiUsageStore::class),
             $app->make(EffectiveSettingsResolver::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
         ));
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
@@ -683,10 +682,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                     ->withoutOverlapping();
                 $this->app->make(Schedule::class)
                     ->job(new DeliverEstimateGenerationFinalizationsJob)
-                    ->everyMinute()
-                    ->withoutOverlapping();
-                $this->app->make(Schedule::class)
-                    ->job(new ReconcileAiBudgetReservationsJob)
                     ->everyMinute()
                     ->withoutOverlapping();
             });

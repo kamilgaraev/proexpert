@@ -14,6 +14,7 @@
 | `estimate_generation_ai_estimate_quota_reservations` | KEEP | `AiEstimateQuotaService` | Идемпотентность по организации и сессии |
 | Журнал фактического AI-usage | KEEP | `AiUsageStore` | Одна запись фактической попытки, токены, стоимость, длительность и результат |
 | Каталог AI-цен и расчёт фактической стоимости | KEEP | `AiPricingCatalog`, `AiCostCalculator` | Используется только для наблюдаемости и экономики |
+| `estimate_generation_ai_operations` | KEEP | `EloquentEffectiveSettingsOperationStore` | Хранит неизменяемый snapshot эффективных настроек операции; не участвует в reserve/claim/settle |
 | `estimate_generation_ai_budget_reservations` | DELETE | — | Нет runtime-callers; таблица удаляется forward-only migration |
 | SQL-функции `eg_*_ai_budget` | DELETE | — | Нет runtime-callers; функции удаляются forward-only migration |
 | `AiAttemptBudgetAuthorizer`, `AiBudgetGuard` | DELETE | — | Классы и container bindings отсутствуют |

@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Quality\Arbiter;
 
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
@@ -36,31 +36,14 @@ final class AttemptAwareCompletenessArbiterTest extends TestCase
                 return [];
             }
         };
-        $authorizer = new class implements AiAttemptAuthorizer
-        {
-            public int $calls = 0;
-
-            public function authorize(AiOperationContext $context, string $provider, string $model, int $maxInputTokens, int $maxOutputTokens, int $imageCount = 0, int $pageCount = 0): AiPriceSnapshot
-            {
-                $this->calls++;
-
-                return AiPriceSnapshot::fromArray([]);
-            }
-
-            public function claimWire(string $attemptId): bool
-            {
-                return true;
-            }
-
-            public function releaseBeforeWire(string $attemptId): void {}
-        };
+        $priceResolver = new TestAiPriceSnapshotResolver;
         $arbiter = new AttemptAwareCompletenessArbiter(
             $wire,
             new class implements AiUsageStore
             {
                 public function record(AiUsageData $data): void {}
             },
-            $authorizer,
+            $priceResolver,
             'openai/gpt-5-mini',
             'completeness-arbiter:v1',
             'completeness-arbiter:v1',
@@ -79,7 +62,7 @@ final class AttemptAwareCompletenessArbiterTest extends TestCase
         } catch (\InvalidArgumentException) {
         }
 
-        self::assertSame(0, $authorizer->calls);
+        self::assertSame(0, $priceResolver->calls);
         self::assertSame(0, $wire->calls);
     }
 
@@ -117,7 +100,7 @@ final class AttemptAwareCompletenessArbiterTest extends TestCase
                     throw new \RuntimeException('store unavailable');
                 }
             },
-            $this->authorizer(),
+            new TestAiPriceSnapshotResolver,
             'openai/gpt-5-mini',
             'completeness-arbiter:v1',
             'completeness-arbiter:v1',
@@ -175,11 +158,11 @@ final class AttemptAwareCompletenessArbiterTest extends TestCase
                 $this->rows[] = $data;
             }
         };
-        $authorizer = $this->authorizer();
+        $priceResolver = new TestAiPriceSnapshotResolver;
         $arbiter = new AttemptAwareCompletenessArbiter(
             $wire,
             $store,
-            $authorizer,
+            $priceResolver,
             'openai/gpt-5-mini',
             'completeness-arbiter:v1',
             'completeness-arbiter:v1',
@@ -197,8 +180,7 @@ final class AttemptAwareCompletenessArbiterTest extends TestCase
 
         self::assertSame('passed', $response['outcome']);
         self::assertSame(70, $wire->options['max_tokens']);
-        self::assertSame(500, $authorizer->maxInputTokens);
-        self::assertSame(70, $authorizer->maxOutputTokens);
+        self::assertSame(1, $priceResolver->calls);
         self::assertCount(1, $store->rows);
         self::assertSame('validate_draft', $store->rows[0]->context->stage);
         self::assertSame('completeness_review', $store->rows[0]->context->operation);
@@ -216,28 +198,16 @@ final class AttemptAwareCompletenessArbiterTest extends TestCase
         );
     }
 
-    private function authorizer(): AiAttemptAuthorizer
+}
+
+final class TestAiPriceSnapshotResolver implements AiPriceSnapshotResolver
+{
+    public int $calls = 0;
+
+    public function resolve(AiOperationContext $context, string $provider, string $model): AiPriceSnapshot
     {
-        return new class implements AiAttemptAuthorizer
-        {
-            public int $maxInputTokens = 0;
+        $this->calls++;
 
-            public int $maxOutputTokens = 0;
-
-            public function authorize(AiOperationContext $context, string $provider, string $model, int $maxInputTokens, int $maxOutputTokens, int $imageCount = 0, int $pageCount = 0): AiPriceSnapshot
-            {
-                $this->maxInputTokens = $maxInputTokens;
-                $this->maxOutputTokens = $maxOutputTokens;
-
-                return AiPriceSnapshot::fromArray([]);
-            }
-
-            public function claimWire(string $attemptId): bool
-            {
-                return true;
-            }
-
-            public function releaseBeforeWire(string $attemptId): void {}
-        };
+        return AiPriceSnapshot::fromArray([]);
     }
 }

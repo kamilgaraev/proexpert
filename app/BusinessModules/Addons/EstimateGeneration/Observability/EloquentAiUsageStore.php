@@ -11,7 +11,6 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
     public function __construct(
         private AiCostCalculator $calculator,
         private Connection $database,
-        private ?AiBudgetGuard $budgetGuard = null,
     ) {}
 
     public function record(AiUsageData $data): void
@@ -66,11 +65,6 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
         $existing = $this->database->table('estimate_generation_ai_usage')->where('attempt_id', $data->context->attemptId)->first();
         if ($existing === null || ! hash_equals((string) $existing->immutable_fingerprint, $data->immutableFingerprint)) {
             throw new UsageInvariantViolation('AI usage attempt collision.');
-        }
-        if ($this->budgetGuard !== null && $cost->pricingStatus === 'available') {
-            $this->budgetGuard->settle($data->context->attemptId, $cost);
-        } elseif ($this->budgetGuard !== null) {
-            $this->budgetGuard->pendingReconciliation($data->context->attemptId);
         }
     }
 }

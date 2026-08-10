@@ -64,7 +64,6 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
     {
         return SystemAdminAccess::canAll([
             FilamentPermission::ESTIMATE_GENERATION_SETTINGS,
-            FilamentPermission::ESTIMATE_GENERATION_BUDGETS,
         ]);
     }
 
@@ -129,12 +128,6 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
         $components[] = Section::make(trans_message('estimate_generation.settings_review_section'))->schema([
             Toggle::make('manual_review.low_confidence')->label(trans_message('estimate_generation.settings_review_low_confidence')),
         ]);
-        $components[] = Section::make(trans_message('estimate_generation.settings_budgets_section'))->schema([
-            TextInput::make('budgets.daily')->label(trans_message('estimate_generation.settings_daily_budget'))->regex('/^(?:0|[1-9]\d{0,17})\.\d{2}$/')->required(),
-            TextInput::make('budgets.monthly')->label(trans_message('estimate_generation.settings_monthly_budget'))->regex('/^(?:0|[1-9]\d{0,17})\.\d{2}$/')->required(),
-            Select::make('budgets.currency')->label(trans_message('estimate_generation.settings_currency'))->options(CurrencyCode::options())->required(),
-        ])->columns(3);
-
         return $schema->components($components)->statePath('data');
     }
 

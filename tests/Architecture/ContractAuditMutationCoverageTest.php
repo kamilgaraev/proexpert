@@ -21,12 +21,6 @@ final class ContractAuditMutationCoverageTest extends TestCase
         ];
         $structuralExemptions = [];
         foreach (array_filter(explode("\n", <<<'MANIFEST'
-AiBudgetGuard|claimWire|82bff5abc33bf29e3f4725595126d1807bd4a5f96df2d989e82c496649f394a8|evidence=selectOne:sql=SELECT eg_claim_ai_budget_wire(?) AS claimed=1
-AiBudgetGuard|pendingReconciliation|068a2d5453e6f3ea4c3ae13a36d7a68a5e7eb06cb9d34b1155e5dfb3e8db5a2c|evidence=selectOne:sql=SELECT eg_mark_ai_budget_reconciliation(?) AS pending=1
-AiBudgetGuard|reconcileExpired|109f77778d94c3dc64d8626e1ed1f048fa2269368adaeaa7ad6c2c65d15749b0|evidence=selectOne:sql=SELECT eg_reconcile_expired_ai_budgets(?) AS reconciled=1
-AiBudgetGuard|releaseBeforeWire|5244afc1591725d4d0243cb35273e97ee8b71d0da465835ac15a37f355834267|evidence=selectOne:sql=SELECT eg_release_ai_budget(?) AS released=1
-AiBudgetGuard|reserve|4144d4f2aa8c2064e9add021d6f28892f2259ea555755e73bed0712891674c48|evidence=selectOne:sql=SELECT eg_reserve_ai_budget(?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?) AS reservation_id=1
-AiBudgetGuard|settle|6b5d627d2409ea12a81956f3ef4bab0ba7c2cb30427f4cf972443d2300498d2e|evidence=selectOne:sql=SELECT eg_settle_ai_budget(?, ?, ?) AS settled=1
 BenchmarkRunRepository|lockStorageObject|f508c8c20db3cad704865d21edb825273d8a68994ef176f45af56917395e5b7c|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=1
 BenchmarkRunRepository|start|915dd588bfeb1f8d2fda948eccba2aa29d1803a90541bb88beffa3c4ae948c5b|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))=1
 BenchmarkRunRepository|unlockStorageObject|6d25371effcc2108e65acf661124937347c8de52414910dc9980410cbac0f058|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=1

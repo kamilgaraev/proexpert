@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits;
@@ -23,7 +23,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProvid
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
-use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -34,7 +33,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     /** @var list<AiUsageData> */
     private array $attempts = [];
 
-    private TestAiAttemptAuthorizer $authorizer;
+    private TestAiPriceSnapshotResolver $priceResolver;
 
     protected function setUp(): void
     {
@@ -88,8 +87,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             }
         };
         $this->app->instance(EffectiveSettingsResolver::class, new EffectiveSettingsResolver($store));
-        $this->authorizer = new TestAiAttemptAuthorizer;
-        $this->app->instance(AiAttemptAuthorizer::class, $this->authorizer);
+        $this->priceResolver = new TestAiPriceSnapshotResolver;
+        $this->app->instance(AiPriceSnapshotResolver::class, $this->priceResolver);
         $this->app->instance(DocumentRuntimeLimits::class, new class implements DocumentRuntimeLimits
         {
             public function assertWithinTotalPages(AiOperationContext $context, EffectiveEstimateGenerationSettings $settings): void {}
@@ -112,7 +111,6 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertSame('succeeded', $this->attempts[0]->status);
         self::assertSame(1, $this->attempts[0]->imageCount);
         self::assertSame('high', $this->attempts[0]->imageDetail);
-        self::assertSame(32_768, $this->authorizer->maxInputTokens);
         self::assertSame(TimewebVisionProvider::promptHash(100), TimewebVisionProvider::promptHash());
         Http::assertSentCount(1);
         Http::assertSent(function ($request): bool {
@@ -509,44 +507,13 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function replay_without_wire_claim_fails_closed_before_provider_call(): void
-    {
-        $this->authorizer->claimGranted = false;
-        Http::fake();
-
-        try {
-            $this->provider()->analyze($this->input());
-            self::fail('Replay without a wire claim reached the provider.');
-        } catch (VisionProviderException $exception) {
-            self::assertSame('vision_wire_replay_forbidden', $exception->reason);
-        }
-
-        Http::assertNothingSent();
-        self::assertSame([], $this->attempts);
-        self::assertSame(0, $this->authorizer->releases);
-
-        $this->authorizer->claimGranted = true;
-        Http::swap(new Factory);
-        Http::fake(fn () => Http::response($this->response()));
-        $analysis = $this->provider()->analyze($this->input());
-
-        self::assertSame('vision/model-v1', $analysis->reportedModel);
-        self::assertCount(1, $this->attempts);
-        self::assertSame('succeeded', $this->attempts[0]->status);
-        self::assertSame('measured', $this->attempts[0]->usageStatus);
-        self::assertSame($this->authorizer->attemptIds[0], $this->authorizer->attemptIds[1]);
-        self::assertSame($this->authorizer->attemptIds[0], $this->attempts[0]->context->attemptId);
-        self::assertSame(0, $this->authorizer->releases);
-    }
-
-    #[Test]
-    public function authorizer_pricing_snapshot_is_attached_and_unavailable_pricing_does_not_drop_usage(): void
+    public function pricing_snapshot_is_attached_and_unavailable_pricing_does_not_drop_usage(): void
     {
         Http::fake(fn () => Http::response($this->response()));
         $this->provider()->analyze($this->input());
         self::assertTrue($this->attempts[0]->priceSnapshot?->available);
 
-        $this->authorizer->available = false;
+        $this->priceResolver->available = false;
         $this->provider()->analyze($this->input());
         self::assertCount(2, $this->attempts);
         self::assertFalse($this->attempts[1]->priceSnapshot?->available);
@@ -627,30 +594,15 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 }
 
-final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
+final class TestAiPriceSnapshotResolver implements AiPriceSnapshotResolver
 {
     public bool $available = true;
 
-    public bool $claimGranted = true;
-
-    public int $releases = 0;
-
-    public int $maxInputTokens = 0;
-
-    /** @var list<string> */
-    public array $attemptIds = [];
-
-    public function authorize(
+    public function resolve(
         AiOperationContext $context,
         string $provider,
         string $model,
-        int $maxInputTokens,
-        int $maxOutputTokens,
-        int $imageCount = 0,
-        int $pageCount = 0,
     ): AiPriceSnapshot {
-        $this->maxInputTokens = $maxInputTokens;
-
         return AiPriceSnapshot::fromArray($this->available ? [
             'input_per_million' => '1.25',
             'cached_input_per_million' => '0.25',
@@ -662,17 +614,5 @@ final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
             'version' => 'vision-2026-07',
             'effective_at' => '2026-07-11T00:00:00+03:00',
         ] : []);
-    }
-
-    public function claimWire(string $attemptId): bool
-    {
-        $this->attemptIds[] = $attemptId;
-
-        return $this->claimGranted;
-    }
-
-    public function releaseBeforeWire(string $attemptId): void
-    {
-        $this->releases++;
     }
 }

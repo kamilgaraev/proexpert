@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
@@ -67,71 +66,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
     }
 
     #[Test]
-    public function replay_without_claim_never_calls_reranker_wire(): void
-    {
-        $wire = new class implements RerankWireClient
-        {
-            public int $calls = 0;
-
-            public function provider(): string
-            {
-                return 'timeweb';
-            }
-
-            public function call(string $model, array $messages, array $options): array
-            {
-                $this->calls++;
-
-                return ['content' => '{}', 'model' => $model, 'usage_available' => false];
-            }
-        };
-        $store = new class implements AiUsageStore
-        {
-            /** @var list<AiUsageData> */
-            public array $rows = [];
-
-            public function record(AiUsageData $data): void
-            {
-                $this->rows[] = $data;
-            }
-        };
-        $authorizer = new RejectingWireClaimAuthorizer;
-        $client = new AttemptAwareNormativeLlmClient(
-            $wire,
-            $store,
-            ['model-a', 'model-b'],
-            [],
-            null,
-            null,
-            $authorizer,
-        );
-
-        try {
-            $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
-            self::fail('Replay without claim reached reranker wire.');
-        } catch (RerankWireException $exception) {
-            self::assertSame('wire_replay_forbidden', $exception->attemptStatus);
-        }
-        self::assertSame(0, $wire->calls);
-        self::assertSame(1, $authorizer->claims);
-        self::assertSame(0, $authorizer->releases);
-        self::assertSame([], $store->rows);
-        self::assertSame([], $this->logger->errors);
-
-        $authorizer->claimGranted = true;
-        $result = $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
-
-        self::assertSame('{}', $result['content']);
-        self::assertSame(1, $wire->calls);
-        self::assertCount(1, $store->rows);
-        self::assertSame('succeeded', $store->rows[0]->status);
-        self::assertSame($authorizer->attemptIds[0], $authorizer->attemptIds[1]);
-        self::assertSame($authorizer->attemptIds[0], $store->rows[0]->context->attemptId);
-        self::assertSame(0, $authorizer->releases);
-    }
-
-    #[Test]
-    public function each_model_wire_attempt_gets_one_row_and_new_claim_gets_new_ids(): void
+    public function each_model_wire_attempt_gets_one_row_and_new_operation_gets_new_ids(): void
     {
         $wire = new class implements RerankWireClient
         {
@@ -574,42 +509,5 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         };
 
         return new EffectiveSettingsResolver($store);
-    }
-}
-
-final class RejectingWireClaimAuthorizer implements AiAttemptAuthorizer
-{
-    public int $claims = 0;
-
-    public int $releases = 0;
-
-    public bool $claimGranted = false;
-
-    /** @var list<string> */
-    public array $attemptIds = [];
-
-    public function authorize(
-        AiOperationContext $context,
-        string $provider,
-        string $model,
-        int $maxInputTokens,
-        int $maxOutputTokens,
-        int $imageCount = 0,
-        int $pageCount = 0,
-    ): AiPriceSnapshot {
-        return AiPriceSnapshot::fromArray([]);
-    }
-
-    public function claimWire(string $attemptId): bool
-    {
-        $this->claims++;
-        $this->attemptIds[] = $attemptId;
-
-        return $this->claimGranted;
-    }
-
-    public function releaseBeforeWire(string $attemptId): void
-    {
-        $this->releases++;
     }
 }
