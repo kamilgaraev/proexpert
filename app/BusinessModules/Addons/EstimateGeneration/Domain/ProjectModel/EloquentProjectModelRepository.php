@@ -241,6 +241,67 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         }
     }
 
+    public function appendCrossDocumentLinks(array $links, int $chunkSize = 200): void
+    {
+        $this->assertChunkSize($chunkSize);
+        foreach (array_chunk($links, $chunkSize) as $chunk) {
+            $this->database->connection()->transaction(function () use ($chunk): void {
+                $evidenceRows = $this->evidenceRowsForLinks($chunk);
+                $factIds = $this->factIdsForLinks($chunk);
+                $linkRows = [];
+                foreach ($chunk as $link) {
+                    $linkRows[] = [
+                        'organization_id' => $link['organization_id'],
+                        'project_id' => $link['project_id'],
+                        'session_id' => $link['session_id'],
+                        'source_version' => $link['source_version'],
+                        'stable_key' => $link['id'],
+                        'left_fact_id' => $factIds[$this->linkFactMapKey($link, $link['left_fact_id'])],
+                        'right_fact_id' => $factIds[$this->linkFactMapKey($link, $link['right_fact_id'])],
+                        'strategy' => $link['strategy'],
+                        'reason' => $link['reason'],
+                        'strategy_version' => $link['strategy_version'],
+                        'operation_identity' => $link['operation_identity'],
+                        'status' => $link['status'],
+                        'is_current' => true,
+                        'created_at' => now(),
+                    ];
+                }
+                $this->database->table('estimate_generation_project_model_cross_document_links')->insertOrIgnore($linkRows);
+                $storedLinks = [];
+                foreach ($this->database->table('estimate_generation_project_model_cross_document_links')
+                    ->whereIn('operation_identity', array_column($chunk, 'operation_identity'))
+                    ->get(['id', 'organization_id', 'project_id', 'session_id', 'source_version', 'operation_identity']) as $row) {
+                    $storedLinks[$row->organization_id.':'.$row->project_id.':'.$row->session_id.':'.$row->source_version.':'.$row->operation_identity] = (int) $row->id;
+                }
+                $evidenceLinks = [];
+                foreach ($chunk as $link) {
+                    $linkId = $storedLinks[$this->linkScopeKey($link).':'.$link['operation_identity']] ?? null;
+                    if ($linkId === null) {
+                        throw new InvalidArgumentException('Cross-document link persistence failed.');
+                    }
+                    foreach (['left', 'right'] as $side) {
+                        foreach ($link['evidence'][$side] as $evidenceId) {
+                            $row = $evidenceRows[$this->linkEvidenceMapKey($link, $evidenceId)];
+                            $evidenceLinks[] = [
+                                'link_id' => $linkId,
+                                'evidence_id' => (int) $row->id,
+                                'organization_id' => $link['organization_id'],
+                                'project_id' => $link['project_id'],
+                                'session_id' => $link['session_id'],
+                                'source_version' => $link['source_version'],
+                                'side' => $side,
+                            ];
+                        }
+                    }
+                }
+                foreach (array_chunk($evidenceLinks, 1000) as $evidenceChunk) {
+                    $this->database->table('estimate_generation_project_model_cross_link_evidence')->insertOrIgnore($evidenceChunk);
+                }
+            }, 3);
+        }
+    }
+
     public function currentFacts(int $organizationId, int $projectId, int $sessionId, ?string $entityId = null): array
     {
         if ($organizationId <= 0 || $projectId <= 0 || $sessionId <= 0) {
@@ -482,6 +543,141 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         }
 
         return $rows;
+    }
+
+    private function evidenceRowsForLinks(array $links): array
+    {
+        $groups = [];
+        foreach ($links as $link) {
+            $this->assertCrossDocumentLink($link);
+            $scopeKey = $link['organization_id'].':'.$link['project_id'].':'.$link['session_id'];
+            $groups[$scopeKey]['scope'] = $link;
+            foreach (['left', 'right'] as $side) {
+                foreach ($link['evidence'][$side] as $evidenceId) {
+                    $numericId = $this->evidenceDatabaseId($evidenceId);
+                    $groups[$scopeKey]['ids'][$numericId] = $numericId;
+                }
+            }
+        }
+        $rows = [];
+        foreach ($groups as $group) {
+            $scope = $group['scope'];
+            foreach ($this->database->table('estimate_generation_evidence')
+                ->where('organization_id', $scope['organization_id'])
+                ->where('project_id', $scope['project_id'])
+                ->where('session_id', $scope['session_id'])
+                ->whereIn('id', array_values($group['ids']))
+                ->whereNull('invalidated_at')
+                ->get(['id']) as $row) {
+                $rows[$scope['organization_id'].':'.$scope['project_id'].':'.$scope['session_id'].':evidence:'.$row->id] = $row;
+            }
+        }
+        foreach ($links as $link) {
+            foreach ([...$link['evidence']['left'], ...$link['evidence']['right']] as $evidenceId) {
+                if (! isset($rows[$this->linkEvidenceMapKey($link, $evidenceId)])) {
+                    throw new InvalidArgumentException('Cross-document link evidence is outside the requested scope or inactive.');
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    private function factIdsForLinks(array $links): array
+    {
+        $groups = [];
+        foreach ($links as $link) {
+            $this->assertCrossDocumentLink($link);
+            $scopeKey = $this->linkScopeKey($link);
+            $groups[$scopeKey]['scope'] = $link;
+            $groups[$scopeKey]['ids'][$link['left_fact_id']] = $link['left_fact_id'];
+            $groups[$scopeKey]['ids'][$link['right_fact_id']] = $link['right_fact_id'];
+        }
+        $factIds = [];
+        foreach ($groups as $scopeKey => $group) {
+            $scope = $group['scope'];
+            $buildingModelExists = $this->database->table('estimate_generation_building_models')
+                ->where('organization_id', $scope['organization_id'])
+                ->where('project_id', $scope['project_id'])
+                ->where('session_id', $scope['session_id'])
+                ->where('content_version', $scope['source_version'])
+                ->exists();
+            if (! $buildingModelExists) {
+                throw new InvalidArgumentException('Cross-document link source version is outside the requested scope.');
+            }
+            foreach ($this->database->table('estimate_generation_project_model_assertions')
+                ->where('organization_id', $scope['organization_id'])
+                ->where('project_id', $scope['project_id'])
+                ->where('session_id', $scope['session_id'])
+                ->where('source_version', $scope['source_version'])
+                ->whereIn('stable_key', array_values($group['ids']))
+                ->get(['id', 'stable_key']) as $row) {
+                $factIds[$scopeKey.':'.$row->stable_key] = (int) $row->id;
+            }
+            foreach ($group['ids'] as $stableKey) {
+                if (! isset($factIds[$scopeKey.':'.$stableKey])) {
+                    throw new InvalidArgumentException('Cross-document link fact is outside the requested scope.');
+                }
+            }
+        }
+
+        return $factIds;
+    }
+
+    private function assertCrossDocumentLink(mixed $link): void
+    {
+        if (! is_array($link) || array_is_list($link)
+            || ! is_int($link['organization_id'] ?? null) || ! is_int($link['project_id'] ?? null)
+            || ! is_int($link['session_id'] ?? null) || ! is_string($link['source_version'] ?? null)
+            || ! is_string($link['id'] ?? null) || ! is_string($link['left_fact_id'] ?? null)
+            || ! is_string($link['right_fact_id'] ?? null) || ! is_string($link['strategy'] ?? null)
+            || ! is_string($link['reason'] ?? null) || trim($link['reason']) === ''
+            || ! is_int($link['strategy_version'] ?? null) || $link['strategy_version'] <= 0
+            || ! is_string($link['operation_identity'] ?? null)
+            || preg_match('/^[a-f0-9]{64}$/D', $link['operation_identity']) !== 1
+            || ! in_array($link['status'] ?? null, ['linked', 'suggested'], true)
+            || ! is_array($link['evidence'] ?? null)
+            || array_keys($link['evidence']) !== ['left', 'right']) {
+            throw new InvalidArgumentException('Cross-document link batch is invalid.');
+        }
+        ProjectModelInvariant::scope(
+            $link['organization_id'],
+            $link['project_id'],
+            $link['session_id'],
+            $link['source_version'],
+        );
+        ProjectModelInvariant::id($link['id'], 'Cross-document link');
+        ProjectModelInvariant::id($link['left_fact_id'], 'Cross-document left fact');
+        ProjectModelInvariant::id($link['right_fact_id'], 'Cross-document right fact');
+        if ($link['left_fact_id'] === $link['right_fact_id']
+            || ! in_array($link['strategy'], [
+                'stable_key',
+                'room_number',
+                'axes',
+                'native_id',
+                'equipment_position',
+                'facade_material',
+                'ai_arbitration',
+            ], true)) {
+            throw new InvalidArgumentException('Cross-document link batch is invalid.');
+        }
+        ProjectModelInvariant::uniqueIds($link['evidence']['left'], 'Cross-document left evidence');
+        ProjectModelInvariant::uniqueIds($link['evidence']['right'], 'Cross-document right evidence');
+    }
+
+    private function linkEvidenceMapKey(array $link, string $evidenceId): string
+    {
+        return $link['organization_id'].':'.$link['project_id'].':'.$link['session_id'].':'.$evidenceId;
+    }
+
+    private function linkFactMapKey(array $link, string $factId): string
+    {
+        return $this->linkScopeKey($link).':'.$factId;
+    }
+
+    private function linkScopeKey(array $link): string
+    {
+        return $link['organization_id'].':'.$link['project_id'].':'.$link['session_id'].':'.$link['source_version'];
     }
 
     private function evidenceMapKey(Fact $fact, string $evidenceId): string

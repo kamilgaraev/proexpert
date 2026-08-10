@@ -16,6 +16,8 @@ interface ProjectModelRepository
 
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void;
 
+    public function appendCrossDocumentLinks(array $links, int $chunkSize = 200): void;
+
     public function currentFacts(
         int $organizationId,
         int $projectId,

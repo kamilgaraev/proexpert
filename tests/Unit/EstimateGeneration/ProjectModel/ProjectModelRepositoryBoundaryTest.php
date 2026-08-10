@@ -20,6 +20,7 @@ final class ProjectModelRepositoryBoundaryTest extends TestCase
             'appendConflicts',
             'appendDecisions',
             'appendDerivedQuantities',
+            'appendCrossDocumentLinks',
             'currentFacts',
             'invalidateSourceVersion',
         ] as $method) {
@@ -41,5 +42,6 @@ final class ProjectModelRepositoryBoundaryTest extends TestCase
         self::assertStringContainsString("->whereIn('binding.fact_id', \$factIds)", $source);
         self::assertStringContainsString('Project model fact evidence is outside the requested scope or inactive.', $source);
         self::assertStringContainsString('System decision cannot confirm an unresolved or recommended fact.', $source);
+        self::assertStringContainsString('Cross-document link evidence is outside the requested scope or inactive.', $source);
     }
 }

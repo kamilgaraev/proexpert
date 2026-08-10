@@ -565,4 +565,20 @@ return [
     'evaluation_release_gate_invalid_organization' => 'Организация указана некорректно.',
     'evaluation_release_gate_empty' => 'Для сравнения версии нет проверенных эталонных примеров.',
     'evaluation_release_gate_ready' => 'Проверенный корпус готов: :count примеров.',
+    'project_model' => [
+        'conflict_question' => 'В документах указаны разные значения для «:fact». Какое значение использовать?',
+        'conflict_option' => ':value — источник: :source',
+        'insufficient_evidence' => 'Недостаточно данных для однозначной связи между документами.',
+        'source_reference' => 'документ :document, стр. :page',
+        'source_without_page' => 'документ :document',
+        'fact_type' => [
+            'area' => 'площадь',
+            'dimension' => 'размер',
+            'material' => 'материал',
+            'equipment' => 'оборудование',
+            'quantity' => 'количество',
+            'room_number' => 'номер помещения',
+            'parameter' => 'параметр',
+        ],
+    ],
 ];
