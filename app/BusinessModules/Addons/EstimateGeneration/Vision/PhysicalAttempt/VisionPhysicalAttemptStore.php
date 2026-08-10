@@ -5,21 +5,45 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use DateTimeImmutable;
 
 interface VisionPhysicalAttemptStore
 {
-    public function reserve(AiOperationContext $context, string $requestFingerprint): VisionPhysicalAttemptSnapshot;
+    public function claim(
+        AiOperationContext $context,
+        string $requestFingerprint,
+        string $ownerToken,
+        DateTimeImmutable $now,
+        DateTimeImmutable $leaseExpiresAt,
+    ): VisionPhysicalAttemptSnapshot;
+
+    public function markWireStarted(
+        string $attemptId,
+        string $requestFingerprint,
+        string $ownerToken,
+        DateTimeImmutable $now,
+        DateTimeImmutable $leaseExpiresAt,
+    ): void;
 
     /** @param array<string, mixed> $responsePayload @param array<string, mixed> $priceSnapshot */
     public function storeResponse(
         string $attemptId,
         string $requestFingerprint,
+        string $ownerToken,
         array $responsePayload,
         string $status,
         ?int $httpCode,
         int $durationMs,
         ?string $reportedModel,
         array $priceSnapshot,
+    ): void;
+
+    public function markAmbiguous(
+        string $attemptId,
+        string $requestFingerprint,
+        string $ownerToken,
+        string $reason,
+        DateTimeImmutable $now,
     ): void;
 
     public function markUsageRecorded(string $attemptId, string $requestFingerprint): void;

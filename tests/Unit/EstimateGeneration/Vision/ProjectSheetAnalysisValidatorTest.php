@@ -135,6 +135,19 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
         ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$published]);
     }
 
+    #[Test]
+    public function reference_from_a_stale_source_registry_is_rejected_against_the_current_call_registry(): void
+    {
+        $current = 'cad:object:current-v2';
+        $stale = 'cad:object:stale-v1';
+        $native = $this->payload();
+        $native['facts'][0]['sourcePolygonOrNativeRef'] = $stale;
+
+        $this->expectException(VisionContractException::class);
+        $this->expectExceptionMessage('invalid_project_sheet_native_reference');
+        ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$current]);
+    }
+
     /** @return iterable<string, array{string, string}> */
     public static function nativeReferenceRegistries(): iterable
     {

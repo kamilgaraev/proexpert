@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Providers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
@@ -20,10 +21,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore;
+use DateTimeImmutable;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use JsonException;
 use Throwable;
 
@@ -36,6 +39,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
     public const PROVIDER = 'timeweb';
 
     public const PROMPT_VERSION = 'vision-contract:v3';
+
+    public const MAX_NATIVE_REFERENCES = 2000;
 
     public function __construct(
         private AiUsageStore $usageStore,
@@ -72,6 +77,14 @@ final readonly class TimewebVisionProvider implements VisionProvider
             throw new VisionProviderException('vision_not_configured');
         }
 
+        if (count($input->nativeReferences) > self::MAX_NATIVE_REFERENCES) {
+            throw new DocumentManifestNeedsReview('document_native_registry_provider_limit_exceeded', [
+                'actual' => count($input->nativeReferences),
+                'limit' => self::MAX_NATIVE_REFERENCES,
+                'source_version' => $input->sourceVersion,
+                'processing_unit_id' => $input->processingUnitId,
+            ]);
+        }
         $payload = $this->requestPayload($input, $model, $maxElements, $maxFacts, $contractHash);
         $attempts = $effective !== null
             ? max(1, $effective->retryAttempts('vision') + 1)
@@ -92,16 +105,31 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $analysis = null;
             $body = null;
             $hasPersistedResponse = false;
+            $wireStarted = false;
+            $invariantFailure = false;
             $requestFingerprint = hash('sha256', json_encode([
                 'payload' => $payload,
                 'attempt_id' => $physicalContext->attemptId,
                 'request_context' => $input->recheckScope?->toSafeUsageContext() ?? [],
             ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
-            $snapshot = $this->physicalAttempts->reserve($physicalContext, $requestFingerprint);
-            if (! $snapshot->reservedNow && $snapshot->state === 'reserved') {
-                throw new VisionProviderException('vision_wire_replay_forbidden');
+            $ownerToken = $this->ownerToken();
+            $leaseTtl = max(30, min(900, (int) config('estimate-generation.vision.physical_attempt_lease_seconds', 180)));
+            $claimNow = new DateTimeImmutable;
+            $snapshot = $this->physicalAttempts->claim(
+                $physicalContext,
+                $requestFingerprint,
+                $ownerToken,
+                $claimNow,
+                $claimNow->modify('+'.$leaseTtl.' seconds'),
+            );
+            if ($snapshot->state === 'ambiguous' || $snapshot->state === 'reserved') {
+                throw new VisionProviderException('vision_wire_outcome_ambiguous');
             }
-            $replayed = ! $snapshot->reservedNow && $snapshot->state === 'response_received';
+            if (in_array($snapshot->state, ['pre_wire', 'wire_started'], true)
+                && $snapshot->ownerToken !== $ownerToken) {
+                throw new VisionProviderException('vision_wire_attempt_busy');
+            }
+            $replayed = in_array($snapshot->state, ['response_received', 'completed'], true);
             if ($replayed) {
                 if ($snapshot->responsePayload === null || $snapshot->durationMs === null || $snapshot->priceSnapshot === null) {
                     throw new UsageInvariantViolation('Persisted vision response is incomplete.');
@@ -118,6 +146,15 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     $timeoutSeconds = $effective?->timeoutSeconds('vision')
                         ?? max(1, min(120, (int) config('estimate-generation.vision.timeout_seconds', 60)));
                     $timeoutSeconds = $this->boundedDocumentAttemptTimeout($input, $attempts, $timeoutSeconds);
+                    $wireNow = new DateTimeImmutable;
+                    $this->physicalAttempts->markWireStarted(
+                        $physicalContext->attemptId,
+                        $requestFingerprint,
+                        $ownerToken,
+                        $wireNow,
+                        $wireNow->modify('+'.$leaseTtl.' seconds'),
+                    );
+                    $wireStarted = true;
                     $response = Http::timeout($timeoutSeconds)
                         ->withOptions(['stream' => true])
                         ->acceptJson()->asJson()->withToken($apiKey)
@@ -127,9 +164,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         $response->toPsrResponse()->getBody()->close();
                         $status = 'http_failed';
                         $this->physicalAttempts->storeResponse(
-                            $physicalContext->attemptId, $requestFingerprint, [], $status, $httpCode,
+                            $physicalContext->attemptId, $requestFingerprint, $ownerToken, [], $status, $httpCode,
                             (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), null, $priceSnapshot->toArray(),
                         );
+                        $wireStarted = false;
                         $hasPersistedResponse = true;
                         $lastException = new VisionProviderException(
                             'vision_http_failed', $httpCode, $this->retryableStatus($httpCode),
@@ -137,10 +175,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     } else {
                         $body = $this->bodyReader->read($response, max(1_024, (int) config('estimate-generation.vision.max_response_bytes', 1_000_000)));
                         $this->physicalAttempts->storeResponse(
-                            $physicalContext->attemptId, $requestFingerprint,
+                            $physicalContext->attemptId, $requestFingerprint, $ownerToken,
                             ['raw_body_base64' => base64_encode($body)], 'response_received', $httpCode,
                             (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), null, $priceSnapshot->toArray(),
                         );
+                        $wireStarted = false;
                         $hasPersistedResponse = true;
                     }
                 }
@@ -218,9 +257,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 }
             } catch (VisionContractException $exception) {
                 $status = 'malformed_response';
-                $lastException = $exception->reason === 'vision_json_invalid' && $wireAttempt < $attempts
-                    ? new VisionProviderException($exception->reason, retryable: true, previous: $exception)
-                    : $exception;
+                $lastException = $exception;
             } catch (VisionProviderException $exception) {
                 $status = 'connection_failed';
                 $lastException = $exception;
@@ -228,11 +265,23 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $status = 'connection_failed';
                 $lastException = new VisionProviderException('vision_connection_failed', retryable: true, previous: $exception);
             } catch (UsageInvariantViolation $exception) {
+                $invariantFailure = true;
                 throw $exception;
             } catch (Throwable $exception) {
                 $status = 'connection_failed';
                 $lastException = new VisionProviderException('vision_request_failed', retryable: false, previous: $exception);
             } finally {
+                if ($wireStarted && ! $hasPersistedResponse && ! $invariantFailure) {
+                    $this->physicalAttempts->markAmbiguous(
+                        $physicalContext->attemptId,
+                        $requestFingerprint,
+                        $ownerToken,
+                        'provider_request_outcome_unknown',
+                        new DateTimeImmutable,
+                    );
+                    $status = 'ambiguous';
+                    $lastException = new VisionProviderException('vision_wire_outcome_ambiguous');
+                }
                 if (! $replayed || ! $snapshot->usageRecorded) {
                     $durationMs = $replayed
                         ? (int) $snapshot->durationMs
@@ -305,8 +354,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 ],
                 'sheet_role' => $input->sheetRole,
                 'role_contract' => self::roleContract($input->sheetRole),
-                'native_reference_registry' => array_slice($input->nativeReferences, 0, 2_000),
-                'native_reference_registry_truncated' => count($input->nativeReferences) > 2_000,
+                'native_reference_registry' => $input->nativeReferences,
                 'targeted_recheck' => $input->recheckScope?->toSafeUsageContext(),
                 'supplemental_evidence' => array_map(
                     static fn ($evidence): array => $evidence->locator(),
@@ -386,7 +434,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             throw new VisionProviderException('vision_max_facts_invalid');
         }
 
-        return 'sha256:'.hash('sha256', self::systemPrompt($effectiveMax, $effectiveFacts, $sheetRole).'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space),sheet_role,role_contract,native_reference_registry,native_reference_registry_truncated,targeted_recheck,supplemental_evidence');
+        return 'sha256:'.hash('sha256', self::systemPrompt($effectiveMax, $effectiveFacts, $sheetRole).'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space),sheet_role,role_contract,native_reference_registry,targeted_recheck,supplemental_evidence');
     }
 
     private static function roleContract(string $role): string
@@ -510,6 +558,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $context->organizationId, $context->projectId, $context->sessionId, $context->stage, $context->operation,
             $context->attemptOrdinal + $wireAttempt - 1, $context->documentId, $context->pageId, $context->unitId,
         );
+    }
+
+    private function ownerToken(): string
+    {
+        return (string) Str::uuid();
     }
 
     /** @param array<mixed> $value */
