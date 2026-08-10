@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
@@ -350,6 +351,38 @@ final class AiEstimateQuotaTest extends TestCase
         $usage = app(\App\Services\Billing\CommercialQuotaService::class)->getUsage($organization);
 
         $this->assertSame(1, $usage['ai_estimates_month']);
+    }
+
+    public function test_detail_and_list_keep_the_session_reservation_status_after_month_boundary(): void
+    {
+        $session = $this->createSession();
+        $quota = app(AiEstimateQuotaService::class);
+        $quota->reserve($session);
+        DB::table('estimate_generation_ai_estimate_quota_reservations')
+            ->where('organization_id', $session->organization_id)
+            ->where('session_id', $session->id)
+            ->update([
+                'monthly_period' => now()->subMonthNoOverflow()->startOfMonth()->toDateString(),
+                'confirmed_at' => now()->subMonthNoOverflow(),
+            ]);
+
+        $quota->reserve($session->fresh());
+        $listQuota = $quota->snapshots([$session->fresh()])[(int) $session->id];
+        $detailQuota = app(BuildSessionSnapshot::class)->handle(
+            session: $session->fresh(),
+            permissions: [],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        )->aiEstimateQuota;
+
+        $this->assertSame('confirmed', $listQuota['reservation_status']);
+        $this->assertSame('confirmed', $detailQuota['reservation_status']);
+        $this->assertSame(0, $listQuota['used']);
+        $this->assertSame(0, $detailQuota['used']);
+        $this->assertNull($quota->snapshot((string) $session->organization_id)->reservationStatus);
+        $this->assertSame(1, DB::table('estimate_generation_ai_estimate_quota_reservations')
+            ->where('organization_id', $session->organization_id)
+            ->where('session_id', $session->id)
+            ->count());
     }
 
     private function createSession(?Organization $organization = null): EstimateGenerationSession

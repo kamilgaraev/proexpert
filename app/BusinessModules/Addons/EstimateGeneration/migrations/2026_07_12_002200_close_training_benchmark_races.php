@@ -2,11 +2,9 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Addons\EstimateGeneration\Migrations\Support\OnlineSchemaMigrationRuntime;
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
-
-require_once __DIR__.'/support/OnlineSchemaMigrationRuntime.php';
 
 return new class extends Migration
 {
@@ -14,7 +12,7 @@ return new class extends Migration
 
     public function up(): void
     {
-        $runtime = new OnlineSchemaMigrationRuntime;
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             DB::unprepared(<<<'SQL'

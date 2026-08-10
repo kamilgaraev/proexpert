@@ -35,6 +35,12 @@
 
 Обе миграции имеют необратимый `down()`, который бросает `RuntimeException`. Они проверены чтением исходника и unit-контрактами; локальный запуск запрещён.
 
+По результатам независимого аудита добавлена `2026_08_10_000250_create_evaluation_corpus.php`. Она создаёт каноническое постоянное хранилище evaluation examples с tenant scope, версиями контрактов, состояниями candidate/reviewed/rejected и неизменяемыми данными review decision. Release gate и явная CLI-команда читают только reviewed examples. Существующие training-таблицы не переиспользованы: их контракт требует dataset membership и хранит строки сметы, но не полный expected facts/decisions/quantities contract и не audit reason для решения по примеру. Миграция forward-only и имеет необратимый `down()`; локально она не запускалась.
+
+Одиннадцать исторических migration-файлов `2026_07_12_001700`–`002200` и `2026_08_01_000150`, `000225`, `000250`, `000275`, `000300` восстановлены байт-в-байт к состоянию `e5d6ede38`. `EstimateGenerationHistoricalMigrationsImmutabilityTest` фиксирует их SHA-256 без обращения к Git history во время выполнения.
+
+Публичный quota snapshot разделяет два контекста: organization-level snapshot не публикует lifecycle-статус конкретной сессии, а detail/list читают статус reservation по `(organization_id, session_id)` независимо от месяца. Месячный usage по-прежнему учитывает только confirmed reservations текущего периода; query budget batch snapshot не увеличен.
+
 Порядок deploy:
 
 1. Выпустить код без legacy callers.

@@ -2,13 +2,11 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Addons\EstimateGeneration\Migrations\Support\OnlineSchemaMigrationRuntime;
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-
-require_once __DIR__.'/support/OnlineSchemaMigrationRuntime.php';
 
 return new class extends Migration
 {
@@ -32,7 +30,7 @@ return new class extends Migration
             return;
         }
 
-        $runtime = new OnlineSchemaMigrationRuntime;
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             $this->assertNoInvalidExactBindingRows();
@@ -56,7 +54,7 @@ return new class extends Migration
 
         $this->assertNoExactBindingAuditData();
 
-        $runtime = new OnlineSchemaMigrationRuntime;
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             $runtime->ensureConcurrentIndex(
@@ -155,7 +153,7 @@ SQL);
         }
     }
 
-    private function ensurePostgresIndexes(OnlineSchemaMigrationRuntime $runtime): void
+    private function ensurePostgresIndexes(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         $runtime->ensureConcurrentIndex(
             'eg_project_model_evidence_assertion_idx',
@@ -171,7 +169,7 @@ SQL);
         );
     }
 
-    private function ensurePostgresConstraints(OnlineSchemaMigrationRuntime $runtime): void
+    private function ensurePostgresConstraints(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         $runtime->ensureConstraint(
             self::TABLE,
@@ -205,7 +203,7 @@ SQL);
         );
     }
 
-    private function validateExactBindingConstraints(OnlineSchemaMigrationRuntime $runtime): void
+    private function validateExactBindingConstraints(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         foreach ([
             'eg_project_model_evidence_assertion_scope_fk',

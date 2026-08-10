@@ -2,13 +2,11 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Addons\EstimateGeneration\Migrations\Support\OnlineSchemaMigrationRuntime;
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-
-require_once __DIR__.'/support/OnlineSchemaMigrationRuntime.php';
 
 return new class extends Migration
 {
@@ -27,7 +25,7 @@ return new class extends Migration
             return;
         }
 
-        $runtime = new OnlineSchemaMigrationRuntime;
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             DB::statement('CREATE EXTENSION IF NOT EXISTS pgcrypto');
@@ -52,7 +50,7 @@ return new class extends Migration
     public function down(): void
     {
         if (DB::getDriverName() === 'pgsql') {
-            $runtime = new OnlineSchemaMigrationRuntime;
+            $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
             $timeouts = $runtime->configureSessionTimeouts();
             try {
                 DB::transaction(function () use ($runtime): void {
@@ -84,7 +82,7 @@ return new class extends Migration
         }
     }
 
-    private function backfillCanonicalBindingFingerprints(OnlineSchemaMigrationRuntime $runtime): void
+    private function backfillCanonicalBindingFingerprints(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         DB::transaction(function () use ($runtime): void {
             DB::statement('LOCK TABLE '.self::TABLE.' IN ACCESS EXCLUSIVE MODE');

@@ -560,4 +560,8 @@ return [
     'readiness_work_composition_ai_unavailable' => 'AI-проверка состава работ временно недоступна. Обязательный состав сформирован по серверному каталогу.',
     'readiness_work_composition_ai_invalid' => 'AI-проверка состава работ вернула неполный ответ. Обязательный состав сохранён по серверному каталогу.',
     'readiness_work_composition_ai_conflict' => 'AI отметил спорную применимость обязательной работы. Проверьте основание расчёта этой позиции.',
+    'evaluation_release_gate_description' => 'Проверяет наличие доверенного корпуса для сравнения версии AI-сметчика.',
+    'evaluation_release_gate_invalid_organization' => 'Организация указана некорректно.',
+    'evaluation_release_gate_empty' => 'Для сравнения версии нет проверенных эталонных примеров.',
+    'evaluation_release_gate_ready' => 'Проверенный корпус готов: :count примеров.',
 ];

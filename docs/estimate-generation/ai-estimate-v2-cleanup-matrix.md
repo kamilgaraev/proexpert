@@ -24,7 +24,7 @@
 | `AdminFailureResolution*` | DELETE | — | Нет mutating endpoints, actions, bindings и registry claims |
 | `FailureWorkflowFence`, изменяющий workflow | DELETE | — | Terminal handling идемпотентен через состояние сессии и quota service |
 | Read-only история сбоев | KEEP | `FailureRecorder` / read model | Не изменяет pipeline или сессию |
-| Доверенный evaluation corpus | KEEP | `EvaluationCorpus` | Только reviewed examples участвуют в release gate |
+| Доверенный evaluation corpus | KEEP | `EvaluationCorpus`, `EvaluationCorpusRepository`, `EvaluationReleaseGate` | Candidate/reviewed/rejected хранятся постоянно; только reviewed examples участвуют в release gate, а review decision сохраняет actor, причину и время |
 | Версии AI-контрактов, моделей и промптов | KEEP | Evaluation metadata | Версия входит в benchmark result |
 | Training lease recovery | DELETE | — | Scheduled recovery и lease processor отсутствуют; trigger, index и lease-поля удаляются `2026_08_10_000200_drop_obsolete_runtime_state.php` |
 | Training online migration runtime | DELETE | — | Нет runtime migration orchestration |

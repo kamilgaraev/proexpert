@@ -15,6 +15,7 @@ use App\Services\Billing\CommercialQuotaService;
 use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Query\Builder;
 
 final readonly class AiEstimateQuotaService
 {
@@ -90,6 +91,13 @@ final readonly class AiEstimateQuotaService
         $organizationKey = $this->validatedId($organizationId, 'organization');
 
         return $this->organizationSnapshot($organizationKey, null);
+    }
+
+    public function sessionSnapshot(string $organizationId, string $sessionId): QuotaSnapshot
+    {
+        [$organizationKey, $sessionKey] = $this->validatedScope($organizationId, $sessionId);
+
+        return $this->snapshotForSession($organizationKey, $sessionKey);
     }
 
     public function reserve(EstimateGenerationSession $session): void
@@ -356,11 +364,18 @@ final readonly class AiEstimateQuotaService
      */
     private function currentMonthReservationSummaries(array $organizationIds, array $sessionIds): array
     {
+        $currentPeriod = now()->startOfMonth()->toDateString();
         $query = $this->database->table(self::TABLE)
             ->whereIn('organization_id', $organizationIds)
-            ->where('monthly_period', now()->startOfMonth()->toDateString())
+            ->where(static function (Builder $query) use ($currentPeriod, $sessionIds): void {
+                $query->where('monthly_period', $currentPeriod)
+                    ->orWhereIn('session_id', $sessionIds);
+            })
             ->select('organization_id')
-            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS used', [self::CONFIRMED]);
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN monthly_period = ? AND status = ? THEN 1 ELSE 0 END), 0) AS used',
+                [$currentPeriod, self::CONFIRMED],
+            );
 
         foreach ($sessionIds as $sessionId) {
             $query->selectRaw(

@@ -9,6 +9,7 @@ use InvalidArgumentException;
 final readonly class EvaluationExample
 {
     public function __construct(
+        public int $organizationId,
         public string $sourceVersion,
         public array $expectedFacts,
         public array $expectedDecisions,
@@ -17,7 +18,11 @@ final readonly class EvaluationExample
         public array $contractVersions,
         public EvaluationExampleTrust $trustStatus,
         public string $split,
+        public ?EvaluationReviewDecision $reviewDecision = null,
     ) {
+        if ($organizationId < 1) {
+            throw new InvalidArgumentException('Evaluation organization is invalid.');
+        }
         if (preg_match('/\Asha256:[a-f0-9]{64}\z/', $sourceVersion) !== 1) {
             throw new InvalidArgumentException('Evaluation source version is invalid.');
         }
@@ -29,25 +34,34 @@ final readonly class EvaluationExample
                 throw new InvalidArgumentException('Evaluation contract version is invalid.');
             }
         }
+        if (($trustStatus === EvaluationExampleTrust::Candidate) !== ($reviewDecision === null)) {
+            throw new InvalidArgumentException('Evaluation review decision is inconsistent.');
+        }
+        if ($reviewDecision !== null && $reviewDecision->trustStatus !== $trustStatus) {
+            throw new InvalidArgumentException('Evaluation review status is inconsistent.');
+        }
     }
 
-    public function withTrust(EvaluationExampleTrust $trust): self
+    public function withReviewDecision(EvaluationReviewDecision $decision): self
     {
         return new self(
+            $this->organizationId,
             $this->sourceVersion,
             $this->expectedFacts,
             $this->expectedDecisions,
             $this->expectedQuantities,
             $this->expectedEstimateRows,
             $this->contractVersions,
-            $trust,
+            $decision->trustStatus,
             $this->split,
+            $decision,
         );
     }
 
     public function fingerprint(): string
     {
         return 'sha256:'.hash('sha256', json_encode([
+            $this->organizationId,
             $this->sourceVersion,
             $this->expectedFacts,
             $this->expectedDecisions,

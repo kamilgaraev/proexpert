@@ -2,13 +2,11 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Addons\EstimateGeneration\Migrations\Support\OnlineSchemaMigrationRuntime;
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-
-require_once __DIR__.'/support/OnlineSchemaMigrationRuntime.php';
 
 return new class extends Migration {
     public $withinTransaction = false;
@@ -26,7 +24,7 @@ return new class extends Migration {
             return;
         }
 
-        $runtime = new OnlineSchemaMigrationRuntime;
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             $this->backfillSafeDefaults();
@@ -102,7 +100,7 @@ return new class extends Migration {
         });
     }
 
-    private function ensureScopeUnique(OnlineSchemaMigrationRuntime $runtime): void
+    private function ensureScopeUnique(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         if (DB::selectOne('SELECT 1 FROM pg_constraint WHERE conname = ?', ['eg_sheet_analysis_scope_kind_uq']) !== null) {
             return;
@@ -142,7 +140,7 @@ SQL);
         }
     }
 
-    private function ensureIdentityAndScopeColumns(OnlineSchemaMigrationRuntime $runtime): void
+    private function ensureIdentityAndScopeColumns(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         foreach (['operation_id', 'organization_id', 'project_id', 'session_id', 'document_id', 'unit_id', 'source_version'] as $column) {
             $runtime->ensureConstraint(self::TABLE, 'eg_sheet_analysis_'.$column.'_nn', sprintf('CHECK (%s IS NOT NULL)', $column));
@@ -167,7 +165,7 @@ SQL);
         }
     }
 
-    private function ensureOperationIdentity(OnlineSchemaMigrationRuntime $runtime): void
+    private function ensureOperationIdentity(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         $primary = DB::selectOne(<<<'SQL'
 SELECT pg_get_constraintdef(c.oid, true) AS definition
@@ -184,7 +182,7 @@ SQL);
         }
     }
 
-    private function ensureSessionForeignKey(OnlineSchemaMigrationRuntime $runtime): void
+    private function ensureSessionForeignKey(TrainingBenchmarkOnlineMigrationRuntime $runtime): void
     {
         $runtime->ensureConstraint(self::TABLE, 'eg_sheet_analysis_session_fk', 'FOREIGN KEY (session_id, organization_id, project_id) REFERENCES estimate_generation_sessions (id, organization_id, project_id) ON DELETE CASCADE');
         $runtime->validateConstraint(self::TABLE, 'eg_sheet_analysis_session_fk');

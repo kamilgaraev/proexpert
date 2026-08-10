@@ -90,11 +90,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectCadRun
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCaseCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEvaluationReleaseGateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EloquentSessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceDocumentSourceReplacementInvalidator;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EloquentEvaluationCorpusRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationCorpus;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationCorpusRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationReleaseGate;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\LaravelTargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
@@ -484,6 +489,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EloquentEstimateDecisionRepository::class,
         );
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
+        $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
+            $app->make('db')->connection(),
+        ));
+        $this->app->singleton(EvaluationCorpusRepository::class, EloquentEvaluationCorpusRepository::class);
+        $this->app->singleton(EvaluationCorpus::class);
+        $this->app->singleton(EvaluationReleaseGate::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentNormativeContextPinSource::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver::class, \App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentSessionBaseInputVersionResolver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver::class, fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver(
@@ -668,6 +679,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 InspectCadRuntimeReadinessCommand::class,
                 RunEstimateGenerationBenchmarkCommand::class,
                 RunEstimateGenerationBenchmarkCaseCommand::class,
+                RunEvaluationReleaseGateCommand::class,
                 ClassifyEstimateNormativesCommand::class,
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,

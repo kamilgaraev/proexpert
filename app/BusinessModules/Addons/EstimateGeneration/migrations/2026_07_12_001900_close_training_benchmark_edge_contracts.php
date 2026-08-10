@@ -2,11 +2,9 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Addons\EstimateGeneration\Migrations\Support\OnlineSchemaMigrationRuntime;
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
-
-require_once __DIR__.'/support/OnlineSchemaMigrationRuntime.php';
 
 return new class extends Migration
 {
@@ -14,7 +12,7 @@ return new class extends Migration
 
     public function up(): void
     {
-        $runtime = new OnlineSchemaMigrationRuntime;
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             DB::statement('ALTER TABLE estimate_generation_benchmark_runs ADD COLUMN IF NOT EXISTS case_results_size bigint, ADD COLUMN IF NOT EXISTS case_results_sha256 char(64), ADD COLUMN IF NOT EXISTS case_results_etag text, ADD COLUMN IF NOT EXISTS case_results_version text, ADD COLUMN IF NOT EXISTS case_results_content_type text, ADD COLUMN IF NOT EXISTS error_summary text');

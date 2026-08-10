@@ -4,16 +4,17 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Evaluation;
 
-use DomainException;
 use InvalidArgumentException;
 
-final class EvaluationCorpus
+final readonly class EvaluationCorpus
 {
-    private array $examples = [];
-
-    public function __construct(private readonly EvaluationEstimateRowNormalizer $rows) {}
+    public function __construct(
+        private EvaluationEstimateRowNormalizer $rows,
+        private EvaluationCorpusRepository $repository,
+    ) {}
 
     public function addCandidate(
+        int $organizationId,
         string $sourceVersion,
         array $expectedFacts,
         array $expectedDecisions,
@@ -21,7 +22,8 @@ final class EvaluationCorpus
         array $expectedEstimateRows,
         array $contractVersions,
     ): EvaluationExample {
-        $example = new EvaluationExample(
+        return $this->repository->addCandidate(new EvaluationExample(
+            organizationId: $organizationId,
             sourceVersion: $sourceVersion,
             expectedFacts: $expectedFacts,
             expectedDecisions: $expectedDecisions,
@@ -30,47 +32,42 @@ final class EvaluationCorpus
             contractVersions: $contractVersions,
             trustStatus: EvaluationExampleTrust::Candidate,
             split: $this->split($sourceVersion),
-        );
-        $existing = $this->examples[$sourceVersion] ?? null;
-        if ($existing instanceof EvaluationExample) {
-            if (! hash_equals($existing->fingerprint(), $example->fingerprint())) {
-                throw new DomainException('Evaluation source version collision.');
-            }
-
-            return $existing;
-        }
-
-        $this->examples[$sourceVersion] = $example;
-
-        return $example;
-    }
-
-    public function review(string $sourceVersion): EvaluationExample
-    {
-        return $this->changeTrust($sourceVersion, EvaluationExampleTrust::Reviewed);
-    }
-
-    public function reject(string $sourceVersion): EvaluationExample
-    {
-        return $this->changeTrust($sourceVersion, EvaluationExampleTrust::Rejected);
-    }
-
-    public function listReviewed(): array
-    {
-        return array_values(array_filter(
-            $this->examples,
-            static fn (EvaluationExample $example): bool => $example->trustStatus === EvaluationExampleTrust::Reviewed,
         ));
     }
 
-    private function changeTrust(string $sourceVersion, EvaluationExampleTrust $trust): EvaluationExample
-    {
-        $example = $this->examples[$sourceVersion] ?? null;
-        if (! $example instanceof EvaluationExample) {
-            throw new InvalidArgumentException('Evaluation example was not found.');
+    public function review(
+        int $organizationId,
+        string $sourceVersion,
+        EvaluationReviewDecision $decision,
+    ): EvaluationExample {
+        if ($decision->trustStatus !== EvaluationExampleTrust::Reviewed) {
+            throw new InvalidArgumentException('Evaluation review decision is invalid.');
         }
 
-        return $this->examples[$sourceVersion] = $example->withTrust($trust);
+        return $this->repository->transition($organizationId, $sourceVersion, $decision);
+    }
+
+    public function reject(
+        int $organizationId,
+        string $sourceVersion,
+        EvaluationReviewDecision $decision,
+    ): EvaluationExample {
+        if ($decision->trustStatus !== EvaluationExampleTrust::Rejected) {
+            throw new InvalidArgumentException('Evaluation rejection decision is invalid.');
+        }
+
+        return $this->repository->transition($organizationId, $sourceVersion, $decision);
+    }
+
+    public function find(int $organizationId, string $sourceVersion): ?EvaluationExample
+    {
+        return $this->repository->find($organizationId, $sourceVersion);
+    }
+
+    /** @return list<EvaluationExample> */
+    public function listReviewed(int $organizationId): array
+    {
+        return $this->repository->reviewed($organizationId);
     }
 
     private function normalizeRows(array $rows): array
