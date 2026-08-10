@@ -388,26 +388,26 @@ final readonly class DocumentRepresentation
 }
 ```
 
-- [ ] **Step 1: Написать общую contract matrix PDF/image/CAD/XLSX**
+- [x] **Step 1: Написать общую contract matrix PDF/image/CAD/XLSX**
 
 Каждый адаптер обязан вернуть source version, native structure, visual artifact, coordinate space и capabilities. IFC остаётся явно неподдерживаемым до отдельного решения и не маскируется CAD adapter.
 
-- [ ] **Step 2: Разделить unit adapter и native extractor по именам и ответственности**
+- [x] **Step 2: Разделить unit adapter и native extractor по именам и ответственности**
 
 Unit adapter управляет единицами документа и каноническим representation. Native extractor только читает форматную структуру и не публикует второй document contract.
 
-- [ ] **Step 3: Удалить legacy callers старых adapter contracts**
+- [x] **Step 3: Удалить legacy callers старых adapter contracts**
 
 `ArtifactDocumentUnitDetector`, `ProductionDocumentUnitProcessor` и service provider должны зависеть только от `DocumentUnitAdapter` и typed extractor interfaces.
 
-- [ ] **Step 4: Запустить contract tests всех форматов**
+- [x] **Step 4: Запустить contract tests всех форматов**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\EstimateGeneration\Documents\CanonicalDocumentAdapterContractTest.php tests\Unit\EstimateGeneration\Documents tests\Unit\EstimateGeneration\Ocr
 vendor\bin\phpstan analyse app\BusinessModules\Addons\EstimateGeneration\Application\Documents app\BusinessModules\Addons\EstimateGeneration\Documents --memory-limit=1G
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 refactor[backend]: объединены адаптеры документов AI-смет

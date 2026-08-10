@@ -19,7 +19,7 @@ final class CadDocumentAdapter implements DocumentUnitAdapter
             || str_contains($mime, 'dxf');
     }
 
-    public function detect(EstimateGenerationDocument $document, string $sourceVersion): array
+    public function createUnits(EstimateGenerationDocument $document, string $sourceVersion): array
     {
         $type = DocumentUnitType::CadDrawing;
 
@@ -29,6 +29,25 @@ final class CadDocumentAdapter implements DocumentUnitAdapter
             $sourceVersion,
             OriginalDocumentArtifactLocator::forUnit($document, $type, 1, $sourceVersion, ['drawing' => 1]),
         )];
+    }
+
+    public function representation(DocumentUnitData $unit): DocumentRepresentation
+    {
+        $provenance = $unit->provenance();
+
+        return new DocumentRepresentation(
+            DocumentSourceVersion::fromString($unit->sourceVersion),
+            [],
+            $provenance->artifactPath,
+            $provenance->coordinateSpace,
+            [
+                'layers' => 'extractable',
+                'blocks' => 'extractable',
+                'polylines' => 'extractable',
+                'texts' => 'extractable',
+                'dimensions' => 'extractable',
+            ],
+        );
     }
 
     private function extension(EstimateGenerationDocument $document): string

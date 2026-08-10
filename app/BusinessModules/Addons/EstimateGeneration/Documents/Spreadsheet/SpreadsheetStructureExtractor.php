@@ -7,11 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Documents\Spreadsheet;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use InvalidArgumentException;
 
-final class SpreadsheetDocumentAdapter
+final class SpreadsheetStructureExtractor
 {
-    /**
-     * @return array{schema_version: int, source_kind: string, text: string, native_structure: array<string, mixed>}
-     */
     public function extract(OcrPageResult $page): array
     {
         $nativeStructure = $page->rawPayload['native_structure'] ?? null;

@@ -6,11 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Documents\Cad;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 
-final class CadDocumentAdapter
+final class CadStructureExtractor
 {
-    /**
-     * @return array{native_structure: array{status: string, capabilities: array<string, string>, source_fingerprint: string, source_unit: ?string, unit_status: string, layers: array<int, array<string, mixed>>, blocks: array<int, array<string, mixed>>, polylines: array<int, array<string, mixed>>, texts: array<int, array<string, mixed>>, dimensions: array<int, array<string, mixed>>}}
-     */
     public function extract(VectorGeometryData $geometry): array
     {
         $capabilities = $this->capabilities($geometry);
@@ -34,7 +31,6 @@ final class CadDocumentAdapter
         ];
     }
 
-    /** @return array<string, string> */
     private function capabilities(VectorGeometryData $geometry): array
     {
         $isDwg = str_contains($geometry->runtimeVersion, ';libredwg:');

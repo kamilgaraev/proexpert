@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadDocumentAdapter;
-use App\BusinessModules\Addons\EstimateGeneration\Documents\Spreadsheet\SpreadsheetDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PdfDocumentAdapter as ApplicationPdfDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StoredDocumentArtifact;
+use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadStructureExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Documents\Spreadsheet\SpreadsheetStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -74,7 +74,7 @@ final class DocumentAdapterContractTest extends TestCase
                 'meta' => ['original_extension' => 'xlsx'],
             ]);
             $page = (new SpreadsheetDocumentExtractor)->extractFile($document, $xlsxPath)->pages[0];
-            $payload = (new SpreadsheetDocumentAdapter)->extract($page);
+            $payload = (new SpreadsheetStructureExtractor)->extract($page);
 
             self::assertSame('available', $page->rawPayload['native_structure']['status']);
             self::assertSame('spreadsheet', $payload['source_kind']);
@@ -94,7 +94,7 @@ final class DocumentAdapterContractTest extends TestCase
     #[Test]
     public function cad_adapter_reports_native_layers_blocks_polylines_text_and_dimensions(): void
     {
-        $payload = (new CadDocumentAdapter)->extract($this->cadGeometry());
+        $payload = (new CadStructureExtractor)->extract($this->cadGeometry());
 
         self::assertSame('available', $payload['native_structure']['status']);
         self::assertSame([
@@ -130,7 +130,7 @@ final class DocumentAdapterContractTest extends TestCase
             $data->warnings,
         );
 
-        $payload = (new CadDocumentAdapter)->extract($dwg);
+        $payload = (new CadStructureExtractor)->extract($dwg);
 
         self::assertSame('partial', $payload['native_structure']['status']);
         self::assertSame('unavailable', $payload['native_structure']['capabilities']['blocks']);
@@ -162,7 +162,6 @@ final class DocumentAdapterContractTest extends TestCase
                     sprintf('org-1/documents/%s-%d', $type->value, $index),
                     max(1, strlen($content)),
                     'sha256:'.hash('sha256', $content),
-                    sprintf('%s-%d', $type->value, $index),
                     $contentType,
                 );
             }
@@ -201,7 +200,7 @@ final class DocumentAdapterContractTest extends TestCase
         });
         $document = new EstimateGenerationDocument(['filename' => 'plan.pdf', 'mime_type' => 'application/pdf']);
 
-        (new ApplicationPdfDocumentAdapter($storage, $text, $geometry))->detect($document, 'sha256:'.str_repeat('b', 64));
+        (new ApplicationPdfDocumentAdapter($storage, $text, $geometry))->createUnits($document, 'sha256:'.str_repeat('b', 64));
         $payload = json_decode($storage->contents['pdf_page:1'], true, 64, JSON_THROW_ON_ERROR);
 
         self::assertSame('available', $payload['sources']['text_layer']['status']);

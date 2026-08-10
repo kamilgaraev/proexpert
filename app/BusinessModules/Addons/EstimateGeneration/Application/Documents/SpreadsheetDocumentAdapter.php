@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Documents\Spreadsheet\SpreadsheetStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
-use App\BusinessModules\Addons\EstimateGeneration\Documents\Spreadsheet\SpreadsheetDocumentAdapter as NativeSpreadsheetDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 
 final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
@@ -15,7 +15,7 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
     public function __construct(
         private DocumentSourceManifestStorage $storage,
         private SpreadsheetDocumentExtractor $extractor,
-        private NativeSpreadsheetDocumentAdapter $nativeAdapter = new NativeSpreadsheetDocumentAdapter,
+        private SpreadsheetStructureExtractor $structureExtractor = new SpreadsheetStructureExtractor,
     ) {}
 
     public function supports(EstimateGenerationDocument $document): bool
@@ -28,7 +28,7 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
             || $mime === 'text/csv';
     }
 
-    public function detect(EstimateGenerationDocument $document, string $sourceVersion): array
+    public function createUnits(EstimateGenerationDocument $document, string $sourceVersion): array
     {
         $source = $this->storage->open($document, $sourceVersion);
 
@@ -42,7 +42,7 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                     $sourceVersion,
                     DocumentUnitType::SpreadsheetSheet,
                     $page->pageNumber,
-                    json_encode($this->nativeAdapter->extract($page), JSON_THROW_ON_ERROR),
+                    json_encode($this->structureExtractor->extract($page), JSON_THROW_ON_ERROR),
                     'application/json',
                 );
                 $units[] = new DocumentUnitData(
@@ -70,6 +70,22 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
         } finally {
             $source->close();
         }
+    }
+
+    public function representation(DocumentUnitData $unit): DocumentRepresentation
+    {
+        $provenance = $unit->provenance();
+
+        return new DocumentRepresentation(
+            DocumentSourceVersion::fromString($unit->sourceVersion),
+            [
+                'artifact_kind' => $unit->locator['artifact_kind'] ?? null,
+                'artifact_schema_version' => $unit->locator['artifact_schema_version'] ?? null,
+            ],
+            $provenance->artifactPath,
+            $provenance->coordinateSpace,
+            ['cells' => 'available', 'formulas' => 'available', 'headings' => 'available'],
+        );
     }
 
     private function extension(EstimateGenerationDocument $document): string
