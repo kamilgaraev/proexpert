@@ -37,16 +37,13 @@ final readonly class ProjectModelEvidenceWriter
     }
 
     /**
-     * @param list<SessionBuildingModelUnitData> $units
+     * @param  list<SessionBuildingModelUnitData>  $units
      * @return list<array{unit: SessionBuildingModelUnitData, entity_key: string, entity: array<string,mixed>, assertion_type: string, value: array<string,mixed>, source: string, confidence: float, locator: array<string,mixed>}>
      */
     private function candidates(array $units): array
     {
         $candidates = [];
         foreach ($units as $unit) {
-            if (! $unit instanceof SessionBuildingModelUnitData) {
-                throw new InvalidArgumentException('Project model source units are invalid.');
-            }
             foreach ($this->explicitCandidates($unit) as $candidate) {
                 $candidates[] = $candidate;
             }
@@ -160,11 +157,13 @@ final readonly class ProjectModelEvidenceWriter
         $context = $stored->context;
         $entityId = $this->entity($stored, $candidate);
         $assertionKey = $this->stableKey('assertion', $candidate['entity_key'], $candidate['assertion_type'], $candidate['source'], (string) $candidate['unit']->documentId, (string) $candidate['unit']->index, ProjectModelValueFingerprint::for($candidate['value']));
-        $assertionId = $this->assertion($stored, $entityId, $assertionKey, $candidate);
         if ($candidate['source'] === 'ai_candidate') {
-            return;
+            $evidence = null;
+        } else {
+            $evidence = $this->activeEvidence($stored, $candidate['unit'], $candidate['source'], $candidate['locator'], $candidate['value']);
         }
-        $evidence = $this->activeEvidence($stored, $candidate['unit'], $candidate['source'], $candidate['locator'], $candidate['value']);
+        $status = $evidence === null ? 'candidate' : 'confirmed';
+        $assertionId = $this->assertion($stored, $entityId, $assertionKey, $candidate, $status);
         if ($evidence === null) {
             return;
         }
@@ -185,6 +184,18 @@ final readonly class ProjectModelEvidenceWriter
             'evidence_invalidation_version' => (int) $evidence->invalidation_version,
             'created_at' => now(),
         ]);
+        $this->database->table('estimate_generation_project_model_fact_evidence')->insertOrIgnore([
+            'fact_id' => $assertionId,
+            'evidence_id' => (int) $evidence->id,
+            'organization_id' => $context->organizationId,
+            'project_id' => $context->projectId,
+            'session_id' => $context->sessionId,
+            'source_version' => $stored->contentVersion,
+            'evidence_source_version' => (string) $evidence->source_version,
+            'evidence_invalidation_version' => (int) $evidence->invalidation_version,
+            'created_at' => now(),
+        ]);
+        $this->projectFact($stored, $assertionId, $candidate, $status);
     }
 
     /** @param array{entity_key: string, entity: array<string,mixed>, confidence: float} $candidate */
@@ -213,7 +224,7 @@ final readonly class ProjectModelEvidenceWriter
     }
 
     /** @param array{entity_key: string, assertion_type: string, value: array<string,mixed>, source: string, confidence: float} $candidate */
-    private function assertion(StoredBuildingModel $stored, int $entityId, string $stableKey, array $candidate): int
+    private function assertion(StoredBuildingModel $stored, int $entityId, string $stableKey, array $candidate, string $status): int
     {
         $context = $stored->context;
         $payload = ['source' => $candidate['source'], ...$candidate['value']];
@@ -228,6 +239,11 @@ final readonly class ProjectModelEvidenceWriter
             'assertion_type' => $candidate['assertion_type'],
             'payload' => $this->json($payload),
             'confidence' => $candidate['confidence'],
+            'fact_origin' => $candidate['source'] === 'ai_candidate' ? 'ai_inference' : 'document',
+            'fact_status' => $status,
+            'fact_version' => 1,
+            'fact_value' => $this->json($candidate['value']),
+            'fact_unit' => is_string($candidate['value']['unit'] ?? null) ? $candidate['value']['unit'] : null,
             'created_at' => now(),
         ]);
         $id = $this->database->table('estimate_generation_project_model_assertions')
@@ -237,6 +253,48 @@ final readonly class ProjectModelEvidenceWriter
         }
 
         return (int) $id;
+    }
+
+    /** @param array{entity_key: string, assertion_type: string} $candidate */
+    private function projectFact(StoredBuildingModel $stored, int $assertionId, array $candidate, string $status): void
+    {
+        if ($status !== 'confirmed') {
+            return;
+        }
+        $context = $stored->context;
+        $current = $this->database->table('estimate_generation_project_model_fact_projections')
+            ->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)
+            ->where('session_id', $context->sessionId)
+            ->where('entity_stable_key', $candidate['entity_key'])
+            ->where('fact_type', $candidate['assertion_type'])
+            ->where('is_current', true)
+            ->lockForUpdate()
+            ->first();
+        if ($current !== null && (int) $current->fact_id === $assertionId) {
+            return;
+        }
+        if ($current !== null) {
+            $this->database->table('estimate_generation_project_model_fact_projections')
+                ->where('id', $current->id)
+                ->update([
+                    'is_current' => false,
+                    'replacement_source_version' => $stored->contentVersion,
+                    'invalidated_at' => now(),
+                ]);
+        }
+        $this->database->table('estimate_generation_project_model_fact_projections')->insertOrIgnore([
+            'organization_id' => $context->organizationId,
+            'project_id' => $context->projectId,
+            'session_id' => $context->sessionId,
+            'source_version' => $stored->contentVersion,
+            'fact_id' => $assertionId,
+            'entity_stable_key' => $candidate['entity_key'],
+            'fact_type' => $candidate['assertion_type'],
+            'projection_version' => 1,
+            'is_current' => true,
+            'created_at' => now(),
+        ]);
     }
 
     /** @param array<string,mixed> $candidateValue */
@@ -295,6 +353,7 @@ final readonly class ProjectModelEvidenceWriter
             }
         }
         $key = is_string($element['key'] ?? null) ? $element['key'] : (string) $index;
+
         return [
             'document_id' => $unit->documentId,
             'unit_type' => $unit->type->value,
@@ -304,21 +363,6 @@ final readonly class ProjectModelEvidenceWriter
             'element_key' => 'element:'.hash('sha256', $unit->unitId.'|'.$key),
             'bbox' => $x === [] ? null : [min($x), min($y), max($x), max($y)],
         ];
-    }
-
-    /** @param array<string,mixed> $candidateValue */
-    private function evidenceValueMatches(mixed $rawValue, array $candidateValue): bool
-    {
-        $value = $this->decode($rawValue);
-        if (isset($value['candidate_value']) && is_array($value['candidate_value']) && ! array_is_list($value['candidate_value'])) {
-            $value = $value['candidate_value'];
-        }
-
-        try {
-            return hash_equals(ProjectModelValueFingerprint::for($candidateValue), ProjectModelValueFingerprint::for($value));
-        } catch (InvalidArgumentException) {
-            return false;
-        }
     }
 
     /** @param array<string,mixed> $identity */

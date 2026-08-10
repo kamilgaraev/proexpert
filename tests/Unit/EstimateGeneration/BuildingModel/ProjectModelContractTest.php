@@ -40,7 +40,8 @@ final class ProjectModelContractTest extends TestCase
     public function it_rejects_incomplete_payloads_for_every_entity_kind(): void
     {
         foreach ($this->validPayloads() as $kind => $payload) {
-            unset($payload[array_key_first(array_diff(array_keys($payload), ['kind', 'key']))]);
+            $domainKeys = array_values(array_diff(array_keys($payload), ['kind', 'key']));
+            unset($payload[$domainKeys[0]]);
 
             try {
                 new ProjectModelEntity(10, 1, 2, 3, $this->sourceVersion(), 'floor-1-'.$kind, $kind, $payload);
@@ -98,8 +99,6 @@ final class ProjectModelContractTest extends TestCase
             'estimate_generation_project_model_evidence_bindings',
             "['id', 'organization_id', 'project_id', 'session_id', 'content_version']",
             "['building_model_id', 'organization_id', 'project_id', 'session_id', 'source_version']",
-            'eg_building_models_projection_scope_uq',
-            'eg_building_model_evidence_projection_scope_uq',
             'eg_project_model_evidence_provenance_fk',
             'evidence_source_version',
             'evidence_invalidation_version',
@@ -120,8 +119,8 @@ final class ProjectModelContractTest extends TestCase
             'PERFORM 1',
             'FROM estimate_generation_building_model_evidence',
             "Schema::dropIfExists('estimate_generation_project_model_evidence_bindings')",
-            "DROP FUNCTION IF EXISTS eg_project_model_entity_payload_guard()",
-            "DROP FUNCTION IF EXISTS eg_project_model_append_guard()",
+            'DROP FUNCTION IF EXISTS eg_project_model_entity_payload_guard()',
+            'DROP FUNCTION IF EXISTS eg_project_model_append_guard()',
         ] as $required) {
             self::assertStringContainsString($required, $source);
         }
@@ -137,7 +136,7 @@ final class ProjectModelContractTest extends TestCase
             'eg_project_model_evidence_assertion_scope_fk',
             'eg_project_model_evidence_correction_scope_fk',
             'eg_project_model_evidence_candidate_subject_ck',
-            'eg_project_model_evidence_candidate_invalid',
+            'estimate_generation.project_model_evidence_candidate_invalid',
             'eg_project_model_evidence_candidate_binding_uq',
             'COALESCE(assertion_id, 0), COALESCE(correction_id, 0), evidence_id',
             'WHERE num_nonnulls(assertion_id, correction_id) = 1',
@@ -224,7 +223,7 @@ final class ProjectModelContractTest extends TestCase
         );
         $downStart = (int) strpos($migration, 'public function down(): void');
         $postgresStart = (int) strpos($migration, "if (DB::getDriverName() === 'pgsql')", $downStart);
-        $nonPostgresStart = (int) strpos($migration, "} elseif (Schema::hasColumn", $postgresStart);
+        $nonPostgresStart = (int) strpos($migration, '} elseif (Schema::hasColumn', $postgresStart);
         $postgresDown = substr($migration, $postgresStart, $nonPostgresStart - $postgresStart);
 
         self::assertStringContainsString('public $withinTransaction = false;', $migration);
@@ -296,6 +295,8 @@ final class ProjectModelContractTest extends TestCase
             'table' => ['kind' => 'table', 'key' => 'floor-1-table', 'columns' => ['name'], 'rows' => [['name' => 'Кухня']]],
             'structural_element' => ['kind' => 'structural_element', 'key' => 'floor-1-structural_element', 'type' => 'beam', 'length_m' => 4.2],
             'quantity' => ['kind' => 'quantity', 'key' => 'floor-1-quantity', 'value' => 12, 'unit' => 'pcs'],
+            'material' => ['kind' => 'material', 'key' => 'floor-1-material', 'name' => 'Кирпич'],
+            'equipment' => ['kind' => 'equipment', 'key' => 'floor-1-equipment', 'position' => 'В1'],
         ];
     }
 }

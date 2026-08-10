@@ -94,6 +94,7 @@ final class ProjectModelEvidenceWriterTest extends TestCase
             "if (\$candidate['source'] === 'ai_candidate')",
             'if ($locator === [] || array_is_list($locator))',
             'ProjectModelEvidenceContract::confirms',
+            'estimate_generation_project_model_fact_evidence',
             "'drawing_identity'",
             "'axis'",
             "'room_number'",
@@ -103,7 +104,7 @@ final class ProjectModelEvidenceWriterTest extends TestCase
         ] as $required) {
             self::assertStringContainsString($required, $source);
         }
-        self::assertStringNotContainsString("->delete()", $source);
+        self::assertStringNotContainsString('->delete()', $source);
     }
 
     /** @return list<array<string,mixed>> */

@@ -15,14 +15,17 @@ final class ProjectModelConflictResolver
         }
         $items = iterator_to_array($candidates, false);
         usort($items, static fn (ProjectModelCandidate $left, ProjectModelCandidate $right): int => $right->priority() <=> $left->priority() ?: $left->stableKey <=> $right->stableKey);
-        $priority = $items[0]->priority();
-        $highest = array_values(array_filter($items, static fn (ProjectModelCandidate $candidate): bool => $candidate->priority() === $priority));
+        $manual = array_values(array_filter(
+            $items,
+            static fn (ProjectModelCandidate $candidate): bool => $candidate->source === 'manual_correction',
+        ));
+        $considered = $manual === [] ? $items : $manual;
         $values = [];
-        foreach ($highest as $candidate) {
+        foreach ($considered as $candidate) {
             $values[ProjectModelValueFingerprint::for($candidate->value)] = $candidate->value;
         }
         if (count($values) > 1) {
-            $candidateStableKeys = array_map(static fn (ProjectModelCandidate $candidate): string => $candidate->stableKey, $highest);
+            $candidateStableKeys = array_map(static fn (ProjectModelCandidate $candidate): string => $candidate->stableKey, $considered);
             sort($candidateStableKeys, SORT_STRING);
             $conflictingValues = array_values($values);
             usort($conflictingValues, static fn (array $left, array $right): int => ProjectModelValueFingerprint::for($left) <=> ProjectModelValueFingerprint::for($right));
@@ -35,7 +38,7 @@ final class ProjectModelConflictResolver
                 $conflictingValues,
             );
         }
-        $candidate = $highest[0];
+        $candidate = $considered[0];
 
         return ProjectModelResolvedValue::fromConfirmedCandidate($entityStableKey, $assertionType, $candidate);
     }

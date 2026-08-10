@@ -497,6 +497,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EloquentEstimateDecisionRepository::class,
         );
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository::class,
+        );
         $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
             $app->make('db')->connection(),
         ));
