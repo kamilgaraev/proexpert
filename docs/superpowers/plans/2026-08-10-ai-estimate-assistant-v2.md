@@ -322,23 +322,23 @@ refactor[backend]: упрощено восстановление AI-смет
 - Produces: immutable evaluation example with `sourceVersion`, `expectedFacts`, `expectedDecisions`, `expectedQuantities`, `expectedEstimateRows`, `trustStatus`.
 - `trustStatus`: `candidate | reviewed | rejected`; только `reviewed` участвует в release gate.
 
-- [ ] **Step 1: Написать RED-тест доверенного evaluation corpus**
+- [x] **Step 1: Написать RED-тест доверенного evaluation corpus**
 
 Проверить, что пользовательское исправление создаёт `candidate`, а не автоматически `reviewed`; release comparison читает только reviewed examples; train/test split неизменяем по stable source hash.
 
-- [ ] **Step 2: Реализовать простой corpus API без leases**
+- [x] **Step 2: Реализовать простой corpus API без leases**
 
 Корпус должен поддерживать синхронные application operations `addCandidate`, `review`, `reject`, `listReviewed`. Тяжёлый benchmark запускается отдельной явной CLI-командой/CI job, а не постоянным lease processor.
 
-- [ ] **Step 3: Удалить scheduled recovery и online migration runtime**
+- [x] **Step 3: Удалить scheduled recovery и online migration runtime**
 
 Удалить schedule из `routes/console.php`, job middleware/rate-limit bindings и Filament actions, завязанные на lease state machine. Исторические таблицы удалить поздней forward-only migration только после переноса reviewed examples в каноническую схему evaluation corpus.
 
-- [ ] **Step 4: Сохранить полезные нормализаторы и corpus importer**
+- [x] **Step 4: Сохранить полезные нормализаторы и corpus importer**
 
 `TrainingEstimateRowNormalizer`, безопасный импорт обезличенных примеров и benchmark comparison не удалять, если cleanup matrix доказывает их прямое использование новым `EvaluationCorpus`. Переименовать из `Training` в `Evaluation`, чтобы runtime не обещал автоматическое обучение модели.
 
-- [ ] **Step 5: Проверить corpus contract**
+- [x] **Step 5: Проверить corpus contract**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\EstimateGeneration\Evaluation\EvaluationCorpusTest.php tests\Unit\EstimateGeneration\Training\TrainingDatasetTrustPolicyTest.php
@@ -347,7 +347,7 @@ vendor\bin\phpstan analyse app\BusinessModules\Addons\EstimateGeneration\Evaluat
 
 До удаления старого trust policy второй тест переносится на новый namespace и старый файл удаляется.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 refactor[backend]: упрощен контур обучения AI-сметчика

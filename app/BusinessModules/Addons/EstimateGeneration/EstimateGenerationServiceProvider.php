@@ -99,7 +99,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\DeliverEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\LaravelTargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
@@ -709,12 +708,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ->by($key);
         });
 
-        RateLimiter::for('estimate-generation-training-datasets', static function (object $job): Limit {
-            $key = $job instanceof ProcessEstimateGenerationTrainingDatasetJob ? $job->rateLimitKey() : 'global';
-
-            return Limit::perMinute(max(1, (int) config('estimate-generation.training.max_dataset_jobs_per_minute', 2)))
-                ->by($key);
-        });
     }
 
     private function repositoryReplayEnabled(): bool

@@ -2,16 +2,16 @@
 
 declare(strict_types=1);
 
-namespace Tests\Unit\EstimateGeneration;
+namespace Tests\Unit\EstimateGeneration\Evaluation;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingEstimateRowNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Evaluation\EvaluationEstimateRowNormalizer;
 use PHPUnit\Framework\TestCase;
 
-final class TrainingEstimateRowNormalizerTest extends TestCase
+final class EvaluationEstimateRowNormalizerTest extends TestCase
 {
     public function test_accepts_work_row_with_normative_code(): void
     {
-        $row = (new TrainingEstimateRowNormalizer())->normalize([
+        $row = (new EvaluationEstimateRowNormalizer)->normalize([
             'row_number' => 17,
             'item_name' => 'Бетонирование фундаментной ленты B22.5',
             'unit' => 'м3',
@@ -24,13 +24,13 @@ final class TrainingEstimateRowNormalizerTest extends TestCase
         self::assertSame('accepted', $row['status']);
         self::assertSame('01-01-006-01', $row['norm_code']);
         self::assertSame('м3', $row['work_unit']);
-        self::assertContains('valid_training_row', $row['quality_flags']);
+        self::assertContains('valid_evaluation_row', $row['quality_flags']);
         self::assertSame(0.9, $row['quality_score']);
     }
 
     public function test_skips_sections_and_resource_children(): void
     {
-        $normalizer = new TrainingEstimateRowNormalizer();
+        $normalizer = new EvaluationEstimateRowNormalizer;
 
         $section = $normalizer->normalize([
             'item_name' => 'Фундамент',
@@ -52,7 +52,7 @@ final class TrainingEstimateRowNormalizerTest extends TestCase
 
     public function test_marks_missing_normative_code_as_skipped(): void
     {
-        $row = (new TrainingEstimateRowNormalizer())->normalize([
+        $row = (new EvaluationEstimateRowNormalizer)->normalize([
             'item_name' => 'Монтаж оконных блоков',
             'unit' => 'м2',
             'quantity' => 24,

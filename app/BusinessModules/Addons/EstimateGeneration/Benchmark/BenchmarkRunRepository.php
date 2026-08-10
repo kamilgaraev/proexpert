@@ -7,7 +7,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationBenchmarkRun;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Operations\BenchmarkExecutionSnapshot;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingDatasetTrustPolicy;
 use DomainException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
@@ -34,7 +33,6 @@ final class BenchmarkRunRepository
     ];
 
     public function __construct(
-        private readonly TrainingDatasetTrustPolicy $trustPolicy,
         private readonly BenchmarkPrivateObjectStore $objectStore,
     ) {}
 
@@ -47,7 +45,8 @@ final class BenchmarkRunRepository
             ->where('dataset_key', $dataset->dataset_key)
             ->where('version', $dataset->version)
             ->firstOrFail();
-        if (! $this->trustPolicy->canBenchmark($dataset)) {
+        if ($dataset->status !== EstimateGenerationTrainingDataset::STATUS_APPROVED
+            || ! in_array($dataset->dataset_type, EstimateGenerationTrainingDataset::TYPES, true)) {
             throw new DomainException('dataset_not_eligible_for_benchmark');
         }
         $this->assertTenantScope($dataset, $manifest);

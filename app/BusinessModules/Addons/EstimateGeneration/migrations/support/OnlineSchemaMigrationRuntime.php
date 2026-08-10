@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Addons\EstimateGeneration\Support;
+namespace App\BusinessModules\Addons\EstimateGeneration\Migrations\Support;
 
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use RuntimeException;
 
-final class TrainingBenchmarkOnlineMigrationRuntime
+final class OnlineSchemaMigrationRuntime
 {
     private static int $observedCheckpointCount = 0;
 

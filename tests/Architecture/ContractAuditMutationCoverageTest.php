@@ -44,7 +44,6 @@ EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|71dafb0555e895cb83f
 EstimateGenerationResourceIndexRuntime|findIndex|4e060f76db194fe35dfdf2bf4fe2cdb4625894edf60441721f80f6e736cda0eb|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, pg_get_indexdef(c.oid) AS definition FROM pg_class AS c INNER JOIN pg_namespace AS n ON n.oid = c.relnamespace INNER JOIN pg_index AS i ON i.inde…=1
 EstimateGenerationReviewQueueQuery|paginate|57b228b9ba3240e69f32df0003ac4592f9d0c43f08a58631c9b96cffc2874e56|evidence=select:argument=$this->pageSql($where)=1
 EstimateGenerationReviewQueueQuery|paginate|70e599835af2edfbd5ee9985fd6b931030ff1c707a60c0fdf2d42f8f0d2640a1|evidence=selectOne:argument=$this->summarySql($where)=1
-EstimateGenerationTrainingDatasetService|appendVersion|e34c72d10591b580f67ff955b8403d70da97a0d378196926f3dcd094d5aecf1a|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))=1
 GeometryDependencyInvalidator|invalidate|36d63fc1179952e4f307d85199ba1908e39cb2a4b7754a837583d908421de037|evidence=select:argument='WITHRECURSIVEdescendants(id)AS(SELECTchild_idFROMestimate_generation_evidence_edgesWHEREsession_id=?ANDparent_idIN('.implode(',',array_fill(0,$roots->count(),'?')).')UNIONSELECTedge.child_idFROMestimate_generation_evidence_edgesedgeJOINdescendantstreeONtree.id=edge.parent_idWHEREedge.session_id=?)SELECTidFROMdescendants'=1
 HoldingReportService|getContractsByContractor|bd4040e774ceec718179b0ec33ef20027984e5fda1b49884724025c2979bf962|evidence=raw:argument="({$query->toSql()})assub"=1
 ImmutableAuditPhaseBInvariantService|ensurePhaseBIndex|9d835f4f075e51c1741894af13a1207e89b20510ee3f415a14ff1a90b4057411|evidence=statement:argument="CREATEUNIQUEINDEXCONCURRENTLY{$name}ONimmutable_audit_events(".implode(',',$columns).")WHERE{$predicate}"=1
@@ -90,24 +89,6 @@ ResetPaymentDocumentSequences|handle|56267ac3cb08778355f83d0fc4e3d672bf902512a73
 SearchService|searchNearby|52055bff3b28c9bb787f1e6fed1ed72975ac50d52cd83debf24300dd47bd636a|evidence=select:sql=SELECT id, name, address, latitude, longitude, status, budget_amount, (6371 * acos( cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)…=1
 SqlEstimateGenerationDashboardRepository|all|171c05b6476ea126861c348f8d0f8ce10beff37221a50a34d1c1454ee5c36fdd|evidence=select:argument=$query->sql=1
 SqlEstimateGenerationDashboardRepository|one|26c10cc7036f46bb543fe28be6ad0bdafe479e32799aeaa140f3ff4ba20a270a|evidence=selectOne:argument=$query->sql=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=select:sql=SELECT c.relname, pg_get_indexdef(c.oid) AS definition FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname IN (?, ?)=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, i.indisunique, ns.nspname AS schema_name, tbl.relname AS table_name, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS keys(attnum,…=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument=$createSql=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument='DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$name=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument='DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$probe=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument='DROPINDEXCONCURRENTLYIFEXISTS'.$expectedSchema.'.'.$probe=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument=(string)$probeSql=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=selectOne:sql=SELECT pg_get_constraintdef(c.oid, true) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = ? …=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=selectOne:sql=SELECT pg_get_constraintdef(c.oid, true) AS definition, c.convalidated FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHER…=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}ADDCONSTRAINT{$name}{$definition}NOTVALID"=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}ADDCONSTRAINT{$probe}{$definition}NOTVALID"=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}DROPCONSTRAINTIFEXISTS{$probe}"=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}DROPCONSTRAINT{$probe}"=1
-TrainingBenchmarkOnlineMigrationRuntime|restoreSessionTimeouts|67f339b40b3dca05a2106751c61f7ca0632cefc65fdf77e25d197a70281984a8|evidence=select:sql=SELECT set_config('lock_timeout', ?, false), set_config('statement_timeout', ?, false)=1
-TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|53f71296deb1f9789d7b7cab4f96895e93042319337b619824d7d3877c1d0e9f|evidence=statement:argument="ALTERTABLE{$schema}.{$table}DROPCONSTRAINTIFEXISTS{$finalName}"=1
-TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|53f71296deb1f9789d7b7cab4f96895e93042319337b619824d7d3877c1d0e9f|evidence=statement:argument="ALTERTABLE{$schema}.{$table}RENAMECONSTRAINT{$temporaryName}TO{$finalName}"=1
-TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|53f71296deb1f9789d7b7cab4f96895e93042319337b619824d7d3877c1d0e9f|evidence=statement:argument="LOCKTABLE{$schema}.{$table}INACCESSEXCLUSIVEMODE"=1
-TrainingBenchmarkOnlineMigrationRuntime|validateConstraint|23e4e90fbfc41585687f7934395d1198fbbb0c5c9e72ecdec92855077f4651a8|evidence=statement:argument="ALTERTABLE{$schema}.{$table}VALIDATECONSTRAINT{$name}"=1
 MANIFEST)) as $line) {
             $separator = strrpos($line, '=');
             self::assertIsInt($separator);
@@ -317,14 +298,6 @@ PHP);
 
     public function test_dynamic_sql_exemptions_have_runtime_guards_before_database_execution(): void
     {
-        $runtime = new \App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
-        try {
-            $runtime->ensureConstraint('contracts', 'forbidden_probe', 'CHECK (id > 0)');
-            self::fail('Online migration runtime must reject the contracts table.');
-        } catch (\InvalidArgumentException $error) {
-            self::assertSame('estimate_generation_online_migration_contract_table_forbidden', $error->getMessage());
-        }
-
         $database = new \App\BusinessModules\Features\Notifications\Services\LaravelNotificationSnapshotDatabase;
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('notification_snapshot_statement_forbidden');

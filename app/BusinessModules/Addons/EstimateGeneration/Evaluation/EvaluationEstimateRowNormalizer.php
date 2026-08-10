@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Addons\EstimateGeneration\Services\Training;
+namespace App\BusinessModules\Addons\EstimateGeneration\Evaluation;
 
-final class TrainingEstimateRowNormalizer
+final class EvaluationEstimateRowNormalizer
 {
     private const RESOURCE_TYPES = [
         'material',
@@ -15,10 +15,6 @@ final class TrainingEstimateRowNormalizer
         'resource',
     ];
 
-    /**
-     * @param array<string, mixed> $row
-     * @return array<string, mixed>
-     */
     public function normalize(array $row): array
     {
         $qualityFlags = [];
@@ -30,23 +26,19 @@ final class TrainingEstimateRowNormalizer
         if ($workName === '') {
             $qualityFlags[] = 'missing_work_name';
         }
-
         if ($normCode === '') {
             $qualityFlags[] = 'missing_norm_code';
         }
-
         if ($unit === null) {
             $qualityFlags[] = 'unit_unverified';
         }
-
         if ($skipReason !== null) {
             $qualityFlags[] = $skipReason;
         }
 
         $isValid = $skipReason === null && $workName !== '' && $normCode !== '';
-
         if ($isValid) {
-            $qualityFlags[] = 'valid_training_row';
+            $qualityFlags[] = 'valid_evaluation_row';
         }
 
         return [
@@ -64,25 +56,19 @@ final class TrainingEstimateRowNormalizer
         ];
     }
 
-    /**
-     * @param array<string, mixed> $row
-     */
     private function skipReason(array $row): ?string
     {
         if ((bool) ($row['is_section'] ?? false)) {
             return 'section_row';
         }
-
         if ((bool) ($row['is_footer'] ?? false)) {
             return 'footer_row';
         }
 
         $itemType = strtolower(trim((string) ($row['item_type'] ?? '')));
-
         if ((bool) ($row['is_sub_item'] ?? false) && in_array($itemType, self::RESOURCE_TYPES, true)) {
             return 'resource_child_row';
         }
-
         if (in_array($itemType, self::RESOURCE_TYPES, true) && $this->normalizeNormCode((string) ($row['code'] ?? '')) === '') {
             return 'resource_child_row';
         }
@@ -112,7 +98,7 @@ final class TrainingEstimateRowNormalizer
 
     private function nullableFloat(mixed $value): ?float
     {
-        if ($value === null || $value === '' || !is_numeric($value)) {
+        if ($value === null || $value === '' || ! is_numeric($value)) {
             return null;
         }
 
@@ -121,7 +107,7 @@ final class TrainingEstimateRowNormalizer
 
     private function positiveInt(mixed $value): ?int
     {
-        if (!is_numeric($value) || (int) $value <= 0) {
+        if (! is_numeric($value) || (int) $value <= 0) {
             return null;
         }
 
