@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -21,6 +22,7 @@ final class ReuseEstimateGenerationDocuments
         private DocumentParsingService $parsing,
         private DocumentGenerationReadinessService $readiness,
         private EffectiveSettingsResolver $settingsResolver,
+        private EstimateGenerationActionAuthorizer $authorizer,
     ) {}
 
     public function handle(
@@ -29,6 +31,7 @@ final class ReuseEstimateGenerationDocuments
         int $sourceSessionId,
         User $user,
     ): UploadDocumentsResult {
+        $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
         $this->policy->documents($session, $expectedVersion);
         if ($sourceSessionId === (int) $session->id) {
             throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_same_session']);

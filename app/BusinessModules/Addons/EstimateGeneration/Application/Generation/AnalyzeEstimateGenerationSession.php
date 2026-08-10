@@ -6,12 +6,13 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionActionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Models\User;
 
 final class AnalyzeEstimateGenerationSession
 {
     public function __construct(private RequestEstimateGeneration $generation) {}
 
-    public function handle(EstimateGenerationSession $session, int $expectedVersion): SessionActionResult
+    public function handle(EstimateGenerationSession $session, int $expectedVersion, User $actor): SessionActionResult
     {
         return $this->generation->handle(
             $session,
@@ -19,6 +20,7 @@ final class AnalyzeEstimateGenerationSession
             is_string($session->input_payload['generation_mode'] ?? null)
                 ? $session->input_payload['generation_mode']
                 : null,
+            actor: $actor,
         );
     }
 }

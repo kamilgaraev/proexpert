@@ -580,12 +580,12 @@ AiEstimateQuotaService::snapshot(string $organizationId): QuotaSnapshot;
 
 `QuotaSnapshot`: `included=10`, `purchased`, `used`, `available`, `reservationStatus`.
 
-- [ ] Добавить RED-сценарии: 10 включённых генераций, purchased extras, повторный start, дозагрузка, AI-диалог, локальный rebuild, техническая ошибка без draft и ошибка после draft.
-- [ ] Реализовать единый session reservation key `(organization_id, session_id)`.
-- [ ] Удалить любые альтернативные счётчики `ai_estimates_month: 0` и вычислять snapshot только из quota reservations + commercial limits.
-- [ ] Проверить start/upload/rebuild permissions через `AuthorizationService`, без role slug.
-- [ ] Запустить `AiEstimateQuotaTest`, permission contract test и PHPStan изменённых файлов.
-- [ ] Commit: `fix[backend]: закреплена единица генерации AI-сметы`.
+- [x] Добавить RED-сценарии: 10 включённых генераций, purchased extras, повторный start, дозагрузка, AI-диалог, локальный rebuild, техническая ошибка без draft и ошибка после draft.
+- [x] Реализовать единый session reservation key `(organization_id, session_id)`.
+- [x] Удалить любые альтернативные счётчики `ai_estimates_month: 0` и вычислять snapshot только из quota reservations + commercial limits.
+- [x] Проверить start/upload/rebuild permissions через `AuthorizationService`, без role slug.
+- [x] Запустить `AiEstimateQuotaTest`, permission contract test и PHPStan изменённых файлов.
+- [x] Commit: `fix[backend]: закреплена единица генерации AI-сметы`.
 
 ---
 

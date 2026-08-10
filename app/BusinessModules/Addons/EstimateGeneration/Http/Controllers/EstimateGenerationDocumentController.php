@@ -26,6 +26,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGeneratio
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -61,6 +62,8 @@ class EstimateGenerationDocumentController extends Controller
                 'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
                 'documents_summary' => $result->summary,
             ], trans_message('estimate_generation.documents_uploaded'));
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $exception) {
@@ -110,6 +113,8 @@ class EstimateGenerationDocumentController extends Controller
                 'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
                 'documents_summary' => $result->summary,
             ], trans_message('estimate_generation.documents_reused'));
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {

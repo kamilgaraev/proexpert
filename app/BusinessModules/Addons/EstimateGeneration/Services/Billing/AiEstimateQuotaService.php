@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Billing;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
@@ -30,38 +31,75 @@ final readonly class AiEstimateQuotaService
         private CommercialQuotaService $commercialQuota,
     ) {}
 
-    public function reserve(EstimateGenerationSession $session): void
+    public function reserveSession(string $organizationId, string $sessionId): QuotaSnapshot
     {
-        $organizationId = (int) $session->organization_id;
-        $sessionId = (int) $session->getKey();
+        [$organizationKey, $sessionKey] = $this->validatedScope($organizationId, $sessionId);
 
-        if ($organizationId < 1 || $sessionId < 1) {
-            throw new \InvalidArgumentException('Estimate generation session scope is invalid.');
-        }
-
-        $this->database->transaction(function () use ($organizationId, $sessionId): void {
-            $lockedSession = EstimateGenerationSession::query()
-                ->whereKey($sessionId)
-                ->where('organization_id', $organizationId)
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            $this->reserveLocked($lockedSession);
+        $this->database->transaction(function () use ($organizationKey, $sessionKey): void {
+            $session = $this->lockedSession($organizationKey, $sessionKey);
+            $this->reserveLocked($session);
         }, 3);
+
+        return $this->snapshotForSession($organizationKey, $sessionKey);
     }
 
-    /** @return array{limit: int|null, used: int, available: int|null, reservation_status: 'confirmed'|'released'|null} */
-    public function snapshot(EstimateGenerationSession $session): array
+    public function releaseTechnicalFailure(string $organizationId, string $sessionId): QuotaSnapshot
     {
-        $sessionId = (int) $session->getKey();
-        $snapshots = $this->snapshots([$session]);
+        [$organizationKey, $sessionKey] = $this->validatedScope($organizationId, $sessionId);
 
-        return $snapshots[$sessionId] ?? $this->emptySnapshot();
+        $this->database->transaction(function () use ($organizationKey, $sessionKey): void {
+            $this->lockedSession($organizationKey, $sessionKey);
+
+            if ($this->hasUsableDraft($sessionKey)) {
+                return;
+            }
+
+            $reservation = $this->database->table(self::TABLE)
+                ->where('organization_id', $organizationKey)
+                ->where('session_id', $sessionKey)
+                ->lockForUpdate()
+                ->first();
+
+            if ($reservation === null || $reservation->status === self::RELEASED) {
+                return;
+            }
+
+            if ($reservation->status !== self::CONFIRMED) {
+                throw new \RuntimeException('estimate_generation.ai_estimate_quota_reservation_invalid');
+            }
+
+            $released = $this->database->table(self::TABLE)
+                ->where('organization_id', $organizationKey)
+                ->where('session_id', $sessionKey)
+                ->where('status', self::CONFIRMED)
+                ->update([
+                    'status' => self::RELEASED,
+                    'released_at' => now(),
+                ]);
+
+            if ($released !== 1) {
+                throw new \RuntimeException('estimate_generation.ai_estimate_quota_release_failed');
+            }
+        }, 3);
+
+        return $this->snapshotForSession($organizationKey, $sessionKey);
+    }
+
+    public function snapshot(string $organizationId): QuotaSnapshot
+    {
+        $organizationKey = $this->validatedId($organizationId, 'organization');
+
+        return $this->organizationSnapshot($organizationKey, null);
+    }
+
+    public function reserve(EstimateGenerationSession $session): void
+    {
+        $this->reserveSession((string) $session->organization_id, (string) $session->getKey());
     }
 
     /**
      * @param  iterable<EstimateGenerationSession>  $sessions
-     * @return array<int, array{limit: int|null, used: int, available: int|null, reservation_status: 'confirmed'|'released'|null}>
+     * @return array<int, array{included: int, purchased: int|null, used: int, available: int|null, reservation_status: string|null}>
      */
     public function snapshots(iterable $sessions): array
     {
@@ -92,17 +130,12 @@ final readonly class AiEstimateQuotaService
         $snapshots = [];
 
         foreach ($validSessions as $sessionId => $organizationId) {
-            $limit = $limits[$organizationId] ?? null;
             $summary = $reservationSummaries[$organizationId] ?? ['used' => 0, 'statuses' => []];
-            $used = max(0, (int) $summary['used']);
-            $status = $summary['statuses'][$sessionId] ?? null;
-
-            $snapshots[$sessionId] = [
-                'limit' => $limit,
-                'used' => $used,
-                'available' => $limit === null ? null : max(0, $limit - $used),
-                'reservation_status' => in_array($status, [self::CONFIRMED, self::RELEASED], true) ? $status : null,
-            ];
+            $snapshots[$sessionId] = $this->makeSnapshot(
+                array_key_exists($organizationId, $limits) ? $limits[$organizationId] : $this->included(),
+                max(0, (int) $summary['used']),
+                $summary['statuses'][$sessionId] ?? null,
+            )->toArray();
         }
 
         return $snapshots;
@@ -111,12 +144,9 @@ final readonly class AiEstimateQuotaService
     /** @param iterable<EstimateGenerationSession> $sessions */
     public function attachSnapshots(iterable $sessions): void
     {
-        $models = [];
-        foreach ($sessions as $session) {
-            $models[] = $session;
-        }
-
+        $models = is_array($sessions) ? $sessions : iterator_to_array($sessions, false);
         $snapshots = $this->snapshots($models);
+
         foreach ($models as $session) {
             $sessionId = (int) $session->getKey();
             if (isset($snapshots[$sessionId])) {
@@ -126,22 +156,17 @@ final readonly class AiEstimateQuotaService
     }
 
     /** @param Closure(EstimateGenerationSession): EstimateGenerationSession $transition */
-    public function startGeneration(EstimateGenerationSession $session, Closure $transition): EstimateGenerationSession
-    {
-        $organizationId = (int) $session->organization_id;
-        $sessionId = (int) $session->getKey();
-
-        if ($organizationId < 1 || $sessionId < 1) {
-            throw new \InvalidArgumentException('Estimate generation session scope is invalid.');
-        }
+    public function reserveSessionWithTransition(
+        EstimateGenerationSession $session,
+        Closure $transition,
+    ): EstimateGenerationSession {
+        [$organizationId, $sessionId] = $this->validatedScope(
+            (string) $session->organization_id,
+            (string) $session->getKey(),
+        );
 
         return $this->database->transaction(function () use ($organizationId, $sessionId, $transition): EstimateGenerationSession {
-            $lockedSession = EstimateGenerationSession::query()
-                ->whereKey($sessionId)
-                ->where('organization_id', $organizationId)
-                ->lockForUpdate()
-                ->firstOrFail();
-
+            $lockedSession = $this->lockedSession($organizationId, $sessionId);
             $this->reserveLocked($lockedSession);
 
             return $transition($lockedSession);
@@ -152,8 +177,7 @@ final readonly class AiEstimateQuotaService
         EstimateGenerationSession $session,
         FailureData $failure,
         ?int $failedFromStateVersion = null,
-    ): void
-    {
+    ): void {
         if ($failure->category !== FailureCategory::Terminal
             || $session->status !== EstimateGenerationStatus::Failed
             || $session->resume_status !== EstimateGenerationStatus::Generating
@@ -166,42 +190,17 @@ final readonly class AiEstimateQuotaService
             return;
         }
 
-        $reservation = $this->database->table(self::TABLE)
-            ->where('organization_id', $session->organization_id)
-            ->where('session_id', $session->getKey())
-            ->lockForUpdate()
-            ->first();
-
-        if ($reservation === null || $reservation->status === self::RELEASED) {
-            return;
-        }
-
-        if ($reservation->status !== self::CONFIRMED) {
-            throw new \RuntimeException('estimate_generation.ai_estimate_quota_reservation_invalid');
-        }
-
-        $released = $this->database->table(self::TABLE)
-            ->where('organization_id', $session->organization_id)
-            ->where('session_id', $session->getKey())
-            ->where('status', self::CONFIRMED)
-            ->update([
-                'status' => self::RELEASED,
-                'released_at' => now(),
-            ]);
-
-        if ($released !== 1) {
-            throw new \RuntimeException('estimate_generation.ai_estimate_quota_release_failed');
-        }
+        $this->releaseTechnicalFailure(
+            (string) $session->organization_id,
+            (string) $session->getKey(),
+        );
     }
 
     private function reserveLocked(EstimateGenerationSession $session): void
     {
         $organizationId = (int) $session->organization_id;
         $sessionId = (int) $session->getKey();
-        $organization = Organization::query()
-            ->whereKey($organizationId)
-            ->lockForUpdate()
-            ->first();
+        $organization = Organization::query()->whereKey($organizationId)->lockForUpdate()->first();
 
         if (! $organization instanceof Organization) {
             throw (new ModelNotFoundException)->setModel(Organization::class, [$organizationId]);
@@ -218,42 +217,30 @@ final readonly class AiEstimateQuotaService
                 return;
             }
 
-            if ($existing->status === self::RELEASED) {
-                $limit = $this->limit($organization);
-                $used = $this->confirmedReservationsForCurrentMonth($organizationId);
-
-                if ($limit !== null && $used + 1 > $limit) {
-                    throw new CommercialQuotaExceededException('ai_estimates_month', $used, $limit, 1);
-                }
-
-                $reconfirmed = $this->database->table(self::TABLE)
-                    ->where('organization_id', $organizationId)
-                    ->where('session_id', $sessionId)
-                    ->where('status', self::RELEASED)
-                    ->update([
-                        'status' => self::CONFIRMED,
-                        'monthly_period' => now()->startOfMonth()->toDateString(),
-                        'confirmed_at' => now(),
-                        'released_at' => null,
-                    ]);
-
-                if ($reconfirmed !== 1) {
-                    throw new \RuntimeException('estimate_generation.ai_estimate_quota_reconfirmation_failed');
-                }
-
-                return;
+            if ($existing->status !== self::RELEASED) {
+                throw new \RuntimeException('estimate_generation.ai_estimate_quota_reservation_invalid');
             }
 
-            throw new \RuntimeException('estimate_generation.ai_estimate_quota_reservation_invalid');
+            $this->assertAvailable($organizationId);
+            $reconfirmed = $this->database->table(self::TABLE)
+                ->where('organization_id', $organizationId)
+                ->where('session_id', $sessionId)
+                ->where('status', self::RELEASED)
+                ->update([
+                    'status' => self::CONFIRMED,
+                    'monthly_period' => now()->startOfMonth()->toDateString(),
+                    'confirmed_at' => now(),
+                    'released_at' => null,
+                ]);
+
+            if ($reconfirmed !== 1) {
+                throw new \RuntimeException('estimate_generation.ai_estimate_quota_reconfirmation_failed');
+            }
+
+            return;
         }
 
-        $limit = $this->limit($organization);
-        $used = $this->confirmedReservationsForCurrentMonth($organizationId);
-
-        if ($limit !== null && $used + 1 > $limit) {
-            throw new CommercialQuotaExceededException('ai_estimates_month', $used, $limit, 1);
-        }
-
+        $this->assertAvailable($organizationId);
         $this->database->table(self::TABLE)->insert([
             'organization_id' => $organizationId,
             'session_id' => $sessionId,
@@ -264,11 +251,26 @@ final readonly class AiEstimateQuotaService
         ]);
     }
 
-    private function limit(Organization $organization): ?int
+    private function assertAvailable(int $organizationId): void
     {
-        return $this->commercialQuota->getEffectiveAiEstimateMonthlyLimits([
-            (int) $organization->getKey(),
-        ])[(int) $organization->getKey()] ?? null;
+        $limit = $this->limit($organizationId);
+        $used = $this->confirmedReservationsForCurrentMonth($organizationId);
+
+        if ($limit !== null && $used + 1 > $limit) {
+            throw new CommercialQuotaExceededException('ai_estimates_month', $used, $limit, 1);
+        }
+    }
+
+    private function limit(int $organizationId): ?int
+    {
+        $limits = $this->commercialQuota->getEffectiveAiEstimateMonthlyLimits([$organizationId]);
+
+        return array_key_exists($organizationId, $limits) ? $limits[$organizationId] : $this->included();
+    }
+
+    private function included(): int
+    {
+        return max(0, (int) config('commercial_limits.ai_estimates.included_monthly', 10));
     }
 
     private function confirmedReservationsForCurrentMonth(int $organizationId): int
@@ -278,6 +280,73 @@ final readonly class AiEstimateQuotaService
             ->where('monthly_period', now()->startOfMonth()->toDateString())
             ->where('status', self::CONFIRMED)
             ->count();
+    }
+
+    private function snapshotForSession(int $organizationId, int $sessionId): QuotaSnapshot
+    {
+        $status = $this->database->table(self::TABLE)
+            ->where('organization_id', $organizationId)
+            ->where('session_id', $sessionId)
+            ->value('status');
+
+        return $this->organizationSnapshot($organizationId, is_string($status) ? $status : null);
+    }
+
+    private function organizationSnapshot(int $organizationId, ?string $status): QuotaSnapshot
+    {
+        return $this->makeSnapshot(
+            $this->limit($organizationId),
+            $this->confirmedReservationsForCurrentMonth($organizationId),
+            $status,
+        );
+    }
+
+    private function makeSnapshot(?int $limit, int $used, ?string $status): QuotaSnapshot
+    {
+        $included = $this->included();
+
+        return new QuotaSnapshot(
+            included: $included,
+            purchased: $limit === null ? null : max(0, $limit - $included),
+            used: max(0, $used),
+            available: $limit === null ? null : max(0, $limit - $used),
+            reservationStatus: in_array($status, [self::CONFIRMED, self::RELEASED], true) ? $status : null,
+        );
+    }
+
+    private function hasUsableDraft(int $sessionId): bool
+    {
+        return EstimateGenerationPackage::query()
+            ->where('session_id', $sessionId)
+            ->whereIn('status', ['ready_for_review', 'review_required', 'approved'])
+            ->exists();
+    }
+
+    private function lockedSession(int $organizationId, int $sessionId): EstimateGenerationSession
+    {
+        return EstimateGenerationSession::query()
+            ->whereKey($sessionId)
+            ->where('organization_id', $organizationId)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    /** @return array{int, int} */
+    private function validatedScope(string $organizationId, string $sessionId): array
+    {
+        return [
+            $this->validatedId($organizationId, 'organization'),
+            $this->validatedId($sessionId, 'session'),
+        ];
+    }
+
+    private function validatedId(string $id, string $scope): int
+    {
+        if (! ctype_digit($id) || (int) $id < 1) {
+            throw new \InvalidArgumentException("Estimate generation {$scope} scope is invalid.");
+        }
+
+        return (int) $id;
     }
 
     /**
@@ -318,16 +387,5 @@ final readonly class AiEstimateQuotaService
         }
 
         return $summaries;
-    }
-
-    /** @return array{limit: null, used: 0, available: null, reservation_status: null} */
-    private function emptySnapshot(): array
-    {
-        return [
-            'limit' => null,
-            'used' => 0,
-            'available' => null,
-            'reservation_status' => null,
-        ];
     }
 }

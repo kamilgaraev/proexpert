@@ -257,9 +257,10 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertSame(['total_count' => 2, 'ready_count' => 2], $snapshot->documentsSummary);
         self::assertSame(['review_items_total' => 3, 'review_items_blocking' => 1], $snapshot->reviewSummary);
         self::assertSame([
-            'limit' => null,
+            'included' => 10,
+            'purchased' => 0,
             'used' => 0,
-            'available' => null,
+            'available' => 10,
             'reservation_status' => null,
         ], $snapshot->aiEstimateQuota);
         self::assertSame('review', $snapshot->nextAction);
@@ -312,6 +313,7 @@ final class BuildSessionSnapshotTest extends TestCase
         $session = new EstimateGenerationSession;
         $session->forceFill([
             'id' => 41,
+            'organization_id' => 5,
             'project_id' => 17,
             'status' => $status,
             'processing_stage' => 'ready',
@@ -325,6 +327,13 @@ final class BuildSessionSnapshotTest extends TestCase
             ],
             'draft_payload' => ['quality_summary' => ['total_work_items' => 12]],
             'problem_flags' => [],
+            'ai_estimate_quota_snapshot' => [
+                'included' => 10,
+                'purchased' => 0,
+                'used' => 0,
+                'available' => 10,
+                'reservation_status' => null,
+            ],
             'updated_at' => CarbonImmutable::parse('2026-07-11 12:00:00'),
         ]);
         $session->setRelation('documents', collect());

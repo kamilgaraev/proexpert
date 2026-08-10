@@ -75,8 +75,7 @@ final class AdvanceEstimateGeneration
             return $session;
         }
 
-        return $this->withQuotaForGeneration($session, fn (EstimateGenerationSession $lockedSession): EstimateGenerationSession =>
-            $this->transitionToGeneration($lockedSession, $attemptId, $inputPayloadChanges),
+        return $this->withQuotaForGeneration($session, fn (EstimateGenerationSession $lockedSession): EstimateGenerationSession => $this->transitionToGeneration($lockedSession, $attemptId, $inputPayloadChanges),
         );
     }
 
@@ -161,7 +160,7 @@ final class AdvanceEstimateGeneration
             return $transition($session);
         }
 
-        return $this->aiEstimateQuota->startGeneration($session, $transition(...));
+        return $this->aiEstimateQuota->reserveSessionWithTransition($session, $transition(...));
     }
 
     public function documentsNeedReview(EstimateGenerationSession $session, ?string $failureCode = null): EstimateGenerationSession

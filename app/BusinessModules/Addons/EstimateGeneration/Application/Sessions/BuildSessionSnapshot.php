@@ -104,7 +104,7 @@ final class BuildSessionSnapshot
             scopeSummary: (new EstimateScopeMetadataProjector)->project($draft, $budgetScope),
             aiEstimateQuota: is_array($aiEstimateQuota)
                 ? $aiEstimateQuota
-                : $this->aiEstimateQuota->snapshot($session),
+                : $this->aiEstimateQuota->snapshot((string) $session->organization_id)->toArray(),
         );
     }
 

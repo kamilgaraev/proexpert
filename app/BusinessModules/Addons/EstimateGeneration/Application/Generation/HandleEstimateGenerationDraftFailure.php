@@ -150,7 +150,12 @@ final readonly class HandleEstimateGenerationDraftFailure
             }
 
             $failed = $this->advance->failed($session, $failure->code);
-            $this->quota->releaseForTerminalTechnicalFailure($failed, $failure, $stateVersion);
+            if (! $hasUsableDraft) {
+                $this->quota->releaseTechnicalFailure(
+                    (string) $failed->organization_id,
+                    (string) $failed->getKey(),
+                );
+            }
         }, 3);
     }
 }

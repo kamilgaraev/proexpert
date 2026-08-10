@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RebuildGeneratedSection;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route as LaravelRoute;
 use Illuminate\Support\Facades\Route;
@@ -130,6 +136,59 @@ class EstimateGenerationRbacTest extends TestCase
         $this->assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
     }
 
+    public function test_direct_generation_start_requires_abac_permission(): void
+    {
+        [$session, $user] = $this->deniedServiceFixture(
+            EstimateGenerationStatus::Generating,
+            'estimate_generation.generate',
+            ['generation_attempt_id' => 'attempt-1'],
+        );
+
+        $this->expectException(AuthorizationException::class);
+
+        app(RequestEstimateGeneration::class)->handle(
+            $session,
+            (int) $session->state_version,
+            null,
+            $user,
+            null,
+        );
+    }
+
+    public function test_direct_document_upload_requires_abac_permission(): void
+    {
+        [$session, $user] = $this->deniedServiceFixture(
+            EstimateGenerationStatus::Applied,
+            'estimate_generation.upload_documents',
+        );
+
+        $this->expectException(AuthorizationException::class);
+
+        app(UploadEstimateGenerationDocuments::class)->handle(
+            $session,
+            (int) $session->state_version,
+            [],
+            $user,
+        );
+    }
+
+    public function test_direct_local_rebuild_requires_abac_permission(): void
+    {
+        [$session, $user] = $this->deniedServiceFixture(
+            EstimateGenerationStatus::Draft,
+            'estimate_generation.generate',
+        );
+
+        $this->expectException(AuthorizationException::class);
+
+        app(RebuildGeneratedSection::class)->handle(
+            $session,
+            (int) $session->state_version,
+            'main',
+            $user,
+        );
+    }
+
     public function test_estimate_generation_roles_are_explicit_and_viewer_roles_cannot_apply(): void
     {
         $root = dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'RoleDefinitions';
@@ -181,5 +240,37 @@ class EstimateGenerationRbacTest extends TestCase
         $request->attributes->set('current_organization', $organization);
 
         return [$request, $user];
+    }
+
+    /** @return array{EstimateGenerationSession, User} */
+    private function deniedServiceFixture(
+        EstimateGenerationStatus $status,
+        string $permission,
+        array $inputPayload = [],
+    ): array {
+        $user = new User(['email' => 'denied@example.test', 'current_organization_id' => 202]);
+        $user->id = 101;
+        $session = new EstimateGenerationSession;
+        $session->exists = true;
+        $session->forceFill([
+            'id' => 404,
+            'organization_id' => 202,
+            'project_id' => 303,
+            'user_id' => 101,
+            'status' => $status,
+            'processing_stage' => $status->value,
+            'state_version' => 7,
+            'input_payload' => $inputPayload,
+            'problem_flags' => [],
+        ]);
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->once()->with(
+            $user,
+            $permission,
+            ['organization_id' => 202, 'project_id' => 303],
+        )->andReturnFalse();
+        $this->app->instance(AuthorizationService::class, $authorization);
+
+        return [$session, $user];
     }
 }

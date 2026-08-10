@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOper
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -36,6 +37,15 @@ final class ReuseEstimateGenerationDocumentsTest extends TestCase
             $this->makeDocument($source, 'house.dwg', 'dwg', 2048, str_repeat('b', 64)),
         ]);
         $this->app->instance(EffectiveSettingsResolver::class, $this->settingsResolver((int) $organization->id));
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($organization, $project, $user): void {
+            $mock->shouldReceive('can')
+                ->twice()
+                ->with($user, 'estimate_generation.upload_documents', [
+                    'organization_id' => (int) $organization->id,
+                    'project_id' => (int) $project->id,
+                ])
+                ->andReturnTrue();
+        });
         $copyIndex = 0;
         $this->mock(FileService::class, function (MockInterface $mock) use (&$copyIndex, $sourceDocuments): void {
             $mock->shouldReceive('duplicateEstimateGenerationObject')

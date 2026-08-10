@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionActionResult;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentSessionBuildingModelBridge;
@@ -17,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecution
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\SelectedRegionalPriceContext;
+use App\Models\User;
 use Illuminate\Support\Str;
 
 final class RequestEstimateGeneration
@@ -28,15 +30,18 @@ final class RequestEstimateGeneration
         private EloquentSessionBuildingModelBridge $buildingModels,
         private EstimateGenerationRegionalContextResolver $regionalContextResolver,
         private SelectedRegionalPriceContext $selectedRegionalPriceContext,
+        private EstimateGenerationActionAuthorizer $authorizer,
     ) {}
 
     public function handle(
         EstimateGenerationSession $session,
         int $expectedVersion,
         ?string $requestedMode,
+        User $actor,
         ?int $selectedRegionalPriceVersionId = null,
-    ): SessionActionResult
-    {
+    ): SessionActionResult {
+        $this->authorizer->authorize($actor, $session, 'estimate_generation.generate');
+
         if ($session->status === EstimateGenerationStatus::Generating) {
             if ($selectedRegionalPriceVersionId !== null) {
                 throw new InvalidEstimateGenerationState($session->status, 'price_source_change_during_generation');

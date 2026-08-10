@@ -77,7 +77,6 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
     #[Test]
     public function snapshot_exposes_current_month_ai_estimate_quota_and_reservation_status(): void
     {
-        config(['commercial_limits.free.ai_estimates_month' => 3]);
         [$user, $project, $session] = $this->fixture();
         app(AiEstimateQuotaService::class)->reserve($session);
         $this->route($project, $session);
@@ -86,9 +85,10 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
             ->assertOk()
             ->assertJsonPath('data.ai_estimate_quota', [
-                'limit' => 3,
+                'included' => 10,
+                'purchased' => 0,
                 'used' => 1,
-                'available' => 2,
+                'available' => 9,
                 'reservation_status' => 'confirmed',
             ]);
 
@@ -100,9 +100,10 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
             ->assertOk()
             ->assertJsonPath('data.ai_estimate_quota', [
-                'limit' => 3,
+                'included' => 10,
+                'purchased' => 0,
                 'used' => 0,
-                'available' => 3,
+                'available' => 10,
                 'reservation_status' => 'released',
             ]);
     }
@@ -110,7 +111,6 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
     #[Test]
     public function confirmed_reservation_in_another_session_invalidates_the_snapshot_etag(): void
     {
-        config(['commercial_limits.free.ai_estimates_month' => 3]);
         [$user, $project, $session] = $this->fixture();
         $otherSession = $this->anotherSession($user, $project);
         $this->route($project, $session);
@@ -151,36 +151,32 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
     #[Test]
     public function quota_snapshot_never_returns_negative_available_when_confirmed_usage_exceeds_limit(): void
     {
-        config(['commercial_limits.free.ai_estimates_month' => 1]);
         [$user, $project, $session] = $this->fixture();
-        $otherSession = $this->anotherSession($user, $project);
+        $sessions = [$session];
+        for ($index = 1; $index < 11; $index++) {
+            $sessions[] = $this->anotherSession($user, $project);
+        }
         $now = now();
-        DB::table('estimate_generation_ai_estimate_quota_reservations')->insert([
-            [
+        DB::table('estimate_generation_ai_estimate_quota_reservations')->insert(array_map(
+            static fn (EstimateGenerationSession $reservedSession): array => [
                 'organization_id' => $project->organization_id,
-                'session_id' => $session->id,
+                'session_id' => $reservedSession->id,
                 'monthly_period' => $now->copy()->startOfMonth()->toDateString(),
                 'status' => 'confirmed',
                 'confirmed_at' => $now,
                 'released_at' => null,
             ],
-            [
-                'organization_id' => $project->organization_id,
-                'session_id' => $otherSession->id,
-                'monthly_period' => $now->copy()->startOfMonth()->toDateString(),
-                'status' => 'confirmed',
-                'confirmed_at' => $now,
-                'released_at' => null,
-            ],
-        ]);
+            $sessions,
+        ));
         $this->route($project, $session);
         $this->actingAs($user);
 
         $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
             ->assertOk()
             ->assertJsonPath('data.ai_estimate_quota', [
-                'limit' => 1,
-                'used' => 2,
+                'included' => 10,
+                'purchased' => 0,
+                'used' => 11,
                 'available' => 0,
                 'reservation_status' => 'confirmed',
             ]);
