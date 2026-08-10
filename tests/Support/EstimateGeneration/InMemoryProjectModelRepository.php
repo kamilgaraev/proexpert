@@ -18,6 +18,12 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 {
     public ?int $lastSnapshotFactLimit = null;
 
+    public ?bool $understandingWithinBudget = null;
+
+    public int $understandingPreflightCalls = 0;
+
+    public int $snapshotCalls = 0;
+
     public array $entities = [];
 
     public array $facts = [];
@@ -108,7 +114,11 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         $this->decisions[$this->recordKey($decision)] = $decision;
         $prefix = implode(':', $this->scope($decision)).':';
         $this->links = array_filter($this->links, static fn (string $key): bool => ! str_starts_with($key, $prefix), ARRAY_FILTER_USE_KEY);
-        $this->understanding = array_filter($this->understanding, static fn (string $key): bool => ! str_starts_with($key, $prefix), ARRAY_FILTER_USE_KEY);
+        foreach ($this->understanding as $key => $run) {
+            if (str_starts_with($key, $prefix)) {
+                $this->understanding[$key]['is_current'] = false;
+            }
+        }
     }
 
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void
@@ -131,6 +141,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot
     {
+        $this->snapshotCalls++;
         $this->lastSnapshotFactLimit = $factLimit;
         $scope = [$organizationId, $projectId, $sessionId];
         $entities = array_values(array_filter($this->entities, fn (Entity $item): bool => $this->scope($item) === $scope));
@@ -139,6 +150,60 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         $conflicts = $this->currentConflicts($organizationId, $projectId, $sessionId);
 
         return new ProjectModelSnapshot($entities, $facts, $evidence, $conflicts);
+    }
+
+    public function understandingPreflight(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        int $maxFacts,
+        int $maxEvidenceItems,
+        int $maxEvidencePerFact,
+        int $maxEvidencePayloadBytes,
+        int $maxEvidenceBytesPerItem,
+    ): array {
+        $this->understandingPreflightCalls++;
+        $facts = [];
+        $source = null;
+        foreach ($this->facts as $fact) {
+            if ($this->scope($fact) !== [$organizationId, $projectId, $sessionId]
+                || ($this->projection[$this->logicalKey($fact)] ?? null) !== $fact->id) {
+                continue;
+            }
+            $facts[] = $fact;
+            $source = $fact->sourceVersion;
+        }
+        $evidence = [];
+        $maxPerFact = 0;
+        foreach ($facts as $fact) {
+            $maxPerFact = max($maxPerFact, count($fact->evidenceIds));
+            foreach ($fact->evidenceIds as $evidenceId) {
+                foreach ($this->evidence as $item) {
+                    if ($item->id === $evidenceId && $this->scope($item) === [$organizationId, $projectId, $sessionId]) {
+                        $evidence[$item->id] = $item;
+                    }
+                }
+            }
+        }
+        $sizes = array_map(
+            static fn (Evidence $item): int => strlen(json_encode(get_object_vars($item), JSON_THROW_ON_ERROR)),
+            $evidence,
+        );
+        $withinBudget = count($facts) <= $maxFacts
+            && count($evidence) <= $maxEvidenceItems
+            && $maxPerFact <= $maxEvidencePerFact
+            && array_sum($sizes) <= $maxEvidencePayloadBytes
+            && ($sizes === [] || max($sizes) <= $maxEvidenceBytesPerItem);
+
+        return [
+            'within_budget' => $this->understandingWithinBudget ?? $withinBudget,
+            'source_version' => $source,
+            'fact_count' => count($facts),
+            'evidence_count' => count($evidence),
+            'max_evidence_per_fact' => $maxPerFact,
+            'total_payload_bytes' => array_sum($sizes),
+            'max_payload_bytes' => $sizes === [] ? 0 : max($sizes),
+        ];
     }
 
     public function currentFacts(
@@ -187,31 +252,84 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         int $projectId,
         int $sessionId,
         string $sourceVersion,
+        string $inputFingerprint,
         array $links,
         array $conflicts,
         array $questions,
         array $limitations,
         int $providerCalls,
     ): void {
-        $key = implode(':', [$organizationId, $projectId, $sessionId, $sourceVersion]);
+        $scope = implode(':', [$organizationId, $projectId, $sessionId]);
+        $encoded = json_encode([$links, $conflicts, $questions, $limitations, $providerCalls], JSON_THROW_ON_ERROR);
+        $fingerprint = hash('sha256', $inputFingerprint."\0".$encoded);
+        $key = implode(':', [$scope, $sourceVersion, $fingerprint]);
+        $existing = $this->understanding[$key] ?? null;
+        if ($existing !== null && (
+            ! hash_equals($existing['input_fingerprint'], $inputFingerprint)
+            || [$existing['links'], $existing['conflicts'], $existing['questions'], $existing['limitations'], $existing['provider_calls']]
+                !== [$links, $conflicts, $questions, $limitations, $providerCalls]
+        )) {
+            throw new InvalidArgumentException('Project understanding fingerprint collision.');
+        }
+        foreach ($this->understanding as $existingKey => $run) {
+            if (str_starts_with($existingKey, $scope.':')) {
+                $this->understanding[$existingKey]['is_current'] = false;
+            }
+        }
         $this->links[$key] = $links;
         foreach ($conflicts as $conflict) {
             $this->conflicts[$this->recordKey($conflict)] = $conflict;
         }
         $this->understanding[$key] = [
             'source_version' => $sourceVersion,
+            'input_fingerprint' => $inputFingerprint,
             'links' => $links,
             'conflicts' => $conflicts,
             'questions' => $questions,
             'limitations' => $limitations,
             'provider_calls' => $providerCalls,
+            'is_current' => true,
         ];
+    }
+
+    public function replayUnderstanding(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+    ): ?array {
+        $scope = implode(':', [$organizationId, $projectId, $sessionId]);
+        $match = null;
+        $matchKey = null;
+        foreach ($this->understanding as $key => $run) {
+            if (str_starts_with($key, $scope.':'.$sourceVersion.':')
+                && hash_equals($run['input_fingerprint'], $inputFingerprint)) {
+                $match = $run;
+                $matchKey = $key;
+            }
+        }
+        if ($matchKey === null) {
+            return null;
+        }
+        foreach ($this->understanding as $key => $run) {
+            if (str_starts_with($key, $scope.':')) {
+                $this->understanding[$key]['is_current'] = $key === $matchKey;
+            }
+        }
+        $this->links[$scope.':'.$sourceVersion] = $match['links'];
+
+        return $this->understanding[$matchKey];
     }
 
     public function currentUnderstanding(int $organizationId, int $projectId, int $sessionId): ?array
     {
         $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
-        $matches = array_filter($this->understanding, static fn (string $key): bool => str_starts_with($key, $prefix), ARRAY_FILTER_USE_KEY);
+        $matches = array_filter(
+            $this->understanding,
+            static fn (array $run, string $key): bool => str_starts_with($key, $prefix) && $run['is_current'],
+            ARRAY_FILTER_USE_BOTH,
+        );
 
         return $matches === [] ? null : end($matches);
     }
@@ -246,7 +364,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         }
         foreach (array_keys($this->understanding) as $key) {
             if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
-                unset($this->understanding[$key]);
+                $this->understanding[$key]['is_current'] = false;
             }
         }
     }

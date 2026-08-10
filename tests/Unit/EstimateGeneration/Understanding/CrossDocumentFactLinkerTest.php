@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Understanding;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactLinker;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ExpectedArbitrationFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
@@ -126,6 +127,34 @@ final class CrossDocumentFactLinkerTest extends TestCase
         self::assertSame($this->sourceVersion('b'), $arbitrator->payloads[0]['subject']['evidence'][0]['source_version']);
         self::assertArrayNotHasKey('attributes', $arbitrator->payloads[0]);
         self::assertArrayNotHasKey('documents', $arbitrator->payloads[0]);
+    }
+
+    #[Test]
+    public function provider_failure_creates_an_evidence_bound_unresolved_relation_and_actionable_question(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $entities[] = $this->entity('entity:right-2', 'room', 'room_schedule', 'room_number', '101');
+        $facts[] = $this->fact('fact:right-2', 'entity:right-2', 'area', 18.4, 'evidence:3');
+        $evidence[] = $this->evidence('evidence:3', 'artifact:explication-2', 8);
+        $arbitrator = new class implements CrossDocumentFactArbitrator
+        {
+            public function arbitrate(string $operationIdentity, array $payload, array $scope): array
+            {
+                throw new ExpectedArbitrationFailure('timeout');
+            }
+        };
+
+        $result = $this->linker($arbitrator)->link($entities, $facts, $evidence);
+
+        self::assertCount(1, $result->links);
+        self::assertSame('unresolved', $result->links[0]['status']);
+        self::assertSame(['fact:left', 'fact:right', 'fact:right-2'], $result->links[0]['candidate_fact_ids']);
+        self::assertSame(['evidence:1', 'evidence:2', 'evidence:3'], $result->links[0]['candidate_evidence_ids']);
+        self::assertCount(1, $result->questions);
+        self::assertSame(['fact:left', 'fact:right', 'fact:right-2'], $result->questions[0]['fact_ids']);
+        self::assertSame(['evidence:1', 'evidence:2', 'evidence:3'], $result->questions[0]['evidence_ids']);
+        self::assertSame(['select:fact:left', 'select:fact:right', 'select:fact:right-2', 'leave_unresolved', 'other'], array_column($result->questions[0]['options'], 'value'));
+        self::assertNotSame([], $result->limitations);
     }
 
     #[Test]
@@ -269,6 +298,8 @@ final class CrossDocumentFactLinkerTest extends TestCase
                 'estimate_generation.project_model.operation_limit' => 'Превышен безопасный лимит сопоставления.',
                 'estimate_generation.project_model.arbitration_unavailable' => 'Автоматическое сопоставление временно недоступно.',
                 'estimate_generation.project_model.manual_review_question' => 'Как связать эти данные между документами?',
+                'estimate_generation.project_model.leave_unresolved' => 'Оставить вопрос открытым',
+                'estimate_generation.project_model.other_source' => 'Указать другой источник',
                 'estimate_generation.project_model.source_reference' => 'документ :document, стр. :page',
                 'estimate_generation.project_model.source_without_page' => 'документ :document',
                 'estimate_generation.project_model.fact_type.area' => 'площадь',

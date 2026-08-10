@@ -238,6 +238,32 @@ final class ProjectModelV2ContractTest extends TestCase
     }
 
     #[Test]
+    public function decimal_contract_matches_numeric_32_12_before_persistence(): void
+    {
+        foreach ([
+            '99999999999999999999.999999999999',
+            '-99999999999999999999.999999999999',
+            '0',
+            '-0.000000000001',
+        ] as $value) {
+            self::assertNotNull($this->quantityWithValue($value, 12)->value);
+        }
+
+        foreach ([
+            ['100000000000000000000', 0],
+            ['1.0000000000001', 12],
+            ['1', 13],
+        ] as [$value, $scale]) {
+            try {
+                $this->quantityWithValue($value, $scale);
+                self::fail($value.' was accepted outside numeric(32,12).');
+            } catch (InvalidArgumentException) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    #[Test]
     public function derived_quantity_becomes_unresolved_when_any_operand_is_not_current_confirmed_and_evidenced(): void
     {
         foreach ([
@@ -368,5 +394,14 @@ final class ProjectModelV2ContractTest extends TestCase
             'evidence_ids' => $evidenceIds,
             'decision_id' => $decisionId,
         ];
+    }
+
+    private function quantityWithValue(string $value, int $roundingScale): DerivedQuantity
+    {
+        return new DerivedQuantity(
+            'quantity:decimal-boundary', 1, 2, 3, $this->sourceVersion('a'), 'entity:wall-1',
+            'input', [$this->operand('fact:input', $value, 'm', 1, ['evidence:input'])],
+            $value, 'm', 'half_up', $roundingScale, ['evidence:input'], 'confirmed',
+        );
     }
 }

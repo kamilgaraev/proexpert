@@ -28,6 +28,7 @@ final class ProjectModelV2MigrationContractTest extends TestCase
             'estimate_generation_project_model_derived_quantities',
             'estimate_generation_project_model_cross_document_links',
             'estimate_generation_project_understanding_runs',
+            "string('match_key', 1000)",
             "'material'",
             "'equipment'",
             'RuntimeException',
@@ -47,6 +48,23 @@ final class ProjectModelV2MigrationContractTest extends TestCase
         self::assertStringContainsString('indisvalid', $secure.$finalize);
         self::assertStringNotContainsString('Schema::dropIfExists', $all);
         self::assertStringNotContainsString('UPDATE estimate_generation_project_model_assertions SET', $all);
+        self::assertStringContainsString('App\\Contracts\\Database\\ForwardOnlyMigration', $all);
+        self::assertStringContainsString('eg_pm_understanding_one_current_uq', $secure);
+        self::assertStringContainsString('eg_pm_facts_backfill_idx', $secure);
+        self::assertStringContainsString('RESET lock_timeout', $secure.$backfill.$finalize);
+        self::assertStringContainsString('RESET statement_timeout', $secure.$backfill.$finalize);
+        self::assertStringNotContainsString('row_number() OVER', $backfill);
+        self::assertStringNotContainsString('WITH candidates AS', $backfill);
+        self::assertStringContainsString('workset', $backfill);
+        self::assertStringContainsString('selected_fact_stable_key', $backfill);
+        self::assertStringContainsString('evidence_lineage', $backfill);
+        self::assertStringContainsString('historical_evidence_unproven', $backfill);
+        self::assertStringContainsString('evidence.source_version = binding.evidence_source_version', $backfill);
+        self::assertStringContainsString('evidence.invalidation_version = binding.evidence_invalidation_version', $backfill);
+        self::assertStringContainsString('evidence.invalidated_at IS NULL', $backfill);
+        self::assertStringContainsString('selected_fact_id AS fact_id', $backfill);
+        self::assertStringContainsString('LEFT JOIN LATERAL', $backfill);
+        self::assertStringContainsString('ORDER BY candidate.conflict_version DESC, candidate.id DESC', $backfill);
     }
 
     #[Test]

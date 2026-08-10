@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\Expe
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -64,11 +65,56 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
         $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
 
-        $result = $this->coordinator($models, $factory)->refresh(1, 2, 3, $this->token(), 1);
+        $coordinator = $this->coordinator($models, $factory);
+        $result = $coordinator->refresh(1, 2, 3, $this->token(), 1);
+        $replayed = $coordinator->refresh(1, 2, 3, $this->token(), 2);
 
         self::assertSame(1, $factory->calls);
         self::assertSame('suggested', $result->links[0]['status']);
         self::assertNotSame('confirmed', $result->links[0]['status']);
+        self::assertSame($result->links, $replayed->links);
+    }
+
+    #[Test]
+    public function decision_invalidation_reactivates_an_identical_persisted_run_without_calling_provider_again(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $factory = new RecordingArbitratorFactory('fact:right-2');
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
+        $coordinator = $this->coordinator($models, $factory);
+
+        $first = $coordinator->refresh(1, 2, 3, $this->token(), 1);
+        $selected = $models->fact(1, 2, 3, 'fact:right-2');
+        self::assertInstanceOf(Fact::class, $selected);
+        $models->applyDecision(new Decision(
+            'decision:replay', 1, 2, 3, $this->modelSource(), 'fact', 'fact:right-2',
+            'fact:right-2', 'user', '42', 'Подтверждено без изменения факта', 1,
+        ), $selected);
+
+        $replayed = $coordinator->refresh(1, 2, 3, $this->token(), 2);
+
+        self::assertSame(1, $factory->calls);
+        self::assertSame($first->links, $replayed->links);
+        self::assertSame($first->links, $models->currentUnderstanding(1, 2, 3)['links']);
+    }
+
+    #[Test]
+    public function changed_current_graph_uses_a_new_input_fingerprint_instead_of_stale_current_understanding(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $factory = new RecordingArbitratorFactory('fact:right-2');
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
+        $coordinator = $this->coordinator($models, $factory);
+
+        $coordinator->refresh(1, 2, 3, $this->token(), 1);
+        self::assertSame(1, $factory->calls);
+
+        $this->appendRight($models, 'entity:right-3', 'fact:right-3', 'evidence:4');
+        $coordinator->refresh(1, 2, 3, $this->token(), 2);
+
+        self::assertSame(2, $factory->calls);
     }
 
     #[Test]
@@ -79,11 +125,21 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
         $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
 
-        $result = $this->coordinator($models, $factory)->refresh(1, 2, 3, $this->token(), 1);
+        $coordinator = $this->coordinator($models, $factory);
+        $result = $coordinator->refresh(1, 2, 3, $this->token(), 1);
+        $replayed = $coordinator->refresh(1, 2, 3, $this->token(), 2);
 
-        self::assertSame([], $result->links);
+        self::assertCount(1, $result->links);
+        self::assertSame('unresolved', $result->links[0]['status']);
+        self::assertSame(
+            ['fact:left', 'fact:right', 'fact:right-2'],
+            $result->links[0]['candidate_fact_ids'],
+        );
         self::assertNotSame([], $result->limitations);
         self::assertNotSame([], $result->questions);
+        self::assertSame(1, $factory->calls);
+        self::assertSame($result->links, $replayed->links);
+        self::assertSame($result->questions, $replayed->questions);
         self::assertNotNull($models->currentUnderstanding(1, 2, 3));
     }
 
@@ -115,6 +171,63 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         $models->invalidateSourceVersion(1, 2, 3, $this->evidenceSource(), 'sha256:'.str_repeat('c', 64));
         self::assertNull($models->currentUnderstanding(1, 2, 3));
         self::assertSame([], $models->currentFacts(1, 2, 3));
+    }
+
+    #[Test]
+    public function evidence_budget_preflight_stops_before_snapshot_hydration_and_provider(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $models->understandingWithinBudget = false;
+        $factory = new RecordingArbitratorFactory('fact:right');
+
+        $result = $this->coordinator($models, $factory)->refresh(1, 2, 3, $this->token(), 1);
+
+        self::assertSame(1, $models->understandingPreflightCalls);
+        self::assertSame(0, $models->snapshotCalls);
+        self::assertSame(0, $factory->calls);
+        self::assertNotSame([], $result->limitations);
+    }
+
+    #[Test]
+    public function repository_preflight_enforces_exact_boundaries_single_item_size_and_tenant_scope(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $baseline = $models->understandingPreflight(1, 2, 3, 2, 2, 1, 10_000, 10_000);
+
+        $boundary = $models->understandingPreflight(
+            1,
+            2,
+            3,
+            $baseline['fact_count'],
+            $baseline['evidence_count'],
+            $baseline['max_evidence_per_fact'],
+            $baseline['total_payload_bytes'],
+            $baseline['max_payload_bytes'],
+        );
+        self::assertTrue($boundary['within_budget']);
+
+        $oversized = $models->understandingPreflight(
+            1,
+            2,
+            3,
+            2,
+            2,
+            1,
+            10_000,
+            $baseline['max_payload_bytes'] - 1,
+        );
+        self::assertFalse($oversized['within_budget']);
+
+        $otherSource = 'sha256:'.str_repeat('d', 64);
+        $models->saveSourceModel(
+            [new Entity('entity:other', 9, 2, 3, $otherSource, 'room', 'entity:other', ['document_role' => 'plan'])],
+            [new Fact('fact:other', 9, 2, 3, $otherSource, 'entity:other', 'area', '1', 'm2', 1, 'document', 'confirmed', ['evidence:other'])],
+            [new Evidence('evidence:other', 9, 2, 3, $otherSource, 'document:other', 'document_unit', 1)],
+        );
+        $scoped = $models->understandingPreflight(1, 2, 3, 2, 2, 1, 10_000, 10_000);
+        self::assertSame($baseline['fact_count'], $scoped['fact_count']);
+        self::assertSame($baseline['evidence_count'], $scoped['evidence_count']);
     }
 
     private function coordinator(InMemoryProjectModelRepository $models, RecordingArbitratorFactory $factory, ?ProjectUnderstandingBudget $budget = null): ProjectUnderstandingCoordinator

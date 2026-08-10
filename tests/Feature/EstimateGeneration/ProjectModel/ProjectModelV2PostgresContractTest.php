@@ -167,7 +167,8 @@ final class ProjectModelV2PostgresContractTest extends TestCase
         $link = $model === null ? null : DB::table('estimate_generation_building_model_evidence')
             ->where('building_model_id', $model->id)->orderBy('evidence_id')->first();
         $evidence = $link === null ? null : DB::table('estimate_generation_evidence')->where('id', $link->evidence_id)->first();
-        if ($model === null || $link === null || $evidence === null) {
+        $actorId = DB::table('users')->orderBy('id')->value('id');
+        if ($model === null || $link === null || $evidence === null || $actorId === null) {
             self::markTestSkipped('Requires one isolated building-model evidence fixture.');
         }
 
@@ -186,6 +187,8 @@ final class ProjectModelV2PostgresContractTest extends TestCase
                 'confidence' => 1,
                 'created_at' => now(),
             ]);
+            $createdAt = now();
+            $historicalFactId = null;
             foreach ([7.94, 8.10] as $index => $value) {
                 $factValue = ['value' => $value, 'unit' => 'm2'];
                 $factId = DB::table('estimate_generation_project_model_assertions')->insertGetId([
@@ -200,8 +203,9 @@ final class ProjectModelV2PostgresContractTest extends TestCase
                     'payload' => json_encode(['source' => 'explicit_dimension', ...$factValue], JSON_THROW_ON_ERROR),
                     'confidence' => 1,
                     'fact_value' => null,
-                    'created_at' => now(),
+                    'created_at' => $createdAt,
                 ]);
+                $historicalFactId ??= $factId;
                 $locator = is_string($evidence->locator) ? json_decode($evidence->locator, true, 512, JSON_THROW_ON_ERROR) : $evidence->locator;
                 DB::table('estimate_generation_project_model_evidence_bindings')->insert([
                     'building_model_id' => $model->id,
@@ -221,6 +225,22 @@ final class ProjectModelV2PostgresContractTest extends TestCase
                     'created_at' => now(),
                 ]);
             }
+            $decisionHash = hash('sha256', 'historical-decision-contract');
+            $correctionKey = 'correction:'.$decisionHash;
+            DB::table('estimate_generation_project_model_corrections')->insert([
+                'building_model_id' => $model->id,
+                'organization_id' => $model->organization_id,
+                'project_id' => $model->project_id,
+                'session_id' => $model->session_id,
+                'source_version' => $model->content_version,
+                'stable_key' => $correctionKey,
+                'assertion_id' => $historicalFactId,
+                'correction_type' => 'manual',
+                'payload' => json_encode(['canonical_value' => ['value' => 8.25, 'unit' => 'm2']], JSON_THROW_ON_ERROR),
+                'reason' => 'Историческое подтверждение',
+                'actor_id' => $actorId,
+                'created_at' => $createdAt,
+            ]);
 
             $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000620_backfill_estimate_project_model_v2.php';
             $migration->up();
@@ -233,6 +253,21 @@ final class ProjectModelV2PostgresContractTest extends TestCase
             self::assertSame(1, $firstProjectionCount);
             self::assertGreaterThanOrEqual(1, $firstConflictCount);
             self::assertSame(2, DB::table('estimate_generation_project_model_assertions')->where('entity_id', $entityId)->where('fact_status', 'conflicted')->count());
+            $decision = DB::table('estimate_generation_project_model_corrections')->where('stable_key', $correctionKey)->first();
+            self::assertNotNull($decision);
+            self::assertSame('fact:decision:'.substr($decisionHash, 0, 48), $decision->selected_fact_stable_key);
+            self::assertNotNull($decision->target_conflict_key);
+            $lineage = is_string($decision->evidence_lineage)
+                ? json_decode($decision->evidence_lineage, true, 512, JSON_THROW_ON_ERROR)
+                : (array) $decision->evidence_lineage;
+            self::assertNotSame([], $lineage);
+            $selectedFact = DB::table('estimate_generation_project_model_assertions')
+                ->where('stable_key', $decision->selected_fact_stable_key)->first();
+            self::assertNotNull($selectedFact);
+            self::assertTrue(DB::table('estimate_generation_project_model_fact_evidence')
+                ->where('fact_id', $selectedFact->id)->where('evidence_id', $evidence->id)->exists());
+            self::assertTrue(DB::table('estimate_generation_project_model_fact_projections')
+                ->where('fact_id', $selectedFact->id)->where('is_current', true)->exists());
 
             $migration->up();
             self::assertSame($firstProjectionCount, DB::table('estimate_generation_project_model_fact_projections')
@@ -241,6 +276,67 @@ final class ProjectModelV2PostgresContractTest extends TestCase
             self::assertSame($firstConflictCount, DB::table('estimate_generation_project_model_conflicts')
                 ->where('organization_id', $model->organization_id)->where('project_id', $model->project_id)
                 ->where('session_id', $model->session_id)->where('status', 'unresolved')->count());
+            self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
+                ->where('stable_key', $decision->selected_fact_stable_key)->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function backfill_crosses_multiple_keyset_batches_with_identical_timestamps_and_retries_idempotently(): void
+    {
+        $this->requireEnvironment();
+        $model = DB::table('estimate_generation_building_models')->orderByDesc('id')->first();
+        if ($model === null) {
+            self::markTestSkipped('Requires one isolated building-model fixture.');
+        }
+
+        DB::beginTransaction();
+        try {
+            $entityKey = 'room:bounded-backfill-contract';
+            $entityId = DB::table('estimate_generation_project_model_entities')->insertGetId([
+                'building_model_id' => $model->id,
+                'organization_id' => $model->organization_id,
+                'project_id' => $model->project_id,
+                'session_id' => $model->session_id,
+                'source_version' => $model->content_version,
+                'stable_key' => $entityKey,
+                'entity_kind' => 'room',
+                'payload' => json_encode(['kind' => 'room', 'key' => $entityKey, 'area_m2' => 10], JSON_THROW_ON_ERROR),
+                'confidence' => 1,
+                'created_at' => now(),
+            ]);
+            $createdAt = now();
+            $rows = [];
+            for ($index = 0; $index < 1_001; $index++) {
+                $rows[] = [
+                    'building_model_id' => $model->id,
+                    'organization_id' => $model->organization_id,
+                    'project_id' => $model->project_id,
+                    'session_id' => $model->session_id,
+                    'source_version' => $model->content_version,
+                    'stable_key' => 'fact:bounded-'.$index,
+                    'entity_id' => $entityId,
+                    'assertion_type' => 'quantity',
+                    'payload' => json_encode(['source' => 'explicit_dimension', 'value' => 1, 'unit' => 'pcs'], JSON_THROW_ON_ERROR),
+                    'confidence' => 1,
+                    'fact_value' => null,
+                    'created_at' => $createdAt,
+                ];
+            }
+            foreach (array_chunk($rows, 250) as $chunk) {
+                DB::table('estimate_generation_project_model_assertions')->insert($chunk);
+            }
+
+            $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000620_backfill_estimate_project_model_v2.php';
+            $migration->up();
+            self::assertSame(1_001, DB::table('estimate_generation_project_model_assertions')
+                ->where('entity_id', $entityId)->whereNotNull('fact_value')->count());
+
+            $migration->up();
+            self::assertSame(1_001, DB::table('estimate_generation_project_model_assertions')
+                ->where('entity_id', $entityId)->whereNotNull('fact_value')->count());
         } finally {
             DB::rollBack();
         }
