@@ -23,7 +23,7 @@ final readonly class Entity
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Entity');
         ProjectModelInvariant::id($stableKey, 'Entity stable key');
-        if (! in_array($type, self::TYPES, true) || array_is_list($attributes)) {
+        if (! in_array($type, self::TYPES, true) || ($attributes !== [] && array_is_list($attributes))) {
             throw new InvalidArgumentException('Project model entity is invalid.');
         }
     }

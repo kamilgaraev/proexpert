@@ -126,6 +126,16 @@ return [
             'schema_version' => 'normative-rerank-v1',
         ],
     ],
+    'project_understanding' => [
+        'max_facts' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_FACTS', 2_000),
+        'max_groups' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_GROUPS', 500),
+        'max_candidates_total' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_CANDIDATES_TOTAL', 4_000),
+        'max_candidates_per_group' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_CANDIDATES_PER_GROUP', 20),
+        'max_links' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_LINKS', 1_000),
+        'max_provider_calls' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_PROVIDER_CALLS', 20),
+        'max_evidence_items' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_EVIDENCE_ITEMS', 4_000),
+        'max_evidence_payload_bytes' => (int) env('ESTIMATE_PROJECT_UNDERSTANDING_MAX_EVIDENCE_PAYLOAD_BYTES', 2_000_000),
+    ],
     'completeness_arbiter' => [
         'enabled' => (bool) env('ESTIMATE_COMPLETENESS_ARBITER_ENABLED', false),
         'active_targeted_rebuild_enabled' => (bool) env('ESTIMATE_TARGETED_REBUILD_ENABLED', false),

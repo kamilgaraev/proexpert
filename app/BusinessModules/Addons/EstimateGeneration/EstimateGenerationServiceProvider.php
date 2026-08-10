@@ -501,6 +501,25 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class,
             \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository::class,
         );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitratorFactory::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\AttemptAwareCrossDocumentFactArbitratorFactory::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget => new \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget(
+                maxFacts: (int) config('estimate-generation.project_understanding.max_facts'),
+                maxGroups: (int) config('estimate-generation.project_understanding.max_groups'),
+                maxCandidatesTotal: (int) config('estimate-generation.project_understanding.max_candidates_total'),
+                maxCandidatesPerGroup: (int) config('estimate-generation.project_understanding.max_candidates_per_group'),
+                maxLinks: (int) config('estimate-generation.project_understanding.max_links'),
+                maxProviderCalls: (int) config('estimate-generation.project_understanding.max_provider_calls'),
+                maxEvidenceItems: (int) config('estimate-generation.project_understanding.max_evidence_items'),
+                maxEvidencePayloadBytes: (int) config('estimate-generation.project_understanding.max_evidence_payload_bytes'),
+            ),
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator::class);
         $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
             $app->make('db')->connection(),
         ));

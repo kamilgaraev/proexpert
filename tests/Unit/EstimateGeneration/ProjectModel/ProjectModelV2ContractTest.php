@@ -192,11 +192,11 @@ final class ProjectModelV2ContractTest extends TestCase
             entityId: 'entity:wall-1',
             formula: '(wall_length * wall_height) - openings_area',
             operands: [
-                ['fact_id' => 'fact:length', 'value' => 5.0, 'unit' => 'm', 'evidence_ids' => ['evidence:length']],
-                ['fact_id' => 'fact:height', 'value' => 3.0, 'unit' => 'm', 'evidence_ids' => ['evidence:height']],
-                ['fact_id' => 'fact:openings', 'value' => 2.4, 'unit' => 'm2', 'evidence_ids' => ['evidence:opening']],
+                $this->operand('fact:length', '5', 'm', 3, ['evidence:length']),
+                $this->operand('fact:height', '3', 'm', 2, ['evidence:height']),
+                $this->operand('fact:openings', '2.4', 'm2', 7, ['evidence:opening']),
             ],
-            value: 12.6,
+            value: '12.60000000',
             unit: 'm2',
             roundingMode: 'half_up',
             roundingScale: 2,
@@ -204,10 +204,95 @@ final class ProjectModelV2ContractTest extends TestCase
             status: 'confirmed',
         );
 
-        self::assertSame(12.6, $quantity->value);
+        self::assertSame('12.6', $quantity->value);
         self::assertSame('m2', $quantity->unit);
         self::assertSame(3, count($quantity->operands));
         self::assertSame('half_up', $quantity->roundingMode);
+    }
+
+    #[Test]
+    public function derived_quantity_preserves_decimal_precision_without_float_conversion(): void
+    {
+        $quantity = new DerivedQuantity(
+            id: 'quantity:decimal',
+            organizationId: 1,
+            projectId: 2,
+            sessionId: 3,
+            sourceVersion: $this->sourceVersion('a'),
+            entityId: 'entity:wall-1',
+            formula: 'small + large',
+            operands: [
+                $this->operand('fact:small', '0.1', 'm', 1, ['evidence:small']),
+                $this->operand('fact:large', '9999999999999999.12345678', 'm', 1, ['evidence:large']),
+            ],
+            value: '9999999999999999.22345678',
+            unit: 'm',
+            roundingMode: 'half_even',
+            roundingScale: 8,
+            evidenceIds: ['evidence:small', 'evidence:large'],
+            status: 'confirmed',
+        );
+
+        self::assertSame('9999999999999999.22345678', $quantity->value);
+        self::assertSame('0.1', $quantity->operands[0]['value']);
+    }
+
+    #[Test]
+    public function derived_quantity_becomes_unresolved_when_any_operand_is_not_current_confirmed_and_evidenced(): void
+    {
+        foreach ([
+            ['candidate', true, ['evidence:input'], null],
+            ['unresolved', true, ['evidence:input'], null],
+            ['conflicted', true, ['evidence:input'], null],
+            ['confirmed', false, ['evidence:input'], null],
+            ['confirmed', true, [], null],
+        ] as [$status, $current, $evidence, $decisionId]) {
+            $operand = $this->operand('fact:input', '1.25', 'm', 4, $evidence, $status, $current, $decisionId);
+            $quantity = new DerivedQuantity(
+                'quantity:unresolved-'.$status.'-'.($current ? 'current' : 'stale').'-'.count($evidence),
+                1,
+                2,
+                3,
+                $this->sourceVersion('a'),
+                'entity:wall-1',
+                'input',
+                [$operand],
+                '1.25',
+                'm',
+                'half_up',
+                2,
+                $evidence,
+                'confirmed',
+            );
+
+            self::assertSame('unresolved', $quantity->status);
+            self::assertNull($quantity->value);
+            self::assertSame(['fact:input'], $quantity->unresolvedInputs);
+        }
+    }
+
+    #[Test]
+    public function explicit_user_decision_can_supply_operand_lineage_without_document_evidence(): void
+    {
+        $quantity = new DerivedQuantity(
+            'quantity:decision-backed',
+            1,
+            2,
+            3,
+            $this->sourceVersion('a'),
+            'entity:wall-1',
+            'input',
+            [$this->operand('fact:input', '1.25', 'm', 4, [], 'confirmed', true, 'decision:input')],
+            '1.25',
+            'm',
+            'half_up',
+            2,
+            [],
+            'confirmed',
+        );
+
+        self::assertSame('confirmed', $quantity->status);
+        self::assertSame([], $quantity->unresolvedInputs);
     }
 
     #[Test]
@@ -261,5 +346,27 @@ final class ProjectModelV2ContractTest extends TestCase
     private function sourceVersion(string $character): string
     {
         return 'sha256:'.str_repeat($character, 64);
+    }
+
+    private function operand(
+        string $factId,
+        string $value,
+        string $unit,
+        int $projectionVersion,
+        array $evidenceIds,
+        string $status = 'confirmed',
+        bool $current = true,
+        ?string $decisionId = null,
+    ): array {
+        return [
+            'fact_id' => $factId,
+            'projection_version' => $projectionVersion,
+            'status' => $status,
+            'current' => $current,
+            'value' => $value,
+            'unit' => $unit,
+            'evidence_ids' => $evidenceIds,
+            'decision_id' => $decisionId,
+        ];
     }
 }

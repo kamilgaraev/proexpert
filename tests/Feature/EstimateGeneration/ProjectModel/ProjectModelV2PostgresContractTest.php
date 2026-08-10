@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\ProjectModel;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
@@ -39,6 +42,7 @@ final class ProjectModelV2PostgresContractTest extends TestCase
             'estimate_generation_project_model_derived_operands',
             'estimate_generation_project_model_cross_document_links',
             'estimate_generation_project_model_cross_link_evidence',
+            'estimate_generation_project_understanding_runs',
         ] as $table) {
             self::assertTrue($this->exists('SELECT to_regclass(?) IS NOT NULL', [$table]), $table.' is missing.');
         }
@@ -56,6 +60,7 @@ final class ProjectModelV2PostgresContractTest extends TestCase
             'eg_pm_conflict_replay_uq',
             'eg_pm_derived_replay_uq',
             'eg_pm_cross_link_replay_uq',
+            'eg_pm_understanding_replay_uq',
         ] as $index) {
             self::assertTrue($this->exists('SELECT to_regclass(?) IS NOT NULL', [$index]), $index.' is missing.');
         }
@@ -77,7 +82,7 @@ final class ProjectModelV2PostgresContractTest extends TestCase
         }
 
         self::assertTrue($this->exists(
-            "SELECT pg_get_constraintdef(oid) LIKE '%material%' AND pg_get_constraintdef(oid) LIKE '%equipment%' FROM pg_constraint WHERE conname = 'eg_project_model_entities_kind_ck'",
+            "SELECT pg_get_constraintdef(oid) LIKE '%material%' AND pg_get_constraintdef(oid) LIKE '%equipment%' FROM pg_constraint WHERE conname = 'eg_pm_entities_kind_v2_ck'",
         ));
     }
 
@@ -100,6 +105,144 @@ final class ProjectModelV2PostgresContractTest extends TestCase
                 'SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = ? AND NOT tgisinternal)',
                 [$trigger],
             ), $trigger.' is missing.');
+        }
+    }
+
+    #[Test]
+    public function entity_guard_rejects_invalid_payload_for_every_supported_kind_and_unknown_or_oversized_fields(): void
+    {
+        $this->requireEnvironment();
+        $model = DB::table('estimate_generation_building_models')->orderBy('id')->first();
+        if ($model === null) {
+            self::markTestSkipped('Requires one isolated building-model fixture.');
+        }
+        $cases = [
+            ['room', ['kind' => 'room', 'polygon' => [[0, 0], [1, 1]]]],
+            ['room', ['kind' => 'room', 'area_m2' => -1]],
+            ['wall', ['kind' => 'wall', 'start' => [0], 'end' => [1, 1]]],
+            ['opening', ['kind' => 'opening', 'wall_key' => 'wall:1', 'type' => 'door', 'width_m' => 1, 'height_m' => 0]],
+            ['dimension', ['kind' => 'dimension', 'value' => 0, 'unit' => 'm']],
+            ['quantity', ['kind' => 'quantity', 'value' => 1, 'unit' => 'unknown']],
+            ['material', ['kind' => 'material', 'name' => 'Paint', 'properties' => []]],
+            ['equipment', ['kind' => 'equipment', 'name' => 'Pump', 'properties' => []]],
+            ['table', ['kind' => 'table', 'columns' => [''], 'rows' => [[]]]],
+            ['structural_element', ['kind' => 'structural_element', 'type' => 'column', 'location' => [0]]],
+            ['room', ['kind' => 'room', 'area_m2' => 10, 'unknown' => true]],
+            ['material', ['kind' => 'material', 'material_code' => 'M-1', 'name' => str_repeat('x', 1_048_577), 'properties' => ['grade' => 'A']]],
+        ];
+
+        DB::beginTransaction();
+        try {
+            foreach ($cases as $index => [$kind, $payload]) {
+                $key = $kind.':negative-'.$index;
+                $payload['key'] = $key;
+                try {
+                    DB::transaction(static fn () => DB::table('estimate_generation_project_model_entities')->insert([
+                        'building_model_id' => $model->id,
+                        'organization_id' => $model->organization_id,
+                        'project_id' => $model->project_id,
+                        'session_id' => $model->session_id,
+                        'source_version' => $model->content_version,
+                        'stable_key' => $key,
+                        'entity_kind' => $kind,
+                        'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
+                        'confidence' => 1,
+                        'created_at' => now(),
+                    ]));
+                    self::fail('Invalid '.$kind.' payload was accepted.');
+                } catch (QueryException) {
+                    self::addToAssertionCount(1);
+                }
+            }
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function historical_rows_backfill_current_projection_conflict_and_evidence_idempotently(): void
+    {
+        $this->requireEnvironment();
+        $model = DB::table('estimate_generation_building_models')->orderByDesc('id')->first();
+        $link = $model === null ? null : DB::table('estimate_generation_building_model_evidence')
+            ->where('building_model_id', $model->id)->orderBy('evidence_id')->first();
+        $evidence = $link === null ? null : DB::table('estimate_generation_evidence')->where('id', $link->evidence_id)->first();
+        if ($model === null || $link === null || $evidence === null) {
+            self::markTestSkipped('Requires one isolated building-model evidence fixture.');
+        }
+
+        DB::beginTransaction();
+        try {
+            $entityKey = 'room:backfill-contract';
+            $entityId = DB::table('estimate_generation_project_model_entities')->insertGetId([
+                'building_model_id' => $model->id,
+                'organization_id' => $model->organization_id,
+                'project_id' => $model->project_id,
+                'session_id' => $model->session_id,
+                'source_version' => $model->content_version,
+                'stable_key' => $entityKey,
+                'entity_kind' => 'room',
+                'payload' => json_encode(['kind' => 'room', 'key' => $entityKey, 'area_m2' => 7.94], JSON_THROW_ON_ERROR),
+                'confidence' => 1,
+                'created_at' => now(),
+            ]);
+            foreach ([7.94, 8.10] as $index => $value) {
+                $factValue = ['value' => $value, 'unit' => 'm2'];
+                $factId = DB::table('estimate_generation_project_model_assertions')->insertGetId([
+                    'building_model_id' => $model->id,
+                    'organization_id' => $model->organization_id,
+                    'project_id' => $model->project_id,
+                    'session_id' => $model->session_id,
+                    'source_version' => $model->content_version,
+                    'stable_key' => 'fact:backfill-'.$index,
+                    'entity_id' => $entityId,
+                    'assertion_type' => 'area',
+                    'payload' => json_encode(['source' => 'explicit_dimension', ...$factValue], JSON_THROW_ON_ERROR),
+                    'confidence' => 1,
+                    'fact_value' => null,
+                    'created_at' => now(),
+                ]);
+                $locator = is_string($evidence->locator) ? json_decode($evidence->locator, true, 512, JSON_THROW_ON_ERROR) : $evidence->locator;
+                DB::table('estimate_generation_project_model_evidence_bindings')->insert([
+                    'building_model_id' => $model->id,
+                    'organization_id' => $model->organization_id,
+                    'project_id' => $model->project_id,
+                    'session_id' => $model->session_id,
+                    'source_version' => $model->content_version,
+                    'entity_id' => $entityId,
+                    'assertion_id' => $factId,
+                    'correction_id' => null,
+                    'evidence_id' => $evidence->id,
+                    'candidate_source' => 'explicit_dimension',
+                    'candidate_value_fingerprint' => ProjectModelValueFingerprint::for($factValue),
+                    'candidate_locator_fingerprint' => ProjectModelLocatorFingerprint::for($locator),
+                    'evidence_source_version' => $evidence->source_version,
+                    'evidence_invalidation_version' => $evidence->invalidation_version,
+                    'created_at' => now(),
+                ]);
+            }
+
+            $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000620_backfill_estimate_project_model_v2.php';
+            $migration->up();
+            $firstProjectionCount = DB::table('estimate_generation_project_model_fact_projections')
+                ->where('organization_id', $model->organization_id)->where('project_id', $model->project_id)
+                ->where('session_id', $model->session_id)->where('entity_stable_key', $entityKey)->where('is_current', true)->count();
+            $firstConflictCount = DB::table('estimate_generation_project_model_conflicts')
+                ->where('organization_id', $model->organization_id)->where('project_id', $model->project_id)
+                ->where('session_id', $model->session_id)->where('status', 'unresolved')->count();
+            self::assertSame(1, $firstProjectionCount);
+            self::assertGreaterThanOrEqual(1, $firstConflictCount);
+            self::assertSame(2, DB::table('estimate_generation_project_model_assertions')->where('entity_id', $entityId)->where('fact_status', 'conflicted')->count());
+
+            $migration->up();
+            self::assertSame($firstProjectionCount, DB::table('estimate_generation_project_model_fact_projections')
+                ->where('organization_id', $model->organization_id)->where('project_id', $model->project_id)
+                ->where('session_id', $model->session_id)->where('entity_stable_key', $entityKey)->where('is_current', true)->count());
+            self::assertSame($firstConflictCount, DB::table('estimate_generation_project_model_conflicts')
+                ->where('organization_id', $model->organization_id)->where('project_id', $model->project_id)
+                ->where('session_id', $model->session_id)->where('status', 'unresolved')->count());
+        } finally {
+            DB::rollBack();
         }
     }
 

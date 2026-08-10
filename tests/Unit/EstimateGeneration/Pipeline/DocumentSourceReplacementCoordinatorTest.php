@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Evidence
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class InMemoryDocumentSourceReplacementTransaction implements DocumentSourceReplacementTransaction
 {
@@ -68,7 +69,7 @@ final class InMemoryDocumentSourceReplacementPageStore implements DocumentSource
                 && $page['document_id'] === $documentId;
 
             if ($belongsToDocument && $page['source_version'] !== $acceptedSourceVersion) {
-                ++$removed;
+                $removed++;
 
                 return false;
             }
@@ -107,7 +108,7 @@ final class DocumentSourceReplacementCoordinatorTest extends TestCase
     {
         $transaction = new InMemoryDocumentSourceReplacementTransaction;
         $invalidator = new FailingOnceEvidenceSourceInvalidator;
-        $coordinator = new DocumentSourceReplacementCoordinator($transaction, $invalidator, new InMemoryDocumentSourceReplacementPageStore);
+        $coordinator = new DocumentSourceReplacementCoordinator($transaction, $invalidator, new InMemoryDocumentSourceReplacementPageStore, new InMemoryProjectModelRepository);
         $accept = function () use ($transaction): string {
             $transaction->sourceVersion = 'new';
 
@@ -153,7 +154,7 @@ final class DocumentSourceReplacementCoordinatorTest extends TestCase
                 return 1;
             }
         };
-        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages);
+        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages, new InMemoryProjectModelRepository);
 
         $coordinator->commit(1, 10, 100, 44, 'old', 'new', function () use ($pages): void {
             $pages->reservePage(44, 1, 'new', 601);
@@ -186,12 +187,12 @@ final class DocumentSourceReplacementCoordinatorTest extends TestCase
 
             public function invalidateReplacedDocumentSource(int $organizationId, int $projectId, int $sessionId, int $documentId, string $previousSourceVersion): int
             {
-                ++$this->calls;
+                $this->calls++;
 
                 return 0;
             }
         };
-        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages);
+        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages, new InMemoryProjectModelRepository);
 
         $coordinator->commit(1, 10, 100, 44, null, 'accepted', static fn (): null => null);
 
@@ -214,12 +215,12 @@ final class DocumentSourceReplacementCoordinatorTest extends TestCase
 
             public function invalidateReplacedDocumentSource(int $organizationId, int $projectId, int $sessionId, int $documentId, string $previousSourceVersion): int
             {
-                ++$this->calls;
+                $this->calls++;
 
                 return 0;
             }
         };
-        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages);
+        $coordinator = new DocumentSourceReplacementCoordinator(new InMemoryDocumentSourceReplacementTransaction, $invalidator, $pages, new InMemoryProjectModelRepository);
 
         $coordinator->commit(1, 10, 100, 44, '', 'accepted', static fn (): null => null);
 

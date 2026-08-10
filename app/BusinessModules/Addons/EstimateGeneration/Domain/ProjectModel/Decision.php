@@ -8,6 +8,8 @@ use InvalidArgumentException;
 
 final readonly class Decision
 {
+    public array $evidenceIds;
+
     public function __construct(
         public string $id,
         public int $organizationId,
@@ -21,6 +23,7 @@ final readonly class Decision
         public string $actorId,
         public string $reason,
         public int $version,
+        array $evidenceIds = [],
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Decision');
@@ -36,5 +39,6 @@ final readonly class Decision
             || trim($reason) === '' || strlen($reason) > 1000 || $version <= 0) {
             throw new InvalidArgumentException('Project model decision is invalid.');
         }
+        $this->evidenceIds = ProjectModelInvariant::uniqueIds($evidenceIds, 'Decision evidence', true);
     }
 }

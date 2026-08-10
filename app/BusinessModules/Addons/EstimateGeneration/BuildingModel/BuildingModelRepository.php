@@ -14,7 +14,7 @@ final readonly class BuildingModelRepository
     public function __construct(
         private BuildingModelStore $store,
         private EvidenceRepository $evidence,
-        private ?ProjectModelRepository $projectModel = null,
+        private ProjectModelRepository $projectModel,
     ) {}
 
     public function store(BuildingModelOperationContext $context, NormalizedBuildingModelData $model, ?callable $afterStore = null): StoredBuildingModel
@@ -60,7 +60,7 @@ final readonly class BuildingModelRepository
 
     public function currentFacts(BuildingModelOperationContext $context, ?string $entityId = null): array
     {
-        if ($this->projectModel === null || $this->validated($context, false) === null) {
+        if ($this->validated($context, false) === null) {
             return [];
         }
 

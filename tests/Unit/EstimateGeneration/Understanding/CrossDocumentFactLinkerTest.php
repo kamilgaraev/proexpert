@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Understanding;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactLinker;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -146,6 +147,22 @@ final class CrossDocumentFactLinkerTest extends TestCase
     }
 
     #[Test]
+    public function unconfirmed_current_states_with_complete_evidence_never_become_linked(): void
+    {
+        foreach (['candidate', 'unresolved', 'conflicted'] as $status) {
+            [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+            $facts[0] = $this->fact('fact:left', 'entity:left', 'area', 18.4, 'evidence:1', $status);
+            $arbitrator = new RecordingCrossDocumentFactArbitrator('fact:right');
+
+            $result = $this->linker($arbitrator)->link($entities, $facts, $evidence);
+
+            self::assertSame([], $result->links, $status);
+            self::assertSame(0, $result->providerCalls, $status);
+            self::assertNotSame([], $result->limitations, $status);
+        }
+    }
+
+    #[Test]
     public function stale_source_and_cross_scope_records_are_never_linked(): void
     {
         [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
@@ -193,9 +210,10 @@ final class CrossDocumentFactLinkerTest extends TestCase
         }
         $arbitrator = new RecordingCrossDocumentFactArbitrator;
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('candidate limit');
-        $this->linker($arbitrator, 2)->link($entities, $facts, $evidence);
+        $result = $this->linker($arbitrator, 2)->link($entities, $facts, $evidence);
+        self::assertSame([], $result->links);
+        self::assertNotSame([], $result->limitations);
+        self::assertSame([], $arbitrator->payloads);
     }
 
     #[Test]
@@ -215,22 +233,42 @@ final class CrossDocumentFactLinkerTest extends TestCase
         $facts[1] = $this->fact('fact:right', 'entity:right', 'area', 18.4, 'evidence:22');
         $arbitrator = new RecordingCrossDocumentFactArbitrator;
 
-        try {
-            $this->linker($arbitrator)->link($entities, $facts, $evidence);
-            self::fail('Unbounded evidence payload was accepted.');
-        } catch (InvalidArgumentException $exception) {
-            self::assertStringContainsString('evidence limit', $exception->getMessage());
-            self::assertSame([], $arbitrator->payloads);
-        }
+        $result = $this->linker($arbitrator)->link($entities, $facts, $evidence);
+        self::assertSame([], $result->links);
+        self::assertNotSame([], $result->limitations);
+        self::assertSame([], $arbitrator->payloads);
     }
 
-    private function linker(?CrossDocumentFactArbitrator $arbitrator = null, int $limit = 20): CrossDocumentFactLinker
+    #[Test]
+    public function global_provider_budget_counts_multiple_left_candidates_against_one_right_candidate(): void
     {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $entities[] = $this->entity('entity:left-2', 'room', 'plan', 'room_number', '101');
+        $facts[] = $this->fact('fact:left-2', 'entity:left-2', 'area', 18.4, 'evidence:3');
+        $evidence[] = $this->evidence('evidence:3', 'artifact:plan-2', 3);
+        $arbitrator = new RecordingCrossDocumentFactArbitrator;
+        $budget = new ProjectUnderstandingBudget(10, 10, 10, 10, 10, 1, 10, 100_000);
+
+        $result = $this->linker($arbitrator, budget: $budget)->link($entities, $facts, $evidence);
+
+        self::assertSame([], $result->links);
+        self::assertNotSame([], $result->limitations);
+        self::assertSame([], $arbitrator->payloads);
+    }
+
+    private function linker(
+        ?CrossDocumentFactArbitrator $arbitrator = null,
+        int $limit = 20,
+        ?ProjectUnderstandingBudget $budget = null,
+    ): CrossDocumentFactLinker {
         $translator = static function (string $key, array $replace): string {
             $messages = [
                 'estimate_generation.project_model.conflict_question' => 'В документах указаны разные значения для «:fact». Какое значение использовать?',
                 'estimate_generation.project_model.conflict_option' => ':value — источник: :source',
                 'estimate_generation.project_model.insufficient_evidence' => 'Недостаточно данных для однозначной связи между документами.',
+                'estimate_generation.project_model.operation_limit' => 'Превышен безопасный лимит сопоставления.',
+                'estimate_generation.project_model.arbitration_unavailable' => 'Автоматическое сопоставление временно недоступно.',
+                'estimate_generation.project_model.manual_review_question' => 'Как связать эти данные между документами?',
                 'estimate_generation.project_model.source_reference' => 'документ :document, стр. :page',
                 'estimate_generation.project_model.source_without_page' => 'документ :document',
                 'estimate_generation.project_model.fact_type.area' => 'площадь',
@@ -246,6 +284,7 @@ final class CrossDocumentFactLinkerTest extends TestCase
             new TargetedConflictResolver($translator),
             $arbitrator,
             $limit,
+            $budget,
         );
     }
 

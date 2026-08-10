@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
@@ -19,6 +20,7 @@ final class ReconcileEstimateGenerationDocuments
     public function __construct(
         private AdvanceEstimateGeneration $advance,
         private DocumentGenerationReadinessService $readiness,
+        private ProjectUnderstandingCoordinator $understanding,
     ) {}
 
     public function changed(EstimateGenerationSession $session): EstimateGenerationSession
@@ -80,6 +82,13 @@ final class ReconcileEstimateGenerationDocuments
             return $session;
         }
 
+        $this->understanding->refresh(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->getKey(),
+            (string) Str::uuid(),
+            max(1, (int) $session->state_version),
+        );
         $session = $this->advance->documentsReady($session);
         if (($session->input_payload['generation_requested'] ?? false) !== true) {
             return $session;

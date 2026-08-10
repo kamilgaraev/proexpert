@@ -22,7 +22,7 @@ final readonly class SessionBuildingModelBridge
         private GeometryBuildingModelInputMapper $mapper,
         private BuildingModelAssembler $assembler,
         private BuildingModelRepository $models,
-        private ?ProjectModelEvidenceWriter $projectModelEvidence = null,
+        private ProjectModelEvidenceWriter $projectModelEvidence,
         private DocumentFloorIdentityResolver $floorIdentity = new DocumentFloorIdentityResolver,
     ) {}
 
@@ -55,8 +55,8 @@ final readonly class SessionBuildingModelBridge
         }
 
         $model = $this->assembler->assembleVisionMany($inputs);
-        $this->models->store($context, $model, function (StoredBuildingModel $stored) use ($units): void {
-            $this->projectModelEvidence?->write($stored, $units);
+        $this->models->store($context, $model, function (StoredBuildingModel $stored) use ($units, $model): void {
+            $this->projectModelEvidence->write($stored, $units, $model->evidenceIds);
         });
 
         return $model;

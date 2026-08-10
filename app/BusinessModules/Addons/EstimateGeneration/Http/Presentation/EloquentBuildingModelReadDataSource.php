@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DocumentTotalAreaConstraintResolver;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentConfirmedProjectModelValues;
 use Illuminate\Database\DatabaseManager;
 use stdClass;
 
@@ -13,8 +12,8 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
 {
     public function __construct(
         private DatabaseManager $database,
+        private ProjectModelReadProjection $projectModel,
         private DocumentTotalAreaConstraintResolver $areaConstraints = new DocumentTotalAreaConstraintResolver,
-        private ?EloquentConfirmedProjectModelValues $confirmedValues = null,
     ) {}
 
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
@@ -33,7 +32,11 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
         return $model === null ? null : [
             'content_version' => (string) $row->content_version,
             'model' => $model,
-            'effective_values' => $this->effectiveValues($row),
+            'effective_values' => $this->projectModel->forScope(
+                $organizationId,
+                $projectId,
+                $sessionId,
+            )['effective_values'],
         ];
     }
 
@@ -172,65 +175,5 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
         $decoded = json_decode($value, true);
 
         return is_array($decoded) ? $decoded : null;
-    }
-
-    /** @return list<array<string, mixed>> */
-    private function currentDecisionRows(stdClass $model): array
-    {
-        return $this->database->table('estimate_generation_project_model_corrections as correction')
-            ->join('estimate_generation_project_model_assertions as assertion', 'assertion.id', '=', 'correction.assertion_id')
-            ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'assertion.entity_id')
-            ->where('correction.building_model_id', (int) $model->id)
-            ->where('correction.organization_id', $model->organization_id ?? null)
-            ->where('correction.project_id', $model->project_id ?? null)
-            ->where('correction.session_id', $model->session_id ?? null)
-            ->where('correction.source_version', (string) $model->content_version)
-            ->whereRaw('correction.id = (select max(current_correction.id) from estimate_generation_project_model_corrections as current_correction where current_correction.assertion_id = correction.assertion_id)')
-            ->orderBy('assertion.stable_key')
-            ->get([
-                'correction.stable_key as correction_stable_key',
-                'correction.payload as correction_payload',
-                'assertion.stable_key as assertion_stable_key',
-                'assertion.assertion_type',
-                'entity.stable_key as entity_stable_key',
-            ])
-            ->map(function (stdClass $row): ?array {
-                $correction = $this->json($row->correction_payload);
-                $audit = is_array($correction['audit'] ?? null) ? $correction['audit'] : null;
-                if ($correction === null || $audit === null) {
-                    throw new \UnexpectedValueException('Project model correction history is invalid.');
-                }
-                if (($audit['operation'] ?? null) === 'revert') {
-                    return null;
-                }
-                $value = $audit['new_canonical_value'] ?? $correction['canonical_value'] ?? null;
-                if (($audit['operation'] ?? null) !== 'apply' || ! is_array($value) || array_is_list($value)) {
-                    throw new \UnexpectedValueException('Project model correction history is invalid.');
-                }
-
-                return [
-                    'correction_stable_key' => (string) $row->correction_stable_key,
-                    'assertion_stable_key' => (string) $row->assertion_stable_key,
-                    'assertion_type' => (string) $row->assertion_type,
-                    'entity_stable_key' => (string) $row->entity_stable_key,
-                    'value' => $value,
-                ];
-            })
-            ->filter()
-            ->values()
-            ->all();
-    }
-
-    /** @return list<array<string,mixed>> */
-    private function effectiveValues(stdClass $model): array
-    {
-        $confirmed = ($this->confirmedValues ?? new EloquentConfirmedProjectModelValues($this->database))->forModel($model);
-        $corrections = $this->currentDecisionRows($model);
-        $byAssertion = [];
-        foreach ($confirmed as $value) $byAssertion[(string) $value['assertion_stable_key']] = $value;
-        foreach ($corrections as $value) $byAssertion[(string) $value['assertion_stable_key']] = $value;
-        ksort($byAssertion, SORT_STRING);
-
-        return array_values($byAssertion);
     }
 }

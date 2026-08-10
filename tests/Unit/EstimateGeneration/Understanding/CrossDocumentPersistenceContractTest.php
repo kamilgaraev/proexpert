@@ -4,34 +4,25 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Understanding;
 
-use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class CrossDocumentPersistenceContractTest extends TestCase
 {
     #[Test]
-    public function repository_persists_idempotent_scoped_links_and_invalidates_only_the_current_projection(): void
+    public function understanding_replay_is_idempotent_scoped_and_source_invalidation_removes_only_current_state(): void
     {
-        self::assertTrue(method_exists(ProjectModelRepository::class, 'appendCrossDocumentLinks'));
+        $repository = new InMemoryProjectModelRepository;
+        $source = 'sha256:'.str_repeat('a', 64);
+        $link = ['id' => 'link:1', 'status' => 'suggested'];
 
-        $source = (string) file_get_contents(
-            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Domain/ProjectModel/EloquentProjectModelRepository.php'
-        );
+        $repository->replaceUnderstanding(1, 2, 3, $source, [$link], [], [], [], 1);
+        $repository->replaceUnderstanding(1, 2, 3, $source, [$link], [], [], [], 1);
 
-        foreach ([
-            'estimate_generation_project_model_cross_document_links',
-            'estimate_generation_project_model_cross_link_evidence',
-            "->whereIn('operation_identity', array_column(\$chunk, 'operation_identity'))",
-            'insertOrIgnore',
-            'evidenceRowsForLinks',
-            'factIdsForLinks',
-            "'is_current' => false",
-            "'invalidated_at' => now()",
-        ] as $required) {
-            self::assertStringContainsString($required, $source);
-        }
-
-        self::assertStringNotContainsString('->delete()', $source);
+        self::assertSame([$link], $repository->currentUnderstanding(1, 2, 3)['links']);
+        self::assertNull($repository->currentUnderstanding(9, 2, 3));
+        $repository->invalidateSourceVersion(1, 2, 3, $source, 'sha256:'.str_repeat('b', 64));
+        self::assertNull($repository->currentUnderstanding(1, 2, 3));
     }
 }

@@ -6,10 +6,11 @@ namespace Tests\Unit\EstimateGeneration\BuildingModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelUnitData;
-use Illuminate\Database\Connection;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class ProjectModelEvidenceWriterTest extends TestCase
 {
@@ -81,36 +82,13 @@ final class ProjectModelEvidenceWriterTest extends TestCase
         self::assertNotSame($first[0]['entity_key'], $second[0]['entity_key']);
     }
 
-    #[Test]
-    public function writer_contract_pins_active_evidence_and_never_deletes_historical_projection(): void
-    {
-        $source = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/BuildingModel/ProjectModelEvidenceWriter.php');
-
-        foreach ([
-            'whereNull(\'evidence.invalidated_at\')',
-            "->where('evidence.source_version', \$unit->sourceVersion)",
-            "'candidate_value_fingerprint' => ProjectModelValueFingerprint::for(\$candidate['value'])",
-            "'candidate_locator_fingerprint' => ProjectModelLocatorFingerprint::for(\$candidate['locator'])",
-            "if (\$candidate['source'] === 'ai_candidate')",
-            'if ($locator === [] || array_is_list($locator))',
-            'ProjectModelEvidenceContract::confirms',
-            'estimate_generation_project_model_fact_evidence',
-            "'drawing_identity'",
-            "'axis'",
-            "'room_number'",
-            "'section_marker'",
-            "'elevation'",
-            'insertOrIgnore',
-        ] as $required) {
-            self::assertStringContainsString($required, $source);
-        }
-        self::assertStringNotContainsString('->delete()', $source);
-    }
-
     /** @return list<array<string,mixed>> */
     private function candidates(SessionBuildingModelUnitData $unit): array
     {
-        $writer = new ProjectModelEvidenceWriter($this->createMock(Connection::class));
+        $writer = new ProjectModelEvidenceWriter(
+            new InMemoryProjectModelRepository,
+            new InMemoryEvidenceRepository,
+        );
         $method = new ReflectionMethod($writer, 'candidates');
         $method->setAccessible(true);
 

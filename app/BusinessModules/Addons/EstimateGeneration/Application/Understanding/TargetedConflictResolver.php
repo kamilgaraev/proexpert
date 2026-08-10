@@ -43,6 +43,25 @@ final readonly class TargetedConflictResolver
         return ($this->translator)('estimate_generation.project_model.insufficient_evidence', []);
     }
 
+    public function budgetExceeded(): string
+    {
+        return ($this->translator)('estimate_generation.project_model.operation_limit', []);
+    }
+
+    public function providerUnavailable(): string
+    {
+        return ($this->translator)('estimate_generation.project_model.arbitration_unavailable', []);
+    }
+
+    public function unresolvedQuestion(string $id): array
+    {
+        return [
+            'conflict_id' => $id,
+            'text' => ($this->translator)('estimate_generation.project_model.manual_review_question', []),
+            'options' => [],
+        ];
+    }
+
     private function source(Fact $fact, array $evidenceById): string
     {
         foreach ($fact->evidenceIds as $evidenceId) {

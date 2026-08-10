@@ -20,6 +20,7 @@ final readonly class CrossDocumentFactLinker
         private TargetedConflictResolver $conflictResolver,
         private ?CrossDocumentFactArbitrator $arbitrator = null,
         private int $maxCandidatesPerFact = 20,
+        private ?ProjectUnderstandingBudget $budget = null,
     ) {
         if ($maxCandidatesPerFact < 1 || $maxCandidatesPerFact > 100) {
             throw new InvalidArgumentException('Cross-document candidate limit is invalid.');
@@ -28,10 +29,19 @@ final readonly class CrossDocumentFactLinker
 
     public function link(array $entities, array $facts, array $evidence): ProjectUnderstandingResult
     {
+        $budget = $this->budget ?? ProjectUnderstandingBudget::defaults($this->maxCandidatesPerFact);
+        foreach ($facts as $fact) {
+            if ($fact instanceof Fact && count($fact->evidenceIds) > self::MAX_EVIDENCE_PER_FACT) {
+                return $this->budgetResult();
+            }
+        }
         [$entityById, $factList, $evidenceById] = $this->validate($entities, $facts, $evidence);
         $groups = [];
+        $limitations = [];
         foreach ($factList as $fact) {
-            if ($fact->status === 'invalidated' || $fact->origin === 'ai_technology_recommendation') {
+            if ($fact->status !== 'confirmed' || $fact->origin === 'ai_technology_recommendation') {
+                $limitations[] = $this->conflictResolver->insufficientEvidence();
+
                 continue;
             }
             $descriptor = $this->descriptor($entityById[$fact->entityId]);
@@ -43,10 +53,32 @@ final readonly class CrossDocumentFactLinker
         }
         ksort($groups, SORT_STRING);
 
+        $candidateTotal = 0;
+        $potentialLinks = 0;
+        $potentialProviderCalls = 0;
+        foreach ($groups as $group) {
+            $leftCount = count($group['left'] ?? []);
+            $rightCount = count($group['right'] ?? []);
+            $candidateTotal += $leftCount + $rightCount;
+            if ($leftCount > 0 && $rightCount > 0) {
+                $potentialLinks += $leftCount;
+                $potentialProviderCalls += $leftCount === 1 && $rightCount === 1 ? 0 : $leftCount;
+            }
+            if ($leftCount > $budget->maxCandidatesPerGroup || $rightCount > $budget->maxCandidatesPerGroup) {
+                return $this->budgetResult();
+            }
+        }
+        $payloadBytes = strlen((string) json_encode($evidence, JSON_THROW_ON_ERROR));
+        if (count($factList) > $budget->maxFacts || count($groups) > $budget->maxGroups
+            || $candidateTotal > $budget->maxCandidatesTotal || $potentialLinks > $budget->maxLinks
+            || $potentialProviderCalls > $budget->maxProviderCalls || count($evidenceById) > $budget->maxEvidenceItems
+            || $payloadBytes > $budget->maxEvidencePayloadBytes) {
+            return $this->budgetResult();
+        }
+
         $links = [];
         $conflicts = [];
         $questions = [];
-        $limitations = [];
         $providerCalls = 0;
         foreach ($groups as $groupKey => $group) {
             $left = $group['left'] ?? [];
@@ -56,9 +88,6 @@ final readonly class CrossDocumentFactLinker
             }
             usort($left, static fn (Fact $first, Fact $second): int => $first->id <=> $second->id);
             usort($right, static fn (Fact $first, Fact $second): int => $first->id <=> $second->id);
-            if (count($left) > $this->maxCandidatesPerFact || count($right) > $this->maxCandidatesPerFact) {
-                throw new InvalidArgumentException('Cross-document candidate limit exceeded.');
-            }
             [$strategy, $matchKey] = explode('|', $groupKey, 3);
             foreach ($left as $subject) {
                 if (count($left) === 1 && count($right) === 1) {
@@ -96,15 +125,25 @@ final readonly class CrossDocumentFactLinker
                     $evidenceById,
                 );
                 $providerCalls++;
-                $verdict = $this->arbitrator->arbitrate($operationIdentity, $payload, [
-                    'organization_id' => $subject->organizationId,
-                    'project_id' => $subject->projectId,
-                    'session_id' => $subject->sessionId,
-                    'source_version' => $subject->sourceVersion,
-                ]);
+                try {
+                    $verdict = $this->arbitrator->arbitrate($operationIdentity, $payload, [
+                        'organization_id' => $subject->organizationId,
+                        'project_id' => $subject->projectId,
+                        'session_id' => $subject->sessionId,
+                        'source_version' => $subject->sourceVersion,
+                    ]);
+                } catch (ExpectedArbitrationFailure) {
+                    $limitations[] = $this->conflictResolver->providerUnavailable();
+                    $questions['provider:'.$operationIdentity] = $this->conflictResolver->unresolvedQuestion('provider:'.$operationIdentity);
+
+                    continue;
+                }
                 $selected = $this->selectedFact($verdict, $right);
                 if ($selected === null) {
                     $limitations[] = $this->conflictResolver->insufficientEvidence();
+                    $questions['arbitration:'.$operationIdentity] = $this->conflictResolver->unresolvedQuestion(
+                        'arbitration:'.$operationIdentity,
+                    );
 
                     continue;
                 }
@@ -134,6 +173,17 @@ final readonly class CrossDocumentFactLinker
         );
     }
 
+    private function budgetResult(): ProjectUnderstandingResult
+    {
+        return new ProjectUnderstandingResult(
+            [],
+            [],
+            [$this->conflictResolver->unresolvedQuestion('budget:project-understanding')],
+            [$this->conflictResolver->budgetExceeded()],
+            0,
+        );
+    }
+
     private function validate(array $entities, array $facts, array $evidence): array
     {
         $scope = null;
@@ -158,9 +208,6 @@ final readonly class CrossDocumentFactLinker
             $this->assertModelScope($fact, $scope);
             if (! isset($entityById[$fact->entityId])) {
                 throw new InvalidArgumentException('Cross-document fact entity is outside the requested scope.');
-            }
-            if (count($fact->evidenceIds) > self::MAX_EVIDENCE_PER_FACT) {
-                throw new InvalidArgumentException('Cross-document evidence limit exceeded.');
             }
             $factList[$fact->id] = $fact;
         }
@@ -232,6 +279,13 @@ final readonly class CrossDocumentFactLinker
         array &$questions,
         array &$limitations,
     ): void {
+        if ($left->status !== 'confirmed' || $right->status !== 'confirmed'
+            || $left->origin === 'ai_technology_recommendation'
+            || $right->origin === 'ai_technology_recommendation') {
+            $limitations[] = $this->conflictResolver->insufficientEvidence();
+
+            return;
+        }
         if (! $this->allEvidenceAvailable([$left, $right], $evidenceById)) {
             $limitations[] = $this->conflictResolver->insufficientEvidence();
 
