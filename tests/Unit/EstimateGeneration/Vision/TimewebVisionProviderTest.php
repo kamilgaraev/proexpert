@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProvid
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -121,7 +122,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'schema_version must equal integer 3')
                 && str_contains($system, 'visual_attributes')
                 && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown')
-                && str_contains($system, 'room, wall, opening, axis, dimension_chain, sanitary_fixture, furniture, structural_element, table or cross_sheet_link')
+                && str_contains($system, 'PlanSheetAnalysis')
+                && str_contains($system, 'entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion')
                 && str_contains($system, 'dimension_text, scale_notation, known_object, manual_reference')
                 && str_contains($system, 'scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain')
                 && str_contains($system, 'meters_per_unit is finite in (0, 1000000]')
@@ -129,7 +131,9 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'Exactly 2 distinct points with nonzero length are allowed only for dimension, axis, engineering_element and text')
                 && str_contains($system, 'Opening elements additionally have exactly geometry')
                 && $user['contract_version'] === TimewebVisionProvider::PROMPT_VERSION
-                && $user['contract_sha256'] === TimewebVisionProvider::promptHash()
+                && $user['contract_sha256'] === TimewebVisionProvider::promptHash(sheetRole: 'plan')
+                && $user['sheet_role'] === 'plan'
+                && $user['role_contract'] === 'PlanSheetAnalysis'
                 && $user['evidence_locator']['processing_unit_id'] === 19;
         });
     }
@@ -215,7 +219,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
 
                 return str_contains($system, "0..{$maxElements} elements")
-                    && $user['contract_sha256'] === TimewebVisionProvider::promptHash($maxElements);
+                    && $user['contract_sha256'] === TimewebVisionProvider::promptHash($maxElements, sheetRole: 'plan');
             });
         }
     }
@@ -228,7 +232,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         $analysis = json_decode($response['choices'][0]['message']['content'], true, 16, JSON_THROW_ON_ERROR);
         $fact = $analysis['project_sheet_analysis']['facts'][0];
         $secondFact = $fact;
-        $secondFact['key'] = 'room-2';
+        $secondFact['entityKey'] = 'room-2';
         $analysis['project_sheet_analysis']['facts'] = [$fact, $secondFact];
         $response['choices'][0]['message']['content'] = json_encode($analysis, JSON_THROW_ON_ERROR);
         Http::fake(['*' => Http::response($response)]);
@@ -525,12 +529,53 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertInstanceOf(TimewebVisionProvider::class, app(VisionProvider::class));
     }
 
+    #[Test]
+    public function targeted_provider_call_contains_only_one_role_contract_and_records_safe_scope(): void
+    {
+        $scope = TargetedSheetRecheckScope::forSheetPair(
+            'facade',
+            'sheet_role_conflict',
+            'document:13/sheet:17',
+            'document:13/sheet:18',
+        );
+        Http::fake(['*' => Http::response($this->response([
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'facade',
+                'facts' => [[
+                    'entityKey' => 'facade-1', 'factType' => 'structural_element',
+                    'value' => ['type' => 'unknown', 'data' => null], 'unit' => null,
+                    'evidenceRef' => 'page-1', 'sourcePolygonOrNativeRef' => $this->responsePolygon(),
+                    'confidence' => 0.95, 'contractVersion' => 'sheet-analysis:v2',
+                ]],
+            ],
+        ]))]);
+
+        $analysis = $this->provider()->analyze($this->input(sheetRole: 'facade', recheckScope: $scope));
+
+        self::assertSame('facade', $analysis->projectSheetAnalysis?->sheetRole);
+        self::assertSame($scope->toSafeUsageContext(), $this->attempts[0]->requestContext);
+        Http::assertSent(function ($request): bool {
+            $system = (string) $request['messages'][0]['content'];
+            $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
+
+            return str_contains($system, 'role facade and contract FacadeSheetAnalysis')
+                && ! str_contains($system, 'PlanSheetAnalysis')
+                && $user['targeted_recheck']['reason'] === 'sheet_role_conflict'
+                && $user['targeted_recheck']['source_set'] === ['document:13/sheet:17', 'document:13/sheet:18'];
+        });
+    }
+
     private function provider(): TimewebVisionProvider
     {
         return app(TimewebVisionProvider::class);
     }
 
-    private function input(?\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData $transform = null): VisionDocumentInput
+    private function input(
+        ?\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData $transform = null,
+        string $sheetRole = 'plan',
+        ?TargetedSheetRecheckScope $recheckScope = null,
+    ): VisionDocumentInput
     {
         $image = imagecreatetruecolor(2, 2);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
@@ -549,6 +594,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             ),
             sourceTransform: $transform ?? (new ProjectiveTransformFactory)->identity(),
             derivativeHash: 'sha256:'.hash('sha256', $imageContent),
+            sheetRole: $sheetRole,
+            recheckScope: $recheckScope,
         );
     }
 
@@ -571,11 +618,13 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 'roof_type' => ['value' => 'pitched', 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
             ],
             'project_sheet_analysis' => [
-                'schema_version' => 1,
-                'sheet_role' => 'plan',
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'plan',
                 'facts' => [[
-                    'key' => 'room-1', 'type' => 'room', 'evidence_ref' => 'page-1', 'polygon' => $this->responsePolygon(), 'confidence' => 0.95,
-                    'value' => ['type' => 'unknown', 'data' => null], 'unit' => null,
+                    'entityKey' => 'room-1', 'factType' => 'room',
+                    'value' => ['type' => 'unknown', 'data' => null], 'unit' => null, 'evidenceRef' => 'page-1',
+                    'sourcePolygonOrNativeRef' => $this->responsePolygon(), 'confidence' => 0.95,
+                    'contractVersion' => 'sheet-analysis:v2',
                 ]],
             ],
         ], $analysisOverrides);

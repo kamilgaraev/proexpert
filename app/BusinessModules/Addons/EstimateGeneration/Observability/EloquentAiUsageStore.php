@@ -55,6 +55,7 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
                 ($data->priceSnapshot ?? AiPriceSnapshot::fromArray([]))->toArray(),
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES,
             ),
+            'request_context' => json_encode($data->requestContext, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
             'cost_amount' => $cost->amount,
             'currency' => $cost->currency,
             'pricing_status' => $cost->pricingStatus,

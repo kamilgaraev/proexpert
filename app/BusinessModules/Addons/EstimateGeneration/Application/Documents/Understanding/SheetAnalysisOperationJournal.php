@@ -19,6 +19,8 @@ use Throwable;
 
 final class SheetAnalysisOperationJournal
 {
+    private const LEASE_SECONDS = 1860;
+
     /**
      * The journal is deliberately written before the provider call. A completed entry contains
      * the provider result, so a lost worker can publish it on the next leased unit attempt.
@@ -235,6 +237,6 @@ final class SheetAnalysisOperationJournal
     private function routing(mixed $stored, array $fallback): array { return is_array($stored) && $stored !== [] ? $stored : $fallback; }
     private function leaseExpiry(): DateTimeImmutable
     {
-        return (new SheetAnalysisLeasePolicy)->renewedJournalLease(new DateTimeImmutable);
+        return (new DateTimeImmutable)->modify('+'.self::LEASE_SECONDS.' seconds');
     }
 }

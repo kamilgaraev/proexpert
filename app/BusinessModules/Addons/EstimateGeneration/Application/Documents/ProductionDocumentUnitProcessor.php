@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryPr
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
@@ -250,8 +251,13 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                         unitId: $input->operationContext->unitId,
                     ),
                     sourceTransform: $input->sourceTransform,
-                    focusedSheetRole: $routing->classification->role->value,
-                    reanalysisReason: $routing->classification->reanalysisReason,
+                    sheetRole: $routing->classification->role->value,
+                    recheckScope: TargetedSheetRecheckScope::forEntity(
+                        $routing->classification->role->value,
+                        (string) $routing->classification->reanalysisReason,
+                        'sheet-role:'.$routing->classification->role->value,
+                        sprintf('document:%d/sheet:%d', $input->documentId, $input->pageId),
+                    ),
                 );
                 $targetedRun = $this->sheetAnalysisJournal?->run($targetedOperation, 'targeted', $scope, $targetedRouting,
                     function () use ($context, $targetedInput, $preprocessed) {

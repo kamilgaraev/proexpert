@@ -629,13 +629,13 @@ XLSX  → sheets + cells + formulas + merges + table render
 
 **Interfaces:** каждый найденный факт содержит `entityKey`, `factType`, `value`, `unit`, `evidenceRef`, `sourcePolygonOrNativeRef`, `confidence`, `contractVersion`.
 
-- [ ] Написать RED-тесты плана, разреза, фасада, экспликации, спецификации и неизвестного листа.
-- [ ] Ограничить каждый AI-вызов одной ролью и одним типизированным контрактом.
-- [ ] Реализовать targeted recheck только для конфликтной сущности или пары листов.
-- [ ] Записать reason и source set каждой повторной проверки в usage ledger.
-- [ ] Отклонять неизвестные ключи, битые координаты и факты без evidence.
-- [ ] Запустить contract tests, privacy tests, provider payload tests и PHPStan.
-- [ ] Commit: `feat[backend]: добавлен ролевой анализ листов проекта`.
+- [x] Написать RED-тесты плана, разреза, фасада, экспликации, спецификации и неизвестного листа.
+- [x] Ограничить каждый AI-вызов одной ролью и одним типизированным контрактом.
+- [x] Реализовать targeted recheck только для конфликтной сущности или пары листов.
+- [x] Записать reason и source set каждой повторной проверки в usage ledger.
+- [x] Отклонять неизвестные ключи, битые координаты и факты без evidence.
+- [x] Запустить contract tests, privacy tests, provider payload tests и PHPStan.
+- [x] Commit: `feat[backend]: добавлен ролевой анализ листов проекта`.
 
 ---
 

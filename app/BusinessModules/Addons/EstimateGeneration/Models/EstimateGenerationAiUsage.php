@@ -24,6 +24,7 @@ final class EstimateGenerationAiUsage extends Model
 
     protected $casts = [
         'price_snapshot' => 'array',
+        'request_context' => 'array',
         'created_at' => 'immutable_datetime',
         'page_id' => 'integer',
     ];

@@ -11,9 +11,10 @@ final class SheetRoleClassifier
     public function classify(VisionAnalysisData $analysis, ?string $nativeText = null): SheetRoleClassification
     {
         $declared = $analysis->projectSheetAnalysis?->sheetRole;
-        $declaredRole = $declared === 'visual'
-            ? SheetRole::Visualization
-            : (is_string($declared) ? SheetRole::tryFrom($declared) : null);
+        $declaredRole = is_string($declared) ? SheetRole::tryFrom($declared) : null;
+        if ($declaredRole === SheetRole::Unknown) {
+            $declaredRole = null;
+        }
         $inferredRole = $this->fromSheetType($analysis->sheetType);
         $hasExplicitSourceRole = $declaredRole !== null;
         $role = $declaredRole ?? $this->inferredRole($inferredRole, $nativeText);
@@ -40,10 +41,8 @@ final class SheetRoleClassifier
         return match ($sheetType) {
             'floor_plan', 'site_plan' => SheetRole::Plan,
             'section' => SheetRole::Section,
-            'elevation' => SheetRole::Elevation,
-            'detail' => SheetRole::Detail,
+            'elevation' => SheetRole::Facade,
             'schedule' => SheetRole::Specification,
-            'sketch', 'photo' => SheetRole::Visualization,
             default => SheetRole::Unknown,
         };
     }

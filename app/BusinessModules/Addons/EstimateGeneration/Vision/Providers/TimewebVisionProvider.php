@@ -62,7 +62,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $maxFacts = $input->isTargetedSheetReanalysis()
             ? min($maxElements, self::sheetRoutingLimit('max_facts', 64, 1, 500))
             : $maxElements;
-        $contractHash = self::promptHash($maxElements, $maxFacts, $input->focusedSheetRole);
+        $contractHash = self::promptHash($maxElements, $maxFacts, $input->sheetRole);
         if ((string) config('estimate-generation.vision.provider', '') !== self::PROVIDER
             || $apiKey === '' || $baseUri === '' || $model === '' || $modelVersion === ''
             || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $model) !== 1) {
@@ -128,6 +128,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     )->assertProvenance($input, 'normalized_derivative_v1')
                         ->mapPolygonsToSource($input->sourceTransform)
                         ->assertProvenance($input, 'normalized_source_v1');
+                    if ($analysis->projectSheetAnalysis?->sheetRole !== $input->sheetRole) {
+                        throw new VisionContractException('vision_sheet_role_contract_mismatch');
+                    }
                     if ($effective !== null) {
                         $threshold = (float) $effective->confidence('geometry');
                         $hasLowConfidence = false;
@@ -226,7 +229,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         return [
             'model' => $model,
             'messages' => [
-                ['role' => 'system', 'content' => self::systemPrompt($maxElements, $maxFacts, $input->focusedSheetRole)],
+                ['role' => 'system', 'content' => self::systemPrompt($maxElements, $maxFacts, $input->sheetRole)],
                 ['role' => 'user', 'content' => [
                     ['type' => 'text', 'text' => json_encode([
                         'instruction' => 'Analyze the construction drawing as visual evidence and return the exact JSON contract.',
@@ -239,8 +242,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
                             'source_version' => $input->sourceVersion,
                             'coordinate_space' => 'normalized_derivative_v1',
                         ],
-                        'focused_sheet_role' => $input->focusedSheetRole,
-                        'reanalysis_reason' => $input->reanalysisReason,
+                        'sheet_role' => $input->sheetRole,
+                        'role_contract' => self::roleContract($input->sheetRole),
+                        'targeted_recheck' => $input->recheckScope?->toSafeUsageContext(),
                     ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)],
                     ['type' => 'image_url', 'image_url' => [
                         'url' => sprintf('data:%s;base64,%s', $input->contentType, base64_encode($input->imageContent)),
@@ -254,7 +258,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         ];
     }
 
-    private static function systemPrompt(int $maxElements, ?int $maxFacts = null, ?string $focusedSheetRole = null): string
+    private static function systemPrompt(int $maxElements, ?int $maxFacts = null, string $sheetRole = 'unknown'): string
     {
         $maxFacts ??= $maxElements;
         return implode("\n", [
@@ -277,12 +281,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'Warnings are unique values only from scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain.',
             'visual_attributes has exactly roof_type. roof_type has exactly value, confidence, evidence_ref.',
             'roof_type value is exactly one of flat, pitched, gable, hip, unknown. Use a visible roof form on an elevation, section or photo; otherwise use unknown. confidence is finite in [0,1] and evidence_ref references an existing evidence key.',
-            'project_sheet_analysis has exactly schema_version, sheet_role, facts. schema_version is integer 1. sheet_role is exactly plan, section, elevation, specification, visual or unknown.',
-            "Return 0..{$maxFacts} facts. Each fact has exactly key, type, evidence_ref, polygon, confidence, value, unit. type is exactly room, wall, opening, axis, dimension_chain, sanitary_fixture, furniture, structural_element, table or cross_sheet_link.",
-            $focusedSheetRole === null
-                ? 'Perform one complete drawing extraction pass.'
-                : "This is a targeted reanalysis for the requested role {$focusedSheetRole}; preserve the closed sheet_role contract and return only facts that prove the requested role and its construction quantities. Do not expand into a second full-document inventory.",
-            'Each fact key and evidence_ref use the existing key format; evidence_ref references returned evidence. polygon is an array of 2..64 distinct finite [x,y] points normalized to [0,1]. confidence is finite in [0,1].',
+            'project_sheet_analysis has exactly contractVersion, role, facts. contractVersion is sheet-analysis:v2. role is exactly plan, section, facade, explication, specification or unknown.',
+            "This invocation is limited to role {$sheetRole} and contract ".self::roleContract($sheetRole).". Return 0..{$maxFacts} facts from this role only; unknown requires an empty facts array.",
+            'Allowed factType values for this role: '.implode(', ', self::roleFactTypes($sheetRole)).'.',
+            'Each fact has exactly entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion. contractVersion is sheet-analysis:v2.',
+            'entityKey and evidenceRef use the existing key format; evidenceRef references returned evidence. sourcePolygonOrNativeRef is either 2..64 distinct finite [x,y] points normalized to [0,1] or a bounded native source reference.',
             'value has exactly type and data. type is exactly number, string, boolean, enum or unknown. For unknown, data and unit must both be null; this is required whenever the document does not explicitly state a fact. For known values, data must match its declared type and unit is null or a visible unit string.',
             'Never invent values or links. A cross_sheet_link must be a visible reference only. All facts, including tables and visual facts, require exact evidence and normalized geometry.',
             'Never infer a confirmed scale. Zero scale candidates requires scale_missing. For any pair a,b, material conflict is exactly abs(a-b) > max(1e-9, 0.02 * min(a,b)); material conflict requires scale_conflict and its absence forbids scale_conflict.',
@@ -290,7 +293,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         ]);
     }
 
-    public static function promptHash(?int $maxElements = null, ?int $maxFacts = null, ?string $focusedSheetRole = null): string
+    public static function promptHash(?int $maxElements = null, ?int $maxFacts = null, string $sheetRole = 'unknown'): string
     {
         $effectiveMax = $maxElements ?? self::effectiveMaxElements();
         if ($effectiveMax < 1 || $effectiveMax > 500) {
@@ -302,7 +305,33 @@ final readonly class TimewebVisionProvider implements VisionProvider
             throw new VisionProviderException('vision_max_facts_invalid');
         }
 
-        return 'sha256:'.hash('sha256', self::systemPrompt($effectiveMax, $effectiveFacts, $focusedSheetRole).'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space)');
+        return 'sha256:'.hash('sha256', self::systemPrompt($effectiveMax, $effectiveFacts, $sheetRole).'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space),sheet_role,role_contract,targeted_recheck');
+    }
+
+    private static function roleContract(string $role): string
+    {
+        return match ($role) {
+            'plan' => 'PlanSheetAnalysis',
+            'section' => 'SectionSheetAnalysis',
+            'facade' => 'FacadeSheetAnalysis',
+            'explication', 'specification' => 'SpecificationSheetAnalysis',
+            'unknown' => 'UnknownSheetAnalysis',
+            default => throw new VisionProviderException('vision_sheet_role_invalid'),
+        };
+    }
+
+    /** @return list<string> */
+    private static function roleFactTypes(string $role): array
+    {
+        return match ($role) {
+            'plan' => ['room', 'wall', 'opening', 'axis', 'dimension_chain', 'sanitary_fixture', 'furniture'],
+            'section' => ['opening', 'dimension_chain', 'structural_element', 'cross_sheet_link'],
+            'facade' => ['opening', 'dimension_chain', 'structural_element', 'cross_sheet_link'],
+            'explication' => ['room', 'table', 'cross_sheet_link'],
+            'specification' => ['table', 'structural_element', 'cross_sheet_link'],
+            'unknown' => ['none'],
+            default => throw new VisionProviderException('vision_sheet_role_invalid'),
+        };
     }
 
     public static function effectiveMaxElements(): int
@@ -377,6 +406,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 status: $status, durationMs: $durationMs, usageStatus: $usage['status'], inputTokens: $usage['input'] ?? 0,
                 outputTokens: $usage['output'] ?? 0, imageCount: 1, imageDetail: $input->imageDetail, httpCode: $httpCode,
                 priceSnapshot: $priceSnapshot,
+                requestContext: $input->recheckScope?->toSafeUsageContext() ?? [],
             ));
         } catch (Throwable $exception) {
             try {

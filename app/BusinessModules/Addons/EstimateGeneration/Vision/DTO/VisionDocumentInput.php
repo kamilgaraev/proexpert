@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\DTO;
 
+use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use InvalidArgumentException;
 
@@ -24,8 +25,8 @@ final readonly class VisionDocumentInput
         public string $imageDetail,
         public AiOperationContext $operationContext,
         public ProjectiveTransformData $sourceTransform,
-        public ?string $focusedSheetRole = null,
-        public ?string $reanalysisReason = null,
+        public string $sheetRole = 'unknown',
+        public ?TargetedSheetRecheckScope $recheckScope = null,
     ) {
         $dimensions = @getimagesizefromstring($imageContent);
         $detectedMime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
@@ -37,9 +38,8 @@ final readonly class VisionDocumentInput
             || ! is_string($detectedMime) || $detectedMime !== $contentType
             || $imageContent === '' || strlen($imageContent) > 20_000_000
             || ! in_array($imageDetail, ['low', 'high', 'auto'], true)
-            || ($focusedSheetRole !== null && ! in_array($focusedSheetRole, ['plan', 'section', 'elevation', 'detail', 'explication', 'specification', 'visualization'], true))
-            || ($reanalysisReason !== null && ! in_array($reanalysisReason, ['sheet_role_conflict', 'sheet_role_insufficient_evidence'], true))
-            || (($focusedSheetRole === null) !== ($reanalysisReason === null))
+            || ! in_array($sheetRole, ['plan', 'section', 'facade', 'explication', 'specification', 'unknown'], true)
+            || ($recheckScope !== null && $recheckScope->role !== $sheetRole)
             || $operationContext->organizationId !== $organizationId
             || $operationContext->projectId !== $projectId
             || $operationContext->sessionId !== $sessionId
@@ -53,6 +53,6 @@ final readonly class VisionDocumentInput
 
     public function isTargetedSheetReanalysis(): bool
     {
-        return $this->focusedSheetRole !== null;
+        return $this->recheckScope !== null;
     }
 }
