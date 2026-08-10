@@ -93,7 +93,7 @@ Evaluation corpus and cost metrics
 - Consumes: текущие container bindings, routes, schedules, jobs, migrations и frontend endpoints.
 - Produces: таблицу `KEEP | REPLACE | DELETE` с конкретным владельцем каждого runtime-контура и архитектурный запрет на возвращение удалённых подсистем.
 
-- [ ] **Step 1: Создать исчерпывающую cleanup matrix**
+- [x] **Step 1: Создать исчерпывающую cleanup matrix**
 
 В документе перечислить минимум следующие контуры и решение по каждому:
 
@@ -114,7 +114,7 @@ KEEP    версионированный audit решений пользоват
 DELETE  event-sourcing-подобную correction chain после переноса undo в обычный журнал версий
 ```
 
-- [ ] **Step 2: Добавить RED architecture test запрещённых runtime-символов**
+- [x] **Step 2: Добавить RED architecture test запрещённых runtime-символов**
 
 Тест должен сканировать production PHP-код, service provider и `routes/console.php` и падать, пока встречаются:
 
@@ -134,7 +134,7 @@ $forbidden = [
 
 Тест отдельно разрешает старые имена только в исторических миграциях и в cleanup migration.
 
-- [ ] **Step 3: Зафиксировать защищаемые публичные контракты**
+- [x] **Step 3: Зафиксировать защищаемые публичные контракты**
 
 Добавить assertions, что после очистки сохраняются:
 
@@ -150,7 +150,7 @@ AiUsageStore
 AuthorizationService checks
 ```
 
-- [ ] **Step 4: Запустить только архитектурные тесты**
+- [x] **Step 4: Запустить только архитектурные тесты**
 
 Run:
 
@@ -160,7 +160,7 @@ vendor\bin\phpunit tests\Architecture\EstimateGenerationV2RuntimeBoundaryTest.ph
 
 Expected: новый boundary test падает на перечисленных legacy runtime-символах; существующая граница обычной сметы проходит.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 test[backend]: зафиксирована граница очистки AI-сметчика
