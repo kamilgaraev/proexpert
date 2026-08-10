@@ -39,7 +39,7 @@ final readonly class DerivedQuantity
         ProjectModelInvariant::id($entityId, 'Derived quantity entity');
         if (trim($formula) === '' || strlen($formula) > 2000 || $operands === [] || ! array_is_list($operands)
             || trim($unit) === '' || ! in_array($roundingMode, ['half_up', 'half_even', 'floor', 'ceil'], true)
-            || $roundingScale < 0 || $roundingScale > 8
+            || $roundingScale < 0 || $roundingScale > 12
             || ! in_array($status, ['candidate', 'confirmed', 'unresolved', 'invalidated'], true)) {
             throw new InvalidArgumentException('Derived quantity is invalid.');
         }

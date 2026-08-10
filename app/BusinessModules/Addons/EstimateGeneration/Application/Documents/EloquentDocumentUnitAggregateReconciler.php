@@ -12,6 +12,7 @@ use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 final readonly class EloquentDocumentUnitAggregateReconciler implements DocumentUnitAggregateReconciler
@@ -110,8 +111,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
 
         try {
             $this->buildingModels->rebuild((int) $session->getKey());
-            $this->sessions->reconcile($session);
-            $this->documentQuery()
+            $marked = $this->documentQuery()
                 ->whereKey($documentId)
                 ->where('source_version', $sourceVersion)
                 ->where('units_reconcile_claim_token', $token)
@@ -121,6 +121,10 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'units_reconcile_lease_expires_at' => null,
                     'updated_at' => now(),
                 ]);
+            if ($marked !== 1) {
+                throw new RuntimeException('estimate_generation.document_reconciliation_marker_stale');
+            }
+            $this->sessions->reconcile($session);
         } catch (Throwable $error) {
             $this->documentQuery()
                 ->whereKey($documentId)

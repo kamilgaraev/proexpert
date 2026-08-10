@@ -14,7 +14,7 @@ final readonly class CrossDocumentFactLinker
 {
     private const STRATEGY_VERSION = 1;
 
-    private const MAX_EVIDENCE_PER_FACT = 20;
+    public const MAX_EVIDENCE_PER_FACT = 20;
 
     public function __construct(
         private TargetedConflictResolver $conflictResolver,
@@ -134,15 +134,37 @@ final readonly class CrossDocumentFactLinker
                     ]);
                 } catch (ExpectedArbitrationFailure) {
                     $limitations[] = $this->conflictResolver->providerUnavailable();
-                    $questions['provider:'.$operationIdentity] = $this->conflictResolver->unresolvedQuestion('provider:'.$operationIdentity);
+                    $candidates = [$subject, ...$right];
+                    $links[$operationIdentity] = $this->unresolvedLinkData(
+                        $candidates,
+                        $strategy,
+                        $matchKey,
+                        $operationIdentity,
+                        'provider_unavailable',
+                    );
+                    $questions['provider:'.$operationIdentity] = $this->conflictResolver->unresolvedQuestion(
+                        'provider:'.$operationIdentity,
+                        $candidates,
+                        $evidenceById,
+                    );
 
                     continue;
                 }
                 $selected = $this->selectedFact($verdict, $right);
                 if ($selected === null) {
                     $limitations[] = $this->conflictResolver->insufficientEvidence();
+                    $candidates = [$subject, ...$right];
+                    $links[$operationIdentity] = $this->unresolvedLinkData(
+                        $candidates,
+                        $strategy,
+                        $matchKey,
+                        $operationIdentity,
+                        'provider_result_unresolved',
+                    );
                     $questions['arbitration:'.$operationIdentity] = $this->conflictResolver->unresolvedQuestion(
                         'arbitration:'.$operationIdentity,
+                        $candidates,
+                        $evidenceById,
                     );
 
                     continue;
@@ -171,6 +193,35 @@ final readonly class CrossDocumentFactLinker
             $limitations,
             $providerCalls,
         );
+    }
+
+    private function unresolvedLinkData(
+        array $facts,
+        string $strategy,
+        string $matchKey,
+        string $operationIdentity,
+        string $reason,
+    ): array {
+        $subject = $facts[0];
+        $candidate = $facts[1];
+        $factIds = array_map(static fn (Fact $fact): string => $fact->id, $facts);
+        $evidenceIds = array_values(array_unique(array_merge(...array_map(
+            static fn (Fact $fact): array => $fact->evidenceIds,
+            $facts,
+        ))));
+
+        return [
+            ...$this->linkData($subject, $candidate, $strategy, $matchKey, 'unresolved', $operationIdentity, $reason),
+            'candidate_fact_ids' => $factIds,
+            'candidate_evidence_ids' => $evidenceIds,
+            'evidence' => [
+                'left' => $subject->evidenceIds,
+                'right' => array_values(array_unique(array_merge(...array_map(
+                    static fn (Fact $fact): array => $fact->evidenceIds,
+                    array_slice($facts, 1),
+                )))),
+            ],
+        ];
     }
 
     private function budgetResult(): ProjectUnderstandingResult

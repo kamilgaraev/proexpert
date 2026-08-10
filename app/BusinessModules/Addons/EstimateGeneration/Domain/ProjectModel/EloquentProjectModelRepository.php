@@ -150,6 +150,89 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         );
     }
 
+    public function understandingPreflight(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        int $maxFacts,
+        int $maxEvidenceItems,
+        int $maxEvidencePerFact,
+        int $maxEvidencePayloadBytes,
+        int $maxEvidenceBytesPerItem,
+    ): array {
+        if (min(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $maxFacts,
+            $maxEvidenceItems,
+            $maxEvidencePerFact,
+            $maxEvidencePayloadBytes,
+            $maxEvidenceBytesPerItem,
+        ) < 1) {
+            throw new InvalidArgumentException('Project understanding preflight scope or budget is invalid.');
+        }
+        $row = $this->database->connection()->selectOne(<<<'SQL'
+WITH scoped_facts AS (
+    SELECT fact.id, fact.source_version
+    FROM estimate_generation_project_model_fact_projections projection
+    JOIN estimate_generation_project_model_assertions fact ON fact.id = projection.fact_id
+    WHERE projection.organization_id = ? AND projection.project_id = ? AND projection.session_id = ?
+      AND projection.is_current
+), scoped_bindings AS (
+    SELECT binding.fact_id, evidence.id AS evidence_id,
+           octet_length(jsonb_build_object(
+               'id', 'evidence:' || evidence.id,
+               'source_version', evidence.source_version,
+               'source_artifact_id', evidence.source_ref,
+               'source_type', evidence.source_type,
+               'locator', evidence.locator
+           )::text) AS payload_bytes
+    FROM scoped_facts fact
+    JOIN estimate_generation_project_model_fact_evidence binding ON binding.fact_id = fact.id
+      AND binding.organization_id = ? AND binding.project_id = ? AND binding.session_id = ?
+      AND binding.source_version = fact.source_version
+    JOIN estimate_generation_evidence evidence ON evidence.id = binding.evidence_id
+      AND evidence.organization_id = binding.organization_id
+      AND evidence.project_id = binding.project_id AND evidence.session_id = binding.session_id
+      AND evidence.source_version = binding.evidence_source_version
+      AND evidence.invalidation_version = binding.evidence_invalidation_version
+      AND evidence.invalidated_at IS NULL
+), evidence_set AS (
+    SELECT evidence_id, max(payload_bytes) AS payload_bytes FROM scoped_bindings GROUP BY evidence_id
+), binding_counts AS (
+    SELECT fact_id, count(*) AS binding_count FROM scoped_bindings GROUP BY fact_id
+)
+SELECT count(DISTINCT scoped_facts.id) AS fact_count,
+       min(scoped_facts.source_version) AS source_version,
+       count(DISTINCT scoped_facts.source_version) AS source_version_count,
+       COALESCE((SELECT count(*) FROM evidence_set), 0) AS evidence_count,
+       COALESCE((SELECT max(binding_count) FROM binding_counts), 0) AS max_evidence_per_fact,
+       COALESCE((SELECT sum(payload_bytes) FROM evidence_set), 0) AS total_payload_bytes,
+       COALESCE((SELECT max(payload_bytes) FROM evidence_set), 0) AS max_payload_bytes
+FROM scoped_facts
+SQL, [
+            $organizationId, $projectId, $sessionId,
+            $organizationId, $projectId, $sessionId,
+        ]);
+        $withinBudget = (int) $row->fact_count <= $maxFacts
+            && (int) $row->evidence_count <= $maxEvidenceItems
+            && (int) $row->max_evidence_per_fact <= $maxEvidencePerFact
+            && (int) $row->total_payload_bytes <= $maxEvidencePayloadBytes
+            && (int) $row->max_payload_bytes <= $maxEvidenceBytesPerItem
+            && (int) $row->source_version_count <= 1;
+
+        return [
+            'within_budget' => $withinBudget,
+            'source_version' => is_string($row->source_version) ? $row->source_version : null,
+            'fact_count' => (int) $row->fact_count,
+            'evidence_count' => (int) $row->evidence_count,
+            'max_evidence_per_fact' => (int) $row->max_evidence_per_fact,
+            'total_payload_bytes' => (int) $row->total_payload_bytes,
+            'max_payload_bytes' => (int) $row->max_payload_bytes,
+        ];
+    }
+
     private function appendEntities(array $entities, int $chunkSize = 500): void
     {
         $this->assertChunkSize($chunkSize);
@@ -341,6 +424,15 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     if (! $quantity instanceof DerivedQuantity) {
                         throw new InvalidArgumentException('Derived quantity batch is invalid.');
                     }
+                    if ($quantity->value !== null
+                        && ! hash_equals($quantity->value, DecimalValue::canonical($quantity->value))) {
+                        throw new InvalidArgumentException('Derived quantity value is not storage-canonical.');
+                    }
+                    foreach ($quantity->operands as $operand) {
+                        if (! hash_equals($operand['value'], DecimalValue::canonical($operand['value']))) {
+                            throw new InvalidArgumentException('Derived quantity operand is not storage-canonical.');
+                        }
+                    }
                     $this->database->table('estimate_generation_project_model_derived_quantities')->insertOrIgnore([
                         'organization_id' => $quantity->organizationId,
                         'project_id' => $quantity->projectId,
@@ -400,10 +492,19 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                         'left_fact_id' => $factIds[$this->linkFactMapKey($link, $link['left_fact_id'])],
                         'right_fact_id' => $factIds[$this->linkFactMapKey($link, $link['right_fact_id'])],
                         'strategy' => $link['strategy'],
+                        'match_key' => $link['match_key'],
                         'reason' => $link['reason'],
                         'strategy_version' => $link['strategy_version'],
                         'operation_identity' => $link['operation_identity'],
                         'status' => $link['status'],
+                        'candidate_fact_ids' => $this->json($link['candidate_fact_ids'] ?? [
+                            $link['left_fact_id'],
+                            $link['right_fact_id'],
+                        ]),
+                        'candidate_evidence_ids' => $this->json($link['candidate_evidence_ids'] ?? array_values(array_unique([
+                            ...$link['evidence']['left'],
+                            ...$link['evidence']['right'],
+                        ]))),
                         'is_current' => true,
                         'created_at' => now(),
                     ];
@@ -412,15 +513,34 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 $storedLinks = [];
                 foreach ($this->database->table('estimate_generation_project_model_cross_document_links')
                     ->whereIn('operation_identity', array_column($chunk, 'operation_identity'))
-                    ->get(['id', 'organization_id', 'project_id', 'session_id', 'source_version', 'operation_identity']) as $row) {
-                    $storedLinks[$row->organization_id.':'.$row->project_id.':'.$row->session_id.':'.$row->source_version.':'.$row->operation_identity] = (int) $row->id;
+                    ->get([
+                        'id', 'organization_id', 'project_id', 'session_id', 'source_version', 'operation_identity',
+                        'stable_key', 'left_fact_id', 'right_fact_id', 'strategy', 'match_key', 'reason', 'strategy_version',
+                        'status', 'candidate_fact_ids', 'candidate_evidence_ids',
+                    ]) as $row) {
+                    $key = $row->organization_id.':'.$row->project_id.':'.$row->session_id.':'.$row->source_version.':'.$row->operation_identity;
+                    $storedLinks[$key] = $row;
                 }
                 $evidenceLinks = [];
-                foreach ($chunk as $link) {
-                    $linkId = $storedLinks[$this->linkScopeKey($link).':'.$link['operation_identity']] ?? null;
-                    if ($linkId === null) {
+                foreach ($chunk as $index => $link) {
+                    $stored = $storedLinks[$this->linkScopeKey($link).':'.$link['operation_identity']] ?? null;
+                    if ($stored === null) {
                         throw new InvalidArgumentException('Cross-document link persistence failed.');
                     }
+                    $expected = $linkRows[$index];
+                    if ((string) $stored->stable_key !== $expected['stable_key']
+                        || (int) $stored->left_fact_id !== $expected['left_fact_id']
+                        || (int) $stored->right_fact_id !== $expected['right_fact_id']
+                        || (string) $stored->strategy !== $expected['strategy']
+                        || (string) $stored->match_key !== $expected['match_key']
+                        || (string) $stored->reason !== $expected['reason']
+                        || (int) $stored->strategy_version !== $expected['strategy_version']
+                        || (string) $stored->status !== $expected['status']
+                        || ! hash_equals($this->json($this->decode($stored->candidate_fact_ids)), $expected['candidate_fact_ids'])
+                        || ! hash_equals($this->json($this->decode($stored->candidate_evidence_ids)), $expected['candidate_evidence_ids'])) {
+                        throw new InvalidArgumentException('Cross-document link operation identity collision.');
+                    }
+                    $linkId = (int) $stored->id;
                     foreach (['left', 'right'] as $side) {
                         foreach ($link['evidence'][$side] as $evidenceId) {
                             $row = $evidenceRows[$this->linkEvidenceMapKey($link, $evidenceId)];
@@ -438,6 +558,20 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 }
                 foreach (array_chunk($evidenceLinks, 1000) as $evidenceChunk) {
                     $this->database->table('estimate_generation_project_model_cross_link_evidence')->insertOrIgnore($evidenceChunk);
+                }
+                $expectedEvidence = array_map(
+                    static fn (array $row): string => $row['link_id'].':'.$row['side'].':'.$row['evidence_id'],
+                    $evidenceLinks,
+                );
+                $actualEvidence = $this->database->table('estimate_generation_project_model_cross_link_evidence')
+                    ->whereIn('link_id', array_map(static fn (object $row): int => (int) $row->id, $storedLinks))
+                    ->get(['link_id', 'side', 'evidence_id'])
+                    ->map(static fn (object $row): string => $row->link_id.':'.$row->side.':'.$row->evidence_id)
+                    ->all();
+                sort($expectedEvidence);
+                sort($actualEvidence);
+                if ($actualEvidence !== $expectedEvidence) {
+                    throw new InvalidArgumentException('Cross-document link evidence collision.');
                 }
             }, 3);
         }
@@ -645,6 +779,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         int $projectId,
         int $sessionId,
         string $sourceVersion,
+        string $inputFingerprint,
         array $links,
         array $conflicts,
         array $questions,
@@ -652,51 +787,57 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         int $providerCalls,
     ): void {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
-        if ($providerCalls < 0 || ! array_is_list($questions) || ! array_is_list($limitations)) {
+        if ($providerCalls < 0 || preg_match('/^[a-f0-9]{64}$/D', $inputFingerprint) !== 1
+            || ! array_is_list($questions) || ! array_is_list($limitations)) {
             throw new InvalidArgumentException('Project understanding result is invalid.');
         }
-        $fingerprint = hash('sha256', $this->json([
+        $payload = [
             'links' => $links,
             'conflicts' => $conflicts,
             'questions' => $questions,
             'limitations' => $limitations,
             'provider_calls' => $providerCalls,
-        ]));
+        ];
+        $encodedPayload = $this->json($payload);
+        $fingerprint = hash('sha256', $inputFingerprint."\0".$encodedPayload);
         $this->database->connection()->transaction(function () use (
             $organizationId,
             $projectId,
             $sessionId,
             $sourceVersion,
+            $inputFingerprint,
             $links,
             $conflicts,
             $questions,
             $limitations,
             $providerCalls,
             $fingerprint,
+            $encodedPayload,
         ): void {
-            $replayed = $this->database->table('estimate_generation_project_understanding_runs')
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $existing = $this->database->table('estimate_generation_project_understanding_runs')
                 ->where('organization_id', $organizationId)
                 ->where('project_id', $projectId)
                 ->where('session_id', $sessionId)
                 ->where('source_version', $sourceVersion)
-                ->where('result_fingerprint', $fingerprint)
-                ->where('is_current', true)
-                ->exists();
-            if ($replayed) {
+                ->where('input_fingerprint', $inputFingerprint)
+                ->lockForUpdate()
+                ->first();
+            if ($existing !== null) {
+                $storedPayload = $this->json($this->decode($existing->result_payload));
+                if (! hash_equals((string) $existing->input_fingerprint, $inputFingerprint)
+                    || ! hash_equals(
+                        (string) $existing->result_fingerprint,
+                        hash('sha256', (string) $existing->input_fingerprint."\0".$storedPayload),
+                    )
+                    || ! hash_equals($storedPayload, $encodedPayload)) {
+                    throw new InvalidArgumentException('Project understanding fingerprint collision.');
+                }
+                $this->activateUnderstandingRun($existing, $links);
+
                 return;
             }
-            $this->database->table('estimate_generation_project_understanding_runs')
-                ->where('organization_id', $organizationId)
-                ->where('project_id', $projectId)
-                ->where('session_id', $sessionId)
-                ->where('is_current', true)
-                ->update(['is_current' => false, 'invalidated_at' => now()]);
-            $this->database->table('estimate_generation_project_model_cross_document_links')
-                ->where('organization_id', $organizationId)
-                ->where('project_id', $projectId)
-                ->where('session_id', $sessionId)
-                ->where('is_current', true)
-                ->update(['is_current' => false, 'invalidated_at' => now()]);
+            $this->deactivateUnderstanding($organizationId, $projectId, $sessionId);
             $this->appendCrossDocumentLinks($links);
             if ($links !== []) {
                 $this->database->table('estimate_generation_project_model_cross_document_links')
@@ -708,12 +849,14 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     ->update(['is_current' => true, 'invalidated_at' => null]);
             }
             $this->appendConflicts($conflicts);
-            $this->database->table('estimate_generation_project_understanding_runs')->insertOrIgnore([
+            $this->database->table('estimate_generation_project_understanding_runs')->insert([
                 'organization_id' => $organizationId,
                 'project_id' => $projectId,
                 'session_id' => $sessionId,
                 'source_version' => $sourceVersion,
+                'input_fingerprint' => $inputFingerprint,
                 'result_fingerprint' => $fingerprint,
+                'result_payload' => $encodedPayload,
                 'questions' => $this->json($questions),
                 'limitations' => $this->json($limitations),
                 'provider_calls' => $providerCalls,
@@ -721,6 +864,101 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 'created_at' => now(),
             ]);
         }, 3);
+    }
+
+    public function replayUnderstanding(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+    ): ?array {
+        ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
+        if (preg_match('/^[a-f0-9]{64}$/D', $inputFingerprint) !== 1) {
+            throw new InvalidArgumentException('Project understanding input fingerprint is invalid.');
+        }
+
+        return $this->database->connection()->transaction(function () use (
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $inputFingerprint,
+        ): ?array {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $row = $this->database->table('estimate_generation_project_understanding_runs')
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('session_id', $sessionId)
+                ->where('source_version', $sourceVersion)
+                ->where('input_fingerprint', $inputFingerprint)
+                ->orderByDesc('id')
+                ->lockForUpdate()
+                ->first();
+            if ($row === null) {
+                return null;
+            }
+            $payload = $this->decode($row->result_payload);
+            if (! hash_equals(
+                (string) $row->result_fingerprint,
+                hash('sha256', (string) $row->input_fingerprint."\0".$this->json($payload)),
+            )) {
+                throw new InvalidArgumentException('Project understanding fingerprint collision.');
+            }
+            $links = is_array($payload['links'] ?? null) ? $payload['links'] : [];
+            $this->activateUnderstandingRun($row, $links);
+
+            return $this->currentUnderstanding($organizationId, $projectId, $sessionId);
+        }, 3);
+    }
+
+    private function lockUnderstandingScope(int $organizationId, int $projectId, int $sessionId): void
+    {
+        $connection = $this->database->connection();
+        if ($connection->getDriverName() === 'pgsql') {
+            $connection->selectOne('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [
+                implode(':', ['project-understanding', $organizationId, $projectId, $sessionId]),
+            ]);
+
+            return;
+        }
+        $this->database->table('estimate_generation_sessions')->where('id', $sessionId)->lockForUpdate()->first();
+    }
+
+    private function deactivateUnderstanding(int $organizationId, int $projectId, int $sessionId): void
+    {
+        foreach (['estimate_generation_project_understanding_runs', 'estimate_generation_project_model_cross_document_links'] as $table) {
+            $this->database->table($table)
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('session_id', $sessionId)
+                ->where('is_current', true)
+                ->update(['is_current' => false, 'invalidated_at' => now()]);
+        }
+    }
+
+    private function activateUnderstandingRun(object $run, array $links): void
+    {
+        $this->deactivateUnderstanding((int) $run->organization_id, (int) $run->project_id, (int) $run->session_id);
+        if ($links !== []) {
+            $operationIdentities = array_values(array_unique(array_column($links, 'operation_identity')));
+            $updated = $this->database->table('estimate_generation_project_model_cross_document_links')
+                ->where('organization_id', $run->organization_id)
+                ->where('project_id', $run->project_id)
+                ->where('session_id', $run->session_id)
+                ->where('source_version', $run->source_version)
+                ->whereIn('operation_identity', $operationIdentities)
+                ->update(['is_current' => true, 'invalidated_at' => null]);
+            if ($updated !== count($operationIdentities)) {
+                throw new InvalidArgumentException('Project understanding links cannot be restored.');
+            }
+        }
+        if ($this->database->table('estimate_generation_project_understanding_runs')->where('id', $run->id)->update([
+            'is_current' => true,
+            'invalidated_at' => null,
+        ]) !== 1) {
+            throw new InvalidArgumentException('Project understanding run cannot be restored.');
+        }
     }
 
     public function currentUnderstanding(int $organizationId, int $projectId, int $sessionId): ?array
@@ -777,20 +1015,42 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             'left_fact_id' => (string) $link->left_stable_key,
             'right_fact_id' => (string) $link->right_stable_key,
             'strategy' => (string) $link->strategy,
+            'match_key' => (string) $link->match_key,
             'reason' => (string) $link->reason,
             'strategy_version' => (int) $link->strategy_version,
             'operation_identity' => (string) $link->operation_identity,
             'status' => (string) $link->status,
+            'candidate_fact_ids' => array_values($this->decode($link->candidate_fact_ids)),
+            'candidate_evidence_ids' => array_values($this->decode($link->candidate_evidence_ids)),
             'evidence' => [
                 'left' => $evidenceByLink[(int) $link->id]['left'] ?? [],
                 'right' => $evidenceByLink[(int) $link->id]['right'] ?? [],
             ],
         ])->all();
+        $resultPayload = $this->decode($row->result_payload);
+        $persistedLinks = is_array($resultPayload['links'] ?? null) ? $resultPayload['links'] : [];
+        $linksByOperation = [];
+        foreach ($links as $link) {
+            $linksByOperation[$link['operation_identity']] = $link;
+        }
+        foreach ($persistedLinks as $persisted) {
+            $operationIdentity = is_array($persisted) ? ($persisted['operation_identity'] ?? null) : null;
+            if (! is_string($operationIdentity) || ! isset($linksByOperation[$operationIdentity])) {
+                throw new InvalidArgumentException('Project understanding link history is incomplete.');
+            }
+        }
+        if (count($persistedLinks) !== count($linksByOperation)) {
+            throw new InvalidArgumentException('Project understanding link history is inconsistent.');
+        }
+        $links = array_values($persistedLinks);
 
         return [
             'source_version' => (string) $row->source_version,
+            'input_fingerprint' => (string) $row->input_fingerprint,
             'links' => $links,
-            'conflicts' => $this->currentConflicts($organizationId, $projectId, $sessionId),
+            'conflicts' => is_array($resultPayload['conflicts'] ?? null)
+                ? array_values($resultPayload['conflicts'])
+                : [],
             'questions' => array_values($this->decode($row->questions)),
             'limitations' => array_values($this->decode($row->limitations)),
             'provider_calls' => (int) $row->provider_calls,
@@ -980,6 +1240,17 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 $evidenceByFact[(int) $binding->fact_id][] = 'evidence:'.$binding->evidence_id;
             }
         }
+        $evidenceByStableKey = [];
+        foreach ($rows as $row) {
+            $key = implode(':', [
+                $row->organization_id,
+                $row->project_id,
+                $row->session_id,
+                $row->source_version,
+                $row->stable_key,
+            ]);
+            $evidenceByStableKey[$key] = $evidenceByFact[(int) $row->database_id] ?? [];
+        }
         $decisionByFact = [];
         foreach ($this->database->table('estimate_generation_project_model_corrections')
             ->whereIn('selected_fact_stable_key', $factIds)
@@ -994,7 +1265,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             })
             ->get([
                 'organization_id', 'project_id', 'session_id', 'source_version',
-                'selected_fact_stable_key', 'stable_key',
+                'selected_fact_stable_key', 'stable_key', 'evidence_lineage',
             ]) as $decision) {
             $key = implode(':', [
                 $decision->organization_id,
@@ -1003,6 +1274,15 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 $decision->source_version,
                 $decision->selected_fact_stable_key,
             ]);
+            $lineage = array_values(array_filter(array_map(
+                static fn (mixed $item): ?string => is_string($item)
+                    ? $item
+                    : (is_array($item) && is_string($item['evidence_id'] ?? null) ? $item['evidence_id'] : null),
+                $this->decode($decision->evidence_lineage),
+            )));
+            if ($lineage === [] || array_diff($lineage, $evidenceByStableKey[$key] ?? []) !== []) {
+                continue;
+            }
             $decisionByFact[$key][] = (string) $decision->stable_key;
         }
         $ready = [];
@@ -1123,6 +1403,10 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     $groups[$scopeKey]['ids'][$numericId] = $numericId;
                 }
             }
+            foreach ($link['candidate_evidence_ids'] ?? [] as $evidenceId) {
+                $numericId = $this->evidenceDatabaseId($evidenceId);
+                $groups[$scopeKey]['ids'][$numericId] = $numericId;
+            }
         }
         $rows = [];
         foreach ($groups as $group) {
@@ -1138,7 +1422,11 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             }
         }
         foreach ($links as $link) {
-            foreach ([...$link['evidence']['left'], ...$link['evidence']['right']] as $evidenceId) {
+            foreach ([
+                ...$link['evidence']['left'],
+                ...$link['evidence']['right'],
+                ...($link['candidate_evidence_ids'] ?? []),
+            ] as $evidenceId) {
                 if (! isset($rows[$this->linkEvidenceMapKey($link, $evidenceId)])) {
                     throw new InvalidArgumentException('Cross-document link evidence is outside the requested scope or inactive.');
                 }
@@ -1157,6 +1445,9 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             $groups[$scopeKey]['scope'] = $link;
             $groups[$scopeKey]['ids'][$link['left_fact_id']] = $link['left_fact_id'];
             $groups[$scopeKey]['ids'][$link['right_fact_id']] = $link['right_fact_id'];
+            foreach ($link['candidate_fact_ids'] ?? [] as $factId) {
+                $groups[$scopeKey]['ids'][$factId] = $factId;
+            }
         }
         $factIds = [];
         foreach ($groups as $scopeKey => $group) {
@@ -1196,11 +1487,12 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             || ! is_int($link['session_id'] ?? null) || ! is_string($link['source_version'] ?? null)
             || ! is_string($link['id'] ?? null) || ! is_string($link['left_fact_id'] ?? null)
             || ! is_string($link['right_fact_id'] ?? null) || ! is_string($link['strategy'] ?? null)
-            || ! is_string($link['reason'] ?? null) || trim($link['reason']) === ''
+            || ! is_string($link['match_key'] ?? null) || trim($link['match_key']) === '' || strlen($link['match_key']) > 1000
+            || ! is_string($link['reason'] ?? null) || trim($link['reason']) === '' || strlen($link['reason']) > 1000
             || ! is_int($link['strategy_version'] ?? null) || $link['strategy_version'] <= 0
             || ! is_string($link['operation_identity'] ?? null)
             || preg_match('/^[a-f0-9]{64}$/D', $link['operation_identity']) !== 1
-            || ! in_array($link['status'] ?? null, ['linked', 'suggested'], true)
+            || ! in_array($link['status'] ?? null, ['linked', 'suggested', 'unresolved'], true)
             || ! is_array($link['evidence'] ?? null)
             || array_keys($link['evidence']) !== ['left', 'right']) {
             throw new InvalidArgumentException('Cross-document link batch is invalid.');
@@ -1228,6 +1520,19 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         }
         ProjectModelInvariant::uniqueIds($link['evidence']['left'], 'Cross-document left evidence');
         ProjectModelInvariant::uniqueIds($link['evidence']['right'], 'Cross-document right evidence');
+        $candidateFactIds = ProjectModelInvariant::uniqueIds(
+            $link['candidate_fact_ids'] ?? [$link['left_fact_id'], $link['right_fact_id']],
+            'Cross-document candidate fact',
+        );
+        ProjectModelInvariant::uniqueIds(
+            $link['candidate_evidence_ids'] ?? [...$link['evidence']['left'], ...$link['evidence']['right']],
+            'Cross-document candidate evidence',
+            true,
+        );
+        if (! in_array($link['left_fact_id'], $candidateFactIds, true)
+            || ! in_array($link['right_fact_id'], $candidateFactIds, true)) {
+            throw new InvalidArgumentException('Cross-document link candidates are incomplete.');
+        }
     }
 
     private function linkEvidenceMapKey(array $link, string $evidenceId): string

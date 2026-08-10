@@ -53,12 +53,37 @@ final readonly class TargetedConflictResolver
         return ($this->translator)('estimate_generation.project_model.arbitration_unavailable', []);
     }
 
-    public function unresolvedQuestion(string $id): array
+    public function unresolvedQuestion(string $id, array $facts = [], array $evidenceById = []): array
     {
+        $options = array_map(fn (Fact $fact): array => [
+            'value' => 'select:'.$fact->id,
+            'fact_id' => $fact->id,
+            'label' => ($this->translator)('estimate_generation.project_model.conflict_option', [
+                'value' => $this->value($fact),
+                'source' => $this->source($fact, $evidenceById),
+            ]),
+            'evidence_ids' => $fact->evidenceIds,
+        ], $facts);
+        $options[] = [
+            'value' => 'leave_unresolved',
+            'label' => ($this->translator)('estimate_generation.project_model.leave_unresolved', []),
+            'evidence_ids' => [],
+        ];
+        $options[] = [
+            'value' => 'other',
+            'label' => ($this->translator)('estimate_generation.project_model.other_source', []),
+            'evidence_ids' => [],
+        ];
+
         return [
             'conflict_id' => $id,
             'text' => ($this->translator)('estimate_generation.project_model.manual_review_question', []),
-            'options' => [],
+            'fact_ids' => array_map(static fn (Fact $fact): string => $fact->id, $facts),
+            'evidence_ids' => array_values(array_unique(array_merge(...array_map(
+                static fn (Fact $fact): array => $fact->evidenceIds,
+                $facts,
+            )))),
+            'options' => $options,
         ];
     }
 

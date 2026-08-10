@@ -21,6 +21,9 @@ final class DecimalValue
         $integer = ltrim($integer, '0');
         $integer = $integer === '' ? '0' : $integer;
         $fraction = rtrim($fraction, '0');
+        if (strlen($integer) > 20 || strlen($fraction) > 12) {
+            throw new InvalidArgumentException('Decimal value exceeds numeric(32,12).');
+        }
         $canonical = $integer.($fraction === '' ? '' : '.'.$fraction);
 
         return $negative && $canonical !== '0' ? '-'.$canonical : $canonical;

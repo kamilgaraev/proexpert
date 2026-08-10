@@ -2,11 +2,12 @@
 
 declare(strict_types=1);
 
+use App\Contracts\Database\ForwardOnlyMigration;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
+return new class extends Migration implements ForwardOnlyMigration
 {
     public $withinTransaction = false;
 
@@ -166,10 +167,13 @@ return new class extends Migration
                 $table->unsignedBigInteger('left_fact_id');
                 $table->unsignedBigInteger('right_fact_id');
                 $table->string('strategy', 64);
+                $table->string('match_key', 1000);
                 $table->string('reason', 1000);
                 $table->unsignedInteger('strategy_version');
                 $table->string('operation_identity', 64);
                 $table->string('status', 24);
+                $table->jsonb('candidate_fact_ids')->default('[]');
+                $table->jsonb('candidate_evidence_ids')->default('[]');
                 $table->boolean('is_current')->default(true);
                 $table->timestampTz('created_at')->useCurrent();
                 $table->timestampTz('invalidated_at')->nullable();
@@ -195,14 +199,16 @@ return new class extends Migration
         Schema::create('estimate_generation_project_understanding_runs', function (Blueprint $table): void {
             $table->id();
             $this->scope($table);
+            $table->string('input_fingerprint', 64);
             $table->string('result_fingerprint', 64);
+            $table->jsonb('result_payload');
             $table->jsonb('questions');
             $table->jsonb('limitations');
             $table->unsignedSmallInteger('provider_calls');
             $table->boolean('is_current')->default(true);
             $table->timestampTz('created_at')->useCurrent();
             $table->timestampTz('invalidated_at')->nullable();
-            $table->unique(['organization_id', 'project_id', 'session_id', 'source_version', 'result_fingerprint'], 'eg_pm_understanding_replay_uq');
+            $table->unique(['organization_id', 'project_id', 'session_id', 'source_version', 'input_fingerprint'], 'eg_pm_understanding_replay_uq');
         });
     }
 

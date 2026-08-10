@@ -17,6 +17,7 @@ final readonly class ProjectUnderstandingBudget
         public int $maxProviderCalls,
         public int $maxEvidenceItems,
         public int $maxEvidencePayloadBytes,
+        public int $maxEvidenceBytesPerItem = 262_144,
     ) {
         foreach (get_object_vars($this) as $value) {
             if ($value < 1) {

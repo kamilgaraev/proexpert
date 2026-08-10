@@ -2,10 +2,12 @@
 
 declare(strict_types=1);
 
+use App\Contracts\Database\ForwardOnlyMigration;
+use App\Support\Database\PostgresSchemaIdentifier;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
-return new class extends Migration
+return new class extends Migration implements ForwardOnlyMigration
 {
     public $withinTransaction = false;
 
@@ -14,37 +16,56 @@ return new class extends Migration
         if (DB::getDriverName() !== 'pgsql') {
             return;
         }
-        DB::statement("SET lock_timeout TO '5s'");
-        DB::statement("SET statement_timeout TO '15min'");
-        $this->concurrentIndex('eg_pm_facts_scope_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_pm_facts_scope_uq ON estimate_generation_project_model_assertions (id, organization_id, project_id, session_id, source_version)');
-        $this->concurrentIndex('eg_pm_facts_scope_subject_idx', 'CREATE INDEX CONCURRENTLY eg_pm_facts_scope_subject_idx ON estimate_generation_project_model_assertions (organization_id, project_id, session_id, source_version, entity_id, assertion_type, fact_version DESC, id DESC)');
-        $this->concurrentIndex('eg_pm_fact_evidence_scope_idx', 'CREATE INDEX CONCURRENTLY eg_pm_fact_evidence_scope_idx ON estimate_generation_project_model_fact_evidence (organization_id, project_id, session_id, fact_id)');
-        $this->concurrentIndex('eg_pm_fact_projection_current_idx', 'CREATE INDEX CONCURRENTLY eg_pm_fact_projection_current_idx ON estimate_generation_project_model_fact_projections (organization_id, project_id, session_id, is_current, entity_stable_key, fact_type)');
-        $this->concurrentIndex('eg_pm_fact_projection_one_current_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_pm_fact_projection_one_current_uq ON estimate_generation_project_model_fact_projections (organization_id, project_id, session_id, entity_stable_key, fact_type) WHERE is_current');
-        $this->concurrentIndex('eg_pm_cross_link_current_idx', 'CREATE INDEX CONCURRENTLY eg_pm_cross_link_current_idx ON estimate_generation_project_model_cross_document_links (organization_id, project_id, session_id, is_current, strategy)');
-        $this->concurrentIndex('eg_pm_understanding_current_idx', 'CREATE INDEX CONCURRENTLY eg_pm_understanding_current_idx ON estimate_generation_project_understanding_runs (organization_id, project_id, session_id, is_current, id DESC)');
+        try {
+            $schema = (string) DB::selectOne('SELECT current_schema() AS schema_name')->schema_name;
+            DB::statement('SET search_path TO '.PostgresSchemaIdentifier::quote($schema).', pg_catalog');
+            DB::statement("SET lock_timeout TO '5s'");
+            DB::statement("SET statement_timeout TO '15min'");
+            $this->concurrentIndex('eg_pm_facts_scope_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_pm_facts_scope_uq ON estimate_generation_project_model_assertions (id, organization_id, project_id, session_id, source_version)');
+            $this->concurrentIndex('eg_pm_facts_scope_subject_idx', 'CREATE INDEX CONCURRENTLY eg_pm_facts_scope_subject_idx ON estimate_generation_project_model_assertions (organization_id, project_id, session_id, source_version, entity_id, assertion_type, fact_version DESC, id DESC)');
+            $this->concurrentIndex('eg_pm_facts_backfill_idx', 'CREATE INDEX CONCURRENTLY eg_pm_facts_backfill_idx ON estimate_generation_project_model_assertions (id) WHERE fact_value IS NULL');
+            $this->concurrentIndex('eg_pm_facts_status_id_idx', 'CREATE INDEX CONCURRENTLY eg_pm_facts_status_id_idx ON estimate_generation_project_model_assertions (fact_status, id)');
+            $this->concurrentIndex('eg_pm_corrections_backfill_idx', 'CREATE INDEX CONCURRENTLY eg_pm_corrections_backfill_idx ON estimate_generation_project_model_corrections (id) WHERE selected_fact_stable_key IS NULL');
+            $this->concurrentIndex('eg_pm_fact_evidence_scope_idx', 'CREATE INDEX CONCURRENTLY eg_pm_fact_evidence_scope_idx ON estimate_generation_project_model_fact_evidence (organization_id, project_id, session_id, fact_id)');
+            $this->concurrentIndex('eg_pm_fact_projection_current_idx', 'CREATE INDEX CONCURRENTLY eg_pm_fact_projection_current_idx ON estimate_generation_project_model_fact_projections (organization_id, project_id, session_id, is_current, entity_stable_key, fact_type)');
+            $this->concurrentIndex('eg_pm_fact_projection_one_current_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_pm_fact_projection_one_current_uq ON estimate_generation_project_model_fact_projections (organization_id, project_id, session_id, entity_stable_key, fact_type) WHERE is_current');
+            $this->concurrentIndex('eg_pm_cross_link_current_idx', 'CREATE INDEX CONCURRENTLY eg_pm_cross_link_current_idx ON estimate_generation_project_model_cross_document_links (organization_id, project_id, session_id, is_current, strategy)');
+            $this->concurrentIndex('eg_pm_understanding_current_idx', 'CREATE INDEX CONCURRENTLY eg_pm_understanding_current_idx ON estimate_generation_project_understanding_runs (organization_id, project_id, session_id, is_current, id DESC)');
+            $this->concurrentIndex('eg_pm_understanding_one_current_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_pm_understanding_one_current_uq ON estimate_generation_project_understanding_runs (organization_id, project_id, session_id) WHERE is_current');
+            $this->concurrentIndex('eg_pm_conflicts_scope_key_idx', 'CREATE INDEX CONCURRENTLY eg_pm_conflicts_scope_key_idx ON estimate_generation_project_model_conflicts (organization_id, project_id, session_id, source_version, stable_key)');
 
-        DB::statement('ALTER TABLE estimate_generation_project_model_entities DROP CONSTRAINT IF EXISTS eg_project_model_entities_kind_ck');
-        $this->constraint('estimate_generation_project_model_entities', 'eg_pm_entities_kind_v2_ck', "CHECK (entity_kind IN ('room','wall','opening','dimension','material','equipment','quantity','table','structural_element')) NOT VALID");
-        $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_origin_ck', "CHECK (fact_origin IN ('document','ai_inference','user_assumption','ai_technology_recommendation','unresolved')) NOT VALID");
-        $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_status_ck', "CHECK (fact_status IN ('candidate','confirmed','conflicted','unresolved','invalidated') AND NOT (fact_origin = 'unresolved' AND fact_status <> 'unresolved') AND NOT (fact_origin = 'ai_technology_recommendation' AND fact_status = 'confirmed')) NOT VALID");
-        $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_version_ck', 'CHECK (fact_version > 0) NOT VALID');
-        $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_value_size_ck', 'CHECK (fact_value IS NULL OR octet_length(fact_value::text) <= 1048576) NOT VALID');
-        $this->constraint('estimate_generation_project_model_fact_projections', 'eg_pm_fact_projection_source_ck', "CHECK (source_version ~ '^sha256:[a-f0-9]{64}$') NOT VALID");
-        $this->constraint('estimate_generation_project_model_fact_projections', 'eg_pm_fact_projection_version_ck', 'CHECK (projection_version > 0) NOT VALID');
-        $this->constraint('estimate_generation_project_model_fact_projections', 'eg_pm_fact_projection_current_ck', 'CHECK ((is_current AND invalidated_at IS NULL AND replacement_source_version IS NULL) OR (NOT is_current AND invalidated_at IS NOT NULL AND replacement_source_version IS NOT NULL)) NOT VALID');
-        $this->constraint('estimate_generation_project_model_cross_document_links', 'eg_pm_cross_link_status_ck', "CHECK (status IN ('linked','conflicted','unresolved','suggested')) NOT VALID");
-        $this->constraint('estimate_generation_project_model_cross_document_links', 'eg_pm_cross_link_distinct_ck', 'CHECK (left_fact_id <> right_fact_id) NOT VALID');
-        $this->constraint('estimate_generation_project_model_cross_document_links', 'eg_pm_cross_link_strategy_ck', "CHECK (strategy IN ('stable_key','room_number','axes','native_id','equipment_position','facade_material','ai_arbitration')) NOT VALID");
-        $this->constraint('estimate_generation_project_model_cross_link_evidence', 'eg_pm_cross_link_evidence_side_ck', "CHECK (side IN ('left','right')) NOT VALID");
-        $this->constraint('estimate_generation_project_model_conflicts', 'eg_pm_conflict_status_ck', "CHECK (status IN ('unresolved','resolved')) NOT VALID");
-        $this->constraint('estimate_generation_project_model_conflicts', 'eg_pm_conflict_reason_ck', 'CHECK (length(btrim(reason)) > 0) NOT VALID');
-        $this->constraint('estimate_generation_project_model_conflicts', 'eg_pm_conflict_version_ck', 'CHECK (conflict_version > 0) NOT VALID');
-        $this->constraint('estimate_generation_project_model_derived_quantities', 'eg_pm_derived_status_ck', "CHECK (status IN ('candidate','confirmed','unresolved','invalidated') AND ((status = 'unresolved' AND value IS NULL) OR (status <> 'unresolved' AND value IS NOT NULL))) NOT VALID");
-        $this->constraint('estimate_generation_project_model_derived_quantities', 'eg_pm_derived_rounding_ck', "CHECK (rounding_mode IN ('half_up','half_even','floor','ceil') AND rounding_scale <= 8) NOT VALID");
-        $this->constraint('estimate_generation_project_model_derived_quantities', 'eg_pm_derived_evidence_ck', "CHECK (jsonb_typeof(evidence_lineage) = 'array' AND jsonb_typeof(unresolved_inputs) = 'array' AND octet_length(evidence_lineage::text) <= 1048576) NOT VALID");
+            DB::statement('ALTER TABLE estimate_generation_project_model_entities DROP CONSTRAINT IF EXISTS eg_project_model_entities_kind_ck');
+            $this->constraint('estimate_generation_project_model_entities', 'eg_pm_entities_kind_v2_ck', "CHECK (entity_kind IN ('room','wall','opening','dimension','material','equipment','quantity','table','structural_element')) NOT VALID");
+            $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_origin_ck', "CHECK (fact_origin IN ('document','ai_inference','user_assumption','ai_technology_recommendation','unresolved')) NOT VALID");
+            $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_status_ck', "CHECK (fact_status IN ('candidate','confirmed','conflicted','unresolved','invalidated') AND NOT (fact_origin = 'unresolved' AND fact_status <> 'unresolved') AND NOT (fact_origin = 'ai_technology_recommendation' AND fact_status = 'confirmed')) NOT VALID");
+            $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_version_ck', 'CHECK (fact_version > 0) NOT VALID');
+            $this->constraint('estimate_generation_project_model_assertions', 'eg_pm_fact_value_size_ck', 'CHECK (fact_value IS NULL OR octet_length(fact_value::text) <= 1048576) NOT VALID');
+            $this->constraint('estimate_generation_project_model_fact_projections', 'eg_pm_fact_projection_source_ck', "CHECK (source_version ~ '^sha256:[a-f0-9]{64}$') NOT VALID");
+            $this->constraint('estimate_generation_project_model_fact_projections', 'eg_pm_fact_projection_version_ck', 'CHECK (projection_version > 0) NOT VALID');
+            $this->constraint('estimate_generation_project_model_fact_projections', 'eg_pm_fact_projection_current_ck', 'CHECK ((is_current AND invalidated_at IS NULL AND replacement_source_version IS NULL) OR (NOT is_current AND invalidated_at IS NOT NULL AND replacement_source_version IS NOT NULL)) NOT VALID');
+            $this->constraint('estimate_generation_project_model_cross_document_links', 'eg_pm_cross_link_status_ck', "CHECK (status IN ('linked','conflicted','unresolved','suggested')) NOT VALID");
+            $this->constraint('estimate_generation_project_model_cross_document_links', 'eg_pm_cross_link_distinct_ck', 'CHECK (left_fact_id <> right_fact_id) NOT VALID');
+            $this->constraint('estimate_generation_project_model_cross_document_links', 'eg_pm_cross_link_strategy_ck', "CHECK (strategy IN ('stable_key','room_number','axes','native_id','equipment_position','facade_material','ai_arbitration')) NOT VALID");
+            $this->constraint('estimate_generation_project_model_cross_link_evidence', 'eg_pm_cross_link_evidence_side_ck', "CHECK (side IN ('left','right')) NOT VALID");
+            $this->constraint('estimate_generation_project_model_conflicts', 'eg_pm_conflict_status_ck', "CHECK (status IN ('unresolved','resolved')) NOT VALID");
+            $this->constraint('estimate_generation_project_model_conflicts', 'eg_pm_conflict_reason_ck', 'CHECK (length(btrim(reason)) > 0) NOT VALID');
+            $this->constraint('estimate_generation_project_model_conflicts', 'eg_pm_conflict_version_ck', 'CHECK (conflict_version > 0) NOT VALID');
+            $this->constraint('estimate_generation_project_model_derived_quantities', 'eg_pm_derived_status_ck', "CHECK (status IN ('candidate','confirmed','unresolved','invalidated') AND ((status = 'unresolved' AND value IS NULL) OR (status <> 'unresolved' AND value IS NOT NULL))) NOT VALID");
+            $this->constraint('estimate_generation_project_model_derived_quantities', 'eg_pm_derived_rounding_ck', "CHECK (rounding_mode IN ('half_up','half_even','floor','ceil') AND rounding_scale <= 12) NOT VALID");
+            $this->constraint('estimate_generation_project_model_derived_quantities', 'eg_pm_derived_evidence_ck', "CHECK (jsonb_typeof(evidence_lineage) = 'array' AND jsonb_typeof(unresolved_inputs) = 'array' AND octet_length(evidence_lineage::text) <= 1048576) NOT VALID");
 
-        $this->installEntityGuard();
+            $this->installEntityGuard();
+        } finally {
+            try {
+                DB::statement('RESET lock_timeout');
+            } finally {
+                try {
+                    DB::statement('RESET statement_timeout');
+                } finally {
+                    DB::statement('RESET search_path');
+                }
+            }
+        }
     }
 
     private function concurrentIndex(string $name, string $sql): void

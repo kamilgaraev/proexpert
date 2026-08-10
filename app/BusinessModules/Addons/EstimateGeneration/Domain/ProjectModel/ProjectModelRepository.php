@@ -14,6 +14,17 @@ interface ProjectModelRepository
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot;
 
+    public function understandingPreflight(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        int $maxFacts,
+        int $maxEvidenceItems,
+        int $maxEvidencePerFact,
+        int $maxEvidencePayloadBytes,
+        int $maxEvidenceBytesPerItem,
+    ): array;
+
     public function currentFacts(
         int $organizationId,
         int $projectId,
@@ -36,12 +47,21 @@ interface ProjectModelRepository
         int $projectId,
         int $sessionId,
         string $sourceVersion,
+        string $inputFingerprint,
         array $links,
         array $conflicts,
         array $questions,
         array $limitations,
         int $providerCalls,
     ): void;
+
+    public function replayUnderstanding(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+    ): ?array;
 
     public function currentUnderstanding(int $organizationId, int $projectId, int $sessionId): ?array;
 
