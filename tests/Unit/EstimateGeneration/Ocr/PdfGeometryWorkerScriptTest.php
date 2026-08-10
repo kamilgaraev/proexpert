@@ -124,10 +124,9 @@ final class PdfGeometryWorkerScriptTest extends TestCase
 
                     return [
                         'artifact_path' => 's3://org-1/pdf/page-'.$pageNumber.'.png',
+                        'artifact_bytes' => strlen($bytes),
+                        'artifact_sha256' => 'sha256:'.$published[$pageNumber],
                         'content_type' => 'image/png',
-                        'sha256' => $published[$pageNumber],
-                        'bytes' => strlen($bytes),
-                        'version_id' => 'version-'.$pageNumber,
                         'width' => $metadata['width'],
                         'height' => $metadata['height'],
                     ];
@@ -148,8 +147,8 @@ final class PdfGeometryWorkerScriptTest extends TestCase
         self::assertSame(1, $page['page_number']);
         self::assertSame('image/png', $page['preview']['content_type'] ?? null);
         self::assertSame('s3://org-1/pdf/page-1.png', $page['preview']['artifact_path'] ?? null);
-        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string) ($page['preview']['sha256'] ?? ''));
-        self::assertSame($published[1], $page['preview']['sha256']);
+        self::assertMatchesRegularExpression('/^sha256:[a-f0-9]{64}$/', (string) ($page['preview']['artifact_sha256'] ?? ''));
+        self::assertSame('sha256:'.$published[1], $page['preview']['artifact_sha256']);
         self::assertGreaterThan(0, $page['preview']['width'] ?? 0);
         self::assertGreaterThan(0, $page['preview']['height'] ?? 0);
         self::assertArrayNotHasKey('content_base64', $page['preview']);
@@ -238,10 +237,9 @@ PYTHON;
 
                 return [
                     'artifact_path' => 's3://org-1/pdf/page-'.$pageNumber.'.png',
+                    'artifact_bytes' => strlen($bytes),
+                    'artifact_sha256' => 'sha256:'.hash('sha256', $bytes),
                     'content_type' => 'image/png',
-                    'sha256' => hash('sha256', $bytes),
-                    'bytes' => strlen($bytes),
-                    'version_id' => 'version-'.$pageNumber,
                     'width' => $metadata['width'],
                     'height' => $metadata['height'],
                 ];
@@ -302,10 +300,9 @@ PYTHON;
 
                     return [
                         'artifact_path' => 's3://org-1/pdf/page-'.$pageNumber.'.png',
+                        'artifact_bytes' => strlen($bytes),
+                        'artifact_sha256' => 'sha256:'.hash('sha256', $bytes),
                         'content_type' => 'image/png',
-                        'sha256' => hash('sha256', $bytes),
-                        'bytes' => strlen($bytes),
-                        'version_id' => 'version-'.$pageNumber,
                         'width' => $metadata['width'],
                         'height' => $metadata['height'],
                     ];

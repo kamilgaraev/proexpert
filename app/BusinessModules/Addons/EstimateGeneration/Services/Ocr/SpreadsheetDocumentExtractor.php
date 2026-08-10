@@ -153,6 +153,7 @@ class SpreadsheetDocumentExtractor
             $sourceRows = max(0, (int) ($info['totalRows'] ?? $worksheet->getHighestDataRow()));
             $sourceColumns = max(0, (int) ($info['totalColumns'] ?? Coordinate::columnIndexFromString($worksheet->getHighestDataColumn())));
             $bounds = $readBounds[$worksheet->getTitle()] ?? ['rows' => 0, 'columns' => 0, 'cells' => 0];
+            $loadedCells = count($worksheet->getCellCollection()->getCoordinates());
             $limitations = [];
             if ($sheetsTruncated) {
                 $limitations[] = 'xlsx_sheets_truncated';
@@ -254,6 +255,7 @@ class SpreadsheetDocumentExtractor
                         )),
                         'merges' => $merges,
                         'native_reference_registry' => $nativeReferences,
+                        'loaded_cells' => $loadedCells,
                         'rows' => $highestRow,
                         'columns' => $highestColumnIndex,
                     ],

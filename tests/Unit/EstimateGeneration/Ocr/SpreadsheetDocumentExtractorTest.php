@@ -241,6 +241,53 @@ final class SpreadsheetDocumentExtractorTest extends TestCase
         }
     }
 
+    #[Test]
+    public function xlsx_cell_budget_loads_exactly_twenty_thousand_cells_globally_and_excludes_the_next_cell(): void
+    {
+        config()->set('estimate-generation.ocr.max_spreadsheet_rows', 1001);
+        config()->set('estimate-generation.ocr.max_spreadsheet_columns', 10);
+        config()->set('estimate-generation.ocr.max_spreadsheet_cells', 20_000);
+        config()->set('estimate-generation.ocr.max_spreadsheet_render_cells', 20_000);
+        $workbook = new Spreadsheet;
+        $first = $workbook->getActiveSheet()->setTitle('Первая');
+        $second = $workbook->createSheet()->setTitle('Вторая');
+        for ($row = 1; $row <= 1000; $row++) {
+            for ($column = 1; $column <= 10; $column++) {
+                $first->setCellValue([$column, $row], 'first-'.$row.'-'.$column);
+                $second->setCellValue([$column, $row], 'second-'.$row.'-'.$column);
+            }
+        }
+        $second->setCellValue('A1001', 'cell-20001');
+        $path = tempnam(sys_get_temp_dir(), 'exact-cell-budget-xlsx-');
+
+        try {
+            self::assertIsString($path);
+            (new Xlsx($workbook))->save($path);
+            $result = (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path);
+            $native = array_map(
+                static fn ($page): array => $page->rawPayload['native_structure'],
+                $result->pages,
+            );
+            $cells = array_merge($native[0]['cells'], $native[1]['cells']);
+
+            self::assertCount(20_000, $cells);
+            self::assertSame(20_000, array_sum(array_column($native, 'loaded_cells')));
+            self::assertSame('first-1-1', $cells[0]['value']);
+            self::assertNotContains('cell-20001', array_column($cells, 'value'));
+            self::assertNotContains('xlsx_cells_truncated', $native[0]['limitations']);
+            self::assertContains('xlsx_cells_truncated', $native[1]['limitations']);
+            self::assertContains('xlsx_rows_truncated', $native[1]['limitations']);
+            self::assertSame('partial', $native[1]['status']);
+            self::assertNotContains('xlsx_render_truncated', $native[0]['limitations']);
+            self::assertNotContains('xlsx_render_truncated', $native[1]['limitations']);
+        } finally {
+            $workbook->disconnectWorksheets();
+            if (is_string($path) && is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
     private function document(): EstimateGenerationDocument
     {
         return new EstimateGenerationDocument([
