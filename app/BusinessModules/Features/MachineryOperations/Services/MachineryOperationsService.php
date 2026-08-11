@@ -96,17 +96,30 @@ final class MachineryOperationsService
 
     public function assignAsset(MachineryAsset $asset, int $userId, array $data): MachineryAssignment
     {
-        if (! in_array($asset->status, ['available', 'assigned'], true)) {
-            throw new DomainException(trans_message('machinery_operations.errors.asset_assign_invalid_status'));
-        }
-
-        $this->assertProjectBelongsToOrganization((int) $data['project_id'], (int) $asset->organization_id);
-        $this->assertOptionalScheduleTaskBelongsToOrganization($data['schedule_task_id'] ?? null, (int) $asset->organization_id);
-
         return DB::transaction(function () use ($asset, $userId, $data): MachineryAssignment {
+            $lockedAsset = $this->requireLockedAsset((int) $asset->id, (int) $asset->organization_id);
+
+            if (! in_array($lockedAsset->status, ['available', 'assigned'], true)) {
+                throw new DomainException(trans_message('machinery_operations.errors.asset_assign_invalid_status'));
+            }
+
+            $this->assertProjectBelongsToOrganization(
+                (int) $data['project_id'],
+                (int) $lockedAsset->organization_id,
+            );
+            $this->assertOptionalScheduleTaskBelongsToOrganization(
+                $data['schedule_task_id'] ?? null,
+                (int) $lockedAsset->organization_id,
+            );
+            $this->assertNoOverlappingActiveAssignment(
+                $lockedAsset,
+                $data['planned_start_at'],
+                $data['planned_end_at'] ?? null,
+            );
+
             $assignment = MachineryAssignment::query()->create([
-                'organization_id' => $asset->organization_id,
-                'asset_id' => $asset->id,
+                'organization_id' => $lockedAsset->organization_id,
+                'asset_id' => $lockedAsset->id,
                 'project_id' => (int) $data['project_id'],
                 'schedule_task_id' => $data['schedule_task_id'] ?? null,
                 'requested_by_user_id' => $userId,
@@ -119,7 +132,7 @@ final class MachineryOperationsService
                 'comment' => $data['comment'] ?? null,
             ]);
 
-            $asset->update([
+            $lockedAsset->update([
                 'status' => 'assigned',
                 'current_project_id' => (int) $data['project_id'],
                 'current_schedule_task_id' => $data['schedule_task_id'] ?? null,
@@ -198,29 +211,38 @@ final class MachineryOperationsService
 
     public function createShiftReport(int $organizationId, int $userId, array $data): MachineryShiftReport
     {
-        $asset = $this->requireAsset((int) $data['asset_id'], $organizationId);
-        $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
-        $this->assertOptionalAssignmentBelongsToOrganization($data['assignment_id'] ?? null, $organizationId);
+        return DB::transaction(function () use ($organizationId, $userId, $data): MachineryShiftReport {
+            $asset = $this->requireLockedAsset((int) $data['asset_id'], $organizationId);
+            $projectId = (int) $data['project_id'];
+            $this->assertProjectBelongsToOrganization($projectId, $organizationId);
+            $this->assertAssetProjectConsistency($asset, $projectId);
+            $this->assertAssignmentLinkConsistency(
+                $data['assignment_id'] ?? null,
+                $organizationId,
+                (int) $asset->id,
+                $projectId,
+            );
 
-        if (! in_array($asset->status, ['assigned', 'in_operation'], true)) {
-            throw new DomainException(trans_message('machinery_operations.errors.shift_asset_not_operational'));
-        }
+            if (! in_array($asset->status, ['assigned', 'in_operation'], true)) {
+                throw new DomainException(trans_message('machinery_operations.errors.shift_asset_not_operational'));
+            }
 
-        return MachineryShiftReport::query()->create([
-            'organization_id' => $organizationId,
-            'asset_id' => $asset->id,
-            'project_id' => (int) $data['project_id'],
-            'assignment_id' => $data['assignment_id'] ?? null,
-            'reported_by_user_id' => $userId,
-            'report_date' => $data['report_date'],
-            'status' => 'draft',
-            'planned_hours' => $data['planned_hours'] ?? $data['actual_hours'],
-            'actual_hours' => $data['actual_hours'],
-            'fuel_consumed' => $data['fuel_consumed'],
-            'meter_start' => $data['meter_start'] ?? null,
-            'meter_end' => $data['meter_end'] ?? null,
-            'work_description' => $data['work_description'] ?? null,
-        ])->fresh(self::SHIFT_RELATIONS);
+            return MachineryShiftReport::query()->create([
+                'organization_id' => $organizationId,
+                'asset_id' => $asset->id,
+                'project_id' => $projectId,
+                'assignment_id' => $data['assignment_id'] ?? null,
+                'reported_by_user_id' => $userId,
+                'report_date' => $data['report_date'],
+                'status' => 'draft',
+                'planned_hours' => $data['planned_hours'] ?? $data['actual_hours'],
+                'actual_hours' => $data['actual_hours'],
+                'fuel_consumed' => $data['fuel_consumed'],
+                'meter_start' => $data['meter_start'] ?? null,
+                'meter_end' => $data['meter_end'] ?? null,
+                'work_description' => $data['work_description'] ?? null,
+            ])->fresh(self::SHIFT_RELATIONS);
+        });
     }
 
     public function findShift(int $organizationId, int $id): ?MachineryShiftReport
@@ -280,59 +302,79 @@ final class MachineryOperationsService
 
     public function createDowntime(int $organizationId, array $data): MachineryDowntime
     {
-        $this->requireAsset((int) $data['asset_id'], $organizationId);
-        $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
-        $this->assertOptionalShiftBelongsToOrganization($data['shift_report_id'] ?? null, $organizationId);
+        return DB::transaction(function () use ($organizationId, $data): MachineryDowntime {
+            $asset = $this->requireLockedAsset((int) $data['asset_id'], $organizationId);
+            $projectId = (int) $data['project_id'];
+            $this->assertProjectBelongsToOrganization($projectId, $organizationId);
+            $this->assertAssetProjectConsistency($asset, $projectId);
+            $shift = $this->findOptionalShift($data['shift_report_id'] ?? null, $organizationId);
 
-        return MachineryDowntime::query()->create([
-            'organization_id' => $organizationId,
-            'asset_id' => (int) $data['asset_id'],
-            'project_id' => (int) $data['project_id'],
-            'shift_report_id' => $data['shift_report_id'] ?? null,
-            'reason' => $data['reason'],
-            'started_at' => $data['started_at'],
-            'ended_at' => $data['ended_at'] ?? null,
-            'duration_minutes' => $data['duration_minutes'],
-            'comment' => $data['comment'] ?? null,
-        ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
+            if ($shift !== null) {
+                $this->assertShiftLinkConsistency($shift, (int) $asset->id, $projectId);
+            }
+
+            return MachineryDowntime::query()->create([
+                'organization_id' => $organizationId,
+                'asset_id' => $asset->id,
+                'project_id' => $projectId,
+                'shift_report_id' => $data['shift_report_id'] ?? null,
+                'reason' => $data['reason'],
+                'started_at' => $data['started_at'],
+                'ended_at' => $data['ended_at'] ?? null,
+                'duration_minutes' => $data['duration_minutes'],
+                'comment' => $data['comment'] ?? null,
+            ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
+        });
     }
 
     public function createProductionRecord(int $organizationId, int $userId, array $data): MachineryProductionRecord
     {
-        $this->requireAsset((int) $data['asset_id'], $organizationId);
-        $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
-        $this->assertOptionalShiftBelongsToOrganization($data['shift_report_id'] ?? null, $organizationId);
+        return DB::transaction(function () use ($organizationId, $userId, $data): MachineryProductionRecord {
+            $asset = $this->requireLockedAsset((int) $data['asset_id'], $organizationId);
+            $projectId = (int) $data['project_id'];
+            $this->assertProjectBelongsToOrganization($projectId, $organizationId);
+            $this->assertAssetProjectConsistency($asset, $projectId);
+            $shift = $this->findOptionalShift($data['shift_report_id'] ?? null, $organizationId);
 
-        return MachineryProductionRecord::query()->create([
-            'organization_id' => $organizationId,
-            'asset_id' => (int) $data['asset_id'],
-            'project_id' => (int) $data['project_id'],
-            'shift_report_id' => $data['shift_report_id'] ?? null,
-            'recorded_by_user_id' => $userId,
-            'recorded_at' => $data['recorded_at'],
-            'quantity' => $data['quantity'],
-            'unit' => $data['unit'],
-            'comment' => $data['comment'] ?? null,
-        ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
+            if ($shift !== null) {
+                $this->assertShiftLinkConsistency($shift, (int) $asset->id, $projectId);
+            }
+
+            return MachineryProductionRecord::query()->create([
+                'organization_id' => $organizationId,
+                'asset_id' => $asset->id,
+                'project_id' => $projectId,
+                'shift_report_id' => $data['shift_report_id'] ?? null,
+                'recorded_by_user_id' => $userId,
+                'recorded_at' => $data['recorded_at'],
+                'quantity' => $data['quantity'],
+                'unit' => $data['unit'],
+                'comment' => $data['comment'] ?? null,
+            ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
+        });
     }
 
     public function createFuelIssue(int $organizationId, int $userId, array $data): MachineryFuelIssue
     {
-        $this->requireAsset((int) $data['asset_id'], $organizationId);
-        $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
+        return DB::transaction(function () use ($organizationId, $userId, $data): MachineryFuelIssue {
+            $asset = $this->requireLockedAsset((int) $data['asset_id'], $organizationId);
+            $projectId = (int) $data['project_id'];
+            $this->assertProjectBelongsToOrganization($projectId, $organizationId);
+            $this->assertAssetProjectConsistency($asset, $projectId);
 
-        return MachineryFuelIssue::query()->create([
-            'organization_id' => $organizationId,
-            'asset_id' => (int) $data['asset_id'],
-            'project_id' => (int) $data['project_id'],
-            'issued_by_user_id' => $userId,
-            'issued_at' => $data['issued_at'],
-            'fuel_type' => $data['fuel_type'],
-            'quantity' => $data['quantity'],
-            'unit' => $data['unit'],
-            'cost' => $data['cost'] ?? 0,
-            'comment' => $data['comment'] ?? null,
-        ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
+            return MachineryFuelIssue::query()->create([
+                'organization_id' => $organizationId,
+                'asset_id' => $asset->id,
+                'project_id' => $projectId,
+                'issued_by_user_id' => $userId,
+                'issued_at' => $data['issued_at'],
+                'fuel_type' => $data['fuel_type'],
+                'quantity' => $data['quantity'],
+                'unit' => $data['unit'],
+                'cost' => $data['cost'] ?? 0,
+                'comment' => $data['comment'] ?? null,
+            ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
+        });
     }
 
     public function createMaintenanceOrder(int $organizationId, int $userId, array $data): MachineryMaintenanceOrder
@@ -435,6 +477,114 @@ final class MachineryOperationsService
         ];
     }
 
+    private function assertAssetProjectConsistency(
+        MachineryAsset $asset,
+        int $projectId,
+        bool $requireActiveAssignment = true,
+    ): void {
+        if ((int) $asset->current_project_id !== $projectId) {
+            throw new DomainException(trans_message('machinery_operations.errors.asset_project_mismatch'));
+        }
+
+        if (
+            $requireActiveAssignment
+            && ! MachineryAssignment::forOrganization((int) $asset->organization_id)
+                ->where('asset_id', $asset->id)
+                ->where('project_id', $projectId)
+                ->where('status', 'active')
+                ->exists()
+        ) {
+            throw new DomainException(trans_message('machinery_operations.errors.asset_active_assignment_missing'));
+        }
+    }
+
+    private function assertShiftLinkConsistency(
+        MachineryShiftReport $shift,
+        int $assetId,
+        int $projectId,
+    ): void {
+        if ((int) $shift->asset_id !== $assetId || (int) $shift->project_id !== $projectId) {
+            throw new DomainException(trans_message('machinery_operations.errors.shift_link_mismatch'));
+        }
+    }
+
+    private function assertAssignmentLinkConsistency(
+        mixed $assignmentId,
+        int $organizationId,
+        int $assetId,
+        int $projectId,
+    ): void {
+        if ($assignmentId === null) {
+            return;
+        }
+
+        $matches = MachineryAssignment::forOrganization($organizationId)
+            ->whereKey((int) $assignmentId)
+            ->where('asset_id', $assetId)
+            ->where('project_id', $projectId)
+            ->where('status', 'active')
+            ->exists();
+
+        if (! $matches) {
+            throw new DomainException(trans_message('machinery_operations.errors.assignment_link_mismatch'));
+        }
+    }
+
+    private function assertNoOverlappingActiveAssignment(
+        MachineryAsset $asset,
+        mixed $plannedStartAt,
+        mixed $plannedEndAt,
+    ): void {
+        $overlap = MachineryAssignment::forOrganization((int) $asset->organization_id)
+            ->where('asset_id', $asset->id)
+            ->where('status', 'active')
+            ->when(
+                $plannedEndAt !== null,
+                static fn ($query) => $query->where('planned_start_at', '<', $plannedEndAt),
+            )
+            ->where(static function ($query) use ($plannedStartAt): void {
+                $query->whereNull('planned_end_at')
+                    ->orWhere('planned_end_at', '>', $plannedStartAt);
+            })
+            ->exists();
+
+        if ($overlap) {
+            throw new DomainException(trans_message('machinery_operations.errors.assignment_period_overlap'));
+        }
+    }
+
+    private function requireLockedAsset(int $id, int $organizationId): MachineryAsset
+    {
+        $asset = MachineryAsset::forOrganization($organizationId)
+            ->whereKey($id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($asset === null) {
+            throw new DomainException(trans_message('machinery_operations.errors.asset_not_found'));
+        }
+
+        return $asset;
+    }
+
+    private function findOptionalShift(mixed $shiftId, int $organizationId): ?MachineryShiftReport
+    {
+        if ($shiftId === null) {
+            return null;
+        }
+
+        $shift = MachineryShiftReport::forOrganization($organizationId)
+            ->whereKey((int) $shiftId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($shift === null) {
+            throw new DomainException(trans_message('machinery_operations.errors.shift_not_found'));
+        }
+
+        return $shift;
+    }
+
     private function requireAsset(int $id, int $organizationId): MachineryAsset
     {
         $asset = $this->findAsset($organizationId, $id);
@@ -486,20 +636,6 @@ final class MachineryOperationsService
 
         if (! ScheduleTask::query()->where('id', (int) $scheduleTaskId)->where('organization_id', $organizationId)->exists()) {
             throw new DomainException(trans_message('machinery_operations.errors.schedule_task_not_found'));
-        }
-    }
-
-    private function assertOptionalAssignmentBelongsToOrganization(mixed $assignmentId, int $organizationId): void
-    {
-        if ($assignmentId !== null && ! MachineryAssignment::forOrganization($organizationId)->where('id', (int) $assignmentId)->exists()) {
-            throw new DomainException(trans_message('machinery_operations.errors.assignment_not_found'));
-        }
-    }
-
-    private function assertOptionalShiftBelongsToOrganization(mixed $shiftId, int $organizationId): void
-    {
-        if ($shiftId !== null && ! MachineryShiftReport::forOrganization($organizationId)->where('id', (int) $shiftId)->exists()) {
-            throw new DomainException(trans_message('machinery_operations.errors.shift_not_found'));
         }
     }
 

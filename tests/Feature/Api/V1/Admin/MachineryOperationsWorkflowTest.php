@@ -4,19 +4,107 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Http\Middleware\WebInterfaceSecurityMiddleware;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class MachineryOperationsWorkflowTest extends TestCase
 {
-    use RefreshDatabase;
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // These workflow tests exercise the legacy JWT route stack, not the
+        // independently covered browser-session token handshake.
+        $this->withoutMiddleware(WebInterfaceSecurityMiddleware::class);
+    }
+
+    public function test_admin_rejects_same_organization_project_leak_in_shift_report(): void
+    {
+        $context = AdminApiTestContext::create();
+        $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $projectB = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $asset = MachineryAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'current_project_id' => $projectA->id,
+            'asset_code' => 'ADMIN-INTEGRITY-1',
+            'name' => 'Admin integrity asset',
+            'status' => 'in_operation',
+            'ownership_type' => 'owned',
+            'operating_cost_per_hour' => 1000,
+        ]);
+        $assignment = MachineryAssignment::query()->create([
+            'organization_id' => $context->organization->id,
+            'asset_id' => $asset->id,
+            'project_id' => $projectA->id,
+            'requested_by_user_id' => $context->user->id,
+            'approved_by_user_id' => $context->user->id,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+            'actual_start_at' => now()->subHour(),
+        ]);
+        $this->actingAs($context->user, 'api_admin');
+        $this->allowAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/machinery-operations/shift-reports', [
+                'asset_id' => $asset->id,
+                'project_id' => $projectB->id,
+                'assignment_id' => $assignment->id,
+                'report_date' => now()->toDateString(),
+                'actual_hours' => 8,
+                'fuel_consumed' => 10,
+            ]);
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('machinery_shift_reports', [
+            'asset_id' => $asset->id,
+            'project_id' => $projectB->id,
+        ]);
+    }
+
+    public function test_admin_rejects_overlapping_active_assignment(): void
+    {
+        $context = AdminApiTestContext::create();
+        $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $projectB = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $asset = MachineryAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'asset_code' => 'ADMIN-INTEGRITY-2',
+            'name' => 'Admin assignment integrity asset',
+            'status' => 'available',
+            'ownership_type' => 'owned',
+            'operating_cost_per_hour' => 1000,
+        ]);
+        $this->actingAs($context->user, 'api_admin');
+        $this->allowAccess();
+
+        $first = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/machinery-operations/assets/{$asset->id}/assign", [
+                'project_id' => $projectA->id,
+                'planned_start_at' => now()->addDay()->toIso8601String(),
+                'planned_end_at' => now()->addDays(3)->toIso8601String(),
+            ]);
+        $first->assertOk();
+
+        $overlapping = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/machinery-operations/assets/{$asset->id}/assign", [
+                'project_id' => $projectB->id,
+                'planned_start_at' => now()->addDays(2)->toIso8601String(),
+                'planned_end_at' => now()->addDays(4)->toIso8601String(),
+            ]);
+
+        $overlapping->assertStatus(422);
+        $this->assertDatabaseCount('machinery_assignments', 1);
+    }
 
     public function test_admin_manages_asset_shift_downtime_fuel_maintenance_and_reports_with_org_scope(): void
     {
@@ -24,6 +112,7 @@ final class MachineryOperationsWorkflowTest extends TestCase
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $this->actingAs($context->user, 'api_admin');
         $this->allowAccess();
 
         $assetResponse = $this->withHeaders($context->authHeaders())
@@ -111,10 +200,11 @@ final class MachineryOperationsWorkflowTest extends TestCase
                 'issued_at' => now()->toIso8601String(),
                 'fuel_type' => 'diesel',
                 'quantity' => 140,
+                'unit' => 'l',
                 'cost' => 9100,
-        ]);
-        $fuelResponse->assertCreated()
-            ->assertJsonPath('data.quantity', 140);
+            ]);
+        $fuelResponse->assertCreated();
+        self::assertSame(140.0, (float) $fuelResponse->json('data.quantity'));
 
         $maintenance = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/machinery-operations/maintenance-orders', [

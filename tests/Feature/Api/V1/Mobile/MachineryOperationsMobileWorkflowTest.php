@@ -5,20 +5,106 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Mobile;
 
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class MachineryOperationsMobileWorkflowTest extends TestCase
 {
-    use RefreshDatabase;
+    public function test_mobile_rejects_same_organization_shift_link_mismatch(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $projectB = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $shiftAsset = MachineryAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'current_project_id' => $projectA->id,
+            'asset_code' => 'MOBILE-INTEGRITY-1',
+            'name' => 'Mobile shift integrity asset',
+            'status' => 'in_operation',
+            'ownership_type' => 'owned',
+            'operating_cost_per_hour' => 1000,
+        ]);
+        $otherAsset = MachineryAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'current_project_id' => $projectA->id,
+            'asset_code' => 'MOBILE-INTEGRITY-2',
+            'name' => 'Mobile operation integrity asset',
+            'status' => 'in_operation',
+            'ownership_type' => 'owned',
+            'operating_cost_per_hour' => 1000,
+        ]);
+        MachineryAssignment::query()->insert([
+            [
+                'organization_id' => $context->organization->id,
+                'asset_id' => $shiftAsset->id,
+                'project_id' => $projectA->id,
+                'requested_by_user_id' => $context->user->id,
+                'approved_by_user_id' => $context->user->id,
+                'status' => 'active',
+                'planned_start_at' => now()->subHour(),
+                'actual_start_at' => now()->subHour(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'organization_id' => $context->organization->id,
+                'asset_id' => $otherAsset->id,
+                'project_id' => $projectA->id,
+                'requested_by_user_id' => $context->user->id,
+                'approved_by_user_id' => $context->user->id,
+                'status' => 'active',
+                'planned_start_at' => now()->subHour(),
+                'actual_start_at' => now()->subHour(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+        $shift = MachineryShiftReport::query()->create([
+            'organization_id' => $context->organization->id,
+            'asset_id' => $shiftAsset->id,
+            'project_id' => $projectA->id,
+            'reported_by_user_id' => $context->user->id,
+            'report_date' => now()->toDateString(),
+            'status' => 'draft',
+            'planned_hours' => 8,
+            'actual_hours' => 8,
+            'fuel_consumed' => 10,
+        ]);
+        $this->allowAccess();
+
+        $downtime = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/machinery-operations/downtimes', [
+                'asset_id' => $otherAsset->id,
+                'project_id' => $projectA->id,
+                'shift_report_id' => $shift->id,
+                'reason' => 'waiting_material',
+                'started_at' => now()->subHour()->toIso8601String(),
+                'duration_minutes' => 60,
+            ]);
+        $downtime->assertStatus(422);
+
+        $production = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/machinery-operations/production-records', [
+                'asset_id' => $shiftAsset->id,
+                'project_id' => $projectB->id,
+                'shift_report_id' => $shift->id,
+                'recorded_at' => now()->subMinute()->toIso8601String(),
+                'quantity' => 10,
+                'unit' => 'm3',
+            ]);
+        $production->assertStatus(422);
+
+        $this->assertDatabaseCount('machinery_downtimes', 0);
+        $this->assertDatabaseCount('machinery_production_records', 0);
+    }
 
     public function test_foreman_reports_machinery_shift_downtime_and_fuel_without_cross_project_leaks(): void
     {
@@ -35,6 +121,7 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
             'ownership_type' => 'owned',
             'operating_cost_per_hour' => 1000,
         ]);
+        $this->createActiveAssignment($asset, (int) $project->id, (int) $context->user->id);
         $this->allowAccess();
 
         $assetList = $this->withHeaders($context->authHeaders())
@@ -103,8 +190,8 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
                 'comment' => 'Excavation output',
             ]);
         $production->assertCreated()
-            ->assertJsonPath('data.quantity', 120.5)
             ->assertJsonPath('data.unit', 'm3');
+        self::assertSame(120.5, (float) $production->json('data.quantity'));
 
         $foreignShift = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/mobile/machinery-operations/shift-reports', [
@@ -130,6 +217,7 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
             'ownership_type' => 'owned',
             'operating_cost_per_hour' => 1500,
         ]);
+        $this->createActiveAssignment($asset, (int) $project->id, (int) $context->user->id);
         $this->allowAccess();
 
         $response = $this->withHeaders($context->authHeaders())
@@ -143,9 +231,9 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
                 'work_description' => 'Grading work',
             ]);
 
-        $response->assertCreated()
-            ->assertJsonPath('data.actual_hours', 6.75)
-            ->assertJsonPath('data.fuel_consumed', 34.5);
+        $response->assertCreated();
+        self::assertSame(6.75, (float) $response->json('data.actual_hours'));
+        self::assertSame(34.5, (float) $response->json('data.fuel_consumed'));
 
         $this->assertDatabaseHas('machinery_shift_reports', [
             'asset_id' => $asset->id,
@@ -261,5 +349,19 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
                 }
             );
         });
+    }
+
+    private function createActiveAssignment(MachineryAsset $asset, int $projectId, int $userId): void
+    {
+        MachineryAssignment::query()->create([
+            'organization_id' => $asset->organization_id,
+            'asset_id' => $asset->id,
+            'project_id' => $projectId,
+            'requested_by_user_id' => $userId,
+            'approved_by_user_id' => $userId,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+            'actual_start_at' => now()->subHour(),
+        ]);
     }
 }
