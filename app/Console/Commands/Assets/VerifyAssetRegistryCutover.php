@@ -42,6 +42,7 @@ final class VerifyAssetRegistryCutover extends Command
                 'missing_links' => $this->missingLinksBreakdown(),
                 'operations_without_canonical_id' => $this->operationsWithoutCanonicalIdBreakdown(),
                 'assignments' => $this->assignmentRiskBreakdown(),
+                'scope_repair_evidence' => $this->scopeRepairEvidence(),
             ];
         }
 
@@ -257,6 +258,101 @@ final class VerifyAssetRegistryCutover extends Command
                 ->orWhereNull('canonical.current_project_id')
                 ->orWhereColumn('assignment.project_id', '<>', 'canonical.current_project_id'))
             ->count();
+    }
+
+    /** @return list<array<string, int|bool|null|list<int>>> */
+    private function scopeRepairEvidence(): array
+    {
+        if (! Schema::hasTable('machinery_assignments')) {
+            return [];
+        }
+
+        $assets = DB::table('machinery_assignments as assignment')
+            ->join('machinery_assets as asset', 'asset.id', '=', 'assignment.asset_id')
+            ->join('projects as project', 'project.id', '=', 'assignment.project_id')
+            ->whereColumn('project.organization_id', '<>', 'asset.organization_id')
+            ->distinct()
+            ->orderBy('asset.id')
+            ->get(['asset.id', 'asset.organization_id', 'asset.current_project_id', 'asset.current_schedule_task_id']);
+
+        return $assets->map(function (object $asset): array {
+            $assetId = (int) $asset->id;
+            $organizationId = (int) $asset->organization_id;
+            $localCandidates = DB::table('projects')->where('organization_id', $organizationId);
+            if (Schema::hasColumn('projects', 'deleted_at')) {
+                $localCandidates->whereNull('deleted_at');
+            }
+
+            $foreignAssignmentProjectIds = DB::table('machinery_assignments as assignment')
+                ->join('projects as project', 'project.id', '=', 'assignment.project_id')
+                ->where('assignment.asset_id', $assetId)
+                ->where('project.organization_id', '<>', $organizationId)
+                ->distinct()
+                ->orderBy('assignment.project_id')
+                ->pluck('assignment.project_id')
+                ->map(static fn ($id): int => (int) $id)
+                ->all();
+
+            $operationProjectIds = collect();
+            foreach (self::OPERATION_TABLES as $table) {
+                if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'asset_id') || ! Schema::hasColumn($table, 'project_id')) {
+                    continue;
+                }
+                $operationProjectIds->push(...DB::table($table)
+                    ->where('asset_id', $assetId)
+                    ->whereNotNull('project_id')
+                    ->pluck('project_id')
+                    ->all());
+            }
+            $operationProjectIds = $operationProjectIds
+                ->map(static fn ($id): int => (int) $id)
+                ->unique()
+                ->sort()
+                ->values();
+
+            $scheduleProjectIds = collect();
+            if (Schema::hasTable('schedule_tasks') && Schema::hasTable('project_schedules')) {
+                $scheduleTaskIds = DB::table('machinery_assignments')
+                    ->where('asset_id', $assetId)
+                    ->whereNotNull('schedule_task_id')
+                    ->pluck('schedule_task_id');
+                if ($asset->current_schedule_task_id !== null) {
+                    $scheduleTaskIds->push((int) $asset->current_schedule_task_id);
+                }
+                if ($scheduleTaskIds->isNotEmpty()) {
+                    $scheduleProjectIds = DB::table('schedule_tasks as task')
+                        ->join('project_schedules as schedule', 'schedule.id', '=', 'task.schedule_id')
+                        ->whereIn('task.id', $scheduleTaskIds->unique()->all())
+                        ->distinct()
+                        ->orderBy('schedule.project_id')
+                        ->pluck('schedule.project_id')
+                        ->map(static fn ($id): int => (int) $id);
+                }
+            }
+
+            $legacyCurrentProjectId = $this->nullableInt($asset->current_project_id);
+
+            return [
+                'asset_id' => $assetId,
+                'organization_id' => $organizationId,
+                'foreign_assignment_project_ids' => $foreignAssignmentProjectIds,
+                'legacy_current_project_id' => $legacyCurrentProjectId,
+                'legacy_current_project_is_local' => $legacyCurrentProjectId !== null && DB::table('projects')
+                    ->where('id', $legacyCurrentProjectId)
+                    ->where('organization_id', $organizationId)
+                    ->exists(),
+                'schedule_project_ids' => $scheduleProjectIds->unique()->sort()->values()->all(),
+                'operation_project_ids' => $operationProjectIds->all(),
+                'local_operation_project_ids' => $operationProjectIds
+                    ->filter(static fn (int $projectId): bool => DB::table('projects')
+                        ->where('id', $projectId)
+                        ->where('organization_id', $organizationId)
+                        ->exists())
+                    ->values()
+                    ->all(),
+                'local_candidate_project_ids' => $localCandidates->orderBy('id')->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+            ];
+        })->all();
     }
 
     private function nullableString(mixed $value): ?string
