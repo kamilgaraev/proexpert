@@ -185,6 +185,15 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         $localCurrentProject = Project::factory()->create(['organization_id' => $organizationId]);
         $otherLocalProject = Project::factory()->create(['organization_id' => $organizationId]);
         $foreignProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        DB::table('project_organization')->insert([
+            'project_id' => $foreignProject->id,
+            'organization_id' => $organizationId,
+            'role' => 'contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $legacy = MachineryAsset::query()->create([
             'organization_id' => $organizationId,
             'current_project_id' => $localCurrentProject->id,
@@ -210,6 +219,7 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
             'asset_id' => (int) $legacy->id,
             'organization_id' => $organizationId,
             'foreign_assignment_project_ids' => [(int) $foreignProject->id],
+            'accessible_foreign_assignment_project_ids' => [(int) $foreignProject->id],
             'legacy_current_project_id' => (int) $localCurrentProject->id,
             'legacy_current_project_is_local' => true,
             'schedule_project_ids' => [],
