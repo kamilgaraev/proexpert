@@ -171,11 +171,11 @@ final class VerifyAssetRegistryCutover extends Command
         return $counts;
     }
 
-    /** @return array{active: int, currently_effective: int, overlapping_pairs: int, distinct_projects: int, assignment_organization_mismatches: int, project_organization_mismatches: int} */
+    /** @return array{active: int, currently_effective: int, overlapping_pairs: int, distinct_projects: int, assignment_organization_mismatches: int, project_organization_mismatches: int, scope_mismatch_assets: int, scope_mismatch_assets_without_candidate: int, scope_mismatch_assets_with_one_candidate: int, scope_mismatch_assets_with_multiple_candidates: int} */
     private function assignmentRiskBreakdown(): array
     {
         if (! Schema::hasTable('machinery_assignments')) {
-            return ['active' => 0, 'currently_effective' => 0, 'overlapping_pairs' => 0, 'distinct_projects' => 0, 'assignment_organization_mismatches' => 0, 'project_organization_mismatches' => 0];
+            return ['active' => 0, 'currently_effective' => 0, 'overlapping_pairs' => 0, 'distinct_projects' => 0, 'assignment_organization_mismatches' => 0, 'project_organization_mismatches' => 0, 'scope_mismatch_assets' => 0, 'scope_mismatch_assets_without_candidate' => 0, 'scope_mismatch_assets_with_one_candidate' => 0, 'scope_mismatch_assets_with_multiple_candidates' => 0];
         }
 
         $active = DB::table('machinery_assignments')
@@ -202,6 +202,21 @@ final class VerifyAssetRegistryCutover extends Command
                 ->whereNull('earlier.planned_end_at')
                 ->orWhereColumn('later.planned_start_at', '<', 'earlier.planned_end_at'))
             ->count();
+        $scopeMismatchAssets = DB::table('machinery_assignments as assignment')
+            ->join('machinery_assets as asset', 'asset.id', '=', 'assignment.asset_id')
+            ->join('projects as project', 'project.id', '=', 'assignment.project_id')
+            ->whereColumn('project.organization_id', '<>', 'asset.organization_id')
+            ->distinct()
+            ->get(['asset.id', 'asset.organization_id']);
+        $candidateBuckets = ['none' => 0, 'one' => 0, 'many' => 0];
+        foreach ($scopeMismatchAssets as $asset) {
+            $projects = DB::table('projects')->where('organization_id', $asset->organization_id);
+            if (Schema::hasColumn('projects', 'deleted_at')) {
+                $projects->whereNull('deleted_at');
+            }
+            $count = (int) $projects->count();
+            $candidateBuckets[$count === 0 ? 'none' : ($count === 1 ? 'one' : 'many')]++;
+        }
 
         return [
             'active' => (int) (clone $active)->count(),
@@ -217,6 +232,10 @@ final class VerifyAssetRegistryCutover extends Command
                 ->join('projects as project', 'project.id', '=', 'assignment.project_id')
                 ->whereColumn('project.organization_id', '<>', 'asset.organization_id')
                 ->count(),
+            'scope_mismatch_assets' => $scopeMismatchAssets->count(),
+            'scope_mismatch_assets_without_candidate' => $candidateBuckets['none'],
+            'scope_mismatch_assets_with_one_candidate' => $candidateBuckets['one'],
+            'scope_mismatch_assets_with_multiple_candidates' => $candidateBuckets['many'],
         ];
     }
 

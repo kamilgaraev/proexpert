@@ -143,6 +143,40 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         self::assertSame(2, DB::table('machinery_assignments')->whereNull('organization_asset_id')->count());
     }
 
+    public function test_details_report_whether_foreign_project_links_have_one_safe_local_candidate(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreign = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        Project::factory()->create(['organization_id' => $organizationId]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        $legacy = MachineryAsset::query()->create([
+            'organization_id' => $organizationId,
+            'asset_code' => 'CUTOVER-SCOPE-CANDIDATE',
+            'name' => 'Техника с ошибочным проектом',
+            'ownership_type' => 'owned',
+            'status' => 'available',
+            'operating_cost_per_hour' => 0,
+            'meter_hours' => 0,
+        ]);
+        MachineryAssignment::query()->create([
+            'organization_id' => $organizationId,
+            'asset_id' => $legacy->id,
+            'project_id' => $foreignProject->id,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+        ]);
+
+        Artisan::call('assets:verify-cutover', ['--format' => 'json', '--details' => true]);
+        $assignments = $this->jsonOutput()['details']['assignments'];
+
+        self::assertSame(1, $assignments['project_organization_mismatches']);
+        self::assertSame(1, $assignments['scope_mismatch_assets']);
+        self::assertSame(0, $assignments['scope_mismatch_assets_without_candidate']);
+        self::assertSame(1, $assignments['scope_mismatch_assets_with_one_candidate']);
+        self::assertSame(0, $assignments['scope_mismatch_assets_with_multiple_candidates']);
+    }
+
     /** @return array<string, mixed> */
     private function jsonOutput(): array
     {
