@@ -1,0 +1,22 @@
+{
+  "name": "Машинист",
+  "slug": "machine_operator",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "mobile",
+  "description": "Эксплуатация назначенной техники и ведение смены",
+  "system_permissions": ["profile.view", "profile.edit"],
+  "module_permissions": {
+    "project-management": ["projects.view"],
+    "machinery-operations": [
+      "machinery-operations.view",
+      "machinery-operations.shifts.create",
+      "machinery-operations.downtime.manage",
+      "machinery-operations.fuel.manage"
+    ],
+    "notifications": ["notifications.view", "notifications.receive.system"]
+  },
+  "interface_access": ["mobile"],
+  "hierarchy": {"can_manage_roles": [], "cannot_manage": ["*"]},
+  "conditions": {"location": {"require_geolocation": true}}
+}

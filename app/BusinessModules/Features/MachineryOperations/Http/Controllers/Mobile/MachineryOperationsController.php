@@ -10,6 +10,7 @@ use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryAss
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryOperationRecordResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryShiftReportResource;
 use App\BusinessModules\Features\MachineryOperations\Services\AssetDispatchService;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryIdempotencyService;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -28,6 +29,7 @@ final class MachineryOperationsController extends Controller
         private readonly MachineryOperationsService $service,
         private readonly MobileProjectAccessResolver $projectAccess,
         private readonly AssetDispatchService $dispatch,
+        private readonly MachineryIdempotencyService $idempotency,
     ) {}
 
     public function storeRequest(CreateAssetRequest $request): JsonResponse
@@ -36,17 +38,24 @@ final class MachineryOperationsController extends Controller
             $data = $request->validated();
             $this->assertProjectAccess($request, (int) $data['project_id']);
 
-            return MobileResponse::success($this->dispatch->request(
+            return MobileResponse::success($this->idempotency->execute(
                 (int) $request->attributes->get('current_organization_id'),
                 (int) $request->user()->id,
-                new AssetRequestData(
-                    projectId: (int) $data['project_id'],
-                    plannedStartAt: (string) $data['planned_start_at'],
-                    plannedEndAt: $data['planned_end_at'] ?? null,
-                    purpose: (string) $data['purpose'],
-                    priority: (string) ($data['priority'] ?? 'normal'),
-                    scheduleTaskId: isset($data['schedule_task_id']) ? (int) $data['schedule_task_id'] : null,
-                    requiredProfile: $data['required_profile'] ?? [],
+                $request->header('Idempotency-Key'),
+                'asset_request.create',
+                $data,
+                fn () => $this->dispatch->request(
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $request->user()->id,
+                    new AssetRequestData(
+                        projectId: (int) $data['project_id'],
+                        plannedStartAt: (string) $data['planned_start_at'],
+                        plannedEndAt: $data['planned_end_at'] ?? null,
+                        purpose: (string) $data['purpose'],
+                        priority: (string) ($data['priority'] ?? 'normal'),
+                        scheduleTaskId: isset($data['schedule_task_id']) ? (int) $data['schedule_task_id'] : null,
+                        requiredProfile: $data['required_profile'] ?? [],
+                    ),
                 ),
             ), null, 201);
         } catch (DomainException $exception) {
@@ -92,12 +101,21 @@ final class MachineryOperationsController extends Controller
                 'work_description' => ['nullable', 'string', 'max:5000'],
             ]);
 
-            return MobileResponse::success(
-                new MachineryShiftReportResource($this->service->createShiftReport(
+            $shift = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'shift.create',
+                $validated,
+                fn () => $this->service->createShiftReport(
                     (int) $request->attributes->get('current_organization_id'),
                     (int) $request->user()?->id,
                     $validated
-                )),
+                ),
+            );
+
+            return MobileResponse::success(
+                new MachineryShiftReportResource($shift),
                 trans_message('machinery_operations.messages.shift_created'),
                 201
             );
@@ -148,11 +166,54 @@ final class MachineryOperationsController extends Controller
 
             $this->assertProjectAccess($request, $shift->project_id);
 
-            return MobileResponse::success(new MachineryShiftReportResource($this->service->submitShift($shift)));
+            $submitted = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'shift.submit',
+                ['shift_id' => $id],
+                fn () => $this->service->submitShift($shift),
+            );
+
+            return MobileResponse::success(new MachineryShiftReportResource($submitted));
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'shifts.submit');
+        }
+    }
+
+    public function finishShift(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, [
+                'actual_hours' => ['required', 'numeric', 'min:0', 'max:24'],
+                'fuel_consumed' => ['required', 'numeric', 'min:0'],
+                'meter_end' => ['nullable', 'numeric', 'min:0'],
+                'work_description' => ['nullable', 'string', 'max:5000'],
+            ]);
+            $shift = $this->service->findShift((int) $request->attributes->get('current_organization_id'), $id);
+            if ($shift === null) {
+                return MobileResponse::error(trans_message('machinery_operations.errors.shift_not_found'), 404);
+            }
+            $this->assertProjectAccess($request, $shift->project_id);
+
+            $finished = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'shift.finish',
+                ['shift_id' => $id, ...$validated],
+                fn () => $this->service->finishShift($shift, $validated),
+            );
+
+            return MobileResponse::success(new MachineryShiftReportResource($finished));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('machinery_operations.errors.validation_failed'), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'shifts.finish');
         }
     }
 
@@ -170,11 +231,20 @@ final class MachineryOperationsController extends Controller
                 'comment' => ['nullable', 'string', 'max:2000'],
             ]);
 
-            return MobileResponse::success(
-                new MachineryOperationRecordResource($this->service->createDowntime(
+            $downtime = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'downtime.create',
+                $validated,
+                fn () => $this->service->createDowntime(
                     (int) $request->attributes->get('current_organization_id'),
                     $validated
-                )),
+                ),
+            );
+
+            return MobileResponse::success(
+                new MachineryOperationRecordResource($downtime),
                 trans_message('machinery_operations.messages.downtime_created'),
                 201
             );
@@ -205,12 +275,21 @@ final class MachineryOperationsController extends Controller
                 'comment' => ['nullable', 'string', 'max:2000'],
             ]);
 
-            return MobileResponse::success(
-                new MachineryOperationRecordResource($this->service->createFuelIssue(
+            $fuelIssue = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'fuel.create',
+                $validated,
+                fn () => $this->service->createFuelIssue(
                     (int) $request->attributes->get('current_organization_id'),
                     (int) $request->user()?->id,
                     $validated
-                )),
+                ),
+            );
+
+            return MobileResponse::success(
+                new MachineryOperationRecordResource($fuelIssue),
                 trans_message('machinery_operations.messages.fuel_created'),
                 201
             );
@@ -240,12 +319,21 @@ final class MachineryOperationsController extends Controller
                 'comment' => ['nullable', 'string', 'max:2000'],
             ]);
 
-            return MobileResponse::success(
-                new MachineryOperationRecordResource($this->service->createProductionRecord(
+            $productionRecord = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'production.create',
+                $validated,
+                fn () => $this->service->createProductionRecord(
                     (int) $request->attributes->get('current_organization_id'),
                     (int) $request->user()?->id,
                     $validated
-                )),
+                ),
+            );
+
+            return MobileResponse::success(
+                new MachineryOperationRecordResource($productionRecord),
                 trans_message('machinery_operations.messages.production_created'),
                 201
             );
@@ -259,6 +347,61 @@ final class MachineryOperationsController extends Controller
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'production.store');
+        }
+    }
+
+    public function maintenanceOrders(Request $request): JsonResponse
+    {
+        try {
+            $this->assertProjectAccess($request, $request->input('project_id'));
+            $orders = $this->service->paginateMaintenanceOrders(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                [
+                    'project_id' => $request->input('project_id'),
+                    'asset_id' => $request->input('asset_id'),
+                    'status' => $request->input('status'),
+                ],
+            );
+
+            return MobileResponse::success(MachineryOperationRecordResource::collection($orders->getCollection()));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'maintenance.index');
+        }
+    }
+
+    public function completeMaintenanceOrder(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['completion_comment' => ['nullable', 'string', 'max:2000']]);
+            $order = $this->service->findMaintenanceOrder((int) $request->attributes->get('current_organization_id'), $id);
+            if ($order === null) {
+                return MobileResponse::error(trans_message('machinery_operations.errors.maintenance_not_found'), 404);
+            }
+            $this->assertProjectAccess($request, $order->project_id);
+
+            $completed = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'maintenance.complete',
+                ['maintenance_order_id' => $id, ...$validated],
+                fn () => $this->service->completeMaintenanceOrder(
+                    $order,
+                    (int) $request->user()?->id,
+                    $validated['completion_comment'] ?? null,
+                ),
+            );
+
+            return MobileResponse::success(new MachineryOperationRecordResource($completed));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('machinery_operations.errors.validation_failed'), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'maintenance.complete');
         }
     }
 

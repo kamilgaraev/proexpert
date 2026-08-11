@@ -1,0 +1,25 @@
+{
+  "name": "Кладовщик",
+  "slug": "storekeeper",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "mobile",
+  "description": "Приёмка, выдача, возврат и перемещение складских активов",
+  "system_permissions": ["profile.view", "profile.edit"],
+  "module_permissions": {
+    "basic-warehouse": [
+      "warehouse.view",
+      "warehouse.receipts",
+      "warehouse.issue_to_responsible",
+      "warehouse.return_from_responsible",
+      "warehouse.view_custody",
+      "warehouse.transfers",
+      "warehouse.advanced.barcode"
+    ],
+    "machinery-operations": ["machinery-operations.view"],
+    "notifications": ["notifications.view", "notifications.receive.system"]
+  },
+  "interface_access": ["mobile"],
+  "hierarchy": {"can_manage_roles": [], "cannot_manage": ["*"]},
+  "conditions": {}
+}

@@ -324,6 +324,25 @@ final class MachineryOperationsService
         return $shift->fresh(self::SHIFT_RELATIONS);
     }
 
+    public function finishShift(MachineryShiftReport $shift, array $data): MachineryShiftReport
+    {
+        if ($shift->status !== 'draft') {
+            throw new DomainException(trans_message('machinery_operations.errors.shift_finish_invalid_status'));
+        }
+        if ($shift->meter_start !== null && isset($data['meter_end']) && (float) $data['meter_end'] < (float) $shift->meter_start) {
+            throw new DomainException(trans_message('machinery_operations.errors.meter_end_before_start'));
+        }
+
+        $shift->update([
+            'actual_hours' => $data['actual_hours'],
+            'fuel_consumed' => $data['fuel_consumed'],
+            'meter_end' => $data['meter_end'] ?? $shift->meter_end,
+            'work_description' => $data['work_description'] ?? $shift->work_description,
+        ]);
+
+        return $shift->fresh(self::SHIFT_RELATIONS);
+    }
+
     public function approveShift(MachineryShiftReport $shift, int $userId): MachineryShiftReport
     {
         if ($shift->status !== 'submitted') {

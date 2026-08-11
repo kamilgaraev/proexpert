@@ -127,6 +127,10 @@ Route::prefix('api/v1/mobile/machinery-operations')
             ->whereNumber('id')
             ->middleware('authorize:machinery-operations.shifts.create')
             ->name('shift_reports.submit');
+        Route::post('/shift-reports/{id}/finish', [MobileMachineryOperationsController::class, 'finishShift'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.shifts.create')
+            ->name('shift_reports.finish');
         Route::post('/downtimes', [MobileMachineryOperationsController::class, 'storeDowntime'])
             ->middleware('authorize:machinery-operations.downtime.manage')
             ->name('downtimes.store');
@@ -136,4 +140,11 @@ Route::prefix('api/v1/mobile/machinery-operations')
         Route::post('/production-records', [MobileMachineryOperationsController::class, 'storeProductionRecord'])
             ->middleware('authorize:machinery-operations.shifts.create')
             ->name('production_records.store');
+        Route::get('/maintenance-orders', [MobileMachineryOperationsController::class, 'maintenanceOrders'])
+            ->middleware('authorize:machinery-operations.view')
+            ->name('maintenance_orders.index');
+        Route::post('/maintenance-orders/{id}/complete', [MobileMachineryOperationsController::class, 'completeMaintenanceOrder'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.downtime.manage')
+            ->name('maintenance_orders.complete');
     });
