@@ -538,6 +538,35 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 maxRecommendations: (int) config('estimate-generation.project_planning.max_recommendations'),
             ),
         );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog => \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::fromArray(
+                config('estimate-generation-completeness-rules'),
+            ),
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer => new \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder::class),
+                maxFindings: (int) config('estimate-generation.project_planning.max_findings'),
+                maxPackages: (int) config('estimate-generation.project_planning.max_work_packages'),
+                maxEvidence: (int) config('estimate-generation.project_planning.max_finding_evidence'),
+                maxRules: (int) config('estimate-generation.project_planning.max_completeness_rules'),
+                maxEvidenceBytes: (int) config('estimate-generation.project_planning.max_finding_evidence_bytes'),
+                translate: static fn (string $key): string => trans_message($key),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class),
+                maxFacts: (int) config('estimate-generation.project_planning.max_facts'),
+            ),
+        );
         $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
             $app->make('db')->connection(),
         ));

@@ -139,6 +139,11 @@ return [
     'project_planning' => [
         'max_facts' => (int) env('ESTIMATE_PROJECT_PLANNING_MAX_FACTS', 2_000),
         'max_recommendations' => (int) env('ESTIMATE_PROJECT_PLANNING_MAX_RECOMMENDATIONS', 20),
+        'max_findings' => (int) env('ESTIMATE_PROJECT_PLANNING_MAX_FINDINGS', 50),
+        'max_work_packages' => (int) env('ESTIMATE_PROJECT_PLANNING_MAX_WORK_PACKAGES', 50),
+        'max_finding_evidence' => (int) env('ESTIMATE_PROJECT_PLANNING_MAX_FINDING_EVIDENCE', 200),
+        'max_completeness_rules' => (int) env('ESTIMATE_PROJECT_PLANNING_MAX_COMPLETENESS_RULES', 50),
+        'max_finding_evidence_bytes' => (int) env('ESTIMATE_PROJECT_PLANNING_MAX_FINDING_EVIDENCE_BYTES', 262_144),
     ],
     'completeness_arbiter' => [
         'enabled' => (bool) env('ESTIMATE_COMPLETENESS_ARBITER_ENABLED', false),

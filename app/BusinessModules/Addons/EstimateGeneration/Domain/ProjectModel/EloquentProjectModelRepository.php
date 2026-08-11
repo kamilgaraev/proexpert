@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingInputFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendation;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackage;
 use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use JsonException;
@@ -85,6 +87,12 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 ->where('is_current', true)
                 ->update(['is_current' => false, 'invalidated_at' => now()]);
             $this->database->table('estimate_generation_technology_planning_runs')
+                ->where('organization_id', $decision->organizationId)
+                ->where('project_id', $decision->projectId)
+                ->where('session_id', $decision->sessionId)
+                ->where('is_current', true)
+                ->update(['is_current' => false, 'invalidated_at' => now()]);
+            $this->database->table('estimate_generation_completeness_runs')
                 ->where('organization_id', $decision->organizationId)
                 ->where('project_id', $decision->projectId)
                 ->where('session_id', $decision->sessionId)
@@ -804,6 +812,48 @@ SQL, [
         );
     }
 
+    public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array
+    {
+        $decisionIds = array_values(array_unique($decisionIds));
+        if (count($decisionIds) > 100) {
+            throw new InvalidArgumentException('Decision read batch exceeds its limit.');
+        }
+        foreach ($decisionIds as $decisionId) {
+            ProjectModelInvariant::id($decisionId, 'Decision');
+        }
+        if ($decisionIds === []) {
+            return [];
+        }
+        $rows = $this->database->table('estimate_generation_project_model_corrections')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->where('session_id', $sessionId)->whereIn('stable_key', $decisionIds)
+            ->orderBy('id')->get();
+
+        return $rows->map(function ($row): Decision {
+            $actorType = (string) $row->decision_actor_type;
+            $actorId = $actorType === 'user' ? (string) $row->actor_id : (string) $row->system_actor_key;
+            $targetId = $row->target_conflict_key === null
+                ? (string) $row->selected_fact_stable_key
+                : (string) $row->target_conflict_key;
+
+            return new Decision(
+                (string) $row->stable_key,
+                (int) $row->organization_id,
+                (int) $row->project_id,
+                (int) $row->session_id,
+                (string) $row->source_version,
+                $row->target_conflict_key === null ? 'fact' : 'conflict',
+                $targetId,
+                (string) $row->selected_fact_stable_key,
+                $actorType,
+                $actorId,
+                (string) $row->reason,
+                (int) $row->decision_version,
+                array_values($this->decode($row->evidence_lineage)),
+            );
+        })->all();
+    }
+
     public function replaceUnderstanding(
         int $organizationId,
         int $projectId,
@@ -1386,6 +1436,143 @@ SQL, [
         return $row === null ? null : $this->technologyPlanningRun($row);
     }
 
+    public function replaceCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+        array $findings,
+        array $limitations,
+    ): bool {
+        ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
+        $payload = [];
+        foreach ($findings as $finding) {
+            if (! $finding instanceof CompletenessFinding) {
+                throw new InvalidArgumentException('Completeness finding batch is invalid.');
+            }
+            $payload[] = $finding->toArray();
+        }
+        if (count($payload) > 100 || count($limitations) > 20) {
+            throw new InvalidArgumentException('Completeness batch exceeds its limits.');
+        }
+        $resultFingerprint = hash('sha256', $this->json([$payload, $limitations]));
+
+        return $this->database->connection()->transaction(function () use (
+            $organizationId, $projectId, $sessionId, $sourceVersion, $inputFingerprint,
+            $catalogVersion, $catalogHash, $ruleCatalogVersion, $ruleCatalogHash,
+            $payload, $limitations, $resultFingerprint,
+        ): bool {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $capture = $this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
+            if (! hash_equals($inputFingerprint, $capture['token'])) {
+                return false;
+            }
+            $query = $this->database->table('estimate_generation_completeness_runs')
+                ->where('organization_id', $organizationId)->where('project_id', $projectId)
+                ->where('session_id', $sessionId)->where('source_version', $sourceVersion)
+                ->where('input_fingerprint', $inputFingerprint)->where('catalog_version', $catalogVersion)
+                ->where('catalog_hash', $catalogHash)->where('rule_catalog_version', $ruleCatalogVersion)
+                ->where('rule_catalog_hash', $ruleCatalogHash);
+            $existing = $query->first();
+            if ($existing !== null) {
+                if (! hash_equals((string) $existing->result_fingerprint, $resultFingerprint)) {
+                    throw new InvalidArgumentException('Completeness replay content differs.');
+                }
+                $this->activateCompletenessRun($existing, $organizationId, $projectId, $sessionId);
+
+                return true;
+            }
+            $this->database->table('estimate_generation_completeness_runs')
+                ->where('organization_id', $organizationId)->where('project_id', $projectId)
+                ->where('session_id', $sessionId)->where('is_current', true)
+                ->update(['is_current' => false, 'invalidated_at' => now()]);
+            $runId = (int) $this->database->table('estimate_generation_completeness_runs')->insertGetId([
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId,
+                'source_version' => $sourceVersion, 'input_fingerprint' => $inputFingerprint,
+                'catalog_version' => $catalogVersion, 'catalog_hash' => $catalogHash,
+                'rule_catalog_version' => $ruleCatalogVersion, 'rule_catalog_hash' => $ruleCatalogHash,
+                'result_fingerprint' => $resultFingerprint, 'limitations' => $this->json($limitations),
+                'is_current' => true, 'created_at' => now(),
+            ]);
+            foreach ($payload as $finding) {
+                $findingId = (int) $this->database->table('estimate_generation_completeness_findings')->insertGetId([
+                    'completeness_run_id' => $runId, 'rule_id' => $finding['ruleId'],
+                    'rule_version' => $finding['ruleVersion'], 'rule_hash' => $finding['ruleHash'],
+                    'classification' => $finding['classification'], 'status' => $finding['status'],
+                    'severity' => $finding['severity'], 'impact' => $finding['impact'],
+                    'confidence' => (string) $finding['confidence'],
+                    'evidence_fact_ids' => $this->json($finding['evidenceFactIds']),
+                    'related_entity_ids' => $this->json($finding['relatedEntityIds']),
+                    'related_fact_types' => $this->json($finding['relatedFactTypes']),
+                    'exclusion_policy' => $this->json($finding['exclusionPolicy']),
+                    'exclusion_decision' => $finding['exclusionDecision'] === null ? null : $this->json($finding['exclusionDecision']),
+                    'created_at' => now(),
+                ]);
+                if ($finding['workPackage'] !== null) {
+                    $package = $finding['workPackage'];
+                    $this->database->table('estimate_generation_technology_work_packages')->insert([
+                        'completeness_finding_id' => $findingId, 'stable_key' => $package['id'],
+                        'works' => $this->json($package['works']), 'materials' => $this->json($package['materials']),
+                        'machinery' => $this->json($package['machinery']), 'norm_intents' => $this->json($package['normIntents']),
+                        'quantity_formulas' => $this->json($package['quantityFormulas']),
+                        'dependencies' => $this->json($package['dependencies']),
+                        'regional_price_availability' => $this->json($package['regionalPriceAvailability']),
+                        'assumptions' => $this->json($package['assumptions']), 'risks' => $this->json($package['risks']),
+                        'provenance' => $this->json($package['provenance']), 'created_at' => now(),
+                    ]);
+                }
+            }
+
+            return true;
+        }, 3);
+    }
+
+    public function replayCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+    ): ?array {
+        $capture = $this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
+        if (! hash_equals($inputFingerprint, $capture['token'])) {
+            return null;
+        }
+        $row = $this->database->table('estimate_generation_completeness_runs')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->where('session_id', $sessionId)->where('source_version', $sourceVersion)
+            ->where('input_fingerprint', $inputFingerprint)->where('catalog_version', $catalogVersion)
+            ->where('catalog_hash', $catalogHash)->where('rule_catalog_version', $ruleCatalogVersion)
+            ->where('rule_catalog_hash', $ruleCatalogHash)->first();
+        if ($row === null) {
+            return null;
+        }
+        $this->database->connection()->transaction(function () use ($row, $organizationId, $projectId, $sessionId): void {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $this->activateCompletenessRun($row, $organizationId, $projectId, $sessionId);
+        }, 3);
+
+        return $this->completenessRun($row);
+    }
+
+    public function currentCompleteness(int $organizationId, int $projectId, int $sessionId): ?array
+    {
+        $row = $this->database->table('estimate_generation_completeness_runs')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->where('session_id', $sessionId)->where('is_current', true)->orderByDesc('id')->first();
+
+        return $row === null ? null : $this->completenessRun($row);
+    }
+
     public function invalidateSourceVersion(
         int $organizationId,
         int $projectId,
@@ -1441,6 +1628,10 @@ SQL, [
                 'invalidated_at' => now(),
             ]);
             $scope($this->database->table('estimate_generation_technology_planning_runs'))->update([
+                'is_current' => false,
+                'invalidated_at' => now(),
+            ]);
+            $scope($this->database->table('estimate_generation_completeness_runs'))->update([
                 'is_current' => false,
                 'invalidated_at' => now(),
             ]);
@@ -1505,6 +1696,75 @@ SQL, [
             'catalog_version' => (string) $run->catalog_version,
             'catalog_hash' => (string) $run->catalog_hash,
             'recommendations' => $recommendations,
+            'limitations' => array_values($this->decode($run->limitations)),
+            'is_current' => (bool) $run->is_current,
+        ];
+    }
+
+    private function activateCompletenessRun(object $run, int $organizationId, int $projectId, int $sessionId): void
+    {
+        $this->database->table('estimate_generation_completeness_runs')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->where('session_id', $sessionId)->where('is_current', true)->where('id', '<>', $run->id)
+            ->update(['is_current' => false, 'invalidated_at' => now()]);
+        $this->database->table('estimate_generation_completeness_runs')->where('id', $run->id)->update([
+            'is_current' => true,
+            'invalidated_at' => null,
+        ]);
+    }
+
+    private function completenessRun(object $run): array
+    {
+        $rows = $this->database->table('estimate_generation_completeness_findings')
+            ->where('completeness_run_id', $run->id)->orderBy('rule_id')->get();
+        $findingIds = $rows->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+        $packages = [];
+        if ($findingIds !== []) {
+            foreach ($this->database->table('estimate_generation_technology_work_packages')
+                ->whereIn('completeness_finding_id', $findingIds)->get() as $package) {
+                $packages[(int) $package->completeness_finding_id] = new TechnologyWorkPackage(
+                    (string) $package->stable_key,
+                    array_values($this->decode($package->works)),
+                    array_values($this->decode($package->materials)),
+                    array_values($this->decode($package->machinery)),
+                    array_values($this->decode($package->norm_intents)),
+                    array_values($this->decode($package->quantity_formulas)),
+                    array_values($this->decode($package->dependencies)),
+                    $this->decode($package->regional_price_availability),
+                    array_values($this->decode($package->assumptions)),
+                    array_values($this->decode($package->risks)),
+                    $this->decode($package->provenance),
+                );
+            }
+        }
+        $findings = [];
+        foreach ($rows as $row) {
+            $findings[] = new CompletenessFinding(
+                (string) $row->rule_id,
+                (string) $row->rule_version,
+                (string) $row->rule_hash,
+                (string) $row->classification,
+                (string) $row->status,
+                (string) $row->severity,
+                (string) $row->impact,
+                (float) $row->confidence,
+                array_values($this->decode($row->evidence_fact_ids)),
+                array_values($this->decode($row->related_entity_ids)),
+                array_values($this->decode($row->related_fact_types)),
+                $this->decode($row->exclusion_policy),
+                $row->exclusion_decision === null ? null : $this->decode($row->exclusion_decision),
+                $packages[(int) $row->id] ?? null,
+            );
+        }
+
+        return [
+            'source_version' => (string) $run->source_version,
+            'input_fingerprint' => (string) $run->input_fingerprint,
+            'catalog_version' => (string) $run->catalog_version,
+            'catalog_hash' => (string) $run->catalog_hash,
+            'rule_catalog_version' => (string) $run->rule_catalog_version,
+            'rule_catalog_hash' => (string) $run->rule_catalog_hash,
+            'findings' => $findings,
             'limitations' => array_values($this->decode($run->limitations)),
             'is_current' => (bool) $run->is_current,
         ];

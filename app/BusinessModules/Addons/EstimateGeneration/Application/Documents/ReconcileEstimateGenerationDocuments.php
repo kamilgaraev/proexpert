@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
@@ -24,6 +25,7 @@ final class ReconcileEstimateGenerationDocuments
         private DocumentGenerationReadinessService $readiness,
         private ProjectUnderstandingCoordinator $understanding,
         private ProjectPlanningCoordinator $planning,
+        private ProjectCompletenessCoordinator $completeness,
     ) {}
 
     public function changed(EstimateGenerationSession $session): EstimateGenerationSession
@@ -92,11 +94,17 @@ final class ReconcileEstimateGenerationDocuments
             (string) Str::uuid(),
             max(1, (int) $session->state_version),
         );
-        $this->planning->refresh(
+        $planning = $this->planning->refresh(
             (int) $session->organization_id,
             (int) $session->project_id,
             (int) $session->getKey(),
             new OrganizationPreferenceContext((int) $session->organization_id, []),
+        );
+        $this->completeness->refresh(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->getKey(),
+            $planning,
         );
         $session = $this->advance->documentsReady($session);
         if (($session->input_payload['generation_requested'] ?? false) !== true) {

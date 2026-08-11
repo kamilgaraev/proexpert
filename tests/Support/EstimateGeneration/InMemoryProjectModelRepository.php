@@ -46,6 +46,10 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public int $technologyPlanningWriteCount = 0;
 
+    public array $completenessHistory = [];
+
+    public int $completenessWriteCount = 0;
+
     public ?Closure $beforeUnderstandingSave = null;
 
     private array $projection = [];
@@ -130,6 +134,11 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         foreach ($this->technologyPlanningHistory as $key => $run) {
             if (str_starts_with($key, $prefix)) {
                 $this->technologyPlanningHistory[$key]['is_current'] = false;
+            }
+        }
+        foreach ($this->completenessHistory as $key => $run) {
+            if (str_starts_with($key, $prefix)) {
+                $this->completenessHistory[$key]['is_current'] = false;
             }
         }
     }
@@ -257,6 +266,17 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         }
 
         return null;
+    }
+
+    public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array
+    {
+        $ids = array_fill_keys($decisionIds, true);
+
+        return array_values(array_filter(
+            $this->decisions,
+            fn (Decision $decision): bool => $this->scope($decision) === [$organizationId, $projectId, $sessionId]
+                && isset($ids[$decision->id]),
+        ));
     }
 
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array
@@ -457,6 +477,88 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return null;
     }
 
+    public function replaceCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+        array $findings,
+        array $limitations,
+    ): bool {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return false;
+        }
+        $scope = implode(':', [$organizationId, $projectId, $sessionId]);
+        $key = implode(':', [$scope, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash, $ruleCatalogVersion, $ruleCatalogHash]);
+        if (isset($this->completenessHistory[$key])) {
+            return true;
+        }
+        foreach ($this->completenessHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $scope.':')) {
+                $this->completenessHistory[$existingKey]['is_current'] = false;
+            }
+        }
+        $this->completenessHistory[$key] = [
+            'source_version' => $sourceVersion,
+            'input_fingerprint' => $inputFingerprint,
+            'catalog_version' => $catalogVersion,
+            'catalog_hash' => $catalogHash,
+            'rule_catalog_version' => $ruleCatalogVersion,
+            'rule_catalog_hash' => $ruleCatalogHash,
+            'findings' => $findings,
+            'limitations' => $limitations,
+            'is_current' => true,
+        ];
+        $this->completenessWriteCount++;
+
+        return true;
+    }
+
+    public function replayCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+    ): ?array {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return null;
+        }
+        $key = implode(':', [$organizationId, $projectId, $sessionId, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash, $ruleCatalogVersion, $ruleCatalogHash]);
+        if (! isset($this->completenessHistory[$key])) {
+            return null;
+        }
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach ($this->completenessHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $prefix)) {
+                $this->completenessHistory[$existingKey]['is_current'] = $existingKey === $key;
+            }
+        }
+
+        return $this->completenessHistory[$key];
+    }
+
+    public function currentCompleteness(int $organizationId, int $projectId, int $sessionId): ?array
+    {
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach (array_reverse($this->completenessHistory, true) as $key => $run) {
+            if (str_starts_with($key, $prefix) && $run['is_current']) {
+                return $run;
+            }
+        }
+
+        return null;
+    }
+
     public function invalidateSourceVersion(
         int $organizationId,
         int $projectId,
@@ -493,6 +595,11 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         foreach (array_keys($this->technologyPlanningHistory) as $key) {
             if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
                 $this->technologyPlanningHistory[$key]['is_current'] = false;
+            }
+        }
+        foreach (array_keys($this->completenessHistory) as $key) {
+            if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
+                $this->completenessHistory[$key]['is_current'] = false;
             }
         }
     }

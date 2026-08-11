@@ -43,6 +43,9 @@ interface ProjectModelRepository
         string $factId,
     ): ?Fact;
 
+    /** @return list<Decision> */
+    public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array;
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array;
 
     public function replaceUnderstanding(
@@ -94,6 +97,34 @@ interface ProjectModelRepository
     ): ?array;
 
     public function currentTechnologyRecommendations(int $organizationId, int $projectId, int $sessionId): ?array;
+
+    public function replaceCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+        array $findings,
+        array $limitations,
+    ): bool;
+
+    public function replayCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+    ): ?array;
+
+    public function currentCompleteness(int $organizationId, int $projectId, int $sessionId): ?array;
 
     public function invalidateSourceVersion(
         int $organizationId,
