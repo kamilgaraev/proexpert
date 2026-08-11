@@ -4,7 +4,6 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
-use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Services\Logging\LoggingService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -34,7 +33,7 @@ class AssetService
         $warehouseId = isset($data['warehouse_id']) ? (int) $data['warehouse_id'] : null;
         unset($data['warehouse_id']);
 
-        if ($warehouseId !== null && !empty($data['code'])) {
+        if ($warehouseId !== null && ! empty($data['code'])) {
             $existingAsset = $this->findActiveAssetByCode($organizationId, (string) $data['code']);
 
             if ($existingAsset !== null) {
@@ -48,18 +47,21 @@ class AssetService
         // Подготовка additional_properties с типом актива
         $additionalProperties = $data['additional_properties'] ?? [];
         $additionalProperties['asset_type'] = $data['asset_type'] ?? Asset::TYPE_MATERIAL;
-        
+        $additionalProperties['accounting_mode'] = $data['accounting_mode'] ?? 'quantitative';
+
         if (isset($data['asset_category'])) {
             $additionalProperties['asset_category'] = $data['asset_category'];
         }
-        
+
         if (isset($data['asset_subcategory'])) {
             $additionalProperties['asset_subcategory'] = $data['asset_subcategory'];
         }
-        
+
         if (isset($data['asset_attributes'])) {
             $additionalProperties['asset_attributes'] = $data['asset_attributes'];
         }
+
+        unset($data['accounting_mode']);
 
         $assetData = array_merge($data, [
             'organization_id' => $organizationId,
@@ -100,11 +102,11 @@ class AssetService
         }
 
         // Обновляем additional_properties
-        if (isset($data['asset_type']) || isset($data['asset_category']) || 
+        if (isset($data['asset_type']) || isset($data['asset_category']) ||
             isset($data['asset_subcategory']) || isset($data['asset_attributes'])) {
-            
+
             $additionalProperties = $asset->additional_properties ?? [];
-            
+
             if (isset($data['asset_type'])) {
                 $additionalProperties['asset_type'] = $data['asset_type'];
             }
@@ -117,7 +119,7 @@ class AssetService
             if (isset($data['asset_attributes'])) {
                 $additionalProperties['asset_attributes'] = $data['asset_attributes'];
             }
-            
+
             $data['additional_properties'] = $additionalProperties;
         }
 
@@ -213,7 +215,7 @@ class AssetService
         return Cache::remember(
             "assets_by_type_{$organizationId}_{$type}",
             3600,
-            fn() => Asset::where('organization_id', $organizationId)
+            fn () => Asset::where('organization_id', $organizationId)
                 ->where('is_active', true)
                 ->ofType($type)
                 ->orderBy('name')
@@ -278,7 +280,7 @@ class AssetService
     /**
      * Получить активы с низкими остатками
      */
-    public function getLowStockAssets(int $organizationId, int $warehouseId = null): \Illuminate\Database\Eloquent\Collection
+    public function getLowStockAssets(int $organizationId, ?int $warehouseId = null): \Illuminate\Database\Eloquent\Collection
     {
         $query = Asset::where('organization_id', $organizationId)
             ->where('is_active', true)
@@ -421,8 +423,8 @@ class AssetService
             })
             ->exists();
 
-        if (!$exists) {
-            throw (new ModelNotFoundException())->setModel(MeasurementUnit::class, [$measurementUnitId]);
+        if (! $exists) {
+            throw (new ModelNotFoundException)->setModel(MeasurementUnit::class, [$measurementUnitId]);
         }
     }
 
@@ -451,4 +453,3 @@ class AssetService
         ]);
     }
 }
-

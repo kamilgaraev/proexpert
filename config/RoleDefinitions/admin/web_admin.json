@@ -159,6 +159,7 @@
     ],
     "basic-warehouse": [
       "warehouse.view",
+      "assets.settings.manage",
       "warehouse.manage_stock",
       "warehouse.issue_to_responsible",
       "warehouse.return_from_responsible",

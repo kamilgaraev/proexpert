@@ -190,12 +190,28 @@ Route::middleware(AdminRouteStack::middleware())
             Route::post('/export-labels-pdf', [AssetController::class, 'exportLabelsPdf'])->name('export-labels-pdf');
             Route::get('/', [AssetController::class, 'index'])->name('index');
             Route::post('/', [AssetController::class, 'store'])->name('store');
+            Route::post('/{id}/instances', [AssetController::class, 'createInstances'])
+                ->middleware('authorize:warehouse.manage_stock')
+                ->whereNumber('id')
+                ->name('instances.store');
             Route::get('/{id}', [AssetController::class, 'show'])->name('show');
             Route::put('/{id}', [AssetController::class, 'update'])->name('update');
             Route::delete('/{id}', [AssetController::class, 'destroy'])->name('destroy');
             Route::get('/{id}/photos', [WarehousePhotoController::class, 'assetPhotos'])->name('photos.index');
             Route::post('/{id}/photos', [WarehousePhotoController::class, 'uploadAssetPhotos'])->name('photos.store');
             Route::delete('/{id}/photos/{fileId}', [WarehousePhotoController::class, 'deleteAssetPhoto'])->name('photos.destroy');
+        });
+
+        Route::prefix('organization-assets')->name('organization-assets.')->group(function () {
+            Route::get('/', [AssetController::class, 'organizationAssets'])->name('index');
+            Route::post('/{id}/issue', [AssetController::class, 'issueInstance'])
+                ->middleware('authorize:warehouse.manage_stock')
+                ->whereNumber('id')
+                ->name('issue');
+            Route::post('/{id}/return', [AssetController::class, 'returnInstance'])
+                ->middleware('authorize:warehouse.manage_stock')
+                ->whereNumber('id')
+                ->name('return');
         });
 
         // Продвинутые функции (Аналитика, Резервирование, Автозаказ)

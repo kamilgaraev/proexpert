@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
+use App\BusinessModules\Core\AssetManagement\Enums\AssetAccountingMode;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use Illuminate\Foundation\Http\FormRequest;
@@ -11,6 +12,17 @@ use Illuminate\Validation\Rule;
 
 class StoreAssetRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        if (! $this->has('accounting_mode')) {
+            $this->merge([
+                'accounting_mode' => $this->input('asset_type') === Asset::TYPE_EQUIPMENT
+                    ? AssetAccountingMode::Serialized->value
+                    : AssetAccountingMode::Quantitative->value,
+            ]);
+        }
+    }
+
     public function authorize(): bool
     {
         return true;
@@ -25,13 +37,13 @@ class StoreAssetRequest extends FormRequest
             'max:50',
         ];
 
-        if (!$this->filled('warehouse_id')) {
+        if (! $this->filled('warehouse_id')) {
             $codeRules[] = Rule::unique('materials', 'code')->where('organization_id', $organizationId);
         }
 
         return [
-            'name'                => 'required|string|max:255',
-            'code'                => $codeRules,
+            'name' => 'required|string|max:255',
+            'code' => $codeRules,
             'measurement_unit_id' => [
                 'required',
                 Rule::exists('measurement_units', 'id')
@@ -41,14 +53,15 @@ class StoreAssetRequest extends FormRequest
                             ->orWhere('is_system', true);
                     }),
             ],
-            'asset_type'          => ['required', 'string', Rule::in(array_keys(Asset::getAssetTypes()))],
-            'asset_category'      => 'nullable|string|max:100',
-            'asset_subcategory'   => 'nullable|string|max:100',
-            'default_price'       => 'nullable|numeric|min:0',
-            'description'         => 'nullable|string|max:1000',
-            'category'            => 'nullable|string|max:100',
-            'asset_attributes'    => 'nullable|array',
-            'warehouse_id'         => [
+            'asset_type' => ['required', 'string', Rule::in(array_keys(Asset::getAssetTypes()))],
+            'accounting_mode' => ['required', Rule::enum(AssetAccountingMode::class)],
+            'asset_category' => 'nullable|string|max:100',
+            'asset_subcategory' => 'nullable|string|max:100',
+            'default_price' => 'nullable|numeric|min:0',
+            'description' => 'nullable|string|max:1000',
+            'category' => 'nullable|string|max:100',
+            'asset_attributes' => 'nullable|array',
+            'warehouse_id' => [
                 'nullable',
                 'integer',
                 Rule::exists(OrganizationWarehouse::class, 'id')

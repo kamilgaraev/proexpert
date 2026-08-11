@@ -4,16 +4,22 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\CreateSerializedAssetInstancesRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ExportAssetLabelsRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IssueSerializedAssetRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReturnSerializedAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\StoreAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UpdateAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetLabelExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
+use App\BusinessModules\Features\BasicWarehouse\Services\SerializedAssetReceiptService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
-use Illuminate\Http\JsonResponse;
+use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -23,9 +29,9 @@ class AssetController extends Controller
 {
     public function __construct(
         protected AssetService $assetService,
-        protected AssetLabelExportService $assetLabelExportService
-    ) {
-    }
+        protected AssetLabelExportService $assetLabelExportService,
+        protected SerializedAssetReceiptService $serializedAssets,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -75,7 +81,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('basic_warehouse.asset.create_error') . ': ' . $exception->getMessage(), 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.create_error').': '.$exception->getMessage(), 500);
         }
     }
 
@@ -119,7 +125,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('basic_warehouse.asset.update_error') . ': ' . $exception->getMessage(), 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.update_error').': '.$exception->getMessage(), 500);
         }
     }
 
@@ -192,6 +198,88 @@ class AssetController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('basic_warehouse.asset.labels_export_error'), 500);
+        }
+    }
+
+    public function createInstances(CreateSerializedAssetInstancesRequest $request, int $id): JsonResponse
+    {
+        try {
+            $instances = $this->serializedAssets->receive(
+                (int) $request->user()->current_organization_id,
+                $id,
+                (int) $request->validated('warehouse_id'),
+                (int) $request->user()->id,
+                $request->validated('instances'),
+            );
+
+            return AdminResponse::success(
+                $instances,
+                trans_message('basic_warehouse.serialized.instances_created'),
+                201,
+            );
+        } catch (DomainException|QueryException $exception) {
+            return AdminResponse::error($exception instanceof DomainException
+                ? $exception->getMessage()
+                : trans_message('asset_management.errors.duplicate_identity'), 422);
+        } catch (\Throwable $exception) {
+            Log::error('AssetController::createInstances error', [
+                'organization_id' => $request->user()->current_organization_id,
+                'user_id' => $request->user()->id,
+                'material_id' => $id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('basic_warehouse.serialized.operation_failed'), 500);
+        }
+    }
+
+    public function organizationAssets(Request $request): JsonResponse
+    {
+        $filters = array_filter([
+            'warehouse_id' => $request->integer('warehouse_id') ?: null,
+            'project_id' => $request->integer('project_id') ?: null,
+            'responsible_user_id' => $request->integer('responsible_user_id') ?: null,
+            'material_id' => $request->integer('material_id') ?: null,
+            'search' => $request->string('search')->trim()->value() ?: null,
+        ], static fn (mixed $value): bool => $value !== null);
+        $paginator = $this->serializedAssets->paginate(
+            (int) $request->user()->current_organization_id,
+            $filters,
+            $request->integer('per_page', 20),
+        );
+
+        return $this->paginatedResponse($paginator);
+    }
+
+    public function issueInstance(IssueSerializedAssetRequest $request, int $id): JsonResponse
+    {
+        try {
+            $asset = $this->serializedAssets->issue(
+                (int) $request->user()->current_organization_id,
+                $id,
+                (int) $request->user()->id,
+                $request->validated(),
+            );
+
+            return AdminResponse::success($asset, trans_message('basic_warehouse.serialized.issued'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        }
+    }
+
+    public function returnInstance(ReturnSerializedAssetRequest $request, int $id): JsonResponse
+    {
+        try {
+            $asset = $this->serializedAssets->returnToWarehouse(
+                (int) $request->user()->current_organization_id,
+                $id,
+                (int) $request->user()->id,
+                $request->validated(),
+            );
+
+            return AdminResponse::success($asset, trans_message('basic_warehouse.serialized.returned'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
         }
     }
 
