@@ -12,6 +12,13 @@ final readonly class CompletenessRuleCatalog
 
     private const CLASSIFICATIONS = ['document_missing', 'technology_required', 'optional_recommendation'];
 
+    private const UNITS = ['m', 'm2', 'm3', 'item', 'degree', 'ratio'];
+
+    private const REQUIRED_RULE_KEYS = [
+        'id', 'version', 'applicability_fact_types', 'conditions', 'satisfaction_fact_type',
+        'satisfaction', 'classification', 'severity', 'impact', 'exclusion_policy', 'work_package',
+    ];
+
     private array $rules;
 
     private function __construct(public string $version, public string $contentHash, array $rules)
@@ -23,50 +30,64 @@ final readonly class CompletenessRuleCatalog
     {
         $encoded = json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
         if (strlen($encoded) > self::MAX_BYTES || self::depth($data) > 12
-            || array_diff(array_keys($data), ['version', 'rules']) !== []) {
+            || array_diff(array_keys($data), ['version', 'rules']) !== []
+            || array_diff(['version', 'rules'], array_keys($data)) !== []) {
             throw new InvalidArgumentException('Completeness rule catalog exceeds its global contract.');
         }
-        $version = trim((string) ($data['version'] ?? ''));
+        $version = is_string($data['version'] ?? null) ? trim($data['version']) : '';
         $rows = $data['rules'] ?? null;
-        if ($version === '' || ! is_array($rows) || $rows === [] || count($rows) > 100) {
+        if (preg_match('/^[a-z0-9._-]{1,64}$/D', $version) !== 1
+            || ! is_array($rows) || ! array_is_list($rows) || $rows === [] || count($rows) > 100) {
             throw new InvalidArgumentException('Completeness rule catalog is invalid.');
         }
         $rules = [];
         foreach ($rows as $row) {
+            if (! is_array($row) || array_is_list($row)) {
+                throw new InvalidArgumentException('Completeness rule entry is invalid.');
+            }
             $id = trim((string) ($row['id'] ?? ''));
             $ruleVersion = trim((string) ($row['version'] ?? ''));
             $classification = (string) ($row['classification'] ?? '');
-            $applicability = array_values(array_unique($row['applicability_fact_types'] ?? []));
+            $applicability = $row['applicability_fact_types'] ?? null;
             $conditions = $row['conditions'] ?? [];
             $satisfaction = $row['satisfaction'] ?? [];
             $package = $row['work_package'] ?? null;
-            if ($id === '' || isset($rules[$id]) || $ruleVersion === '' || $applicability === []
+            if (! is_array($applicability) || ! array_is_list($applicability) || $applicability === []
+                || count($applicability) > 50) {
+                throw new InvalidArgumentException('Completeness applicability contract is invalid.');
+            }
+            self::uniqueStrings($applicability, 50);
+            if ($id === '' || isset($rules[$id]) || $ruleVersion === ''
                 || ! in_array($classification, self::CLASSIFICATIONS, true) || ! is_array($package)
                 || ! is_array($conditions) || $conditions === [] || ! is_array($satisfaction)
+                || ! self::nonEmptyString($row['severity'] ?? null)
+                || ! self::nonEmptyString($row['impact'] ?? null)
                 || array_diff(array_keys($row), [
                     'id', 'version', 'applicability_fact_types', 'conditions', 'satisfaction_fact_type',
                     'satisfaction', 'classification', 'severity', 'impact', 'exclusion_policy',
                     'work_package', 'technology_requirement',
                 ]) !== []
-                || count($package['works'] ?? []) > 40 || count($package['materials'] ?? []) > 40
-                || count($package['machinery'] ?? []) > 20 || count($package['norm_intents'] ?? []) > 20
-                || count($package['quantity_formulas'] ?? []) > 20
+                || array_diff(self::REQUIRED_RULE_KEYS, array_keys($row)) !== []
                 || strlen(json_encode($package, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)) > 1048576) {
                 throw new InvalidArgumentException('Completeness rule entry is invalid.');
             }
             self::validateConditions($conditions);
+            self::validateSatisfaction($satisfaction, (string) ($row['satisfaction_fact_type'] ?? ''));
             self::validatePackage($package);
             $policy = $row['exclusion_policy'] ?? null;
-            if (! is_array($policy) || ! is_string($policy['id'] ?? null)
-                || ! is_string($policy['version'] ?? null) || ! is_bool($policy['allowed'] ?? null)) {
+            $policyKeys = ['id', 'version', 'allowed', 'requires_decision', 'requires_actor', 'requires_reason'];
+            if (! is_array($policy) || array_is_list($policy)
+                || array_diff(array_keys($policy), $policyKeys) !== []
+                || array_diff($policyKeys, array_keys($policy)) !== []
+                || ! self::nonEmptyString($policy['id'] ?? null)
+                || ! self::nonEmptyString($policy['version'] ?? null)
+                || ! is_bool($policy['allowed'] ?? null)
+                || ! is_bool($policy['requires_decision'] ?? null)
+                || ! is_bool($policy['requires_actor'] ?? null)
+                || ! is_bool($policy['requires_reason'] ?? null)) {
                 throw new InvalidArgumentException('Completeness exclusion policy is invalid.');
             }
-            foreach ($package['norm_intents'] ?? [] as $intent) {
-                if (($intent['max_candidates'] ?? 0) < 1 || $intent['max_candidates'] > 5
-                    || count($intent['candidate_refs'] ?? []) > 5) {
-                    throw new InvalidArgumentException('Completeness norm candidates are invalid.');
-                }
-            }
+            self::validateTechnologyRequirement($row['technology_requirement'] ?? null);
             $canonical = self::canonical($row);
             $rules[$id] = new CompletenessRule(
                 $id,
@@ -98,12 +119,8 @@ final readonly class CompletenessRuleCatalog
     {
         if (array_is_list($value)) {
             $canonical = array_map(static fn (mixed $item): mixed => is_array($item) ? self::canonical($item) : $item, $value);
-            $dependencies = $canonical !== [] && is_array($canonical[0])
-                && array_keys($canonical[0]) === ['from', 'to'];
-            if (! $dependencies) {
-                usort($canonical, static fn (mixed $left, mixed $right): int => json_encode($left, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
-                    <=> json_encode($right, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-            }
+            usort($canonical, static fn (mixed $left, mixed $right): int => json_encode($left, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
+                <=> json_encode($right, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
 
             return $canonical;
         }
@@ -119,8 +136,11 @@ final readonly class CompletenessRuleCatalog
 
     private static function validateConditions(array $conditions): void
     {
+        if (! array_is_list($conditions) || count($conditions) > 20) {
+            throw new InvalidArgumentException('Completeness conditions must be a list.');
+        }
         foreach ($conditions as $condition) {
-            if (! is_array($condition) || ! is_string($condition['fact_type'] ?? null)
+            if (! is_array($condition) || ! self::nonEmptyString($condition['fact_type'] ?? null)
                 || ! in_array($condition['operator'] ?? null, ['present', '=', '!=', 'in', '>', '>=', '<', '<='], true)
                 || array_diff(array_keys($condition), ['fact_type', 'operator', 'value', 'values', 'unit']) !== []) {
                 throw new InvalidArgumentException('Completeness condition is invalid.');
@@ -128,6 +148,65 @@ final readonly class CompletenessRuleCatalog
             if (($condition['operator'] ?? null) === 'in' && ! is_array($condition['values'] ?? null)) {
                 throw new InvalidArgumentException('Completeness condition values are invalid.');
             }
+            $operator = $condition['operator'];
+            $required = match ($operator) {
+                'present' => ['fact_type', 'operator'],
+                'in' => ['fact_type', 'operator', 'values'],
+                default => ['fact_type', 'operator', 'value'],
+            };
+            if (array_diff($required, array_keys($condition)) !== []
+                || ($operator === 'present' && count($condition) !== 2)
+                || ($operator === 'in' && (array_key_exists('value', $condition)
+                    || ! array_is_list($condition['values']) || $condition['values'] === []))
+                || ($operator !== 'in' && array_key_exists('values', $condition))
+                || (array_key_exists('unit', $condition) && ! in_array($condition['unit'], self::UNITS, true))) {
+                throw new InvalidArgumentException('Completeness condition operand contract is invalid.');
+            }
+            if ($operator === 'in') {
+                if (count($condition['values']) > 50
+                    || count($condition['values']) !== count(array_unique($condition['values'], SORT_REGULAR))) {
+                    throw new InvalidArgumentException('Completeness condition list is invalid.');
+                }
+                foreach ($condition['values'] as $value) {
+                    if (! is_scalar($value) && $value !== null) {
+                        throw new InvalidArgumentException('Completeness condition list value is invalid.');
+                    }
+                }
+            } elseif ($operator !== 'present' && ! is_scalar($condition['value']) && $condition['value'] !== null) {
+                throw new InvalidArgumentException('Completeness condition value is invalid.');
+            }
+            if (in_array($operator, ['>', '>=', '<', '<='], true) && ! is_int($condition['value']) && ! is_float($condition['value'])) {
+                throw new InvalidArgumentException('Completeness comparison operand is invalid.');
+            }
+        }
+    }
+
+    private static function validateSatisfaction(array $satisfaction, string $factType): void
+    {
+        $keys = ['fact_type', 'operator', 'false_means_missing'];
+        if (array_is_list($satisfaction)
+            || array_diff(array_keys($satisfaction), $keys) !== []
+            || array_diff($keys, array_keys($satisfaction)) !== []
+            || ! self::nonEmptyString($factType)
+            || ($satisfaction['fact_type'] ?? null) !== $factType
+            || ($satisfaction['operator'] ?? null) !== 'present'
+            || ! is_bool($satisfaction['false_means_missing'] ?? null)) {
+            throw new InvalidArgumentException('Completeness satisfaction contract is invalid.');
+        }
+    }
+
+    private static function validateTechnologyRequirement(mixed $requirement): void
+    {
+        if ($requirement === null) {
+            return;
+        }
+        $keys = ['decision_kind', 'allow_recommended_applicable'];
+        if (! is_array($requirement) || array_is_list($requirement)
+            || array_diff(array_keys($requirement), $keys) !== []
+            || array_diff($keys, array_keys($requirement)) !== []
+            || ! self::nonEmptyString($requirement['decision_kind'] ?? null)
+            || ! is_bool($requirement['allow_recommended_applicable'] ?? null)) {
+            throw new InvalidArgumentException('Completeness technology requirement is invalid.');
         }
     }
 
@@ -137,8 +216,32 @@ final readonly class CompletenessRuleCatalog
             'id', 'works', 'materials', 'machinery', 'norm_intents', 'quantity_formulas', 'dependencies',
             'regional_price_availability', 'assumptions', 'risks', 'variant_fact_type', 'variants',
         ];
-        if (array_diff(array_keys($package), $keys) !== [] || ! is_string($package['id'] ?? null)) {
+        $requiredKeys = [
+            'id', 'works', 'materials', 'machinery', 'norm_intents', 'quantity_formulas', 'dependencies',
+            'regional_price_availability', 'assumptions', 'risks',
+        ];
+        if (array_diff(array_keys($package), $keys) !== []
+            || array_diff($requiredKeys, array_keys($package)) !== []
+            || ! self::nonEmptyString($package['id'] ?? null)) {
             throw new InvalidArgumentException('Completeness work package is invalid.');
+        }
+        $hasVariantFact = array_key_exists('variant_fact_type', $package);
+        $hasVariants = array_key_exists('variants', $package);
+        if ($hasVariantFact !== $hasVariants) {
+            throw new InvalidArgumentException('Completeness package variants are incomplete.');
+        }
+        foreach ([
+            'works' => 40,
+            'materials' => 40,
+            'machinery' => 20,
+            'norm_intents' => 20,
+            'quantity_formulas' => 20,
+            'dependencies' => 80,
+        ] as $collection => $limit) {
+            if (! is_array($package[$collection] ?? null) || ! array_is_list($package[$collection])
+                || count($package[$collection]) > $limit) {
+                throw new InvalidArgumentException('Completeness work package collection is invalid.');
+            }
         }
         $workIds = [];
         foreach (['works', 'materials', 'machinery', 'norm_intents', 'quantity_formulas'] as $collection) {
@@ -154,13 +257,13 @@ final readonly class CompletenessRuleCatalog
                     'norm_intents' => ['id', 'candidate_refs', 'max_candidates'],
                     'quantity_formulas' => ['id', 'expression', 'input_fact', 'unit'],
                 };
-                if (! is_string($id) || isset($ids[$id]) || ! is_array($item)
+                if (! self::nonEmptyString($id) || isset($ids[$id]) || ! is_array($item)
                     || array_diff(array_keys($item), $expectedKeys) !== []
                     || array_diff($expectedKeys, array_keys($item)) !== []) {
                     throw new InvalidArgumentException('Completeness work package identifier is invalid.');
                 }
                 if (in_array($collection, ['works', 'materials', 'machinery'], true)
-                    && ! is_string($item['name_key'] ?? null)) {
+                    && ! self::nonEmptyString($item['name_key'] ?? null)) {
                     throw new InvalidArgumentException('Completeness work package name is invalid.');
                 }
                 $ids[$id] = true;
@@ -170,8 +273,8 @@ final readonly class CompletenessRuleCatalog
             }
         }
         foreach ($package['quantity_formulas'] as $formula) {
-            if (! is_string($formula['expression'] ?? null)
-                || ! is_string($formula['input_fact'] ?? null)
+            if (! self::nonEmptyString($formula['expression'] ?? null)
+                || ! self::nonEmptyString($formula['input_fact'] ?? null)
                 || ! in_array($formula['unit'] ?? null, ['m', 'm2', 'm3', 'item'], true)) {
                 throw new InvalidArgumentException('Completeness quantity formula is invalid.');
             }
@@ -182,19 +285,31 @@ final readonly class CompletenessRuleCatalog
                 || $intent['max_candidates'] > 5) {
                 throw new InvalidArgumentException('Completeness norm intent is invalid.');
             }
+            self::uniqueStrings($intent['candidate_refs'], 5);
         }
-        foreach ($package['dependencies'] ?? [] as $dependency) {
+        $dependencies = [];
+        foreach ($package['dependencies'] as $dependency) {
             if (! is_array($dependency) || array_keys($dependency) !== ['from', 'to']
-                || ! isset($workIds[(string) ($dependency['from'] ?? '')], $workIds[(string) ($dependency['to'] ?? '')])) {
+                || ! isset($workIds[(string) ($dependency['from'] ?? '')], $workIds[(string) ($dependency['to'] ?? '')])
+                || $dependency['from'] === $dependency['to']) {
                 throw new InvalidArgumentException('Completeness dependency is invalid.');
             }
+            $identity = $dependency['from'].'>'.$dependency['to'];
+            if (isset($dependencies[$identity])) {
+                throw new InvalidArgumentException('Completeness dependency is duplicated.');
+            }
+            $dependencies[$identity] = true;
         }
-        if (! $variant && isset($package['variant_fact_type'], $package['variants'])) {
-            if (! is_string($package['variant_fact_type']) || ! is_array($package['variants']) || $package['variants'] === []) {
+        self::validateAvailability($package['regional_price_availability']);
+        self::uniqueStrings($package['assumptions'], 50);
+        self::uniqueStrings($package['risks'], 50);
+        if (! $variant && $hasVariantFact && $hasVariants) {
+            if (! self::nonEmptyString($package['variant_fact_type']) || ! is_array($package['variants'])
+                || array_is_list($package['variants']) || $package['variants'] === [] || count($package['variants']) > 20) {
                 throw new InvalidArgumentException('Completeness package variants are invalid.');
             }
             foreach ($package['variants'] as $name => $candidate) {
-                if (! is_string($name) || ! is_array($candidate)) {
+                if (! self::nonEmptyString($name) || ! is_array($candidate)) {
                     throw new InvalidArgumentException('Completeness package variant is invalid.');
                 }
                 self::validatePackage($candidate, true);
@@ -202,6 +317,41 @@ final readonly class CompletenessRuleCatalog
         } elseif ($variant && (isset($package['variant_fact_type']) || isset($package['variants']))) {
             throw new InvalidArgumentException('Nested completeness package variants are invalid.');
         }
+    }
+
+    private static function validateAvailability(mixed $availability): void
+    {
+        $keys = ['available', 'region', 'source', 'version', 'reason'];
+        if (! is_array($availability) || array_is_list($availability)
+            || array_diff(array_keys($availability), $keys) !== []
+            || array_diff($keys, array_keys($availability)) !== []
+            || ! is_bool($availability['available'] ?? null)
+            || ! self::nonEmptyString($availability['reason'] ?? null)) {
+            throw new InvalidArgumentException('Completeness regional availability is invalid.');
+        }
+        foreach (['region', 'source', 'version'] as $field) {
+            if ($availability[$field] !== null && ! self::nonEmptyString($availability[$field])) {
+                throw new InvalidArgumentException('Completeness regional availability source is invalid.');
+            }
+        }
+    }
+
+    private static function uniqueStrings(mixed $values, int $limit): void
+    {
+        if (! is_array($values) || ! array_is_list($values) || count($values) > $limit
+            || count($values) !== count(array_unique($values, SORT_REGULAR))) {
+            throw new InvalidArgumentException('Completeness string collection is invalid.');
+        }
+        foreach ($values as $value) {
+            if (! self::nonEmptyString($value)) {
+                throw new InvalidArgumentException('Completeness string value is invalid.');
+            }
+        }
+    }
+
+    private static function nonEmptyString(mixed $value): bool
+    {
+        return is_string($value) && trim($value) !== '' && mb_strlen($value) <= 191;
     }
 
     private static function depth(array $value, int $depth = 1): int

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
@@ -61,7 +61,8 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 'normative_dataset_version' => 'fsnb-2022',
             ],
         ];
-        [$action] = $this->action($session, new class extends EstimateGenerationRegionalContextResolver {
+        [$action] = $this->action($session, new class extends EstimateGenerationRegionalContextResolver
+        {
             public function __construct() {}
 
             public function resolve(array $input): array
@@ -93,7 +94,8 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 'normative_dataset_version' => 'fsnb-2022',
             ],
         ];
-        $resolver = new class extends EstimateGenerationRegionalContextResolver {
+        $resolver = new class extends EstimateGenerationRegionalContextResolver
+        {
             /** @var array<string, mixed> */
             public array $resolvedInput = [];
 
@@ -262,6 +264,46 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     #[Test]
+    public function planning_review_retry_returns_to_reanalysis_without_bypassing_stage_four(): void
+    {
+        $session = $this->inputReview([
+            'description' => 'Дом',
+            'generation_requested' => true,
+            'planning_review' => [
+                'status' => 'blocked',
+                'limitations' => ['budget_exceeded'],
+            ],
+        ]);
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $result->status);
+        self::assertArrayNotHasKey('planning_review', $result->input_payload);
+        self::assertTrue($result->input_payload['generation_requested']);
+        self::assertSame([], $dispatcher->generation);
+        self::assertSame([], $dispatcher->documents);
+    }
+
+    #[Test]
+    public function planning_review_retry_still_dispatches_corrected_documents_before_reanalysis(): void
+    {
+        $session = $this->inputReview([
+            'description' => 'Дом',
+            'generation_requested' => true,
+            'planning_review' => ['status' => 'blocked', 'limitations' => ['empty_facts']],
+        ]);
+        $session->setRelation('documents', collect([$this->document(13, 'needs_review')]));
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $result->status);
+        self::assertSame([13], $dispatcher->documents);
+        self::assertSame([], $dispatcher->generation);
+    }
+
+    #[Test]
     public function input_review_without_eligible_documents_or_description_stays_actionable(): void
     {
         $session = $this->inputReview([]);
@@ -295,7 +337,8 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         $store = new RetrySessionStateStore($session);
         $repository = new RetrySessionRepositoryFake($session);
         $dispatcher = new RetryDispatcherFake;
-        $regionalContextResolver ??= new class extends EstimateGenerationRegionalContextResolver {
+        $regionalContextResolver ??= new class extends EstimateGenerationRegionalContextResolver
+        {
             public function __construct() {}
 
             public function resolve(array $input): array

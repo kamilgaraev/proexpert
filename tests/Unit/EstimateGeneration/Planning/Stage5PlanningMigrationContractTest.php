@@ -20,6 +20,11 @@ final class Stage5PlanningMigrationContractTest extends TestCase
         self::assertStringContainsString('indisvalid', $source);
         self::assertStringContainsString('indisready', $source);
         self::assertStringContainsString('pg_get_indexdef', $source);
+        self::assertStringContainsString('pg_get_constraintdef', $source);
+        self::assertStringContainsString('JOIN pg_class AS constraint_table', $source);
+        self::assertStringContainsString('JOIN pg_namespace AS constraint_schema', $source);
+        self::assertStringContainsString("constraint_state.contype = 'c'", $source);
+        self::assertStringContainsString('canonicalConstraint', $source);
         self::assertStringContainsString('DROP INDEX CONCURRENTLY IF EXISTS', $source);
         self::assertStringContainsString('CREATE INDEX CONCURRENTLY', $source);
         self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY', $source);
@@ -31,6 +36,7 @@ final class Stage5PlanningMigrationContractTest extends TestCase
         self::assertStringContainsString('} finally {', $source);
         self::assertStringContainsString('throw new RuntimeException', $source);
         self::assertStringNotContainsString('->whereRaw("', $source);
+        self::assertStringNotContainsString("SELECT 1 FROM pg_constraint WHERE conname = '", $source);
         self::assertStringContainsString('no destructive rollback', $source);
     }
 

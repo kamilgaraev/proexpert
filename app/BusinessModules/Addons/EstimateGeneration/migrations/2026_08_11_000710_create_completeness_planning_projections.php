@@ -88,7 +88,7 @@ return new class extends Migration implements ForwardOnlyMigration
             }
             $this->index($schema, 'eg_completeness_current_idx', 'CREATE INDEX CONCURRENTLY eg_completeness_current_idx ON '.$schema.'.estimate_generation_completeness_runs (organization_id, project_id, session_id, is_current, id DESC)');
             $this->index($schema, 'eg_completeness_one_current_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_completeness_one_current_uq ON '.$schema.'.estimate_generation_completeness_runs (organization_id, project_id, session_id) WHERE is_current');
-            $this->constraints();
+            $this->constraints($schema);
             $this->guards();
         } finally {
             $this->resetSession();
@@ -164,43 +164,64 @@ SQL, [$this->unquote($schema), $name]);
         return str_replace(' using btree ', ' ', (string) $canonical);
     }
 
-    private function constraints(): void
+    private function constraint(string $schema, string $table, string $name, string $check): void
     {
-        DB::unprepared(<<<'SQL'
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eg_completeness_run_ck') THEN
-        ALTER TABLE estimate_generation_completeness_runs ADD CONSTRAINT eg_completeness_run_ck CHECK (
-            source_version ~ '^sha256:[a-f0-9]{64}$' AND input_fingerprint ~ '^[a-f0-9]{64}$'
-            AND catalog_hash ~ '^[a-f0-9]{64}$' AND rule_catalog_hash ~ '^[a-f0-9]{64}$'
-            AND result_fingerprint ~ '^[a-f0-9]{64}$' AND jsonb_typeof(limitations) = 'array'
-            AND octet_length(limitations::text) <= 32768
-            AND ((is_current AND invalidated_at IS NULL) OR (NOT is_current AND invalidated_at IS NOT NULL))
-        );
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eg_completeness_finding_ck') THEN
-        ALTER TABLE estimate_generation_completeness_findings ADD CONSTRAINT eg_completeness_finding_ck CHECK (
-            finding_stable_key ~ '^[a-f0-9]{64}$' AND finding_version BETWEEN 1 AND 65535
-            AND classification IN ('document_missing', 'technology_required', 'optional_recommendation', 'technology_conditional', 'not_applicable')
-            AND status IN ('unknown', 'unresolved', 'proven_missing', 'satisfied', 'not_applicable', 'excluded')
-            AND confidence BETWEEN 0 AND 1 AND octet_length(evidence_fact_ids::text) <= 65536
-            AND octet_length(related_entity_ids::text) <= 32768 AND octet_length(related_fact_types::text) <= 32768
-            AND jsonb_typeof(applicability) = 'object' AND octet_length(applicability::text) <= 65536
-            AND octet_length(exclusion_policy::text) <= 32768
-            AND (exclusion_decision IS NULL OR octet_length(exclusion_decision::text) <= 32768)
-        );
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eg_work_package_payload_ck') THEN
-        ALTER TABLE estimate_generation_technology_work_packages ADD CONSTRAINT eg_work_package_payload_ck CHECK (
-            octet_length(works::text) <= 262144 AND octet_length(materials::text) <= 262144
-            AND octet_length(machinery::text) <= 131072 AND octet_length(norm_intents::text) <= 131072
-            AND octet_length(quantity_formulas::text) <= 131072 AND octet_length(dependencies::text) <= 65536
-            AND octet_length(regional_price_availability::text) <= 32768
-            AND octet_length(assumptions::text) <= 65536 AND octet_length(risks::text) <= 65536
-            AND octet_length(provenance::text) <= 65536
-        );
-    END IF;
-END $$;
+        $row = DB::selectOne(<<<'SQL'
+SELECT pg_get_constraintdef(constraint_state.oid, true) AS definition
+FROM pg_constraint AS constraint_state
+JOIN pg_class AS constraint_table ON constraint_table.oid = constraint_state.conrelid
+JOIN pg_namespace AS constraint_schema ON constraint_schema.oid = constraint_table.relnamespace
+WHERE constraint_schema.nspname = ? AND constraint_table.relname = ?
+  AND constraint_state.conname = ? AND constraint_state.contype = 'c'
+SQL, [$this->unquote($schema), $table, $name]);
+        $expected = 'CHECK ('.$check.')';
+        if ($row !== null && $this->canonicalConstraint((string) $row->definition) !== $this->canonicalConstraint($expected)) {
+            throw new RuntimeException('Existing completeness constraint has a different definition: '.$name);
+        }
+        if ($row === null) {
+            DB::statement('ALTER TABLE '.$schema.'.'.$this->quote($table).' ADD CONSTRAINT '.$this->quote($name).' '.$expected);
+        }
+    }
+
+    private function canonicalConstraint(string $definition): string
+    {
+        $canonical = strtolower(str_replace('"', '', $definition));
+        $canonical = preg_replace('/::(?:text|character varying|bpchar)/', '', $canonical);
+        $canonical = preg_replace('/\s+/', '', (string) $canonical);
+        do {
+            $previous = $canonical;
+            $canonical = str_replace(['((', '))'], ['(', ')'], $canonical);
+        } while ($canonical !== $previous);
+
+        return $canonical;
+    }
+
+    private function constraints(string $schema): void
+    {
+        $this->constraint($schema, 'estimate_generation_completeness_runs', 'eg_completeness_run_ck', <<<'SQL'
+source_version ~ '^sha256:[a-f0-9]{64}$' AND input_fingerprint ~ '^[a-f0-9]{64}$'
+AND catalog_hash ~ '^[a-f0-9]{64}$' AND rule_catalog_hash ~ '^[a-f0-9]{64}$'
+AND result_fingerprint ~ '^[a-f0-9]{64}$' AND jsonb_typeof(limitations) = 'array'
+AND octet_length(limitations::text) <= 32768
+AND ((is_current AND invalidated_at IS NULL) OR (NOT is_current AND invalidated_at IS NOT NULL))
+SQL);
+        $this->constraint($schema, 'estimate_generation_completeness_findings', 'eg_completeness_finding_ck', <<<'SQL'
+finding_stable_key ~ '^[a-f0-9]{64}$' AND finding_version BETWEEN 1 AND 65535
+AND classification IN ('document_missing', 'technology_required', 'optional_recommendation', 'technology_conditional', 'not_applicable')
+AND status IN ('unknown', 'unresolved', 'proven_missing', 'satisfied', 'not_applicable', 'excluded')
+AND confidence BETWEEN 0 AND 1 AND octet_length(evidence_fact_ids::text) <= 65536
+AND octet_length(related_entity_ids::text) <= 32768 AND octet_length(related_fact_types::text) <= 32768
+AND jsonb_typeof(applicability) = 'object' AND octet_length(applicability::text) <= 65536
+AND octet_length(exclusion_policy::text) <= 32768
+AND (exclusion_decision IS NULL OR octet_length(exclusion_decision::text) <= 32768)
+SQL);
+        $this->constraint($schema, 'estimate_generation_technology_work_packages', 'eg_work_package_payload_ck', <<<'SQL'
+octet_length(works::text) <= 262144 AND octet_length(materials::text) <= 262144
+AND octet_length(machinery::text) <= 131072 AND octet_length(norm_intents::text) <= 131072
+AND octet_length(quantity_formulas::text) <= 131072 AND octet_length(dependencies::text) <= 65536
+AND octet_length(regional_price_availability::text) <= 32768
+AND octet_length(assumptions::text) <= 65536 AND octet_length(risks::text) <= 65536
+AND octet_length(provenance::text) <= 65536
 SQL);
     }
 

@@ -64,6 +64,7 @@ final class RetryEstimateGenerationSession
 
     private function retryInputReview(EstimateGenerationSession $session): EstimateGenerationSession
     {
+        $requiresPlanningRecovery = $this->hasBlockedPlanningReview($session);
         $documentIds = $session->documents
             ->filter(static fn ($document): bool => in_array((string) $document->status, [
                 'uploaded', 'queued', 'processing', 'failed', 'needs_review',
@@ -83,11 +84,16 @@ final class RetryEstimateGenerationSession
             'processing_progress' => 5,
             'last_error' => null,
             'failure_code' => null,
+            'input_payload' => $this->withoutPlanningReview($session),
         ]);
 
         if ($documentIds !== []) {
             $this->dispatcher->dispatchDocuments($documentIds);
 
+            return $session;
+        }
+
+        if ($requiresPlanningRecovery) {
             return $session;
         }
 
@@ -210,5 +216,23 @@ final class RetryEstimateGenerationSession
             'last_error' => null,
             'failure_code' => null,
         ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function withoutPlanningReview(EstimateGenerationSession $session): array
+    {
+        $payload = is_array($session->input_payload) ? $session->input_payload : [];
+        unset($payload['planning_review']);
+
+        return $payload;
+    }
+
+    private function hasBlockedPlanningReview(EstimateGenerationSession $session): bool
+    {
+        $review = is_array($session->input_payload['planning_review'] ?? null)
+            ? $session->input_payload['planning_review']
+            : [];
+
+        return ($review['status'] ?? null) === 'blocked';
     }
 }

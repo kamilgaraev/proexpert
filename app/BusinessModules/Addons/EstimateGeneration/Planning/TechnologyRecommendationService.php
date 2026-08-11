@@ -36,7 +36,7 @@ final readonly class TechnologyRecommendationService
                 || $fact->sourceVersion !== $unresolvedDecision->sourceVersion) {
                 throw new InvalidArgumentException('Technology recommendation contains a cross-scope fact.');
             }
-            if ($fact->status === 'confirmed') {
+            if ($fact->status === 'confirmed' && $fact->entityId === $unresolvedDecision->entityId) {
                 $facts[$fact->type][] = $fact;
             }
         }
@@ -170,7 +170,7 @@ final readonly class TechnologyRecommendationService
             foreach ($candidates as $fact) {
                 $evidence[$fact->id] = ['fact_id' => $fact->id, 'type' => $fact->type, 'value' => $fact->value, 'unit' => $fact->unit];
                 if (in_array($key, ['minimum_slope_degrees', 'maximum_slope_degrees'], true)) {
-                    if ($fact->unit !== null && $fact->unit !== 'degree') {
+                    if ($fact->unit !== 'degree') {
                         $reasons[] = ['condition' => $key, 'status' => 'invalid_unit', 'fact_id' => $fact->id];
 
                         return ['unavailable', $reasons, array_values($evidence)];

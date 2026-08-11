@@ -17,6 +17,13 @@ interface ProjectModelRepository
         int $planningRunId,
     ): bool;
 
+    public function applyCompletenessExclusionDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $completenessRunId,
+    ): bool;
+
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void;
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot;

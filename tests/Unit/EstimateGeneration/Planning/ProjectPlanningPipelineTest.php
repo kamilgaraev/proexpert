@@ -51,7 +51,7 @@ final class ProjectPlanningPipelineTest extends TestCase
         $blocked = $pipeline->refresh(10, 20, 30, '123e4567-e89b-42d3-a456-426614174000', 1);
 
         self::assertFalse($blocked->isReadyForCompleteness());
-        self::assertSame(['estimate_generation.project_model.operation_limit'], $blocked->limitations);
+        self::assertSame(['budget_exceeded'], $blocked->limitations);
         self::assertSame(0, $repository->technologyPlanningWriteCount);
         self::assertSame(0, $repository->completenessWriteCount);
 
@@ -64,6 +64,24 @@ final class ProjectPlanningPipelineTest extends TestCase
         self::assertSame($recovered->fingerprint(), $replayed->fingerprint());
         self::assertSame(1, $repository->technologyPlanningWriteCount);
         self::assertSame(1, $repository->completenessWriteCount);
+    }
+
+    public function test_empty_stage_four_snapshot_returns_stable_blocking_code_without_stage_five_writes(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+
+        $blocked = $this->pipeline($repository)->refresh(
+            10,
+            20,
+            30,
+            '123e4567-e89b-42d3-a456-426614174020',
+            1,
+        );
+
+        self::assertFalse($blocked->isReadyForCompleteness());
+        self::assertSame(['empty_facts'], $blocked->limitations);
+        self::assertSame(0, $repository->technologyPlanningWriteCount);
+        self::assertSame(0, $repository->completenessWriteCount);
     }
 
     private function repository(): InMemoryProjectModelRepository

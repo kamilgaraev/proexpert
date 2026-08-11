@@ -59,7 +59,7 @@ final readonly class ProjectUnderstandingCoordinator
             return $this->budgetLimitation();
         }
         if ($snapshot->facts === []) {
-            return ProjectUnderstandingResult::unresolved([$this->conflicts->insufficientEvidence()]);
+            return ProjectUnderstandingResult::unresolved(['empty_facts']);
         }
         $sourceVersions = array_values(array_unique(array_map(
             static fn (Fact $fact): string => $fact->sourceVersion,

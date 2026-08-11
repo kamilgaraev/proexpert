@@ -51,7 +51,25 @@ final readonly class TechnologyRecommendationDecisionService
             [$decisionId],
         );
         if ($existing !== []) {
-            return $existing[0];
+            $decision = $existing[0];
+            $this->assertReplayMatches(
+                $decision,
+                $context,
+                $planningRunId,
+                $decisionKey,
+                $response,
+                $other,
+                $reason,
+            );
+            if ($this->models->currentCompleteness(
+                $context->organizationId,
+                $context->projectId,
+                (int) $session->getKey(),
+            ) === null) {
+                $this->reanalysis->trigger((int) $session->getKey(), $context);
+            }
+
+            return $decision;
         }
         $current = $this->models->currentTechnologyRecommendations(
             $context->organizationId,
@@ -107,6 +125,7 @@ final readonly class TechnologyRecommendationDecisionService
         }
         $value = $this->value($currentRecommendation, $response, $other);
         $value['decision_key'] = $decisionKey;
+        $value['planning_run_id'] = $planningRunId;
         $decision = $this->decisions->applyTechnologyChoice(
             organizationId: $context->organizationId,
             projectId: $context->projectId,
@@ -124,6 +143,44 @@ final readonly class TechnologyRecommendationDecisionService
         $this->reanalysis->trigger((int) $session->getKey(), $context);
 
         return $decision;
+    }
+
+    private function assertReplayMatches(
+        Decision $decision,
+        ActorContext $context,
+        int $planningRunId,
+        string $decisionKey,
+        string $response,
+        ?string $other,
+        string $reason,
+    ): void {
+        $selected = $decision->selectedFactId === null ? null : $this->models->fact(
+            $context->organizationId,
+            $context->projectId,
+            $decision->sessionId,
+            $decision->selectedFactId,
+        );
+        $matchesResponse = $selected instanceof Fact
+            && is_array($selected->value)
+            && ($selected->value['decision_key'] ?? null) === $decisionKey
+            && ($selected->value['planning_run_id'] ?? null) === $planningRunId
+            && match ($response) {
+                'other' => ($selected->value['kind'] ?? null) === 'other'
+                    && is_string($other)
+                    && ($selected->value['other'] ?? null) === trim($other),
+                'leave_unresolved' => false,
+                default => ($selected->value['kind'] ?? null) === 'catalog_system'
+                    && ($selected->value['system_id'] ?? null) === $response,
+            };
+        if (! $matchesResponse
+            || $decision->organizationId !== $context->organizationId
+            || $decision->projectId !== $context->projectId
+            || $decision->actorId !== (string) $context->actorId
+            || $decision->reason !== $reason
+            || ($context->expectedSourceVersion !== null
+                && ! hash_equals($context->expectedSourceVersion, $decision->sourceVersion))) {
+            throw new InvalidArgumentException('Technology decision idempotency payload differs.');
+        }
     }
 
     private function authorize(User $actor, EstimateGenerationSession $session, ActorContext $context): void

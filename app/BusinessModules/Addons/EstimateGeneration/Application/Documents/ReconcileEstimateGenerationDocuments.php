@@ -90,7 +90,11 @@ final class ReconcileEstimateGenerationDocuments
             max(1, (int) $session->state_version),
         );
         if (! $planning->isReadyForCompleteness()) {
-            return $this->advance->documentsNeedReview($session);
+            return $this->advance->documentsNeedReview(
+                $session,
+                'project_planning_blocked',
+                $planning->limitations === [] ? ['planning_blocked_by_understanding'] : $planning->limitations,
+            );
         }
         $session = $this->advance->documentsReady($session);
         if (($session->input_payload['generation_requested'] ?? false) !== true) {

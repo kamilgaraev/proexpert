@@ -10,6 +10,7 @@ use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 
 #[Group('postgres-contract')]
 final class Stage5PlanningPostgresContractTest extends TestCase
@@ -78,6 +79,55 @@ SQL, [$index]);
 
             $this->expectException(QueryException::class);
             DB::table('estimate_generation_technology_planning_runs')->insert($duplicate);
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function same_named_constraint_in_another_schema_does_not_hide_the_target_constraint(): void
+    {
+        $this->requireEnvironment();
+        DB::beginTransaction();
+        try {
+            DB::statement('CREATE SCHEMA IF NOT EXISTS stage5_collision');
+            DB::statement('CREATE TABLE IF NOT EXISTS stage5_collision.constraint_holder (value integer)');
+            DB::statement('ALTER TABLE stage5_collision.constraint_holder DROP CONSTRAINT IF EXISTS eg_tech_plan_scope_ck');
+            DB::statement('ALTER TABLE stage5_collision.constraint_holder ADD CONSTRAINT eg_tech_plan_scope_ck CHECK (value >= 0)');
+            DB::statement('ALTER TABLE estimate_generation_technology_planning_runs DROP CONSTRAINT IF EXISTS eg_tech_plan_scope_ck');
+
+            $file = glob(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/*_000700_create_technology_planning_projections.php');
+            self::assertCount(1, $file);
+            (require $file[0])->up();
+
+            self::assertNotNull(DB::selectOne(<<<'SQL'
+SELECT constraint_state.oid
+FROM pg_constraint AS constraint_state
+JOIN pg_class AS constraint_table ON constraint_table.oid = constraint_state.conrelid
+JOIN pg_namespace AS constraint_schema ON constraint_schema.oid = constraint_table.relnamespace
+WHERE constraint_schema.nspname = current_schema()
+  AND constraint_table.relname = 'estimate_generation_technology_planning_runs'
+  AND constraint_state.conname = 'eg_tech_plan_scope_ck'
+  AND constraint_state.contype = 'c'
+SQL));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function wrong_target_constraint_definition_fails_fast(): void
+    {
+        $this->requireEnvironment();
+        DB::beginTransaction();
+        try {
+            DB::statement('ALTER TABLE estimate_generation_technology_planning_runs DROP CONSTRAINT IF EXISTS eg_tech_plan_scope_ck');
+            DB::statement('ALTER TABLE estimate_generation_technology_planning_runs ADD CONSTRAINT eg_tech_plan_scope_ck CHECK (organization_id > 0)');
+            $file = glob(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/*_000700_create_technology_planning_projections.php');
+            self::assertCount(1, $file);
+
+            $this->expectException(RuntimeException::class);
+            (require $file[0])->up();
         } finally {
             DB::rollBack();
         }

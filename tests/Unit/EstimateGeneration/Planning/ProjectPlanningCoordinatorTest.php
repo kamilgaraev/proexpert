@@ -26,7 +26,7 @@ final class ProjectPlanningCoordinatorTest extends TestCase
         $facts = [
             $this->fact('fact:roof-material', 'material', null, 'unresolved', 'unresolved', []),
             $this->fact('fact:roof-type', 'roof_type', 'pitched'),
-            $this->fact('fact:roof-slope', 'roof_slope_degrees', '28'),
+            $this->fact('fact:roof-slope', 'roof_slope_degrees', '28', unit: 'degree'),
             $this->fact('fact:roof-geometry', 'roof_geometry', 'simple_gable'),
         ];
         $repository->saveSourceModel([], $facts, [$evidence]);
@@ -125,7 +125,7 @@ final class ProjectPlanningCoordinatorTest extends TestCase
         $repository->saveSourceModel([], [
             $this->fact('fact:roof-material', 'roof_covering_system', null, 'unresolved', 'unresolved', []),
             $this->fact('fact:roof-type', 'roof_type', 'pitched'),
-            $this->fact('fact:roof-slope', 'roof_slope_degrees', '28'),
+            $this->fact('fact:roof-slope', 'roof_slope_degrees', '28', unit: 'degree'),
         ], [new Evidence('evidence:1', 10, 20, 30, self::SOURCE_VERSION, 'artifact:roof', 'drawing', page: 1)]);
         $understanding = $this->readyUnderstanding($repository);
         $coordinator = $this->coordinator(
@@ -155,7 +155,7 @@ final class ProjectPlanningCoordinatorTest extends TestCase
         $repository->saveSourceModel([], [
             $this->fact('fact:roof-material', 'roof_covering_system', null, 'unresolved', 'unresolved', []),
             $this->fact('fact:roof-type', 'roof_type', 'pitched'),
-            $this->fact('fact:roof-slope', 'roof_slope_degrees', '28'),
+            $this->fact('fact:roof-slope', 'roof_slope_degrees', '28', unit: 'degree'),
         ], [new Evidence('evidence:1', 10, 20, 30, self::SOURCE_VERSION, 'artifact:roof', 'drawing', page: 1)]);
         $understanding = $this->readyUnderstanding($repository);
         $v1 = require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php';
@@ -236,6 +236,7 @@ final class ProjectPlanningCoordinatorTest extends TestCase
         string $status = 'confirmed',
         array $evidenceIds = ['evidence:1'],
         string $entityId = 'entity:roof',
+        ?string $unit = null,
     ): Fact {
         return new Fact(
             id: $id,
@@ -246,7 +247,7 @@ final class ProjectPlanningCoordinatorTest extends TestCase
             entityId: $entityId,
             type: $type,
             value: $value,
-            unit: null,
+            unit: $unit,
             confidence: $status === 'confirmed' ? 1.0 : 0.0,
             origin: $origin,
             status: $status,

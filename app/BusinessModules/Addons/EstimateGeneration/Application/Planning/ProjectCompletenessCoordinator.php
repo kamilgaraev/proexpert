@@ -53,7 +53,8 @@ final readonly class ProjectCompletenessCoordinator
         }
         $decisionIds = [];
         foreach ($capture['snapshot']->facts as $fact) {
-            if ($fact->type === 'completeness_exclusion' && is_array($fact->value)
+            if (($fact->type === 'completeness_exclusion' || str_starts_with($fact->type, 'completeness_exclusion.'))
+                && is_array($fact->value)
                 && is_string($fact->value['decision_id'] ?? null)) {
                 $decisionIds[] = $fact->value['decision_id'];
             }
@@ -69,6 +70,8 @@ final readonly class ProjectCompletenessCoordinator
             'input_fingerprint' => $planning->inputFingerprint,
             'catalog_version' => $planning->catalogVersion,
             'catalog_hash' => $planning->catalogHash,
+            'rule_catalog_version' => $this->rules->version,
+            'rule_catalog_hash' => $this->rules->contentHash,
         ]);
         $saved = $this->models->replaceCompleteness(
             $organizationId, $projectId, $sessionId, $planning->sourceVersion, $planning->inputFingerprint,

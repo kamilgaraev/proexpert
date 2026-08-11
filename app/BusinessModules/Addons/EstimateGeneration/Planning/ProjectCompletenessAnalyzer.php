@@ -51,7 +51,13 @@ final readonly class ProjectCompletenessAnalyzer
             }
         }
         $exclusions = [];
-        foreach ($factsByType['completeness_exclusion'] ?? [] as $fact) {
+        $exclusionFacts = [];
+        foreach ($factsByType as $type => $typedFacts) {
+            if ($type === 'completeness_exclusion' || str_starts_with($type, 'completeness_exclusion.')) {
+                $exclusionFacts = [...$exclusionFacts, ...$typedFacts];
+            }
+        }
+        foreach ($exclusionFacts as $fact) {
             if ($fact->origin === 'user_assumption' && is_array($fact->value)
                 && isset($fact->value['rule_id'], $fact->value['decision_id'], $fact->value['actor'], $fact->value['reason'])) {
                 $decision = $decisionsById[(string) $fact->value['decision_id']] ?? null;
@@ -202,9 +208,10 @@ final readonly class ProjectCompletenessAnalyzer
             'policy_id' => $policy['id'] ?? null,
             'policy_version' => $policy['version'] ?? null,
             'source_version' => $projection['source_version'] ?? null,
-            'input_fingerprint' => $projection['input_fingerprint'] ?? null,
             'catalog_version' => $projection['catalog_version'] ?? null,
             'catalog_hash' => $projection['catalog_hash'] ?? null,
+            'rule_catalog_version' => $projection['rule_catalog_version'] ?? null,
+            'rule_catalog_hash' => $projection['rule_catalog_hash'] ?? null,
         ];
         foreach ($expected as $key => $value) {
             if ($value === null || ($exclusion[$key] ?? null) !== $value) {

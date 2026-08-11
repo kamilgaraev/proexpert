@@ -57,6 +57,10 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             'input_fingerprint' => str_repeat('b', 64),
             'catalog_version' => '2026.08.11-v1',
             'catalog_hash' => str_repeat('c', 64),
+            'rule_catalog_version' => '2026.08.11-v1',
+            'rule_catalog_hash' => CompletenessRuleCatalog::fromArray(
+                require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php',
+            )->contentHash,
         ];
         $baseline = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
             $this->fact('foundation_type', 'slab'),
@@ -94,7 +98,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             'decision:exclude-base', 10, 20, 30, self::SOURCE_VERSION, 'fact', 'fact:base-preparation',
             $exclusion->id, 'user', '7', 'Основание выполнено ранее', 1,
         )], $staleProjection);
-        self::assertSame('proven_missing', $stale->finding('base_preparation')?->status);
+        self::assertSame('excluded', $stale->finding('base_preparation')?->status);
 
         $updatedRules = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
         $updatedRules['rules'][1]['version'] = '1.0.1';
@@ -217,7 +221,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         CompletenessRuleCatalog::fromArray($data);
     }
 
-    public function test_rule_hash_is_permutation_stable_but_tracks_conditions_and_dependency_order(): void
+    public function test_rule_hash_is_permutation_stable_for_dag_edges_and_tracks_meaningful_changes(): void
     {
         $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
         $base = CompletenessRuleCatalog::fromArray($data);
@@ -241,7 +245,69 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         $dependencyOrder['rules'][0]['work_package']['dependencies'] = array_reverse(
             $dependencyOrder['rules'][0]['work_package']['dependencies'],
         );
-        self::assertNotSame($orderedHash, CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash);
+        self::assertSame($orderedHash, CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash);
+    }
+
+    public function test_rule_catalog_rejects_incomplete_or_mistyped_runtime_contracts(): void
+    {
+        $base = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
+        $invalid = [];
+        foreach (['fact_type', 'operator', 'false_means_missing'] as $field) {
+            $candidate = $base;
+            unset($candidate['rules'][0]['satisfaction'][$field]);
+            $invalid[] = $candidate;
+        }
+        $unknownSatisfaction = $base;
+        $unknownSatisfaction['rules'][0]['satisfaction']['unexpected'] = true;
+        $invalid[] = $unknownSatisfaction;
+        $badTechnologyRequirement = $base;
+        $badTechnologyRequirement['rules'][4]['technology_requirement']['allow_recommended_applicable'] = 'yes';
+        $invalid[] = $badTechnologyRequirement;
+        $unknownTechnologyRequirement = $base;
+        $unknownTechnologyRequirement['rules'][4]['technology_requirement']['unexpected'] = true;
+        $invalid[] = $unknownTechnologyRequirement;
+        $badFactType = $base;
+        $badFactType['rules'][0]['conditions'][0]['fact_type'] = 123;
+        $invalid[] = $badFactType;
+        $unknownUnit = $base;
+        $unknownUnit['rules'][3]['conditions'][0]['unit'] = 'unknown';
+        $invalid[] = $unknownUnit;
+        $nullUnit = $base;
+        $nullUnit['rules'][3]['conditions'][0]['unit'] = null;
+        $invalid[] = $nullUnit;
+        $wrongOperandShape = $base;
+        $wrongOperandShape['rules'][3]['conditions'][0]['values'] = [3];
+        $invalid[] = $wrongOperandShape;
+        $wrongValuesType = $base;
+        $wrongValuesType['rules'][0]['conditions'][0]['value'] = ['yes'];
+        $invalid[] = $wrongValuesType;
+        $unknownPackageField = $base;
+        $unknownPackageField['rules'][0]['work_package']['regional_price_availability']['unexpected'] = true;
+        $invalid[] = $unknownPackageField;
+        $nonListRules = $base;
+        $nonListRules['rules'] = ['rule' => $nonListRules['rules'][0]];
+        $invalid[] = $nonListRules;
+        $badApplicability = $base;
+        $badApplicability['rules'][0]['applicability_fact_types'] = 'foundation_type';
+        $invalid[] = $badApplicability;
+        $badSeverity = $base;
+        $badSeverity['rules'][0]['severity'] = 3;
+        $invalid[] = $badSeverity;
+        $unpairedVariants = $base;
+        $unpairedVariants['rules'][0]['work_package']['variant_fact_type'] = 'foundation_type';
+        $invalid[] = $unpairedVariants;
+        $badCandidateReference = $base;
+        $badCandidateReference['rules'][0]['work_package']['norm_intents'][0]['candidate_refs'] = [123];
+        $invalid[] = $badCandidateReference;
+
+        foreach ($invalid as $data) {
+            try {
+                CompletenessRuleCatalog::fromArray($data);
+                self::fail('Incomplete or mistyped completeness catalog was accepted.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
     }
 
     public function test_typed_conditions_distinguish_flat_roof_low_height_null_zero_and_false(): void

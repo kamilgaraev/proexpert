@@ -5,20 +5,33 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Planning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningPipeline;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitrator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitratorFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\OrganizationPreferenceContext;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class TechnologyRecommendationServiceTest extends TestCase
@@ -142,6 +155,7 @@ final class TechnologyRecommendationServiceTest extends TestCase
             ['12', 'degree', 'pitched_roof.standing_seam', 1],
             ['14', 'degree', 'pitched_roof.standing_seam', 0],
             [null, null, null, 0],
+            ['14', null, null, 3],
             ['14', 'm', null, 3],
         ];
         foreach ($expected as [$slope, $unit, $recommended, $unavailable]) {
@@ -161,6 +175,83 @@ final class TechnologyRecommendationServiceTest extends TestCase
                 static fn ($option): bool => $option->applicabilityStatus === 'unavailable',
             )), (string) $slope.' '.$unit);
         }
+    }
+
+    public function test_recommendation_and_selection_use_only_the_target_roof_facts(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $target = $this->fact('fact:roof-1-material', 'roof_covering_system', null, 'unresolved', 'unresolved', entityId: 'entity:roof-1');
+        $facts = [
+            $target,
+            $this->fact('fact:roof-1-type', 'roof_type', 'pitched', entityId: 'entity:roof-1'),
+            $this->fact('fact:roof-1-slope', 'roof_slope_degrees', '5', unit: 'degree', entityId: 'entity:roof-1'),
+            $this->fact('fact:roof-1-base', 'solid_deck_type', 'boards', entityId: 'entity:roof-1'),
+            $this->fact('fact:roof-2-type', 'roof_type', 'pitched', entityId: 'entity:roof-2'),
+            $this->fact('fact:roof-2-slope', 'roof_slope_degrees', '20', unit: 'degree', entityId: 'entity:roof-2'),
+            $this->fact('fact:roof-2-base', 'solid_deck_type', 'osb', entityId: 'entity:roof-2'),
+        ];
+        $repository->saveSourceModel([
+            new Entity('entity:roof-1', 10, 20, 30, self::SOURCE_VERSION, 'material', 'roof:1', []),
+            new Entity('entity:roof-2', 10, 20, 30, self::SOURCE_VERSION, 'material', 'roof:2', []),
+        ], $facts, [new Evidence(
+            'evidence:1', 10, 20, 30, self::SOURCE_VERSION, 'document:1', 'document', page: 1,
+        )]);
+        $recommendationService = $this->service();
+        $recommendation = $recommendationService->recommend(
+            new ProjectModelSnapshot([], $facts, [], []),
+            $target,
+            new OrganizationPreferenceContext(10, []),
+        );
+
+        $options = [];
+        foreach ($recommendation->options as $option) {
+            $options[$option->system->id] = $option;
+        }
+        self::assertSame('pitched_roof.standing_seam', $recommendation->recommendedOption()?->system->id);
+        self::assertSame('unavailable', $options['pitched_roof.metal_tile']->applicabilityStatus);
+        self::assertSame('unavailable', $options['pitched_roof.flexible_shingle']->applicabilityStatus);
+        self::assertNotContains('fact:roof-2-slope', array_column(
+            $recommendation->recommendedOption()?->applicabilityEvidence ?? [],
+            'fact_id',
+        ));
+
+        $token = $repository->snapshotForPlanning(10, 20, 30, 10001)['token'];
+        self::assertTrue($repository->replaceTechnologyRecommendations(
+            10, 20, 30, self::SOURCE_VERSION, $token,
+            $recommendation->catalogVersion, $recommendation->catalogHash, [$recommendation], [],
+        ));
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturn(true);
+        $service = new TechnologyRecommendationDecisionService(
+            $repository,
+            new ApplyProjectModelDecision($repository),
+            $recommendationService,
+            $authorization,
+            new class implements PlanningReanalysisTrigger
+            {
+                public function trigger(int $sessionId, ActorContext $context): void {}
+            },
+            static fn (string $key): string => 'Доступ запрещён',
+        );
+        $actor = new User;
+        $actor->setAttribute('id', 7);
+        $actor->setAttribute('current_organization_id', 10);
+        $session = new EstimateGenerationSession;
+        $session->setAttribute('id', 30);
+        $session->setAttribute('organization_id', 10);
+        $session->setAttribute('project_id', 20);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $service->respond(
+            $actor,
+            $session,
+            new ActorContext(10, 20, 7, 'multi-roof-selection', self::SOURCE_VERSION),
+            1,
+            $recommendation->decisionKey,
+            'pitched_roof.metal_tile',
+            null,
+            'Проверка применимости к выбранной крыше',
+        );
     }
 
     public function test_decision_key_is_entity_specific_and_alias_stable(): void
@@ -280,7 +371,7 @@ final class TechnologyRecommendationServiceTest extends TestCase
         );
         self::assertSame($selected->id, $replayed?->id);
         self::assertCount(1, $repository->decisions);
-        self::assertSame(1, $trigger->count);
+        self::assertSame(2, $trigger->count);
     }
 
     public function test_catalog_fails_closed_on_duplicates_and_keeps_candidates_bounded(): void
@@ -396,6 +487,101 @@ final class TechnologyRecommendationServiceTest extends TestCase
         }
     }
 
+    public function test_retry_after_post_commit_reanalysis_failure_recovers_and_payload_mismatch_fails_fast(): void
+    {
+        [, $repository, $actor, $session, $context, $recommendation] = $this->selectionFixture('20', true);
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturn(true);
+        $trigger = new class($this->planningPipeline($repository)) implements PlanningReanalysisTrigger
+        {
+            public int $calls = 0;
+
+            public function __construct(private ProjectPlanningPipeline $pipeline) {}
+
+            public function trigger(int $sessionId, ActorContext $context): void
+            {
+                $this->calls++;
+                if ($this->calls === 1) {
+                    throw new RuntimeException('reanalysis failed after commit');
+                }
+                $this->pipeline->refresh(
+                    $context->organizationId,
+                    $context->projectId,
+                    $sessionId,
+                    $context->idempotencyKey,
+                    $this->calls,
+                );
+            }
+        };
+        $service = new TechnologyRecommendationDecisionService(
+            $repository,
+            new ApplyProjectModelDecision($repository),
+            $this->service(),
+            $authorization,
+            $trigger,
+            static fn (string $key): string => 'Доступ запрещён',
+        );
+
+        try {
+            $service->respond(
+                $actor,
+                $session,
+                $context,
+                1,
+                $recommendation->decisionKey,
+                'pitched_roof.standing_seam',
+                null,
+                'Выбран вариант после проверки',
+            );
+            self::fail('Injected reanalysis failure was not propagated.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('reanalysis failed after commit', $exception->getMessage());
+        }
+        self::assertCount(1, $repository->decisions);
+
+        $recovered = $service->respond(
+            $actor,
+            $session,
+            $context,
+            1,
+            $recommendation->decisionKey,
+            'pitched_roof.standing_seam',
+            null,
+            'Выбран вариант после проверки',
+        );
+
+        self::assertNotNull($recovered);
+        self::assertSame(2, $trigger->calls);
+        self::assertCount(1, $repository->decisions);
+        self::assertNotNull($repository->currentCompleteness(10, 20, 30));
+
+        $service->respond(
+            $actor,
+            $session,
+            $context,
+            1,
+            $recommendation->decisionKey,
+            'pitched_roof.standing_seam',
+            null,
+            'Выбран вариант после проверки',
+        );
+        self::assertSame(2, $trigger->calls);
+
+        foreach ([
+            [$recommendation->decisionKey, 'pitched_roof.metal_tile', null, 'Выбран вариант после проверки'],
+            ['roof_covering_system.changed', 'pitched_roof.standing_seam', null, 'Выбран вариант после проверки'],
+            [$recommendation->decisionKey, 'pitched_roof.standing_seam', null, 'Изменённая причина'],
+        ] as [$decisionKey, $response, $other, $reason]) {
+            try {
+                $service->respond($actor, $session, $context, 1, $decisionKey, $response, $other, $reason);
+                self::fail('Idempotency payload mismatch was accepted.');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        self::assertSame(2, $trigger->calls);
+    }
+
     public function test_catalog_hash_is_permutation_stable_and_sensitive_to_meaningful_changes(): void
     {
         $data = require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php';
@@ -441,6 +627,53 @@ final class TechnologyRecommendationServiceTest extends TestCase
         }
     }
 
+    public function test_catalog_requires_every_runtime_field_and_rejects_invalid_nested_types(): void
+    {
+        $base = require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php';
+        $invalid = [];
+        foreach ([
+            ['materials', 0, 'intent'],
+            ['works', 0, 'intent'],
+            ['machinery', 0, 'intent'],
+            ['norm_intents', 0, 'stable_intent'],
+            ['quantity_formulas', 0, 'result_unit'],
+        ] as [$collection, $index, $field]) {
+            $candidate = $base;
+            unset($candidate['systems'][0][$collection][$index][$field]);
+            $invalid[] = $candidate;
+        }
+        $badScoreValues = $base;
+        $badScoreValues['systems'][0]['score_rules'][0]['values'] = 'pitched';
+        $invalid[] = $badScoreValues;
+        $badAvailability = $base;
+        $badAvailability['systems'][0]['regional_price_availability']['available'] = 'false';
+        $invalid[] = $badAvailability;
+        $badRequiredFacts = $base;
+        $badRequiredFacts['recommendation_required_facts'][0] = 123;
+        $invalid[] = $badRequiredFacts;
+        $badApplicability = $base;
+        $badApplicability['systems'][0]['applicability'] = 'roof_type';
+        $invalid[] = $badApplicability;
+        $badSlopeApplicability = $base;
+        $badSlopeApplicability['systems'][0]['applicability'][1]['minimum_slope_degrees'] = 'unknown';
+        $invalid[] = $badSlopeApplicability;
+        $tooManyMaterials = $base;
+        $tooManyMaterials['systems'][0]['materials'] = array_map(
+            static fn (int $index): array => ['id' => 'material:'.$index, 'intent' => 'intent:'.$index],
+            range(1, 51),
+        );
+        $invalid[] = $tooManyMaterials;
+
+        foreach ($invalid as $data) {
+            try {
+                TechnologySystemCatalog::fromArray($data);
+                self::fail('Incomplete or mistyped technology catalog was accepted.');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
+
     private function service(): TechnologyRecommendationService
     {
         return new TechnologyRecommendationService(
@@ -459,7 +692,9 @@ final class TechnologyRecommendationServiceTest extends TestCase
             $this->fact('fact:roof-slope', 'roof_slope_degrees', $slope, unit: 'degree'),
             $this->fact('fact:roof-geometry', 'roof_geometry', 'simple_gable'),
         ];
-        $repository->saveSourceModel([], $facts, [new Evidence(
+        $repository->saveSourceModel([new Entity(
+            'entity:roof', 10, 20, 30, self::SOURCE_VERSION, 'material', 'roof:main', [],
+        )], $facts, [new Evidence(
             'evidence:1', 10, 20, 30, self::SOURCE_VERSION, 'document:1', 'document', page: 1,
         )]);
         $recommendationService = $this->service();
@@ -494,6 +729,45 @@ final class TechnologyRecommendationServiceTest extends TestCase
         ), $recommendation];
     }
 
+    private function planningPipeline(InMemoryProjectModelRepository $repository): ProjectPlanningPipeline
+    {
+        $translator = static fn (string $key, array $replace = []): string => strtr($key, $replace);
+        $technology = TechnologySystemCatalog::fromArray(
+            require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php',
+        );
+        $rules = CompletenessRuleCatalog::fromArray(
+            require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php',
+        );
+
+        return new ProjectPlanningPipeline(
+            new ProjectUnderstandingCoordinator(
+                $repository,
+                new TargetedConflictResolver($translator),
+                new TechnologyRetryNoopArbitratorFactory,
+                ProjectUnderstandingBudget::defaults(),
+            ),
+            new ProjectPlanningCoordinator(
+                $repository,
+                new TechnologyRecommendationService($technology, $translator),
+                $technology,
+                100,
+                10,
+            ),
+            new ProjectCompletenessCoordinator(
+                $repository,
+                new ProjectCompletenessAnalyzer(
+                    $rules,
+                    new TechnologyWorkPackageBuilder(static fn (string $key): string => 'Человекочитаемое название'),
+                    50,
+                    50,
+                    200,
+                ),
+                $rules,
+                100,
+            ),
+        );
+    }
+
     private function fact(
         string $id,
         string $type,
@@ -518,5 +792,23 @@ final class TechnologyRecommendationServiceTest extends TestCase
             status: $status,
             evidenceIds: $status === 'confirmed' ? ['evidence:1'] : [],
         );
+    }
+}
+
+final class TechnologyRetryNoopArbitratorFactory implements CrossDocumentFactArbitrator, CrossDocumentFactArbitratorFactory
+{
+    public function create(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $checkpointClaimToken,
+        int $logicalAttempt,
+    ): CrossDocumentFactArbitrator {
+        return $this;
+    }
+
+    public function arbitrate(string $operationIdentity, array $payload, array $scope): array
+    {
+        return ['status' => 'unresolved', 'selected_fact_id' => null, 'reason' => 'not_required'];
     }
 }

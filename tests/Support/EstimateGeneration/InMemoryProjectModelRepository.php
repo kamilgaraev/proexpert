@@ -58,6 +58,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public ?Closure $beforeTechnologyDecisionLock = null;
 
+    public ?Closure $beforeCompletenessDecisionLock = null;
+
     private array $projection = [];
 
     public function saveSourceModel(array $entities, array $facts, array $evidence, array $conflicts = []): void
@@ -167,6 +169,36 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         );
         if ($current === null || ($current['run_id'] ?? null) !== $planningRunId
             || ! hash_equals($inputFingerprint, $current['input_fingerprint'])
+            || ! hash_equals($inputFingerprint, $this->understandingSnapshotToken(
+                $decision->organizationId,
+                $decision->projectId,
+                $decision->sessionId,
+            ))) {
+            return false;
+        }
+        $this->applyDecision($decision, $selectedFact);
+
+        return true;
+    }
+
+    public function applyCompletenessExclusionDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $completenessRunId,
+    ): bool {
+        if ($this->beforeCompletenessDecisionLock !== null) {
+            $hook = $this->beforeCompletenessDecisionLock;
+            $this->beforeCompletenessDecisionLock = null;
+            $hook();
+        }
+        $current = $this->currentCompleteness(
+            $decision->organizationId,
+            $decision->projectId,
+            $decision->sessionId,
+        );
+        if ($current === null || ($current['run_id'] ?? null) !== $completenessRunId
+            || ! hash_equals($inputFingerprint, (string) ($current['input_fingerprint'] ?? ''))
             || ! hash_equals($inputFingerprint, $this->understandingSnapshotToken(
                 $decision->organizationId,
                 $decision->projectId,

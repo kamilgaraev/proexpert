@@ -40,7 +40,7 @@ final readonly class CompletenessFinding
         if (($this->exclusionPolicy['allowed'] ?? false) !== true) {
             throw new \InvalidArgumentException('Completeness finding cannot be excluded.');
         }
-        foreach (['source_version', 'input_fingerprint', 'catalog_version', 'catalog_hash'] as $key) {
+        foreach (['source_version', 'input_fingerprint', 'catalog_version', 'catalog_hash', 'rule_catalog_version', 'rule_catalog_hash'] as $key) {
             if (! is_string($projection[$key] ?? null) || $projection[$key] === '') {
                 throw new \InvalidArgumentException('Completeness exclusion projection is invalid.');
             }
@@ -55,9 +55,11 @@ final readonly class CompletenessFinding
             'policy_id' => $this->exclusionPolicy['id'],
             'policy_version' => $this->exclusionPolicy['version'],
             'source_version' => $projection['source_version'],
-            'input_fingerprint' => $projection['input_fingerprint'],
+            'accepted_input_fingerprint' => $projection['input_fingerprint'],
             'catalog_version' => $projection['catalog_version'],
             'catalog_hash' => $projection['catalog_hash'],
+            'rule_catalog_version' => $projection['rule_catalog_version'],
+            'rule_catalog_hash' => $projection['rule_catalog_hash'],
             'decision_id' => $decisionId,
             'actor' => $actor,
             'reason' => $reason,

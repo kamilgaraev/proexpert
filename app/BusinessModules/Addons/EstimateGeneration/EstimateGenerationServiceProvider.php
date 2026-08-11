@@ -528,6 +528,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationDecisionService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessExclusionDecisionService::class);
         $this->app->bind(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger::class,
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\SynchronousPlanningReanalysisTrigger::class,

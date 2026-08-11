@@ -138,6 +138,48 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         }, 3);
     }
 
+    public function applyCompletenessExclusionDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $completenessRunId,
+    ): bool {
+        ProjectModelInvariant::sameScope($decision, $selectedFact);
+        if ($decision->selectedFactId !== $selectedFact->id) {
+            throw new InvalidArgumentException('Completeness exclusion decision does not select the supplied fact.');
+        }
+
+        return $this->database->connection()->transaction(function () use (
+            $decision,
+            $selectedFact,
+            $inputFingerprint,
+            $completenessRunId,
+        ): bool {
+            $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
+            $run = $this->database->table('estimate_generation_completeness_runs')
+                ->where('id', $completenessRunId)
+                ->where('organization_id', $decision->organizationId)
+                ->where('project_id', $decision->projectId)
+                ->where('session_id', $decision->sessionId)
+                ->where('is_current', true)
+                ->lockForUpdate()
+                ->first(['id', 'input_fingerprint']);
+            $capture = $this->snapshotForPlanning(
+                $decision->organizationId,
+                $decision->projectId,
+                $decision->sessionId,
+                10001,
+            );
+            if ($run === null || ! hash_equals($inputFingerprint, (string) $run->input_fingerprint)
+                || ! hash_equals($inputFingerprint, $capture['token'])) {
+                return false;
+            }
+            $this->applyDecision($decision, $selectedFact);
+
+            return true;
+        }, 3);
+    }
+
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot
     {
         $facts = $this->currentFacts($organizationId, $projectId, $sessionId, limit: $factLimit);

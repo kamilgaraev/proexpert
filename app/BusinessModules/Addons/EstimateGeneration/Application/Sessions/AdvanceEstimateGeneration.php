@@ -40,6 +40,7 @@ final class AdvanceEstimateGeneration
             'processing_progress' => 5,
             'last_error' => null,
             'failure_code' => null,
+            'input_payload' => $this->withoutPlanningReview($session),
             ...$attributes,
         ]);
     }
@@ -61,6 +62,7 @@ final class AdvanceEstimateGeneration
             'processing_progress' => 35,
             'last_error' => null,
             'failure_code' => null,
+            'input_payload' => $this->withoutPlanningReview($session),
             ...$attributes,
         ]);
     }
@@ -163,13 +165,36 @@ final class AdvanceEstimateGeneration
         return $this->aiEstimateQuota->reserveSessionWithTransition($session, $transition(...));
     }
 
-    public function documentsNeedReview(EstimateGenerationSession $session, ?string $failureCode = null): EstimateGenerationSession
-    {
-        return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsNeedReview, [
+    public function documentsNeedReview(
+        EstimateGenerationSession $session,
+        ?string $failureCode = null,
+        array $planningLimitations = [],
+    ): EstimateGenerationSession {
+        $attributes = [
             'processing_stage' => 'input_review_required',
             'processing_progress' => 35,
             'last_error' => null,
             'failure_code' => $failureCode,
+        ];
+        if ($planningLimitations !== []) {
+            $limitations = array_values(array_unique(array_filter(
+                $planningLimitations,
+                static fn (mixed $limitation): bool => is_string($limitation) && trim($limitation) !== '',
+            )));
+            if ($limitations === [] || count($limitations) > 20) {
+                throw new \InvalidArgumentException('Planning review limitations are invalid.');
+            }
+            $attributes['input_payload'] = [
+                ...($session->input_payload ?? []),
+                'planning_review' => [
+                    'status' => 'blocked',
+                    'limitations' => $limitations,
+                ],
+            ];
+        }
+
+        return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsNeedReview, [
+            ...$attributes,
         ]);
     }
 
@@ -241,6 +266,8 @@ final class AdvanceEstimateGeneration
 
     public function documentsChanged(EstimateGenerationSession $session): EstimateGenerationSession
     {
+        $resumeRequestedGeneration = $this->hasBlockedPlanningReview($session)
+            && ($session->input_payload['generation_requested'] ?? false) === true;
         if ($session->status === EstimateGenerationStatus::Failed
             && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments) {
             return $this->workflow->transition($session, EstimateGenerationEvent::Retried, [
@@ -248,6 +275,7 @@ final class AdvanceEstimateGeneration
                 'processing_progress' => 5,
                 'last_error' => null,
                 'failure_code' => null,
+                'input_payload' => $this->withoutPlanningReview($session),
             ]);
         }
         if ($session->status === EstimateGenerationStatus::Draft
@@ -261,10 +289,27 @@ final class AdvanceEstimateGeneration
             'last_error' => null,
             'failure_code' => null,
             'input_payload' => [
-                ...($session->input_payload ?? []),
+                ...$this->withoutPlanningReview($session),
                 'generation_attempt_id' => null,
-                'generation_requested' => false,
+                'generation_requested' => $resumeRequestedGeneration,
             ],
         ]);
+    }
+
+    private function hasBlockedPlanningReview(EstimateGenerationSession $session): bool
+    {
+        $review = is_array($session->input_payload['planning_review'] ?? null)
+            ? $session->input_payload['planning_review']
+            : [];
+
+        return ($review['status'] ?? null) === 'blocked';
+    }
+
+    private function withoutPlanningReview(EstimateGenerationSession $session): array
+    {
+        $payload = is_array($session->input_payload) ? $session->input_payload : [];
+        unset($payload['planning_review']);
+
+        return $payload;
     }
 }
