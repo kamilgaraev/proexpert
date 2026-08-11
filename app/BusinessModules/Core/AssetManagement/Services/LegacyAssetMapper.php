@@ -11,6 +11,7 @@ use App\BusinessModules\Core\AssetManagement\Enums\AssetOperationalMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -24,6 +25,8 @@ final readonly class LegacyAssetMapper
         'machinery_fuel_issues',
         'machinery_production_records',
         'machinery_maintenance_orders',
+        'machinery_defects',
+        'maintenance_inspections',
     ];
 
     public function __construct(private OrganizationAssetService $assets) {}
@@ -36,6 +39,10 @@ final readonly class LegacyAssetMapper
      *     created: int,
      *     links_updated: int,
      *     already_linked: int,
+     *     would_normalize_assignment_periods: int,
+     *     assignment_periods_normalized: int,
+     *     would_reconcile_placements: int,
+     *     placements_reconciled: int,
      *     conflicts: int,
      *     conflict_records: list<array{source: string, reason: string}>
      * }
@@ -49,6 +56,10 @@ final readonly class LegacyAssetMapper
             'created' => 0,
             'links_updated' => 0,
             'already_linked' => 0,
+            'would_normalize_assignment_periods' => 0,
+            'assignment_periods_normalized' => 0,
+            'would_reconcile_placements' => 0,
+            'placements_reconciled' => 0,
             'conflicts' => 0,
             'conflict_records' => [],
         ];
@@ -191,6 +202,10 @@ final readonly class LegacyAssetMapper
         if ($this->hasMachineryShadowLinkConflict($legacy, $canonical)) {
             $this->addConflict($report, $source, 'shadow_link_mismatch');
 
+            return;
+        }
+
+        if (! $this->prepareActiveAssignments($legacy, $canonical, $dryRun, $report)) {
             return;
         }
 
@@ -460,6 +475,146 @@ final readonly class LegacyAssetMapper
         return $canonical === null
             ? $query->exists()
             : $query->where('organization_asset_id', '<>', $canonical->id)->exists();
+    }
+
+    /**
+     * @param  array<string, mixed>  $report
+     */
+    private function prepareActiveAssignments(
+        object $legacy,
+        ?OrganizationAsset $canonical,
+        bool $dryRun,
+        array &$report,
+    ): bool {
+        $assignments = DB::table('machinery_assignments')
+            ->where('asset_id', $legacy->id)
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->orderBy('planned_start_at')
+            ->orderBy('id')
+            ->get();
+        $normalizations = [];
+
+        foreach ($assignments->zip($assignments->skip(1)) as $pair) {
+            [$earlier, $later] = $pair;
+            if ($later === null) {
+                continue;
+            }
+
+            $earlierStart = Carbon::parse($earlier->planned_start_at);
+            $laterStart = Carbon::parse($later->planned_start_at);
+            $earlierEnd = $earlier->planned_end_at !== null ? Carbon::parse($earlier->planned_end_at) : null;
+            if ($earlierEnd !== null && $earlierEnd->lessThanOrEqualTo($laterStart)) {
+                continue;
+            }
+            if ($earlierStart->equalTo($laterStart)) {
+                $this->addConflict(
+                    $report,
+                    $this->sourceKey('machinery_assets', (int) $legacy->id),
+                    'ambiguous_active_assignments',
+                );
+
+                return false;
+            }
+
+            $normalizations[] = ['id' => (int) $earlier->id, 'planned_end_at' => $laterStart];
+        }
+
+        $observedAt = now();
+        $effective = $assignments
+            ->filter(static function (object $assignment) use ($observedAt): bool {
+                $start = Carbon::parse($assignment->planned_start_at);
+                $end = $assignment->planned_end_at !== null ? Carbon::parse($assignment->planned_end_at) : null;
+
+                return $start->lessThanOrEqualTo($observedAt) && ($end === null || $end->isAfter($observedAt));
+            })
+            ->sortByDesc('planned_start_at')
+            ->first();
+        if ($effective === null) {
+            $this->applyAssignmentPeriodNormalizations($normalizations, $dryRun, $report);
+
+            return true;
+        }
+
+        $organizationId = (int) $legacy->organization_id;
+        $projectId = (int) $effective->project_id;
+        if (
+            (int) $effective->organization_id !== $organizationId
+            || ! DB::table('projects')->where('id', $projectId)->where('organization_id', $organizationId)->exists()
+        ) {
+            $this->addConflict(
+                $report,
+                $this->sourceKey('machinery_assets', (int) $legacy->id),
+                'assignment_scope_mismatch',
+            );
+
+            return false;
+        }
+
+        $legacyNeedsUpdate = (int) ($legacy->current_project_id ?? 0) !== $projectId;
+        $canonicalNeedsUpdate = $canonical !== null && (int) ($canonical->current_project_id ?? 0) !== $projectId;
+        $this->applyAssignmentPeriodNormalizations($normalizations, $dryRun, $report);
+        if (! $legacyNeedsUpdate && ! $canonicalNeedsUpdate) {
+            return true;
+        }
+        if ($dryRun) {
+            $report['would_reconcile_placements']++;
+
+            return true;
+        }
+
+        if ($legacyNeedsUpdate) {
+            DB::table('machinery_assets')->where('id', $legacy->id)->update(['current_project_id' => $projectId]);
+            $legacy->current_project_id = $projectId;
+        }
+        if ($canonicalNeedsUpdate) {
+            $fromWarehouseId = $canonical->current_warehouse_id;
+            $fromProjectId = $canonical->current_project_id;
+            $fromUserId = $canonical->responsible_user_id;
+            $canonical->update([
+                'current_warehouse_id' => null,
+                'current_project_id' => $projectId,
+                'responsible_user_id' => null,
+            ]);
+            DB::table('asset_custody_events')->insert([
+                'organization_id' => $organizationId,
+                'organization_asset_id' => $canonical->id,
+                'actor_user_id' => null,
+                'event_type' => 'cutover_reconciled',
+                'from_warehouse_id' => $fromWarehouseId,
+                'from_project_id' => $fromProjectId,
+                'from_user_id' => $fromUserId,
+                'to_warehouse_id' => null,
+                'to_project_id' => $projectId,
+                'to_user_id' => null,
+                'metadata' => json_encode(['assignment_id' => (int) $effective->id], JSON_THROW_ON_ERROR),
+                'occurred_at' => now(),
+                'created_at' => now(),
+            ]);
+        }
+        $report['placements_reconciled']++;
+
+        return true;
+    }
+
+    /**
+     * @param  list<array{id: int, planned_end_at: Carbon}>  $normalizations
+     * @param  array<string, mixed>  $report
+     */
+    private function applyAssignmentPeriodNormalizations(array $normalizations, bool $dryRun, array &$report): void
+    {
+        if ($dryRun) {
+            $report['would_normalize_assignment_periods'] += count($normalizations);
+
+            return;
+        }
+
+        foreach ($normalizations as $normalization) {
+            DB::table('machinery_assignments')
+                ->where('id', $normalization['id'])
+                ->update(['planned_end_at' => $normalization['planned_end_at']]);
+            $report['assignment_periods_normalized']++;
+        }
     }
 
     private function machineryLifecycleStatus(object $legacy): AssetLifecycleStatus

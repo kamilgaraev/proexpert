@@ -13,6 +13,9 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryDefect;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
+use App\BusinessModules\Features\MachineryOperations\Models\MaintenanceInspection;
 use App\Models\Material;
 use App\Models\Project;
 use Illuminate\Database\QueryException;
@@ -95,6 +98,68 @@ final class BackfillOrganizationAssetsTest extends TestCase
         self::assertSame(0, OrganizationAsset::query()->count());
         self::assertNull($first->fresh()->organization_asset_id);
         self::assertNull($second->fresh()->organization_asset_id);
+    }
+
+    public function test_same_project_legacy_overlap_is_normalized_at_the_newer_assignment_boundary(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId]);
+        $legacy = $this->createMachineryAsset($organizationId, 'BF-OVERLAP', 'INV-BF-OVERLAP');
+        $boundary = now()->subHour()->startOfSecond();
+        $assignments = collect([now()->subHours(2)->startOfSecond(), $boundary])
+            ->map(fn ($plannedStartAt) => MachineryAssignment::query()->create([
+                'organization_id' => $organizationId,
+                'asset_id' => $legacy->id,
+                'project_id' => $project->id,
+                'requested_by_user_id' => $context->user->id,
+                'status' => 'active',
+                'planned_start_at' => $plannedStartAt,
+            ]));
+
+        self::assertSame(0, Artisan::call('assets:backfill', ['--dry-run' => true, '--format' => 'json']));
+        $dryRun = $this->jsonOutput();
+        self::assertSame(1, $dryRun['would_normalize_assignment_periods']);
+        self::assertSame(1, $dryRun['would_reconcile_placements']);
+        self::assertNull($assignments[0]->fresh()->planned_end_at);
+        self::assertNull($legacy->fresh()->organization_asset_id);
+
+        $exitCode = Artisan::call('assets:backfill', ['--format' => 'json']);
+        $report = $this->jsonOutput();
+
+        self::assertSame(0, $exitCode);
+        self::assertSame(1, $report['assignment_periods_normalized']);
+        self::assertSame($boundary->toDateTimeString(), $assignments[0]->fresh()->planned_end_at?->toDateTimeString());
+        self::assertSame($project->id, $legacy->fresh()->current_project_id);
+        self::assertSame($project->id, OrganizationAsset::query()->sole()->current_project_id);
+        self::assertSame(0, MachineryAssignment::query()->whereNull('organization_asset_id')->count());
+        self::assertSame(0, Artisan::call('assets:verify-cutover', ['--format' => 'json']));
+    }
+
+    public function test_equal_start_overlap_remains_a_hard_conflict_without_partial_backfill(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId]);
+        $legacy = $this->createMachineryAsset($organizationId, 'BF-AMBIGUOUS', 'INV-BF-AMBIGUOUS');
+        $start = now()->subHour()->startOfSecond();
+        foreach (range(1, 2) as $_) {
+            MachineryAssignment::query()->create([
+                'organization_id' => $organizationId,
+                'asset_id' => $legacy->id,
+                'project_id' => $project->id,
+                'requested_by_user_id' => $context->user->id,
+                'status' => 'active',
+                'planned_start_at' => $start,
+            ]);
+        }
+
+        self::assertSame(1, Artisan::call('assets:backfill', ['--format' => 'json']));
+        $report = $this->jsonOutput();
+
+        self::assertSame('ambiguous_active_assignments', $report['conflict_records'][0]['reason']);
+        self::assertSame(0, OrganizationAsset::query()->count());
+        self::assertNull($legacy->fresh()->organization_asset_id);
     }
 
     public function test_all_ownership_types_and_legacy_states_are_preserved_without_name_matching(): void
@@ -223,6 +288,52 @@ final class BackfillOrganizationAssetsTest extends TestCase
         } catch (QueryException) {
             self::assertSame('1.000', $movement->fresh()->quantity);
         }
+    }
+
+    public function test_apply_propagates_canonical_id_to_defects_and_maintenance_inspections(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId]);
+        $legacy = $this->createMachineryAsset($organizationId, 'BF-LATE-OPS', 'INV-BF-LATE-OPS');
+        self::assertSame(0, Artisan::call('assets:backfill', ['--format' => 'json']));
+        $canonicalId = (int) $legacy->fresh()->organization_asset_id;
+
+        $defect = MachineryDefect::query()->create([
+            'organization_id' => $organizationId,
+            'asset_id' => $legacy->id,
+            'project_id' => $project->id,
+            'defect_code' => 'other',
+            'severity' => 'minor',
+            'status' => 'open',
+            'description' => 'Исторический дефект',
+            'reported_at' => now(),
+        ]);
+        $order = MachineryMaintenanceOrder::query()->create([
+            'organization_id' => $organizationId,
+            'asset_id' => $legacy->id,
+            'project_id' => $project->id,
+            'requested_by_user_id' => $context->user->id,
+            'order_number' => 'BF-LATE-ORDER',
+            'title' => 'Историческое обслуживание',
+            'maintenance_type' => 'repair',
+            'priority' => 'normal',
+            'status' => 'completed',
+        ]);
+        $inspection = MaintenanceInspection::query()->create([
+            'organization_id' => $organizationId,
+            'maintenance_order_id' => $order->id,
+            'asset_id' => $legacy->id,
+            'inspected_by_user_id' => $context->user->id,
+            'result' => 'passed',
+            'inspected_at' => now(),
+        ]);
+
+        self::assertSame(0, Artisan::call('assets:backfill', ['--format' => 'json']));
+
+        self::assertSame($canonicalId, $defect->fresh()->organization_asset_id);
+        self::assertSame($canonicalId, $order->fresh()->organization_asset_id);
+        self::assertSame($canonicalId, $inspection->fresh()->organization_asset_id);
     }
 
     /**

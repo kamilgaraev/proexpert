@@ -33,7 +33,7 @@ final class BackfillOrganizationAssets extends Command
         }
 
         $this->table(
-            ['dry_run', 'scanned', 'would_create', 'created', 'links_updated', 'already_linked', 'conflicts'],
+            ['dry_run', 'scanned', 'would_create', 'created', 'links_updated', 'already_linked', 'periods_normalized', 'placements_reconciled', 'conflicts'],
             [[
                 $report['dry_run'] ? 'yes' : 'no',
                 $report['scanned'],
@@ -41,6 +41,8 @@ final class BackfillOrganizationAssets extends Command
                 $report['created'],
                 $report['links_updated'],
                 $report['already_linked'],
+                $report['assignment_periods_normalized'],
+                $report['placements_reconciled'],
                 $report['conflicts'],
             ]],
         );
