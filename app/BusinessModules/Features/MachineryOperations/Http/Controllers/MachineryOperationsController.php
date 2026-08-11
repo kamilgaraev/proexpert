@@ -8,6 +8,7 @@ use App\BusinessModules\Features\MachineryOperations\DTO\AssetRequestData;
 use App\BusinessModules\Features\MachineryOperations\DTO\AssignmentData;
 use App\BusinessModules\Features\MachineryOperations\Http\Requests\AssignAssetRequest;
 use App\BusinessModules\Features\MachineryOperations\Http\Requests\CreateAssetRequest;
+use App\BusinessModules\Features\MachineryOperations\Http\Resources\AssetRequestResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryAssetResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryOperationRecordResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryShiftReportResource;
@@ -52,6 +53,36 @@ final class MachineryOperationsController extends Controller
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         }
+    }
+
+    public function requests(Request $request): JsonResponse
+    {
+        return $this->paginated($this->dispatch->paginateRequests(
+            (int) $request->attributes->get('current_organization_id'),
+            (int) $request->input('per_page', 20),
+            $request->only(['status', 'project_id']),
+        ), AssetRequestResource::class);
+    }
+
+    public function overview(Request $request): JsonResponse
+    {
+        return AdminResponse::success($this->dispatch->overview(
+            (int) $request->attributes->get('current_organization_id'),
+        ));
+    }
+
+    public function assetWorkspace(Request $request, int $id): JsonResponse
+    {
+        $workspace = $this->service->assetWorkspace(
+            (int) $request->attributes->get('current_organization_id'),
+            $id,
+        );
+        if ($workspace === null) {
+            return AdminResponse::error(trans_message('machinery_operations.errors.asset_not_found'), 404);
+        }
+        $workspace['asset'] = new MachineryAssetResource($workspace['asset']);
+
+        return AdminResponse::success($workspace);
     }
 
     public function requestCandidates(Request $request, int $id): JsonResponse

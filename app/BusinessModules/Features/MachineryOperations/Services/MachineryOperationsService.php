@@ -119,6 +119,29 @@ final class MachineryOperationsService
         return $this->assets->find($organizationId, $id);
     }
 
+    /** @return array<string, mixed>|null */
+    public function assetWorkspace(int $organizationId, int $id): ?array
+    {
+        $asset = $this->findAsset($organizationId, $id);
+        if ($asset === null) {
+            return null;
+        }
+
+        return [
+            'asset' => $asset,
+            'assignments' => MachineryAssignment::forOrganization($organizationId)->where('asset_id', $id)->with('project:id,name')->latest()->limit(50)->get(),
+            'shifts' => MachineryShiftReport::forOrganization($organizationId)->where('asset_id', $id)->with('project:id,name')->latest('report_date')->limit(50)->get(),
+            'fuel_issues' => MachineryFuelIssue::forOrganization($organizationId)->where('asset_id', $id)->latest('issued_at')->limit(50)->get(),
+            'maintenance_orders' => MachineryMaintenanceOrder::forOrganization($organizationId)->where('asset_id', $id)->latest()->limit(50)->get(),
+            'custody_history' => $asset->organizationAsset?->custodyEvents()->latest('occurred_at')->limit(100)->get() ?? [],
+            'documents' => [],
+            'costs' => [
+                'fuel' => (float) MachineryFuelIssue::forOrganization($organizationId)->where('asset_id', $id)->sum('cost'),
+                'maintenance' => (float) MachineryMaintenanceOrder::forOrganization($organizationId)->where('asset_id', $id)->sum('cost'),
+            ],
+        ];
+    }
+
     public function assignAsset(MachineryAsset $asset, int $userId, array $data): MachineryAssignment
     {
         return DB::transaction(function () use ($asset, $userId, $data): MachineryAssignment {

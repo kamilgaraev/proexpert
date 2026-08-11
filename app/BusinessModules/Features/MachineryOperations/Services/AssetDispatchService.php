@@ -17,6 +17,7 @@ use App\Models\Project;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use DomainException;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -53,6 +54,29 @@ final readonly class AssetDispatchService
 
             return $request->load('events');
         });
+    }
+
+    public function paginateRequests(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
+    {
+        return AssetRequest::forOrganization($organizationId)
+            ->with(['project:id,name', 'organizationAsset:id,name,inventory_number,technical_status'])
+            ->withCount('events')
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', $filters['status']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->orderByRaw("CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END")
+            ->orderBy('planned_start_at')
+            ->paginate(min(max($perPage, 1), 100));
+    }
+
+    /** @return array<string, int> */
+    public function overview(int $organizationId): array
+    {
+        return [
+            'open_downtimes' => DB::table('machinery_downtimes')->where('organization_id', $organizationId)->whereNull('ended_at')->count(),
+            'pending_requests' => DB::table('asset_requests')->where('organization_id', $organizationId)->whereIn('status', ['pending', 'approved'])->whereNull('deleted_at')->count(),
+            'shift_variances' => DB::table('machinery_shift_reports')->where('organization_id', $organizationId)->where('status', 'submitted')->whereColumn('actual_hours', '<>', 'planned_hours')->whereNull('deleted_at')->count(),
+            'overdue_maintenance' => DB::table('machinery_maintenance_orders')->where('organization_id', $organizationId)->whereIn('status', ['open', 'in_progress'])->where('planned_at', '<', now())->whereNull('deleted_at')->count(),
+        ];
     }
 
     public function assign(int $organizationId, int $actorId, AssignmentData $data): MachineryAssignment
