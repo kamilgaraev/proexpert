@@ -115,7 +115,7 @@ final readonly class AssetDispatchService
                 $reasons = $canonical === null ? ['canonical_link_missing'] : $this->exclusionReasons($canonical, $request);
                 $distance = $canonical === null ? null : $this->distanceKm($request->project, $canonical->currentProject);
                 $sameProject = $canonical?->current_project_id === $request->project_id;
-                $cost = (float) $legacy->operating_cost_per_hour;
+                $cost = (float) ($canonical?->operationProfile?->operating_cost_per_hour ?? $legacy->operating_cost_per_hour);
                 $score = ($sameProject ? 100000.0 : 0.0) - (($distance ?? 1000.0) * 100.0) - $cost;
 
                 return [

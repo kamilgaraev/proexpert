@@ -30,5 +30,9 @@ final readonly class CreateOrganizationAssetData
         public bool $tracksProduction = false,
         public bool $maintenanceEnabled = false,
         public ?string $meterUnit = null,
+        public float $operatingCostPerHour = 0,
+        public ?string $fuelType = null,
+        public ?float $fuelConsumptionRate = null,
+        public float $meterValue = 0,
     ) {}
 }
