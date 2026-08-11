@@ -21,6 +21,7 @@
     "machinery-operations.delete",
     "machinery-operations.requests.create",
     "machinery-operations.requests.approve",
+    "machinery-operations.direct_assign",
     "machinery-operations.shifts.create",
     "machinery-operations.shifts.approve",
     "machinery-operations.downtime.manage",

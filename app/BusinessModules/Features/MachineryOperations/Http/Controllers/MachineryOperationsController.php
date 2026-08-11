@@ -4,9 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\MachineryOperations\Http\Controllers;
 
+use App\BusinessModules\Features\MachineryOperations\DTO\AssetRequestData;
+use App\BusinessModules\Features\MachineryOperations\DTO\AssignmentData;
+use App\BusinessModules\Features\MachineryOperations\Http\Requests\AssignAssetRequest;
+use App\BusinessModules\Features\MachineryOperations\Http\Requests\CreateAssetRequest;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryAssetResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryOperationRecordResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryShiftReportResource;
+use App\BusinessModules\Features\MachineryOperations\Models\AssetRequest;
+use App\BusinessModules\Features\MachineryOperations\Services\AssetDispatchService;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -22,7 +28,58 @@ final class MachineryOperationsController extends Controller
 {
     public function __construct(
         private readonly MachineryOperationsService $service,
-    ) {
+        private readonly AssetDispatchService $dispatch,
+    ) {}
+
+    public function storeRequest(CreateAssetRequest $request): JsonResponse
+    {
+        try {
+            $data = $request->validated();
+
+            return AdminResponse::success($this->dispatch->request(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()->id,
+                new AssetRequestData(
+                    projectId: (int) $data['project_id'],
+                    plannedStartAt: (string) $data['planned_start_at'],
+                    plannedEndAt: $data['planned_end_at'] ?? null,
+                    purpose: (string) $data['purpose'],
+                    priority: (string) ($data['priority'] ?? 'normal'),
+                    scheduleTaskId: isset($data['schedule_task_id']) ? (int) $data['schedule_task_id'] : null,
+                    requiredProfile: $data['required_profile'] ?? [],
+                ),
+            ), null, 201);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        }
+    }
+
+    public function requestCandidates(Request $request, int $id): JsonResponse
+    {
+        $assetRequest = AssetRequest::forOrganization((int) $request->attributes->get('current_organization_id'))->find($id);
+        if ($assetRequest === null) {
+            return AdminResponse::error(trans_message('machinery_operations.errors.asset_request_not_found'), 404);
+        }
+
+        $candidates = $this->dispatch->candidates($assetRequest)->map(fn (array $candidate): array => [
+            'asset' => new MachineryAssetResource($candidate['asset']),
+            'eligible' => $candidate['eligible'],
+            'exclusion_reasons' => $candidate['exclusion_reasons'],
+            'score' => $candidate['score'],
+            'distance_km' => $candidate['distance_km'],
+        ]);
+
+        return AdminResponse::success($candidates);
+    }
+
+    public function assignRequestedAsset(AssignAssetRequest $request): JsonResponse
+    {
+        return $this->dispatchAssignment($request, false);
+    }
+
+    public function directAssignAsset(AssignAssetRequest $request): JsonResponse
+    {
+        return $this->dispatchAssignment($request, true);
     }
 
     public function assets(Request $request): JsonResponse
@@ -312,6 +369,40 @@ final class MachineryOperationsController extends Controller
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'asset.action');
+        }
+    }
+
+    private function dispatchAssignment(AssignAssetRequest $request, bool $direct): JsonResponse
+    {
+        try {
+            $data = $request->validated();
+            $assignment = new AssignmentData(
+                organizationAssetId: (int) $data['organization_asset_id'],
+                projectId: (int) $data['project_id'],
+                plannedStartAt: (string) $data['planned_start_at'],
+                plannedEndAt: $data['planned_end_at'] ?? null,
+                assetRequestId: isset($data['asset_request_id']) ? (int) $data['asset_request_id'] : null,
+                scheduleTaskId: isset($data['schedule_task_id']) ? (int) $data['schedule_task_id'] : null,
+                plannedHours: isset($data['planned_hours']) ? (float) $data['planned_hours'] : null,
+                comment: $data['comment'] ?? null,
+                replacesAssignmentId: isset($data['replaces_assignment_id']) ? (int) $data['replaces_assignment_id'] : null,
+            );
+            $result = $direct
+                ? $this->dispatch->directAssign(
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $request->user()->id,
+                    $assignment,
+                    (string) ($data['reason'] ?? ''),
+                )
+                : $this->dispatch->assign(
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $request->user()->id,
+                    $assignment,
+                );
+
+            return AdminResponse::success(new MachineryOperationRecordResource($result));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
         }
     }
 
