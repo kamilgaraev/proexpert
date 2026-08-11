@@ -23,6 +23,27 @@ return [
         'completed' => 'Завершена',
         'cancelled' => 'Отменена',
     ],
+    'downtime_reasons' => [
+        'waiting_material' => 'Ожидание материалов',
+        'weather' => 'Погодные условия',
+        'breakdown' => 'Поломка',
+        'organizational' => 'Организационная причина',
+        'other' => 'Другое',
+    ],
+    'fuel_types' => [
+        'diesel' => 'Дизельное топливо',
+        'gasoline' => 'Бензин',
+        'electricity' => 'Электроэнергия',
+        'gas' => 'Газ',
+        'other' => 'Другое',
+    ],
+    'fuel_units' => [
+        'l' => 'л',
+        'kg' => 'кг',
+        'kwh' => 'кВт·ч',
+        'm3' => 'м³',
+        'other' => 'другая',
+    ],
     'actions' => [
         'assign' => 'Назначить',
         'start_operation' => 'Начать работу',
@@ -46,6 +67,7 @@ return [
         'fuel_created' => 'Выдача ГСМ зафиксирована.',
         'production_created' => 'Выработка техники зафиксирована.',
         'maintenance_created' => 'Заявка на обслуживание создана.',
+        'defect_created' => 'Дефект техники зарегистрирован.',
     ],
     'errors' => [
         'organization_missing' => 'Организация не определена.',
@@ -86,6 +108,8 @@ return [
         'shift_approve_invalid_status' => 'Утвердить можно только отправленный сменный рапорт.',
         'shift_reject_invalid_status' => 'Вернуть можно только отправленный сменный рапорт.',
         'maintenance_complete_invalid_status' => 'Завершить можно только открытую заявку на обслуживание.',
+        'inspection_result_invalid' => 'Укажите корректный результат контрольного осмотра.',
+        'defect_severity_invalid' => 'Укажите корректную критичность дефекта.',
         'validation_failed' => 'Проверьте данные операции по технике.',
     ],
     'validation' => [

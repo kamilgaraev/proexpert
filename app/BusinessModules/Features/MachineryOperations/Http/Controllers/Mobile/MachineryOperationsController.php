@@ -375,7 +375,11 @@ final class MachineryOperationsController extends Controller
     public function completeMaintenanceOrder(Request $request, int $id): JsonResponse
     {
         try {
-            $validated = $this->validated($request, ['completion_comment' => ['nullable', 'string', 'max:2000']]);
+            $validated = $this->validated($request, [
+                'completion_comment' => ['nullable', 'string', 'max:2000'],
+                'inspection_result' => ['nullable', 'in:serviceable,restricted,unavailable'],
+                'inspection_evidence' => ['nullable', 'array'],
+            ]);
             $order = $this->service->findMaintenanceOrder((int) $request->attributes->get('current_organization_id'), $id);
             if ($order === null) {
                 return MobileResponse::error(trans_message('machinery_operations.errors.maintenance_not_found'), 404);
@@ -392,6 +396,8 @@ final class MachineryOperationsController extends Controller
                     $order,
                     (int) $request->user()?->id,
                     $validated['completion_comment'] ?? null,
+                    (string) ($validated['inspection_result'] ?? 'serviceable'),
+                    $validated['inspection_evidence'] ?? [],
                 ),
             );
 

@@ -102,6 +102,14 @@ Route::prefix('api/v1/admin/machinery-operations')
             ->middleware('authorize:machinery-operations.downtime.manage')
             ->name('maintenance_orders.complete');
 
+        Route::post('/defects', [MachineryOperationsController::class, 'storeDefect'])
+            ->middleware('authorize:machinery-operations.downtime.manage')
+            ->name('defects.store');
+
+        Route::get('/reports/costs', [MachineryOperationsController::class, 'costReport'])
+            ->middleware('authorize:machinery-operations.view')
+            ->name('reports.costs');
+
         Route::get('/reports', [MachineryOperationsController::class, 'reports'])
             ->middleware('authorize:machinery-operations.view')
             ->name('reports.index');

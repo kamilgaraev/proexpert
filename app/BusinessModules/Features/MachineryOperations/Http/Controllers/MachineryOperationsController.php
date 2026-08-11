@@ -359,7 +359,11 @@ final class MachineryOperationsController extends Controller
     public function completeMaintenanceOrder(Request $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate(['completion_comment' => ['nullable', 'string', 'max:2000']]);
+            $validated = $request->validate([
+                'completion_comment' => ['nullable', 'string', 'max:2000'],
+                'inspection_result' => ['nullable', Rule::in(['serviceable', 'restricted', 'unavailable'])],
+                'inspection_evidence' => ['nullable', 'array'],
+            ]);
             $order = $this->service->findMaintenanceOrder((int) $request->attributes->get('current_organization_id'), $id);
 
             if ($order === null) {
@@ -369,7 +373,9 @@ final class MachineryOperationsController extends Controller
             return AdminResponse::success(new MachineryOperationRecordResource($this->service->completeMaintenanceOrder(
                 $order,
                 (int) $request->user()?->id,
-                $validated['completion_comment'] ?? null
+                $validated['completion_comment'] ?? null,
+                (string) ($validated['inspection_result'] ?? 'serviceable'),
+                $validated['inspection_evidence'] ?? [],
             )));
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
@@ -377,6 +383,56 @@ final class MachineryOperationsController extends Controller
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'maintenance.complete');
+        }
+    }
+
+    public function storeDefect(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'asset_id' => ['required', 'integer'],
+                'project_id' => ['nullable', 'integer'],
+                'defect_code' => ['required', 'string', 'max:80'],
+                'severity' => ['required', Rule::in(['low', 'medium', 'high', 'critical'])],
+                'description' => ['required', 'string', 'max:5000'],
+                'reported_at' => ['nullable', 'date', 'before_or_equal:now'],
+            ]);
+
+            return AdminResponse::success(
+                new MachineryOperationRecordResource($this->service->reportDefect(
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $request->user()?->id,
+                    $validated,
+                )),
+                trans_message('machinery_operations.messages.defect_created'),
+                201,
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        }
+    }
+
+    public function costReport(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'date_from' => ['required', 'date'],
+                'date_to' => ['required', 'date', 'after_or_equal:date_from'],
+                'project_id' => ['nullable', 'integer'],
+            ]);
+
+            return AdminResponse::success($this->service->costReport(
+                (int) $request->attributes->get('current_organization_id'),
+                (string) $validated['date_from'],
+                (string) $validated['date_to'],
+                isset($validated['project_id']) ? (int) $validated['project_id'] : null,
+            ));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
         }
     }
 

@@ -21,8 +21,12 @@ final class MachineryFuelIssue extends Model
         'issued_by_user_id',
         'issued_at',
         'fuel_type',
+        'fuel_type_code',
+        'fuel_type_original',
         'quantity',
         'unit',
+        'unit_code',
+        'unit_original',
         'cost',
         'comment',
     ];

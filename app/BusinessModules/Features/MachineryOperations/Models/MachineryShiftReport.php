@@ -29,6 +29,8 @@ final class MachineryShiftReport extends Model
         'status',
         'planned_hours',
         'actual_hours',
+        'hourly_rate_snapshot',
+        'cost_evidence',
         'fuel_consumed',
         'meter_start',
         'meter_end',
@@ -44,6 +46,7 @@ final class MachineryShiftReport extends Model
         'submitted_at' => 'datetime',
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
+        'cost_evidence' => 'array',
     ];
 
     public function asset(): BelongsTo

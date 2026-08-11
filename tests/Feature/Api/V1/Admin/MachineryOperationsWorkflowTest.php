@@ -177,7 +177,8 @@ final class MachineryOperationsWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/machinery-operations/shift-reports/{$shiftId}/approve");
         $approvedShift->assertOk()
             ->assertJsonPath('data.status', 'approved')
-            ->assertJsonPath('data.approved_by_user_id', $context->user->id);
+            ->assertJsonPath('data.approved_by_user_id', $context->user->id)
+            ->assertJsonPath('data.hourly_rate_snapshot', '4500.00');
 
         $downtimeResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/machinery-operations/downtimes', [

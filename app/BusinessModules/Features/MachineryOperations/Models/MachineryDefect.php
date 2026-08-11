@@ -6,31 +6,20 @@ namespace App\BusinessModules\Features\MachineryOperations\Models;
 
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\Models\Project;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-final class MachineryDowntime extends Model
+final class MachineryDefect extends Model
 {
     protected $fillable = [
-        'organization_id',
-        'organization_asset_id',
-        'asset_id',
-        'project_id',
-        'shift_report_id',
-        'reason',
-        'reason_code',
-        'reason_original',
-        'started_at',
-        'ended_at',
-        'duration_minutes',
-        'comment',
+        'organization_id', 'organization_asset_id', 'asset_id', 'project_id',
+        'reported_by_user_id', 'defect_code', 'severity', 'status', 'description',
+        'reported_at', 'resolved_at',
     ];
 
-    protected $casts = [
-        'started_at' => 'datetime',
-        'ended_at' => 'datetime',
-    ];
+    protected $casts = ['reported_at' => 'datetime', 'resolved_at' => 'datetime'];
 
     public function asset(): BelongsTo
     {
@@ -47,9 +36,9 @@ final class MachineryDowntime extends Model
         return $this->belongsTo(Project::class);
     }
 
-    public function shiftReport(): BelongsTo
+    public function reportedBy(): BelongsTo
     {
-        return $this->belongsTo(MachineryShiftReport::class, 'shift_report_id');
+        return $this->belongsTo(User::class, 'reported_by_user_id');
     }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder

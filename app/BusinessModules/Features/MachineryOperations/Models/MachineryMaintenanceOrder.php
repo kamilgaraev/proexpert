@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class MachineryMaintenanceOrder extends Model
@@ -58,6 +59,11 @@ final class MachineryMaintenanceOrder extends Model
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by_user_id');
+    }
+
+    public function inspection(): HasOne
+    {
+        return $this->hasOne(MaintenanceInspection::class, 'maintenance_order_id');
     }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder

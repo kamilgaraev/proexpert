@@ -49,6 +49,8 @@ final class MachineryShiftReportResource extends JsonResource
             'status_label' => trans_message("machinery_operations.shift_statuses.{$shift->status}"),
             'planned_hours' => $shift->planned_hours,
             'actual_hours' => $shift->actual_hours,
+            'hourly_rate_snapshot' => $shift->hourly_rate_snapshot,
+            'cost_evidence' => $shift->cost_evidence,
             'fuel_consumed' => $shift->fuel_consumed,
             'meter_start' => $shift->meter_start,
             'meter_end' => $shift->meter_end,
