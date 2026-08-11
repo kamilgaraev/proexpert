@@ -8,6 +8,7 @@ use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetReadRepository;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Middleware\WebInterfaceSecurityMiddleware;
@@ -116,6 +117,31 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'Создание физической единицы перенесено в единый складской реестр.');
+    }
+
+    public function test_strict_canonical_reads_reject_direct_access_without_a_live_canonical_asset(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $unlinked = MachineryAsset::query()->create([
+            'organization_id' => $organizationId,
+            'asset_code' => 'STRICT-UNLINKED',
+            'name' => 'Legacy only',
+            'ownership_type' => 'owned',
+            'status' => 'available',
+            'operating_cost_per_hour' => 0,
+            'meter_hours' => 0,
+        ]);
+        $retired = app(MachineryOperationsService::class)->createAsset($organizationId, [
+            'asset_code' => 'STRICT-RETIRED',
+            'name' => 'Retired canonical asset',
+        ]);
+        $retired->organizationAsset()->firstOrFail()->delete();
+        config()->set('asset_registry.strict_canonical_reads', true);
+        $repository = app(MachineryAssetReadRepository::class);
+
+        self::assertNull($repository->find($organizationId, (int) $unlinked->id));
+        self::assertNull($repository->find($organizationId, (int) $retired->id));
     }
 
     private function allowAccess(): void

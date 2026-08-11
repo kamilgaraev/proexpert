@@ -23,7 +23,7 @@ final class MachineryAssetReadRepository
     {
         return MachineryAsset::forOrganization($organizationId)
             ->with(self::RELATIONS)
-            ->when((bool) config('asset_registry.strict_canonical_reads'), fn ($query) => $query->whereNotNull('organization_asset_id'))
+            ->when((bool) config('asset_registry.strict_canonical_reads'), fn ($query) => $query->whereHas('organizationAsset'))
             ->when(array_key_exists('project_ids', $filters), function ($query) use ($filters): void {
                 $query->where(function ($projectQuery) use ($filters): void {
                     $projectQuery->whereNull('current_project_id')
@@ -55,6 +55,9 @@ final class MachineryAssetReadRepository
 
     public function find(int $organizationId, int $id): ?MachineryAsset
     {
-        return MachineryAsset::forOrganization($organizationId)->with(self::RELATIONS)->find($id);
+        return MachineryAsset::forOrganization($organizationId)
+            ->with(self::RELATIONS)
+            ->when((bool) config('asset_registry.strict_canonical_reads'), fn ($query) => $query->whereHas('organizationAsset'))
+            ->find($id);
     }
 }
