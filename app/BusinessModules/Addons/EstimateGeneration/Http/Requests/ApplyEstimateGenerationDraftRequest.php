@@ -23,6 +23,8 @@ class ApplyEstimateGenerationDraftRequest extends FormRequest
             'name' => ['nullable', 'string', 'max:255'],
             'type' => ['nullable', 'in:local,object,summary,contractual'],
             'estimate_date' => ['nullable', 'date'],
+            'idempotency_key' => ['nullable', 'string', 'max:160', 'regex:/^[a-zA-Z0-9._:-]+$/'],
+            'artifact_hash' => ['nullable', 'regex:/^[a-f0-9]{64}$/'],
         ];
     }
 }

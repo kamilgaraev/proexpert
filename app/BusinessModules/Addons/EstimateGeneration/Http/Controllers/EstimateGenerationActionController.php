@@ -216,6 +216,12 @@ final class EstimateGenerationActionController extends Controller
                 name: isset($validated['name']) ? (string) $validated['name'] : null,
                 type: isset($validated['type']) ? (string) $validated['type'] : null,
                 estimateDate: isset($validated['estimate_date']) ? (string) $validated['estimate_date'] : null,
+                idempotencyKey: isset($validated['idempotency_key']) ? (string) $validated['idempotency_key'] : null,
+                artifactHash: isset($validated['artifact_hash'])
+                    ? (string) $validated['artifact_hash']
+                    : (is_string($session->draft_payload['artifact_hash'] ?? null)
+                        ? $session->draft_payload['artifact_hash']
+                        : null),
             ));
 
             return AdminResponse::success($result->toArray(), trans_message('estimate_generation.draft_applied'));

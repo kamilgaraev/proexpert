@@ -22,7 +22,7 @@ final class SinglePipelineRuntimeContractTest extends TestCase
 {
     private const PIPELINE_VERSION = 'pipeline:v2';
 
-    private const ARTIFACT_HASH = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    public const ARTIFACT_HASH = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
     public function sequential_and_competing_publications_create_one_ordinary_estimate(): void
@@ -171,6 +171,12 @@ final class PublicationApply extends ApplyGeneratedEstimate
     {
         return $this->session;
     }
+
+    protected function replayMatches(int $estimateId, ApplyGeneratedEstimateCommand $command): bool
+    {
+        return $estimateId === (int) $this->session->applied_estimate_id
+            && $command->artifactHash === SinglePipelineRuntimeContractTest::ARTIFACT_HASH;
+    }
 }
 
 final class PublicationWriter implements GeneratedEstimateWriter
@@ -187,6 +193,11 @@ final class PublicationWriter implements GeneratedEstimateWriter
 
         return $this->estimateId;
     }
+
+    public function publishedMetadata(int $estimateId, int $organizationId, int $projectId): ?array
+    {
+        return null;
+    }
 }
 
 final class FailingPublicationWriter implements GeneratedEstimateWriter
@@ -196,6 +207,11 @@ final class FailingPublicationWriter implements GeneratedEstimateWriter
         ApplyGeneratedEstimateCommand $command,
     ): int {
         throw new RuntimeException('writer failed');
+    }
+
+    public function publishedMetadata(int $estimateId, int $organizationId, int $projectId): ?array
+    {
+        return null;
     }
 }
 

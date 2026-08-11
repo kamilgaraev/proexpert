@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimat
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ApplyGeneratedEstimate
 {
@@ -29,6 +30,12 @@ class ApplyGeneratedEstimate
             );
 
             if ($session->applied_estimate_id !== null) {
+                if (! $this->replayMatches((int) $session->applied_estimate_id, $command)) {
+                    throw ValidationException::withMessages([
+                        'draft' => [trans_message('estimate_generation.stage6_artifact_invalid')],
+                    ]);
+                }
+
                 return new ApplyGeneratedEstimateResult((int) $session->applied_estimate_id, false);
             }
 
@@ -63,6 +70,39 @@ class ApplyGeneratedEstimate
     protected function transaction(callable $callback): mixed
     {
         return DB::transaction($callback);
+    }
+
+    protected function replayMatches(int $estimateId, ApplyGeneratedEstimateCommand $command): bool
+    {
+        if ($command->artifactHash === null && $command->idempotencyKey === null) {
+            return true;
+        }
+        $metadata = $this->writer->publishedMetadata(
+            $estimateId,
+            $command->organizationId,
+            $command->projectId,
+        );
+        if ($metadata === null) {
+            return false;
+        }
+
+        return $this->replayMetadataMatches($metadata, $command);
+    }
+
+    protected function replayMetadataMatches(array $metadata, ApplyGeneratedEstimateCommand $command): bool
+    {
+        if ($command->artifactHash !== null
+            && ! hash_equals($command->artifactHash, (string) (
+                $metadata['generation_source_artifact_hash']
+                ?? $metadata['generation_artifact_hash']
+                ?? ''
+            ))) {
+            return false;
+        }
+
+        return $command->artifactHash !== null
+            || $command->idempotencyKey === null
+            || ($metadata['generation_idempotency_key'] ?? null) === $command->idempotencyKey;
     }
 
     protected function loadLockedSession(

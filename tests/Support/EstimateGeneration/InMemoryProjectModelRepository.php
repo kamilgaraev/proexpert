@@ -347,6 +347,18 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         ));
     }
 
+    public function decisionsForSelectedFacts(int $organizationId, int $projectId, int $sessionId, array $factIds): array
+    {
+        $ids = array_fill_keys(array_slice(array_values(array_unique($factIds)), 0, 100), true);
+
+        return array_values(array_filter(
+            $this->decisions,
+            fn (Decision $decision): bool => $this->scope($decision) === [$organizationId, $projectId, $sessionId]
+                && $decision->selectedFactId !== null
+                && isset($ids[$decision->selectedFactId]),
+        ));
+    }
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array
     {
         return array_values(array_filter(

@@ -39,6 +39,33 @@ final class EstimateGenerationApplyBoundaryTest extends TestCase
     }
 
     #[Test]
+    public function replay_contract_is_artifact_idempotent_and_rejects_key_payload_conflicts(): void
+    {
+        $useCase = $this->useCase($this->session(), new RecordingGeneratedEstimateWriter(781));
+        $stored = [
+            'generation_artifact_hash' => str_repeat('a', 64),
+            'generation_idempotency_key' => 'publish:one',
+        ];
+
+        self::assertTrue($useCase->replayMetadataMatchesForTest(
+            $stored,
+            new ApplyGeneratedEstimateCommand(42, 10, 20, 5, idempotencyKey: 'publish:two', artifactHash: str_repeat('a', 64)),
+        ));
+        self::assertTrue($useCase->replayMetadataMatchesForTest(
+            $stored,
+            new ApplyGeneratedEstimateCommand(42, 10, 20, 5, idempotencyKey: 'publish:one', artifactHash: str_repeat('a', 64)),
+        ));
+        self::assertFalse($useCase->replayMetadataMatchesForTest(
+            $stored,
+            new ApplyGeneratedEstimateCommand(42, 10, 20, 5, idempotencyKey: 'publish:one', artifactHash: str_repeat('b', 64)),
+        ));
+        self::assertFalse($useCase->replayMetadataMatchesForTest(
+            $stored,
+            new ApplyGeneratedEstimateCommand(42, 10, 20, 5, idempotencyKey: 'publish:other'),
+        ));
+    }
+
+    #[Test]
     public function foreign_tenant_or_project_is_not_visible_to_apply_use_case(): void
     {
         $session = $this->session();
@@ -211,6 +238,11 @@ final class TestableApplyGeneratedEstimate extends ApplyGeneratedEstimate
 
         return $this->session;
     }
+
+    public function replayMetadataMatchesForTest(array $metadata, ApplyGeneratedEstimateCommand $command): bool
+    {
+        return $this->replayMetadataMatches($metadata, $command);
+    }
 }
 
 final class RecordingGeneratedEstimateWriter implements GeneratedEstimateWriter
@@ -227,6 +259,11 @@ final class RecordingGeneratedEstimateWriter implements GeneratedEstimateWriter
 
         return $this->estimateId;
     }
+
+    public function publishedMetadata(int $estimateId, int $organizationId, int $projectId): ?array
+    {
+        return null;
+    }
 }
 
 final class FailingGeneratedEstimateWriter implements GeneratedEstimateWriter
@@ -236,6 +273,11 @@ final class FailingGeneratedEstimateWriter implements GeneratedEstimateWriter
         ApplyGeneratedEstimateCommand $command,
     ): int {
         throw new \RuntimeException('writer failed');
+    }
+
+    public function publishedMetadata(int $estimateId, int $organizationId, int $projectId): ?array
+    {
+        return null;
     }
 }
 

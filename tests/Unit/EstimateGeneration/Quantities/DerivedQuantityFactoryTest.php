@@ -102,7 +102,7 @@ final class DerivedQuantityFactoryTest extends TestCase
             }
         }
 
-        $result = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $this->request(
+        $roofRequest = $this->request(
             'sloped_roof_area',
             'roof:1',
             [
@@ -110,10 +110,23 @@ final class DerivedQuantityFactoryTest extends TestCase
                 'slope_rises' => ['facet-1-rise', 'facet-2-rise'],
                 'slope_runs' => ['facet-1-run', 'facet-2-run'],
             ],
-        ));
+        );
+        $result = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $roofRequest);
 
         self::assertTrue($result->isReady());
         self::assertSame('30', $result->quantity?->value);
+
+        $duplicateGeometry = [
+            $this->entity('roof:1', 'roof'),
+            $this->entity('facet:1', 'roof_facet', ['roof_id' => 'roof:1', 'geometry_identity' => 'facet:g1']),
+            $this->entity('facet:2', 'roof_facet', ['roof_id' => 'roof:1', 'geometry_identity' => 'facet:g1']),
+        ];
+        $duplicate = (new DerivedQuantityFactory)->derive(
+            $this->snapshot($duplicateGeometry, $facts, $evidence),
+            [],
+            $roofRequest,
+        );
+        self::assertSame('duplicate_geometry', $duplicate->unresolvedInputs[0]['code'] ?? null);
 
         $foreign = [...$entities, $this->entity('facet:foreign', 'roof_facet', ['roof_id' => 'roof:2'])];
         $foreignFact = $this->fact('foreign-area', 'facet:foreign', 'plan_area', '1', 'm2', ['evidence:foreign']);
@@ -135,10 +148,16 @@ final class DerivedQuantityFactoryTest extends TestCase
             $this->fact('site-area', 'site:1', 'area', '100.125', 'm2', ['evidence:site-area']),
             $this->fact('depth', 'site:1', 'depth', '0.35', 'm', ['evidence:depth']),
             $this->fact('coefficient', 'package:leveling', 'coefficient', '1.05', 'count', [], 'user_assumption'),
+            new Fact(
+                'selected-leveling-system', 1, 2, 3, self::SOURCE_VERSION, 'package:leveling', 'selected_system',
+                ['kind' => 'catalog_system', 'system_id' => 'site-leveling:v1', 'catalog_version' => 'technology-catalog:v1', 'catalog_hash' => str_repeat('d', 64)],
+                null, 1.0, 'user_assumption', 'confirmed', [],
+            ),
         ];
         $entities = [$this->entity('site:1', 'site'), $this->entity('package:leveling', 'technology_work_package')];
         $evidence = [$this->evidence('evidence:site-area', 'cad:site-area'), $this->evidence('evidence:depth', 'section:depth')];
-        $decision = $this->decision('decision:leveling', 'coefficient');
+        $decision = $this->decision('decision:leveling', 'selected-leveling-system');
+        $coefficientDecision = $this->decision('decision:leveling-coefficient', 'coefficient');
         $snapshot = $this->snapshot($entities, $facts, $evidence);
 
         $earthwork = (new DerivedQuantityFactory)->derive($snapshot, [], $this->request(
@@ -156,12 +175,47 @@ final class DerivedQuantityFactoryTest extends TestCase
         $request['technology_status'] = 'current';
         $request['technology_applicable'] = true;
         $request['technology_availability'] = 'available';
-        $package = (new DerivedQuantityFactory)->derive($snapshot, [$decision], $request);
+        $package = (new DerivedQuantityFactory)->derive($snapshot, [$decision, $coefficientDecision], $request);
         self::assertSame('105.13', $package->quantity?->value);
         self::assertSame($decision->id, $package->quantity?->technologyDecisionId);
 
         $blocked = (new DerivedQuantityFactory)->derive($snapshot, [], $request);
         self::assertSame('decision_missing', $blocked->unresolvedInputs[0]['code'] ?? null);
+    }
+
+    #[Test]
+    public function stage_five_identity_work_package_uses_the_selected_current_catalog_system_without_a_hidden_factor(): void
+    {
+        $base = $this->fact('roof-area', 'roof:1', 'roof_area', '88.125', 'm2', ['evidence:roof-area']);
+        $system = new Fact(
+            'selected-roof-system', 1, 2, 3, self::SOURCE_VERSION, 'roof:1', 'selected_roof_system',
+            ['kind' => 'catalog_system', 'system_id' => 'metal-tile', 'catalog_version' => 'technology-catalog:v1', 'catalog_hash' => str_repeat('d', 64)],
+            null, 1.0, 'user_assumption', 'confirmed', [],
+        );
+        $decision = $this->decision('decision:roof-system', 'selected-roof-system');
+        $snapshot = $this->snapshot(
+            [$this->entity('roof:1', 'roof')],
+            [$base, $system],
+            [$this->evidence('evidence:roof-area', 'cad:roof-area')],
+        );
+        $request = $this->request(
+            'technology_work_package',
+            'roof:1',
+            ['base_quantity' => 'roof-area'],
+            'm2',
+        );
+        $request['technology_operation'] = 'identity';
+        $request['technology_decision_id'] = $decision->id;
+        $request['applicable_system_id'] = 'metal-tile';
+        $request['technology_status'] = 'current';
+        $request['technology_applicable'] = true;
+        $request['technology_availability'] = 'available';
+
+        $result = (new DerivedQuantityFactory)->derive($snapshot, [$decision], $request);
+
+        self::assertTrue($result->isReady());
+        self::assertSame('88.13', $result->quantity?->value);
+        self::assertSame(['base_quantity'], array_values(array_unique(array_column($result->quantity?->operands ?? [], 'role'))));
     }
 
     #[Test]
@@ -294,13 +348,19 @@ final class DerivedQuantityFactoryTest extends TestCase
         $facts = [
             $this->fact('base', 'package:1', 'area', '10', 'm2', ['evidence:base']),
             $this->fact('coefficient', 'package:1', 'coefficient', '1', 'count', [], 'user_assumption'),
+            new Fact(
+                'selected-package-system', 1, 2, 3, self::SOURCE_VERSION, 'package:1', 'selected_system',
+                ['kind' => 'catalog_system', 'system_id' => 'system:v1', 'catalog_version' => 'technology-catalog:v1', 'catalog_hash' => str_repeat('d', 64)],
+                null, 1.0, 'user_assumption', 'confirmed', [],
+            ),
         ];
         $snapshot = $this->snapshot(
             [$this->entity('package:1', 'technology_work_package')],
             $facts,
             [$this->evidence('evidence:base', 'native:base')],
         );
-        $decision = $this->decision('decision:package', 'coefficient');
+        $decision = $this->decision('decision:package', 'selected-package-system');
+        $coefficientDecision = $this->decision('decision:package-coefficient', 'coefficient');
         $request = $this->request('technology_work_package', 'package:1', [
             'base_quantity' => 'base', 'coefficient' => 'coefficient',
         ]);
@@ -318,7 +378,7 @@ final class DerivedQuantityFactoryTest extends TestCase
             ['technology_availability', 'unavailable'],
         ] as [$key, $value]) {
             $blockedRequest = [...$request, $key => $value];
-            $result = (new DerivedQuantityFactory)->derive($snapshot, [$decision], $blockedRequest);
+            $result = (new DerivedQuantityFactory)->derive($snapshot, [$decision, $coefficientDecision], $blockedRequest);
             self::assertSame('decision_missing', $result->unresolvedInputs[0]['code'] ?? null);
         }
     }

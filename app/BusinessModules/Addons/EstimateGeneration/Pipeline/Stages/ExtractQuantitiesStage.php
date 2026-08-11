@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\EffectiveProjectModelQuantityInputProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCalculationResult;
@@ -34,6 +35,7 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
         private ResidentialQuantityScenarioCatalog $residentialScenarios = new ResidentialQuantityScenarioCatalog,
         private EffectiveProjectModelQuantityInputProjector $effectiveProjection = new EffectiveProjectModelQuantityInputProjector,
+        private ?CurrentProjectDerivedQuantityService $canonicalQuantities = null,
     ) {}
 
     public function stage(): ProcessingStage
@@ -50,6 +52,7 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
             'quantity_learning_hints' => $hints,
             'quantity_coverage_warnings' => [],
             'building_quantities' => [],
+            'stage6_generation_context' => [],
         ];
         $normalized = $analysis['normalized_building_model'] ?? null;
         $quantities = [];
@@ -93,6 +96,33 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
                 $metrics['residential_scenario_omission_count'] = count($scenario->omissions);
             }
         }
+        if ($this->canonicalQuantities !== null) {
+            $decisionIds = [];
+            foreach ($analysis['effective_project_model_values'] ?? [] as $effectiveValue) {
+                if (is_array($effectiveValue) && is_string($effectiveValue['decision_id'] ?? null)) {
+                    $decisionIds[] = $effectiveValue['decision_id'];
+                }
+            }
+            $canonical = $this->canonicalQuantities->derive(
+                $context->organizationId,
+                $context->projectId,
+                $context->sessionId,
+                $decisionIds,
+            );
+            foreach ($canonical['quantities'] as $key => $quantity) {
+                $quantities[$key] = $quantity;
+            }
+            foreach ($canonical['warnings'] as $warning) {
+                $diagnostics[] = [
+                    'code' => (string) ($warning['code'] ?? 'canonical_quantity_unresolved'),
+                    'severity' => 'warning',
+                    'path' => 'quantities.stage6',
+                    'details' => $warning,
+                ];
+            }
+            $data['stage6_generation_context'] = $canonical['context'];
+            $metrics['canonical_derived_quantity_count'] = count($canonical['quantities']);
+        }
         if ($quantities !== [] || is_array($normalized)) {
             $data['building_quantities'] = (new QuantityCalculationResult(
                 $quantities,
@@ -103,5 +133,4 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
 
         return $this->results->make($context, $this->stage(), $data, ['hints_count' => count($hints)]);
     }
-
 }

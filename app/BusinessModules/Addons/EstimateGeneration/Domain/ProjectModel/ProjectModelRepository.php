@@ -60,6 +60,9 @@ interface ProjectModelRepository
     /** @return list<Decision> */
     public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array;
 
+    /** @return list<Decision> */
+    public function decisionsForSelectedFacts(int $organizationId, int $projectId, int $sessionId, array $factIds): array;
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array;
 
     public function replaceUnderstanding(

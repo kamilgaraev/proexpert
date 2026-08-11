@@ -58,4 +58,21 @@ final class EstimateBudgetScopeTest extends TestCase
         self::assertSame('not_calculated', $scope['commercial_budget']['status']);
         self::assertSame('confirmed_direct_costs', $scope['claim']);
     }
+
+    #[Test]
+    public function stage_six_budget_keeps_exact_decimal_strings_without_changing_the_legacy_contract(): void
+    {
+        $scope = (new EstimateBudgetScope)->project([
+            'generation_contract' => 'most_ordinary_estimate:v1',
+            'completeness' => ['status' => 'full_confirmed_scope'],
+            'budget_calculation' => [
+                'overhead' => ['status' => 'calculated', 'amount' => '100.10'],
+                'profit' => ['status' => 'calculated', 'amount' => '50.20'],
+            ],
+        ], '1000.30');
+
+        self::assertSame('1000.30', $scope['direct_costs']);
+        self::assertSame('100.10', $scope['overhead']['amount']);
+        self::assertSame('1150.60', $scope['commercial_budget']['amount']);
+    }
 }

@@ -201,6 +201,11 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         AcceptedNormativeDecisionData::fromWorkflowResult($result, $catalogCandidate),
                         $regionalPin,
                     );
+                    $enriched['normative_match'] = [
+                        ...(is_array($enriched['normative_match'] ?? null) ? $enriched['normative_match'] : []),
+                        'hard_gate_passed' => true,
+                        'selection_source' => $result->rerankResult !== null ? 'ai_reranker_after_hard_gate' : 'deterministic_hard_gate',
+                    ];
                     $enriched['normative_retrieval'] = [
                         'status' => $result->status,
                         'dataset_version' => $datasetVersion,

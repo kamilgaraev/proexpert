@@ -12,4 +12,11 @@ interface GeneratedEstimateWriter
         EstimateGenerationSession $session,
         ApplyGeneratedEstimateCommand $command,
     ): int;
+
+    /** @return array<string, mixed>|null */
+    public function publishedMetadata(
+        int $estimateId,
+        int $organizationId,
+        int $projectId,
+    ): ?array;
 }

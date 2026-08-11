@@ -908,7 +908,32 @@ SQL, [
             ->where('session_id', $sessionId)->whereIn('stable_key', $decisionIds)
             ->orderBy('id')->get();
 
-        return $rows->map(function ($row): Decision {
+        return $this->mapDecisionRows($rows);
+    }
+
+    public function decisionsForSelectedFacts(int $organizationId, int $projectId, int $sessionId, array $factIds): array
+    {
+        $factIds = array_values(array_unique($factIds));
+        if (count($factIds) > 100) {
+            throw new InvalidArgumentException('Decision fact read batch exceeds its limit.');
+        }
+        foreach ($factIds as $factId) {
+            ProjectModelInvariant::id($factId, 'Decision fact');
+        }
+        if ($factIds === []) {
+            return [];
+        }
+        $rows = $this->database->table('estimate_generation_project_model_corrections')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->where('session_id', $sessionId)->whereIn('selected_fact_stable_key', $factIds)
+            ->orderBy('id')->get();
+
+        return $this->mapDecisionRows($rows);
+    }
+
+    private function mapDecisionRows(iterable $rows): array
+    {
+        return collect($rows)->map(function ($row): Decision {
             $actorType = (string) $row->decision_actor_type;
             $actorId = $actorType === 'user' ? (string) $row->actor_id : (string) $row->system_actor_key;
             $targetId = $row->target_conflict_key === null

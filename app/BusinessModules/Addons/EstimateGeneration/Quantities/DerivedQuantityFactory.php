@@ -43,6 +43,13 @@ final class DerivedQuantityFactory
             && $request['operands']['roof_opening_areas'] !== []) {
             $roles[] = 'roof_opening_areas';
         }
+        $technologyOperation = $request['technology_operation'] ?? 'multiply_by_coefficient';
+        if ($formula === 'technology_work_package') {
+            if (! in_array($technologyOperation, ['identity', 'multiply_by_coefficient'], true)) {
+                return $this->unresolved('formula_unknown', 'technology_operation');
+            }
+            $roles = $technologyOperation === 'identity' ? ['base_quantity'] : $roles;
+        }
         $limits = is_array($request['limits'] ?? null) ? $request['limits'] : [];
         $maxOperands = $this->boundedLimit($limits['max_operands'] ?? null, 128, 1, 1000);
         $maxEvidence = $this->boundedLimit($limits['max_evidence'] ?? null, 256, 1, 2000);
@@ -72,10 +79,21 @@ final class DerivedQuantityFactory
             ? $request['technology_decision_id'] : null;
         if ($formula === 'technology_work_package') {
             $decision = $technologyDecisionId === null ? null : ($decisionIndex[$technologyDecisionId] ?? null);
+            $selectedSystem = $decision instanceof Decision && $decision->selectedFactId !== null
+                ? ($facts[$decision->selectedFactId] ?? null)
+                : null;
+            $selectedValue = $selectedSystem instanceof Fact && is_array($selectedSystem->value)
+                ? $selectedSystem->value
+                : [];
+            $snapshotIdentity = is_array($request['snapshot'] ?? null) ? $request['snapshot'] : [];
             if (! $decision instanceof Decision || $decision->actorType !== 'user'
                 || [$decision->organizationId, $decision->projectId, $decision->sessionId, $decision->sourceVersion]
                     !== [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion]
                 || $decision->selectedFactId === null || ! isset($facts[$decision->selectedFactId])
+                || ($selectedValue['kind'] ?? null) !== 'catalog_system'
+                || ($selectedValue['system_id'] ?? null) !== ($request['applicable_system_id'] ?? null)
+                || ($selectedValue['catalog_version'] ?? null) !== ($snapshotIdentity['catalog_version'] ?? null)
+                || ($selectedValue['catalog_hash'] ?? null) !== ($snapshotIdentity['catalog_hash'] ?? null)
                 || ($request['technology_status'] ?? null) !== 'current'
                 || ($request['technology_applicable'] ?? null) !== true
                 || ($request['technology_availability'] ?? null) !== 'available'
@@ -107,6 +125,7 @@ final class DerivedQuantityFactory
                 }
                 $resolvedOperand = $this->resolveOperand(
                     $facts[$id], $role, $target, $evidence, $decisionIndex, $formula,
+                    is_string($request['output_unit'] ?? null) ? $request['output_unit'] : null,
                 );
                 if (isset($resolvedOperand['issue'])) {
                     $issues[] = $resolvedOperand['issue'];
@@ -125,7 +144,7 @@ final class DerivedQuantityFactory
             return $this->issues([$scopeIssue]);
         }
         try {
-            $value = $this->calculate($formula, $resolved);
+            $value = $this->calculate($formula, $resolved, (string) $technologyOperation);
         } catch (MathException) {
             return $this->unresolved('decimal_operation_invalid', 'formula');
         }
@@ -170,7 +189,7 @@ final class DerivedQuantityFactory
             return $this->unresolved('metadata_budget_exceeded', 'metadata');
         }
         $unit = is_string($request['output_unit'] ?? null) ? $request['output_unit'] : '';
-        if ($unit !== $this->outputUnit($formula, $resolved)) {
+        if (! $this->outputUnitIsCompatible($formula, $resolved, $unit)) {
             return $this->unresolved('output_unit_incompatible', 'output_unit');
         }
 
@@ -265,6 +284,7 @@ final class DerivedQuantityFactory
         array $evidence,
         array $decisions,
         string $formula,
+        ?string $outputUnit,
     ): array {
         if ([$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]
             !== [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion]) {
@@ -276,7 +296,7 @@ final class DerivedQuantityFactory
         if (! is_string($fact->value) && ! is_int($fact->value)) {
             return ['issue' => $this->issue('decimal_value_required', $role, $fact->id)];
         }
-        $group = $this->expectedGroup($formula, $role);
+        $group = $this->expectedGroup($formula, $role, $outputUnit);
         $factor = self::UNIT_GROUPS[$group][$fact->unit ?? ''] ?? null;
         if ($factor === null) {
             return ['issue' => $this->issue('unit_incompatible', $role, $fact->id)];
@@ -360,6 +380,7 @@ final class DerivedQuantityFactory
                 return $this->issue('opening_operand_mismatch', 'openings');
             }
             $geometry = [];
+            $evidenceCoordinates = [];
             foreach ($resolved['opening_widths'] as $index => $width) {
                 $height = $resolved['opening_heights'][$index];
                 if ($width['entity_id'] !== $height['entity_id']) {
@@ -374,6 +395,13 @@ final class DerivedQuantityFactory
                     return $this->issue('duplicate_geometry', 'openings', $width['fact_id']);
                 }
                 $geometry[$identity] = true;
+                $evidenceIdentity = $this->operandEvidenceIdentity($width, $height);
+                if ($evidenceIdentity !== '' && isset($evidenceCoordinates[$evidenceIdentity])) {
+                    return $this->issue('duplicate_geometry', 'openings', $width['fact_id']);
+                }
+                if ($evidenceIdentity !== '') {
+                    $evidenceCoordinates[$evidenceIdentity] = true;
+                }
             }
         }
         if ($formula === 'sloped_roof_area') {
@@ -381,6 +409,8 @@ final class DerivedQuantityFactory
             if ($count !== count($resolved['slope_rises']) || $count !== count($resolved['slope_runs'])) {
                 return $this->issue('roof_operand_mismatch', 'roof_facets');
             }
+            $facetGeometry = [];
+            $facetEvidence = [];
             for ($index = 0; $index < $count; $index++) {
                 $entityId = $resolved['plan_areas'][$index]['entity_id'];
                 $facet = $entities[$entityId] ?? null;
@@ -389,8 +419,23 @@ final class DerivedQuantityFactory
                     || ! $facet instanceof Entity || ($facet->attributes['roof_id'] ?? null) !== $target->id) {
                     return $this->issue('entity_scope_mismatch', 'roof_facets', $resolved['plan_areas'][$index]['fact_id']);
                 }
+                $identity = $facet->attributes['geometry_identity'] ?? $facet->id;
+                $evidenceIdentity = $this->operandEvidenceIdentity(
+                    $resolved['plan_areas'][$index],
+                    $resolved['slope_rises'][$index],
+                    $resolved['slope_runs'][$index],
+                );
+                if (isset($facetGeometry[$identity])
+                    || ($evidenceIdentity !== '' && isset($facetEvidence[$evidenceIdentity]))) {
+                    return $this->issue('duplicate_geometry', 'roof_facets', $resolved['plan_areas'][$index]['fact_id']);
+                }
+                $facetGeometry[$identity] = true;
+                if ($evidenceIdentity !== '') {
+                    $facetEvidence[$evidenceIdentity] = true;
+                }
             }
             $geometry = [];
+            $evidenceCoordinates = [];
             foreach ($resolved['roof_opening_areas'] ?? [] as $openingArea) {
                 $opening = $entities[$openingArea['entity_id']] ?? null;
                 if (! $opening instanceof Entity || ($opening->attributes['roof_id'] ?? null) !== $target->id) {
@@ -401,19 +446,43 @@ final class DerivedQuantityFactory
                     return $this->issue('duplicate_geometry', 'roof_openings', $openingArea['fact_id']);
                 }
                 $geometry[$identity] = true;
+                $evidenceIdentity = $this->operandEvidenceIdentity($openingArea);
+                if ($evidenceIdentity !== '' && isset($evidenceCoordinates[$evidenceIdentity])) {
+                    return $this->issue('duplicate_geometry', 'roof_openings', $openingArea['fact_id']);
+                }
+                if ($evidenceIdentity !== '') {
+                    $evidenceCoordinates[$evidenceIdentity] = true;
+                }
             }
         }
 
         return null;
     }
 
-    private function calculate(string $formula, array $resolved): BigDecimal
+    private function operandEvidenceIdentity(array ...$operands): string
+    {
+        $evidenceIds = [];
+        foreach ($operands as $operand) {
+            foreach ($operand['evidence_ids'] ?? [] as $evidenceId) {
+                if (is_string($evidenceId) && $evidenceId !== '') {
+                    $evidenceIds[$evidenceId] = true;
+                }
+            }
+        }
+        $evidenceIds = array_keys($evidenceIds);
+        sort($evidenceIds, SORT_STRING);
+
+        return implode("\0", $evidenceIds);
+    }
+
+    private function calculate(string $formula, array $resolved, string $technologyOperation): BigDecimal
     {
         return match ($formula) {
             'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
             'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
-            'technology_work_package' => $this->decimal($resolved['base_quantity'][0])
-                ->multipliedBy($this->decimal($resolved['coefficient'][0])),
+            'technology_work_package' => $technologyOperation === 'identity'
+                ? $this->decimal($resolved['base_quantity'][0])
+                : $this->decimal($resolved['base_quantity'][0])->multipliedBy($this->decimal($resolved['coefficient'][0])),
             'wall_net_area' => $this->wallArea($resolved),
             'sloped_roof_area' => $this->roofArea($resolved),
         };
@@ -456,16 +525,42 @@ final class DerivedQuantityFactory
         };
     }
 
-    private function expectedGroup(string $formula, string $role): string
+    private function expectedGroup(string $formula, string $role, ?string $outputUnit): string
     {
         if ($role === 'coefficient') {
             return 'count';
+        }
+        if ($formula === 'technology_work_package' && $role === 'base_quantity') {
+            return match ($outputUnit) {
+                'm' => 'length',
+                'm2' => 'area',
+                'm3' => 'volume',
+                'item', 'count' => 'count',
+                default => 'unknown',
+            };
         }
         if (in_array($role, ['area', 'base_quantity', 'plan_areas', 'roof_opening_areas'], true)) {
             return 'area';
         }
 
         return 'length';
+    }
+
+    private function outputUnitIsCompatible(string $formula, array $resolved, string $requested): bool
+    {
+        if ($formula !== 'technology_work_package') {
+            return $requested === $this->outputUnit($formula, $resolved);
+        }
+
+        $actual = $resolved['base_quantity'][0]['compatibility_group'] ?? null;
+
+        return $actual === match ($requested) {
+            'm' => 'length',
+            'm2' => 'area',
+            'm3' => 'volume',
+            'item', 'count' => 'count',
+            default => null,
+        };
     }
 
     private function canonicalUnit(string $group): string

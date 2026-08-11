@@ -10,12 +10,12 @@ final class GeneratedEstimateItemMetadataFactory
     public function make(array $workItem): array
     {
         return [
-            'source_refs' => $workItem['source_refs'] ?? [],
+            'source_refs' => array_slice(is_array($workItem['source_refs'] ?? null) ? $workItem['source_refs'] : [], 0, 16),
             'confidence' => $workItem['confidence'] ?? null,
-            'validation_flags' => $workItem['validation_flags'] ?? [],
+            'validation_flags' => array_slice(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : [], 0, 32),
             'normative_dataset' => $workItem['normative_dataset'] ?? null,
             'normative_match' => $workItem['normative_match'] ?? null,
-            'normative_candidates' => $workItem['normative_candidates'] ?? [],
+            'normative_candidates' => array_slice(is_array($workItem['normative_candidates'] ?? null) ? $workItem['normative_candidates'] : [], 0, 10),
             'price_source' => $workItem['price_source'] ?? null,
             'material_assumption' => is_array($workItem['metadata']['material_assumption'] ?? null)
                 ? $workItem['metadata']['material_assumption']
@@ -25,6 +25,9 @@ final class GeneratedEstimateItemMetadataFactory
                 : null,
             'quantity_calculation' => $this->quantityCalculation($workItem),
             'applied_price' => $this->appliedPrice($workItem),
+            'stage6_provenance' => is_array($workItem['metadata']['stage6_provenance'] ?? null)
+                ? $workItem['metadata']['stage6_provenance']
+                : null,
         ];
     }
 

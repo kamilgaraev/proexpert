@@ -30,6 +30,8 @@ class EloquentPublishDraftOnce implements PublishDraftOnce
             organizationId: (int) $session->organization_id,
             projectId: (int) $session->project_id,
             expectedStateVersion: (int) $session->state_version,
+            idempotencyKey: 'pipeline:'.$pipelineVersion,
+            artifactHash: $artifactHash,
         ));
 
         return new DraftPublicationResult(
