@@ -14,6 +14,19 @@ Route::prefix('api/v1/admin/machinery-operations')
         Route::get('/assets', [MachineryOperationsController::class, 'assets'])
             ->middleware('authorize:machinery-operations.view')
             ->name('assets.index');
+        Route::post('/asset-requests', [MachineryOperationsController::class, 'storeRequest'])
+            ->middleware('authorize:machinery-operations.requests.create')
+            ->name('asset_requests.store');
+        Route::get('/asset-requests/{id}/candidates', [MachineryOperationsController::class, 'requestCandidates'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.requests.approve')
+            ->name('asset_requests.candidates');
+        Route::post('/asset-requests/assign', [MachineryOperationsController::class, 'assignRequestedAsset'])
+            ->middleware('authorize:machinery-operations.requests.approve')
+            ->name('asset_requests.assign');
+        Route::post('/asset-requests/direct-assign', [MachineryOperationsController::class, 'directAssignAsset'])
+            ->middleware('authorize:machinery-operations.direct_assign')
+            ->name('asset_requests.direct_assign');
         Route::post('/assets', [MachineryOperationsController::class, 'storeAsset'])
             ->middleware('authorize:machinery-operations.create')
             ->name('assets.store');
@@ -91,6 +104,9 @@ Route::prefix('api/v1/mobile/machinery-operations')
         Route::get('/assets', [MobileMachineryOperationsController::class, 'assets'])
             ->middleware('authorize:machinery-operations.view')
             ->name('assets.index');
+        Route::post('/asset-requests', [MobileMachineryOperationsController::class, 'storeRequest'])
+            ->middleware('authorize:machinery-operations.requests.create')
+            ->name('asset_requests.store');
         Route::get('/shift-reports', [MobileMachineryOperationsController::class, 'shifts'])
             ->middleware('authorize:machinery-operations.view')
             ->name('shift_reports.index');

@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\MachineryOperations\Http\Controllers\Mobile;
 
+use App\BusinessModules\Features\MachineryOperations\DTO\AssetRequestData;
+use App\BusinessModules\Features\MachineryOperations\Http\Requests\CreateAssetRequest;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryAssetResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryOperationRecordResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryShiftReportResource;
+use App\BusinessModules\Features\MachineryOperations\Services\AssetDispatchService;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -24,7 +27,32 @@ final class MachineryOperationsController extends Controller
     public function __construct(
         private readonly MachineryOperationsService $service,
         private readonly MobileProjectAccessResolver $projectAccess,
+        private readonly AssetDispatchService $dispatch,
     ) {}
+
+    public function storeRequest(CreateAssetRequest $request): JsonResponse
+    {
+        try {
+            $data = $request->validated();
+            $this->assertProjectAccess($request, (int) $data['project_id']);
+
+            return MobileResponse::success($this->dispatch->request(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()->id,
+                new AssetRequestData(
+                    projectId: (int) $data['project_id'],
+                    plannedStartAt: (string) $data['planned_start_at'],
+                    plannedEndAt: $data['planned_end_at'] ?? null,
+                    purpose: (string) $data['purpose'],
+                    priority: (string) ($data['priority'] ?? 'normal'),
+                    scheduleTaskId: isset($data['schedule_task_id']) ? (int) $data['schedule_task_id'] : null,
+                    requiredProfile: $data['required_profile'] ?? [],
+                ),
+            ), null, 201);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        }
+    }
 
     public function assets(Request $request): JsonResponse
     {
