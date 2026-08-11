@@ -17,6 +17,16 @@ Route::prefix('api/v1/admin/machinery-operations')
         Route::post('/asset-requests', [MachineryOperationsController::class, 'storeRequest'])
             ->middleware('authorize:machinery-operations.requests.create')
             ->name('asset_requests.store');
+        Route::get('/asset-requests', [MachineryOperationsController::class, 'requests'])
+            ->middleware('authorize:machinery-operations.view')
+            ->name('asset_requests.index');
+        Route::get('/overview', [MachineryOperationsController::class, 'overview'])
+            ->middleware('authorize:machinery-operations.view')
+            ->name('overview');
+        Route::get('/assets/{id}/workspace', [MachineryOperationsController::class, 'assetWorkspace'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.view')
+            ->name('assets.workspace');
         Route::get('/asset-requests/{id}/candidates', [MachineryOperationsController::class, 'requestCandidates'])
             ->whereNumber('id')
             ->middleware('authorize:machinery-operations.requests.approve')

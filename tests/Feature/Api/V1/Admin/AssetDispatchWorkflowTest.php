@@ -53,6 +53,20 @@ final class AssetDispatchWorkflowTest extends TestCase
         $requestId = (int) $request->json('data.id');
 
         $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/machinery-operations/asset-requests?status=pending')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $requestId);
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/machinery-operations/overview')
+            ->assertOk()
+            ->assertJsonPath('data.pending_requests', 1);
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/machinery-operations/assets/{$asset->id}/workspace")
+            ->assertOk()
+            ->assertJsonPath('data.asset.id', $asset->id)
+            ->assertJsonPath('data.costs.fuel', 0);
+
+        $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/machinery-operations/asset-requests/{$requestId}/candidates")
             ->assertOk()
             ->assertJsonPath('data.0.asset.organization_asset_id', $asset->organization_asset_id)
