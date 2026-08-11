@@ -19,6 +19,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use DomainException;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use LogicException;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -221,6 +222,35 @@ final class OrganizationAssetServiceTest extends TestCase
             new AssetPlacementData(userId: (int) $context->user->id),
             (int) $foreign->user->id,
         );
+    }
+
+    public function test_move_accepts_project_actively_shared_with_asset_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreign = AdminApiTestContext::create();
+        $asset = $this->service()->create(
+            (int) $context->organization->id,
+            new CreateOrganizationAssetData(name: 'Кран', inventoryNumber: 'INV-SHARED-PROJECT'),
+        );
+        $sharedProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        DB::table('project_organization')->insert([
+            'project_id' => $sharedProject->id,
+            'organization_id' => $context->organization->id,
+            'role' => 'contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $moved = $this->service()->move(
+            $asset,
+            new AssetPlacementData(projectId: (int) $sharedProject->id),
+            (int) $context->user->id,
+        );
+
+        self::assertSame($sharedProject->id, $moved->current_project_id);
+        self::assertSame($sharedProject->id, $moved->custodyEvents()->sole()->to_project_id);
     }
 
     public function test_available_actions_are_state_and_permission_aware(): void

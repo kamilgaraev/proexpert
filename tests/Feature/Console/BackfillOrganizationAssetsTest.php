@@ -136,6 +136,39 @@ final class BackfillOrganizationAssetsTest extends TestCase
         self::assertSame(0, Artisan::call('assets:verify-cutover', ['--format' => 'json']));
     }
 
+    public function test_shared_project_assignment_is_backfilled_without_scope_rewrite(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreign = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $sharedProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        DB::table('project_organization')->insert([
+            'project_id' => $sharedProject->id,
+            'organization_id' => $organizationId,
+            'role' => 'contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $legacy = $this->createMachineryAsset($organizationId, 'BF-SHARED-PROJECT', 'INV-BF-SHARED-PROJECT');
+        $legacy->update(['current_project_id' => $sharedProject->id]);
+        $assignment = MachineryAssignment::query()->create([
+            'organization_id' => $organizationId,
+            'asset_id' => $legacy->id,
+            'project_id' => $sharedProject->id,
+            'requested_by_user_id' => $context->user->id,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+        ]);
+
+        self::assertSame(0, Artisan::call('assets:backfill', ['--format' => 'json']));
+
+        self::assertSame($sharedProject->id, OrganizationAsset::query()->sole()->current_project_id);
+        self::assertNotNull($assignment->fresh()->organization_asset_id);
+        self::assertSame(0, Artisan::call('assets:verify-cutover', ['--format' => 'json']));
+    }
+
     public function test_equal_start_overlap_remains_a_hard_conflict_without_partial_backfill(): void
     {
         $context = AdminApiTestContext::create();
