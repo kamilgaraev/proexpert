@@ -67,6 +67,32 @@ final class OrganizationAssetServiceTest extends TestCase
         self::assertSame($context->user->id, $event->actor_user_id);
     }
 
+    public function test_create_persists_operational_economics_in_canonical_profile(): void
+    {
+        $context = AdminApiTestContext::create();
+
+        $asset = $this->service()->create(
+            (int) $context->organization->id,
+            new CreateOrganizationAssetData(
+                name: 'Экскаватор №1',
+                inventoryNumber: 'EX-0001',
+                operationalMode: AssetOperationalMode::ShiftOperation,
+                tracksMeter: true,
+                tracksFuel: true,
+                meterUnit: 'hour',
+                operatingCostPerHour: 2750.50,
+                fuelType: 'diesel',
+                fuelConsumptionRate: 18.25,
+                meterValue: 412.75,
+            ),
+        );
+
+        self::assertSame('2750.50', $asset->operationProfile->operating_cost_per_hour);
+        self::assertSame('diesel', $asset->operationProfile->fuel_type);
+        self::assertSame('18.250', $asset->operationProfile->fuel_consumption_rate);
+        self::assertSame('412.75', $asset->operationProfile->meter_value);
+    }
+
     public function test_inventory_number_is_unique_only_inside_organization(): void
     {
         $first = AdminApiTestContext::create();

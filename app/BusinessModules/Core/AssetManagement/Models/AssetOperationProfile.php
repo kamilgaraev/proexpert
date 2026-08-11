@@ -18,6 +18,10 @@ final class AssetOperationProfile extends Model
         'tracks_production',
         'maintenance_enabled',
         'meter_unit',
+        'operating_cost_per_hour',
+        'fuel_type',
+        'fuel_consumption_rate',
+        'meter_value',
     ];
 
     protected $casts = [
@@ -26,6 +30,9 @@ final class AssetOperationProfile extends Model
         'tracks_fuel' => 'boolean',
         'tracks_production' => 'boolean',
         'maintenance_enabled' => 'boolean',
+        'operating_cost_per_hour' => 'decimal:2',
+        'fuel_consumption_rate' => 'decimal:3',
+        'meter_value' => 'decimal:2',
     ];
 
     public function asset(): BelongsTo

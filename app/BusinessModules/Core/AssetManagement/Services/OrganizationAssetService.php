@@ -59,6 +59,10 @@ final readonly class OrganizationAssetService
                 'tracks_production' => $data->tracksProduction,
                 'maintenance_enabled' => $data->maintenanceEnabled,
                 'meter_unit' => $data->meterUnit,
+                'operating_cost_per_hour' => $data->operatingCostPerHour,
+                'fuel_type' => $data->fuelType,
+                'fuel_consumption_rate' => $data->fuelConsumptionRate,
+                'meter_value' => $data->meterValue,
             ]);
 
             if ($data->placement !== null) {

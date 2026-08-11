@@ -14,6 +14,7 @@ final readonly class MachineryAssetProjection
     public function project(MachineryAsset $legacy): array
     {
         $canonical = $legacy->organizationAsset;
+        $profile = $canonical?->operationProfile;
 
         return [
             'id' => (int) $legacy->id,
@@ -33,10 +34,10 @@ final readonly class MachineryAssetProjection
             'technical_status' => $canonical?->technical_status?->value,
             'current_warehouse_id' => $canonical?->current_warehouse_id,
             'responsible_user_id' => $canonical?->responsible_user_id,
-            'operating_cost_per_hour' => $legacy->operating_cost_per_hour,
-            'fuel_type' => $legacy->fuel_type,
-            'fuel_consumption_rate' => $legacy->fuel_consumption_rate,
-            'meter_hours' => $legacy->meter_hours,
+            'operating_cost_per_hour' => $profile !== null ? $profile->operating_cost_per_hour : $legacy->operating_cost_per_hour,
+            'fuel_type' => $profile !== null ? $profile->fuel_type : $legacy->fuel_type,
+            'fuel_consumption_rate' => $profile !== null ? $profile->fuel_consumption_rate : $legacy->fuel_consumption_rate,
+            'meter_hours' => $profile !== null ? $profile->meter_value : $legacy->meter_hours,
             'metadata' => $canonical?->metadata ?? $legacy->metadata,
         ];
     }

@@ -49,6 +49,7 @@ final class BackfillOrganizationAssetsTest extends TestCase
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $legacy = $this->createMachineryAsset((int) $context->organization->id, 'BF-IDEMPOTENT', 'INV-BF-IDEMPOTENT');
+        $legacy->update(['metadata' => ['rental_terms' => ['daily_rate' => 7500, 'version' => 'legacy-v3']]]);
         $assignment = MachineryAssignment::query()->create([
             'organization_id' => $context->organization->id,
             'asset_id' => $legacy->id,
@@ -76,11 +77,16 @@ final class BackfillOrganizationAssetsTest extends TestCase
             ['id' => $legacy->id, 'table' => 'machinery_assets'],
             $canonical->metadata['legacy_source'],
         );
+        self::assertEquals(['daily_rate' => 7500, 'version' => 'legacy-v3'], $canonical->metadata['rental_terms']);
         self::assertSame(AssetOperationalMode::ShiftOperation, $canonical->operationProfile->operational_mode);
         self::assertTrue($canonical->operationProfile->tracks_meter);
         self::assertTrue($canonical->operationProfile->tracks_fuel);
         self::assertTrue($canonical->operationProfile->tracks_production);
         self::assertTrue($canonical->operationProfile->maintenance_enabled);
+        self::assertSame('1000.00', $canonical->operationProfile->operating_cost_per_hour);
+        self::assertSame('diesel', $canonical->operationProfile->fuel_type);
+        self::assertNull($canonical->operationProfile->fuel_consumption_rate);
+        self::assertSame('12.00', $canonical->operationProfile->meter_value);
     }
 
     public function test_duplicate_legacy_inventory_numbers_are_reported_and_not_auto_resolved(): void

@@ -180,6 +180,11 @@ final class MachineryOperationsWorkflowTest extends TestCase
             ->assertJsonPath('data.approved_by_user_id', $context->user->id)
             ->assertJsonPath('data.hourly_rate_snapshot', '4500.00');
 
+        $canonicalProfile = MachineryAsset::query()->findOrFail($assetId)
+            ->organizationAsset()->firstOrFail()
+            ->operationProfile()->firstOrFail();
+        self::assertSame('106.50', $canonicalProfile->meter_value);
+
         $downtimeResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/machinery-operations/downtimes', [
                 'asset_id' => $assetId,
@@ -227,11 +232,14 @@ final class MachineryOperationsWorkflowTest extends TestCase
         $completedMaintenance->assertOk()
             ->assertJsonPath('data.status', 'completed');
 
+        MachineryAsset::query()->whereKey($assetId)->update(['operating_cost_per_hour' => 9999]);
+
         $reports = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/machinery-operations/reports?project_id={$project->id}");
         $reports->assertOk()
             ->assertJsonPath('data.downtime_by_reason.0.reason', 'waiting_material')
-            ->assertJsonPath('data.fuel_consumption.0.fuel_type', 'diesel');
+            ->assertJsonPath('data.fuel_consumption.0.fuel_type', 'diesel')
+            ->assertJsonPath('data.operating_cost_by_project.0.cost', static fn (mixed $cost): bool => (float) $cost === 29250.0);
 
         $reserveAsset = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/machinery-operations/assets', [

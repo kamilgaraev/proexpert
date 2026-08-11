@@ -77,18 +77,20 @@ final class MachineryRagSource implements RagSourceCollectorInterface
 
     private function assetChunk(MachineryAsset $asset): RagChunkData
     {
+        $canonical = $asset->organizationAsset;
+        $profile = $canonical?->operationProfile;
         $content = $this->lines([
             'Единица техники: '.$this->stringValue($asset->asset_code),
-            'Название: '.$this->stringValue($asset->name),
-            'Инвентарный номер: '.$this->stringValue($asset->inventory_number),
-            'Проект: '.$this->stringValue($asset->currentProject?->name),
+            'Название: '.$this->stringValue($canonical?->name ?? $asset->name),
+            'Инвентарный номер: '.$this->stringValue($canonical?->inventory_number ?? $asset->inventory_number),
+            'Проект: '.$this->stringValue($canonical?->currentProject?->name ?? $asset->currentProject?->name),
             'Задача графика: '.$this->stringValue($asset->currentScheduleTask?->name),
             'Статус: '.$this->stringValue($asset->status),
-            'Владение: '.$this->stringValue($asset->ownership_type),
-            'Стоимость часа: '.$this->moneyValue($asset->operating_cost_per_hour),
-            'Топливо: '.$this->stringValue($asset->fuel_type),
-            'Расход топлива: '.$this->numberValue($asset->fuel_consumption_rate),
-            'Наработка: '.$this->numberValue($asset->meter_hours),
+            'Владение: '.$this->stringValue($canonical?->ownership_type ?? $asset->ownership_type),
+            'Стоимость часа: '.$this->moneyValue($profile !== null ? $profile->operating_cost_per_hour : $asset->operating_cost_per_hour),
+            'Топливо: '.$this->stringValue($profile !== null ? $profile->fuel_type : $asset->fuel_type),
+            'Расход топлива: '.$this->numberValue($profile !== null ? $profile->fuel_consumption_rate : $asset->fuel_consumption_rate),
+            'Наработка: '.$this->numberValue($profile !== null ? $profile->meter_value : $asset->meter_hours),
         ]);
 
         return $this->chunk(
@@ -96,7 +98,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             $asset->current_project_id !== null ? (int) $asset->current_project_id : null,
             'machinery_asset',
             $asset->id,
-            'Техника: '.$this->stringValue($asset->name),
+            'Техника: '.$this->stringValue($canonical?->name ?? $asset->name),
             $content,
             [
                 'status' => $this->scalarValue($asset->status),
@@ -303,7 +305,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
     private function assets(int $organizationId, ?int $projectId): iterable
     {
         return MachineryAsset::query()
-            ->with(['machinery', 'currentProject', 'currentScheduleTask'])
+            ->with(['machinery', 'currentProject', 'currentScheduleTask', 'organizationAsset.operationProfile', 'organizationAsset.currentProject'])
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('current_project_id', $projectId))
             ->orderBy('id')
@@ -373,7 +375,10 @@ final class MachineryRagSource implements RagSourceCollectorInterface
 
     private function singleAsset(int $organizationId, string|int $entityId): array
     {
-        $asset = MachineryAsset::query()->with(['machinery', 'currentProject', 'currentScheduleTask'])->forOrganization($organizationId)->find($entityId);
+        $asset = MachineryAsset::query()
+            ->with(['machinery', 'currentProject', 'currentScheduleTask', 'organizationAsset.operationProfile', 'organizationAsset.currentProject'])
+            ->forOrganization($organizationId)
+            ->find($entityId);
 
         return $asset instanceof MachineryAsset ? [$this->assetChunk($asset)] : [];
     }

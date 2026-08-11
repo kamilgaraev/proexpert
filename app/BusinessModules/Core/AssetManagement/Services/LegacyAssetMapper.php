@@ -233,13 +233,20 @@ final readonly class LegacyAssetMapper
                     placement: $legacy->current_project_id !== null
                         ? new AssetPlacementData(projectId: (int) $legacy->current_project_id)
                         : null,
-                    metadata: ['legacy_source' => ['table' => 'machinery_assets', 'id' => (int) $legacy->id]],
+                    metadata: [
+                        ...(is_array($legacy->metadata) ? $legacy->metadata : (json_decode((string) ($legacy->metadata ?? ''), true) ?: [])),
+                        'legacy_source' => ['table' => 'machinery_assets', 'id' => (int) $legacy->id],
+                    ],
                     operationalMode: AssetOperationalMode::ShiftOperation,
                     tracksMeter: true,
                     tracksFuel: $legacy->fuel_type !== null || $legacy->fuel_consumption_rate !== null,
                     tracksProduction: true,
                     maintenanceEnabled: true,
                     meterUnit: 'hour',
+                    operatingCostPerHour: (float) $legacy->operating_cost_per_hour,
+                    fuelType: $legacy->fuel_type !== null ? (string) $legacy->fuel_type : null,
+                    fuelConsumptionRate: $legacy->fuel_consumption_rate !== null ? (float) $legacy->fuel_consumption_rate : null,
+                    meterValue: (float) $legacy->meter_hours,
                 ),
             );
             $canonical->update([

@@ -121,6 +121,7 @@ final class VerifyAssetRegistryCutover extends Command
         $divergence = 0;
         $rows = DB::table('machinery_assets as legacy')
             ->join('organization_assets as canonical', 'canonical.id', '=', 'legacy.organization_asset_id')
+            ->leftJoin('asset_operation_profiles as profile', 'profile.organization_asset_id', '=', 'canonical.id')
             ->whereNull('legacy.deleted_at')
             ->get([
                 'legacy.organization_id as legacy_organization_id',
@@ -136,6 +137,14 @@ final class VerifyAssetRegistryCutover extends Command
                 'canonical.machinery_id as canonical_machinery_id',
                 'legacy.current_project_id as legacy_project_id',
                 'canonical.current_project_id as canonical_project_id',
+                'legacy.operating_cost_per_hour as legacy_operating_cost_per_hour',
+                'profile.operating_cost_per_hour as canonical_operating_cost_per_hour',
+                'legacy.fuel_type as legacy_fuel_type',
+                'profile.fuel_type as canonical_fuel_type',
+                'legacy.fuel_consumption_rate as legacy_fuel_consumption_rate',
+                'profile.fuel_consumption_rate as canonical_fuel_consumption_rate',
+                'legacy.meter_hours as legacy_meter_value',
+                'profile.meter_value as canonical_meter_value',
             ]);
 
         foreach ($rows as $row) {
@@ -146,6 +155,10 @@ final class VerifyAssetRegistryCutover extends Command
                 || (string) $row->legacy_ownership_type !== (string) $row->canonical_ownership_type
                 || $this->nullableInt($row->legacy_machinery_id) !== $this->nullableInt($row->canonical_machinery_id)
                 || $this->nullableInt($row->legacy_project_id) !== $this->nullableInt($row->canonical_project_id)
+                || ! $this->numericValuesMatch($row->legacy_operating_cost_per_hour, $row->canonical_operating_cost_per_hour)
+                || $this->nullableString($row->legacy_fuel_type) !== $this->nullableString($row->canonical_fuel_type)
+                || ! $this->numericValuesMatch($row->legacy_fuel_consumption_rate, $row->canonical_fuel_consumption_rate)
+                || ! $this->numericValuesMatch($row->legacy_meter_value, $row->canonical_meter_value)
             ) {
                 $divergence++;
             }
@@ -406,5 +419,14 @@ final class VerifyAssetRegistryCutover extends Command
     private function nullableInt(mixed $value): ?int
     {
         return $value === null ? null : (int) $value;
+    }
+
+    private function numericValuesMatch(mixed $first, mixed $second): bool
+    {
+        if ($first === null || $second === null) {
+            return $first === null && $second === null;
+        }
+
+        return abs((float) $first - (float) $second) < 0.0005;
     }
 }

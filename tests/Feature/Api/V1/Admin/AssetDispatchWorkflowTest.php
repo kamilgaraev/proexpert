@@ -41,6 +41,11 @@ final class AssetDispatchWorkflowTest extends TestCase
             (int) $context->organization->id,
             ['asset_code' => 'DSP-1', 'name' => 'Dispatcher excavator', 'operating_cost_per_hour' => 1000],
         );
+        $misleadingLegacyAsset = $this->app->make(MachineryOperationsService::class)->createAsset(
+            (int) $context->organization->id,
+            ['asset_code' => 'DSP-LEGACY-TRAP', 'name' => 'Higher canonical cost', 'operating_cost_per_hour' => 2000],
+        );
+        $misleadingLegacyAsset->update(['operating_cost_per_hour' => 1]);
 
         $request = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/machinery-operations/asset-requests', [
             'project_id' => $project->id,
@@ -69,6 +74,7 @@ final class AssetDispatchWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/machinery-operations/asset-requests/{$requestId}/candidates")
             ->assertOk()
+            ->assertJsonPath('data.0.asset.id', $asset->id)
             ->assertJsonPath('data.0.asset.organization_asset_id', $asset->organization_asset_id)
             ->assertJsonPath('data.0.eligible', true);
 

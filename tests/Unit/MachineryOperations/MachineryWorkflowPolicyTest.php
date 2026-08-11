@@ -6,6 +6,7 @@ namespace Tests\Unit\MachineryOperations;
 
 use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
+use App\BusinessModules\Core\AssetManagement\Models\AssetOperationProfile;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetProjection;
@@ -62,6 +63,9 @@ final class MachineryWorkflowPolicyTest extends TestCase
         self::assertSame(array_keys($projection->project($legacy)), array_keys($projection->project($linked)));
         self::assertSame(900, $projection->project($linked)['organization_asset_id']);
         self::assertSame('Canonical excavator', $projection->project($linked)['name']);
+        self::assertSame('2500.00', $projection->project($linked)['operating_cost_per_hour']);
+        self::assertSame('17.500', $projection->project($linked)['fuel_consumption_rate']);
+        self::assertSame('321.00', $projection->project($linked)['meter_hours']);
         self::assertNull($projection->project($legacy)['organization_asset_id']);
         self::assertSame('Legacy excavator', $projection->project($legacy)['name']);
     }
@@ -89,6 +93,13 @@ final class MachineryWorkflowPolicyTest extends TestCase
             'metadata' => ['machinery_operation_status' => 'available'],
         ], $canonicalOverrides));
         $canonical->id = 900;
+        $canonical->setRelation('operationProfile', new AssetOperationProfile([
+            'organization_asset_id' => 900,
+            'operating_cost_per_hour' => '2500',
+            'fuel_type' => 'diesel',
+            'fuel_consumption_rate' => '17.5',
+            'meter_value' => '321',
+        ]));
         $asset->setRelation('organizationAsset', $canonical);
 
         return $asset;
@@ -103,7 +114,7 @@ final class MachineryWorkflowPolicyTest extends TestCase
             'inventory_number' => 'INV-LEG',
             'ownership_type' => 'owned',
             'status' => 'available',
-            'operating_cost_per_hour' => 1000,
+            'operating_cost_per_hour' => '1000',
         ]);
         $asset->id = 70;
         $asset->setRelation('organizationAsset', null);

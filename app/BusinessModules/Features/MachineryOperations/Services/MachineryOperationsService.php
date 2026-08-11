@@ -109,6 +109,7 @@ final class MachineryOperationsService
                     ? new AssetPlacementData(projectId: (int) $legacy->current_project_id)
                     : null,
                 metadata: [
+                    ...($data['metadata'] ?? []),
                     'legacy_source' => ['table' => 'machinery_assets', 'id' => (int) $legacy->id],
                     'machinery_operation_status' => $initialStatus,
                 ],
@@ -118,6 +119,10 @@ final class MachineryOperationsService
                 tracksProduction: true,
                 maintenanceEnabled: true,
                 meterUnit: 'hour',
+                operatingCostPerHour: (float) $legacy->operating_cost_per_hour,
+                fuelType: $legacy->fuel_type !== null ? (string) $legacy->fuel_type : null,
+                fuelConsumptionRate: $legacy->fuel_consumption_rate !== null ? (float) $legacy->fuel_consumption_rate : null,
+                meterValue: (float) $legacy->meter_hours,
             ));
             $legacy->update(['organization_asset_id' => $canonical->id]);
 
@@ -361,7 +366,10 @@ final class MachineryOperationsService
         }
 
         return DB::transaction(function () use ($shift, $userId): MachineryShiftReport {
-            $hourlyRate = (float) ($shift->asset?->operating_cost_per_hour ?? 0);
+            $legacy = MachineryAsset::query()->whereKey($shift->asset_id)->lockForUpdate()->first();
+            $canonical = $legacy !== null ? $this->canonicalAsset($legacy, true) : null;
+            $profile = $canonical?->operationProfile()->lockForUpdate()->first();
+            $hourlyRate = (float) ($profile?->operating_cost_per_hour ?? $legacy?->operating_cost_per_hour ?? 0);
             $shift->update([
                 'status' => 'approved',
                 'approved_by_user_id' => $userId,
@@ -369,24 +377,17 @@ final class MachineryOperationsService
                 'hourly_rate_snapshot' => $hourlyRate,
                 'cost_evidence' => [
                     'version' => 1,
-                    'source' => 'asset_operating_cost_per_hour',
+                    'source' => $profile !== null ? 'canonical_operation_profile' : 'legacy_asset_fallback',
                     'asset_id' => (int) $shift->asset_id,
+                    'organization_asset_id' => $canonical?->id,
                     'hourly_rate' => $hourlyRate,
                     'captured_at' => now()->toIso8601String(),
                 ],
             ]);
 
             if ($shift->meter_end !== null) {
-                $shift->asset()->update(['meter_hours' => $shift->meter_end]);
-                $asset = $shift->asset()->first();
-                if ($asset !== null) {
-                    $canonical = $this->canonicalAsset($asset, true);
-                    if ($canonical !== null) {
-                        $metadata = is_array($canonical->metadata) ? $canonical->metadata : [];
-                        $metadata['meter_hours'] = (float) $shift->meter_end;
-                        $canonical->update(['metadata' => $metadata]);
-                    }
-                }
+                $profile?->update(['meter_value' => $shift->meter_end]);
+                $legacy?->update(['meter_hours' => $shift->meter_end]);
             }
 
             return $shift->fresh(self::SHIFT_RELATIONS);
@@ -652,8 +653,8 @@ final class MachineryOperationsService
                 ->get()
                 ->all(),
             'operating_cost_by_project' => MachineryShiftReport::query()
-                ->join('machinery_assets', 'machinery_shift_reports.asset_id', '=', 'machinery_assets.id')
-                ->selectRaw('machinery_shift_reports.project_id, sum(machinery_shift_reports.actual_hours * machinery_assets.operating_cost_per_hour) as cost')
+                ->leftJoin('asset_operation_profiles', 'machinery_shift_reports.organization_asset_id', '=', 'asset_operation_profiles.organization_asset_id')
+                ->selectRaw('machinery_shift_reports.project_id, sum(machinery_shift_reports.actual_hours * coalesce(machinery_shift_reports.hourly_rate_snapshot, asset_operation_profiles.operating_cost_per_hour, 0)) as cost')
                 ->where('machinery_shift_reports.organization_id', $organizationId)
                 ->where('machinery_shift_reports.status', 'approved')
                 ->where('machinery_shift_reports.report_date', '<=', now()->toDateString())

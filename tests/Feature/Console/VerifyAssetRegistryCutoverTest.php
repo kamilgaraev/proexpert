@@ -100,6 +100,27 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         self::assertFalse($report['ready']);
     }
 
+    public function test_command_blocks_cutover_when_operational_profile_diverges_from_legacy_mirror(): void
+    {
+        $context = AdminApiTestContext::create();
+        $legacy = app(MachineryOperationsService::class)->createAsset((int) $context->organization->id, [
+            'asset_code' => 'CUTOVER-ECONOMICS',
+            'name' => 'Экскаватор',
+            'operating_cost_per_hour' => 1750,
+            'fuel_type' => 'diesel',
+            'fuel_consumption_rate' => 14.5,
+            'meter_hours' => 90,
+        ]);
+        $legacy->organizationAsset->operationProfile()->update(['operating_cost_per_hour' => 1800]);
+
+        $exitCode = Artisan::call('assets:verify-cutover', ['--format' => 'json']);
+        $report = $this->jsonOutput();
+
+        self::assertSame(1, $exitCode);
+        self::assertSame(1, $report['dual_write_divergence']);
+        self::assertFalse($report['ready']);
+    }
+
     public function test_details_report_breaks_down_missing_links_operations_and_assignment_risk(): void
     {
         $context = AdminApiTestContext::create();

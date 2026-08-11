@@ -20,7 +20,11 @@ final class MachineryCostService
     ): array {
         $effectiveDateTo = $dateTo->lessThan(CarbonImmutable::today()) ? $dateTo : CarbonImmutable::today();
         $shifts = MachineryShiftReport::forOrganization($organizationId)
-            ->with('asset:id,operating_cost_per_hour,ownership_type,metadata')
+            ->with([
+                'asset:id,operating_cost_per_hour,ownership_type,metadata',
+                'organizationAsset:id,ownership_type,metadata',
+                'organizationAsset.operationProfile:organization_asset_id,operating_cost_per_hour',
+            ])
             ->where('status', 'approved')
             ->whereBetween('report_date', [$dateFrom->toDateString(), $effectiveDateTo->toDateString()])
             ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))
@@ -38,7 +42,8 @@ final class MachineryCostService
 
         $shiftEvidence = $shifts->map(function (MachineryShiftReport $shift): array {
             $snapshot = $shift->hourly_rate_snapshot;
-            $rate = (float) ($snapshot ?? $shift->asset?->operating_cost_per_hour ?? 0);
+            $canonicalRate = $shift->organizationAsset?->operationProfile?->operating_cost_per_hour;
+            $rate = (float) ($snapshot ?? $canonicalRate ?? $shift->asset?->operating_cost_per_hour ?? 0);
 
             return [
                 'shift_report_id' => (int) $shift->id,
@@ -47,7 +52,9 @@ final class MachineryCostService
                 'approved_at' => $shift->approved_at?->toIso8601String(),
                 'actual_hours' => (float) $shift->actual_hours,
                 'hourly_rate' => $rate,
-                'rate_source' => $snapshot !== null ? 'approval_snapshot' : 'legacy_current_rate',
+                'rate_source' => $snapshot !== null
+                    ? 'approval_snapshot'
+                    : ($canonicalRate !== null ? 'canonical_operation_profile' : 'legacy_current_rate'),
                 'rate_evidence' => $shift->cost_evidence,
                 'cost' => round((float) $shift->actual_hours * $rate, 2),
             ];
@@ -82,13 +89,18 @@ final class MachineryCostService
     /** @param array<int, MachineryShiftReport> $shifts @return array<int, array<string, mixed>> */
     private function rentalEvidence(array $shifts, CarbonImmutable $dateFrom, CarbonImmutable $dateTo, ?int $projectId): array
     {
-        $assets = collect($shifts)->map(fn (MachineryShiftReport $shift) => $shift->asset)->filter()->unique('id');
+        $assets = collect($shifts)
+            ->filter(fn (MachineryShiftReport $shift): bool => $shift->asset !== null)
+            ->unique('asset_id');
         $evidence = [];
-        foreach ($assets as $asset) {
-            if ($asset->ownership_type !== 'rented') {
+        foreach ($assets as $shift) {
+            $legacy = $shift->asset;
+            $canonical = $shift->organizationAsset;
+            if (! in_array($canonical?->ownership_type ?? $legacy->ownership_type, ['leased', 'rented'], true)) {
                 continue;
             }
-            $terms = is_array($asset->metadata) ? ($asset->metadata['rental_terms'] ?? null) : null;
+            $metadata = $canonical?->metadata ?? $legacy->metadata;
+            $terms = is_array($metadata) ? ($metadata['rental_terms'] ?? null) : null;
             if (! is_array($terms) || ! is_numeric($terms['daily_rate'] ?? null)) {
                 continue;
             }
@@ -105,7 +117,8 @@ final class MachineryCostService
             $days = $start->diffInDays($end) + 1;
             $rate = (float) $terms['daily_rate'];
             $evidence[] = [
-                'asset_id' => (int) $asset->id,
+                'asset_id' => (int) $legacy->id,
+                'organization_asset_id' => $canonical?->id,
                 'date_from' => $start->toDateString(),
                 'date_to' => $end->toDateString(),
                 'days' => $days,
