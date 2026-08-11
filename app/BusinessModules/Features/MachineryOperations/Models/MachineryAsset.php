@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 
@@ -84,6 +85,17 @@ final class MachineryAsset extends Model
     public function assignments(): HasMany
     {
         return $this->hasMany(MachineryAssignment::class, 'asset_id');
+    }
+
+    public function currentAssignment(): HasOne
+    {
+        return $this->hasOne(MachineryAssignment::class, 'asset_id')
+            ->where('machinery_assignments.status', 'active')
+            ->where('machinery_assignments.planned_start_at', '<=', now())
+            ->where(fn (Builder $query) => $query
+                ->whereNull('machinery_assignments.planned_end_at')
+                ->orWhere('machinery_assignments.planned_end_at', '>', now()))
+            ->orderByDesc('machinery_assignments.planned_start_at');
     }
 
     public function shiftReports(): HasMany

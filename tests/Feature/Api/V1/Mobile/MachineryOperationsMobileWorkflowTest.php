@@ -128,6 +128,8 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
             ->getJson("/api/v1/mobile/machinery-operations/assets?project_id={$project->id}");
         $assetList->assertOk()
             ->assertJsonPath('data.data.0.id', $asset->id)
+            ->assertJsonPath('data.data.0.current_assignment.asset_id', $asset->id)
+            ->assertJsonPath('data.data.0.current_assignment.project_id', $project->id)
             ->assertJsonPath('data.data.0.workflow_summary.status', 'in_operation');
 
         $shift = $this->withHeaders($context->authHeaders())

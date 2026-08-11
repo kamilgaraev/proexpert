@@ -13,6 +13,7 @@ final class MachineryAssetReadRepository
         'machinery:id,name,code,category',
         'currentProject:id,name',
         'currentScheduleTask:id,name',
+        'currentAssignment:id,asset_id,organization_asset_id,project_id,schedule_task_id,status,planned_start_at,planned_end_at,actual_start_at',
         'organizationAsset.operationProfile',
         'organizationAsset.machinery:id,name,code,category',
         'organizationAsset.currentProject:id,name',
