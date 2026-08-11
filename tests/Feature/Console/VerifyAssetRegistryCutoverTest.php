@@ -11,6 +11,7 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Models\Project;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -99,7 +100,48 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         self::assertFalse($report['ready']);
     }
 
-    /** @return array<string, int|bool> */
+    public function test_details_report_breaks_down_missing_links_operations_and_assignment_risk(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId]);
+        $legacy = MachineryAsset::query()->create([
+            'organization_id' => $organizationId,
+            'asset_code' => 'CUTOVER-DETAILS',
+            'name' => 'Диагностируемая единица',
+            'ownership_type' => 'owned',
+            'status' => 'available',
+            'operating_cost_per_hour' => 0,
+            'meter_hours' => 0,
+        ]);
+        foreach ([now()->subHours(2), now()->subHour()] as $plannedStartAt) {
+            MachineryAssignment::query()->create([
+                'organization_id' => $organizationId,
+                'asset_id' => $legacy->id,
+                'project_id' => $project->id,
+                'status' => 'active',
+                'planned_start_at' => $plannedStartAt,
+            ]);
+        }
+
+        $exitCode = Artisan::call('assets:verify-cutover', ['--format' => 'json', '--details' => true]);
+        $report = $this->jsonOutput();
+
+        self::assertSame(1, $exitCode);
+        self::assertSame([
+            'machinery_assets' => 1,
+            'operation_profiles' => 0,
+            'serialized_projections' => 0,
+        ], $report['details']['missing_links']);
+        self::assertSame(2, $report['details']['operations_without_canonical_id']['machinery_assignments']);
+        self::assertSame(2, $report['details']['assignments']['active']);
+        self::assertSame(2, $report['details']['assignments']['currently_effective']);
+        self::assertSame(1, $report['details']['assignments']['overlapping_pairs']);
+        self::assertSame(1, $report['details']['assignments']['distinct_projects']);
+        self::assertSame(2, DB::table('machinery_assignments')->whereNull('organization_asset_id')->count());
+    }
+
+    /** @return array<string, mixed> */
     private function jsonOutput(): array
     {
         $decoded = json_decode(trim(Artisan::output()), true, 512, JSON_THROW_ON_ERROR);

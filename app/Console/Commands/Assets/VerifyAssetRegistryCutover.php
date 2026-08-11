@@ -23,7 +23,7 @@ final class VerifyAssetRegistryCutover extends Command
         'maintenance_inspections',
     ];
 
-    protected $signature = 'assets:verify-cutover {--format=table : table или json}';
+    protected $signature = 'assets:verify-cutover {--format=table : table или json} {--details : Добавить агрегированную диагностику}';
 
     protected $description = 'Проверяет go/no-go условия перехода на единый реестр имущества';
 
@@ -37,6 +37,13 @@ final class VerifyAssetRegistryCutover extends Command
             'open_assignments_with_inconsistent_placement' => $this->inconsistentOpenAssignments(),
         ];
         $report['ready'] = array_sum($report) === 0;
+        if ((bool) $this->option('details')) {
+            $report['details'] = [
+                'missing_links' => $this->missingLinksBreakdown(),
+                'operations_without_canonical_id' => $this->operationsWithoutCanonicalIdBreakdown(),
+                'assignments' => $this->assignmentRiskBreakdown(),
+            ];
+        }
 
         if ($this->option('format') === 'json') {
             $this->line((string) json_encode($report, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
@@ -54,17 +61,21 @@ final class VerifyAssetRegistryCutover extends Command
 
     private function missingLinks(): int
     {
-        $missing = (int) DB::table('machinery_assets')->whereNull('organization_asset_id')->count();
+        return array_sum($this->missingLinksBreakdown());
+    }
 
-        $missing += (int) DB::table('organization_assets')
+    /** @return array{machinery_assets: int, operation_profiles: int, serialized_projections: int} */
+    private function missingLinksBreakdown(): array
+    {
+        $machineryAssets = (int) DB::table('machinery_assets')->whereNull('organization_asset_id')->count();
+        $operationProfiles = (int) DB::table('organization_assets')
             ->whereNull('deleted_at')
             ->whereNotExists(static fn (Builder $query) => $query
                 ->selectRaw('1')
                 ->from('asset_operation_profiles')
                 ->whereColumn('asset_operation_profiles.organization_asset_id', 'organization_assets.id'))
             ->count();
-
-        return $missing + (int) DB::table('organization_assets')
+        $serializedProjections = (int) DB::table('organization_assets')
             ->where('accounting_mode', 'serialized')
             ->whereNotNull('material_id')
             ->whereNull('deleted_at')
@@ -73,6 +84,12 @@ final class VerifyAssetRegistryCutover extends Command
                 ->from('machinery_assets')
                 ->whereColumn('machinery_assets.organization_asset_id', 'organization_assets.id'))
             ->count();
+
+        return [
+            'machinery_assets' => $machineryAssets,
+            'operation_profiles' => $operationProfiles,
+            'serialized_projections' => $serializedProjections,
+        ];
     }
 
     private function duplicateCanonicalAssets(): int
@@ -138,14 +155,60 @@ final class VerifyAssetRegistryCutover extends Command
 
     private function operationsWithoutCanonicalId(): int
     {
-        $count = 0;
+        return array_sum($this->operationsWithoutCanonicalIdBreakdown());
+    }
+
+    /** @return array<string, int> */
+    private function operationsWithoutCanonicalIdBreakdown(): array
+    {
+        $counts = [];
         foreach (self::OPERATION_TABLES as $table) {
-            if (Schema::hasTable($table) && Schema::hasColumn($table, 'organization_asset_id')) {
-                $count += (int) DB::table($table)->whereNull('organization_asset_id')->count();
-            }
+            $counts[$table] = Schema::hasTable($table) && Schema::hasColumn($table, 'organization_asset_id')
+                ? (int) DB::table($table)->whereNull('organization_asset_id')->count()
+                : 0;
         }
 
-        return $count;
+        return $counts;
+    }
+
+    /** @return array{active: int, currently_effective: int, overlapping_pairs: int, distinct_projects: int} */
+    private function assignmentRiskBreakdown(): array
+    {
+        if (! Schema::hasTable('machinery_assignments')) {
+            return ['active' => 0, 'currently_effective' => 0, 'overlapping_pairs' => 0, 'distinct_projects' => 0];
+        }
+
+        $active = DB::table('machinery_assignments')
+            ->where('status', 'active')
+            ->whereNull('deleted_at');
+        $currentlyEffective = (clone $active)
+            ->where('planned_start_at', '<=', now())
+            ->where(static fn (Builder $query) => $query
+                ->whereNull('planned_end_at')
+                ->orWhere('planned_end_at', '>', now()))
+            ->count();
+        $overlappingPairs = DB::table('machinery_assignments as earlier')
+            ->join('machinery_assignments as later', static fn ($join) => $join
+                ->on('later.asset_id', '=', 'earlier.asset_id')
+                ->on('later.id', '>', 'earlier.id'))
+            ->where('earlier.status', 'active')
+            ->where('later.status', 'active')
+            ->whereNull('earlier.deleted_at')
+            ->whereNull('later.deleted_at')
+            ->where(static fn (Builder $query) => $query
+                ->whereNull('later.planned_end_at')
+                ->orWhereColumn('earlier.planned_start_at', '<', 'later.planned_end_at'))
+            ->where(static fn (Builder $query) => $query
+                ->whereNull('earlier.planned_end_at')
+                ->orWhereColumn('later.planned_start_at', '<', 'earlier.planned_end_at'))
+            ->count();
+
+        return [
+            'active' => (int) (clone $active)->count(),
+            'currently_effective' => (int) $currentlyEffective,
+            'overlapping_pairs' => (int) $overlappingPairs,
+            'distinct_projects' => (int) (clone $active)->distinct()->count('project_id'),
+        ];
     }
 
     private function inconsistentOpenAssignments(): int
