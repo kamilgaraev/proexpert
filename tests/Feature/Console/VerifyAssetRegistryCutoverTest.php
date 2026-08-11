@@ -185,15 +185,6 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         $localCurrentProject = Project::factory()->create(['organization_id' => $organizationId]);
         $otherLocalProject = Project::factory()->create(['organization_id' => $organizationId]);
         $foreignProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
-        DB::table('project_organization')->insert([
-            'project_id' => $foreignProject->id,
-            'organization_id' => $organizationId,
-            'role' => 'contractor',
-            'role_new' => 'contractor',
-            'is_active' => true,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
         $legacy = MachineryAsset::query()->create([
             'organization_id' => $organizationId,
             'current_project_id' => $localCurrentProject->id,
@@ -219,7 +210,7 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
             'asset_id' => (int) $legacy->id,
             'organization_id' => $organizationId,
             'foreign_assignment_project_ids' => [(int) $foreignProject->id],
-            'accessible_foreign_assignment_project_ids' => [(int) $foreignProject->id],
+            'accessible_foreign_assignment_project_ids' => [],
             'legacy_current_project_id' => (int) $localCurrentProject->id,
             'legacy_current_project_is_local' => true,
             'schedule_project_ids' => [],
@@ -227,6 +218,47 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
             'local_operation_project_ids' => [],
             'local_candidate_project_ids' => collect([$localCurrentProject->id, $otherLocalProject->id])->map(static fn ($id): int => (int) $id)->sort()->values()->all(),
         ]], $evidence);
+    }
+
+    public function test_active_shared_project_is_not_reported_as_a_scope_mismatch(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreign = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $sharedProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        DB::table('project_organization')->insert([
+            'project_id' => $sharedProject->id,
+            'organization_id' => $organizationId,
+            'role' => 'contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $legacy = MachineryAsset::query()->create([
+            'organization_id' => $organizationId,
+            'current_project_id' => $sharedProject->id,
+            'asset_code' => 'CUTOVER-SHARED-PROJECT',
+            'name' => 'Техника на общем проекте',
+            'ownership_type' => 'owned',
+            'status' => 'available',
+            'operating_cost_per_hour' => 0,
+            'meter_hours' => 0,
+        ]);
+        MachineryAssignment::query()->create([
+            'organization_id' => $organizationId,
+            'asset_id' => $legacy->id,
+            'project_id' => $sharedProject->id,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+        ]);
+
+        Artisan::call('assets:verify-cutover', ['--format' => 'json', '--details' => true]);
+        $details = $this->jsonOutput()['details'];
+
+        self::assertSame(0, $details['assignments']['project_organization_mismatches']);
+        self::assertSame(0, $details['assignments']['scope_mismatch_assets']);
+        self::assertSame([], $details['scope_repair_evidence']);
     }
 
     /** @return array<string, mixed> */

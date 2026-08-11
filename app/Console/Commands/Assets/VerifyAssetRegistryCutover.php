@@ -207,11 +207,24 @@ final class VerifyAssetRegistryCutover extends Command
             ->join('machinery_assets as asset', 'asset.id', '=', 'assignment.asset_id')
             ->join('projects as project', 'project.id', '=', 'assignment.project_id')
             ->whereColumn('project.organization_id', '<>', 'asset.organization_id')
+            ->whereNotExists(static fn (Builder $query) => $query
+                ->selectRaw('1')
+                ->from('project_organization as participant')
+                ->whereColumn('participant.project_id', 'assignment.project_id')
+                ->whereColumn('participant.organization_id', 'asset.organization_id')
+                ->where('participant.is_active', true))
             ->distinct()
             ->get(['asset.id', 'asset.organization_id']);
         $candidateBuckets = ['none' => 0, 'one' => 0, 'many' => 0];
         foreach ($scopeMismatchAssets as $asset) {
-            $projects = DB::table('projects')->where('organization_id', $asset->organization_id);
+            $projects = DB::table('projects')->where(static fn (Builder $query) => $query
+                ->where('organization_id', $asset->organization_id)
+                ->orWhereExists(static fn (Builder $participant) => $participant
+                    ->selectRaw('1')
+                    ->from('project_organization')
+                    ->whereColumn('project_organization.project_id', 'projects.id')
+                    ->where('project_organization.organization_id', $asset->organization_id)
+                    ->where('project_organization.is_active', true)));
             if (Schema::hasColumn('projects', 'deleted_at')) {
                 $projects->whereNull('deleted_at');
             }
@@ -232,6 +245,12 @@ final class VerifyAssetRegistryCutover extends Command
                 ->join('machinery_assets as asset', 'asset.id', '=', 'assignment.asset_id')
                 ->join('projects as project', 'project.id', '=', 'assignment.project_id')
                 ->whereColumn('project.organization_id', '<>', 'asset.organization_id')
+                ->whereNotExists(static fn (Builder $query) => $query
+                    ->selectRaw('1')
+                    ->from('project_organization as participant')
+                    ->whereColumn('participant.project_id', 'assignment.project_id')
+                    ->whereColumn('participant.organization_id', 'asset.organization_id')
+                    ->where('participant.is_active', true))
                 ->count(),
             'scope_mismatch_assets' => $scopeMismatchAssets->count(),
             'scope_mismatch_assets_without_candidate' => $candidateBuckets['none'],
@@ -271,6 +290,12 @@ final class VerifyAssetRegistryCutover extends Command
             ->join('machinery_assets as asset', 'asset.id', '=', 'assignment.asset_id')
             ->join('projects as project', 'project.id', '=', 'assignment.project_id')
             ->whereColumn('project.organization_id', '<>', 'asset.organization_id')
+            ->whereNotExists(static fn (Builder $query) => $query
+                ->selectRaw('1')
+                ->from('project_organization as participant')
+                ->whereColumn('participant.project_id', 'assignment.project_id')
+                ->whereColumn('participant.organization_id', 'asset.organization_id')
+                ->where('participant.is_active', true))
             ->distinct()
             ->orderBy('asset.id')
             ->get(['asset.id', 'asset.organization_id', 'asset.current_project_id', 'asset.current_schedule_task_id']);
@@ -278,7 +303,14 @@ final class VerifyAssetRegistryCutover extends Command
         return $assets->map(function (object $asset): array {
             $assetId = (int) $asset->id;
             $organizationId = (int) $asset->organization_id;
-            $localCandidates = DB::table('projects')->where('organization_id', $organizationId);
+            $localCandidates = DB::table('projects')->where(static fn (Builder $query) => $query
+                ->where('organization_id', $organizationId)
+                ->orWhereExists(static fn (Builder $participant) => $participant
+                    ->selectRaw('1')
+                    ->from('project_organization')
+                    ->whereColumn('project_organization.project_id', 'projects.id')
+                    ->where('project_organization.organization_id', $organizationId)
+                    ->where('project_organization.is_active', true)));
             if (Schema::hasColumn('projects', 'deleted_at')) {
                 $localCandidates->whereNull('deleted_at');
             }

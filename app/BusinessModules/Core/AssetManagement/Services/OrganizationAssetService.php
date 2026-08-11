@@ -12,6 +12,7 @@ use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\AssetCustodyEvent;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Project;
 use App\Models\User;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -174,7 +175,7 @@ final readonly class OrganizationAssetService
         }
 
         $this->assertOrganizationReference('organization_warehouses', $placement->warehouseId, $organizationId);
-        $this->assertOrganizationReference('projects', $placement->projectId, $organizationId);
+        $this->assertProjectReference($placement->projectId, $organizationId);
 
         if ($placement->userId !== null) {
             $this->assertOrganizationUser($placement->userId, $organizationId);
@@ -193,6 +194,13 @@ final readonly class OrganizationAssetService
             ->exists();
 
         if (! $exists) {
+            throw new DomainException(trans_message('asset_management.errors.foreign_reference'));
+        }
+    }
+
+    private function assertProjectReference(?int $projectId, int $organizationId): void
+    {
+        if ($projectId !== null && ! Project::query()->accessibleByOrganization($organizationId)->whereKey($projectId)->exists()) {
             throw new DomainException(trans_message('asset_management.errors.foreign_reference'));
         }
     }

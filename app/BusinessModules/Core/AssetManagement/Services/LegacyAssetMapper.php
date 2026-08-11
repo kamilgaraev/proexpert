@@ -10,6 +10,7 @@ use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetOperationalMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
+use App\Models\Project;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -540,7 +541,7 @@ final readonly class LegacyAssetMapper
         $projectId = (int) $effective->project_id;
         if (
             (int) $effective->organization_id !== $organizationId
-            || ! DB::table('projects')->where('id', $projectId)->where('organization_id', $organizationId)->exists()
+            || ! Project::query()->accessibleByOrganization($organizationId)->whereKey($projectId)->exists()
         ) {
             $this->addConflict(
                 $report,
