@@ -1,0 +1,20 @@
+{
+  "name": "Механик",
+  "slug": "mechanic",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "mobile",
+  "description": "Диагностика, техническое обслуживание и ремонт техники",
+  "system_permissions": ["profile.view", "profile.edit"],
+  "module_permissions": {
+    "machinery-operations": [
+      "machinery-operations.view",
+      "machinery-operations.edit",
+      "machinery-operations.downtime.manage"
+    ],
+    "notifications": ["notifications.view", "notifications.receive.system"]
+  },
+  "interface_access": ["mobile"],
+  "hierarchy": {"can_manage_roles": [], "cannot_manage": ["*"]},
+  "conditions": {}
+}

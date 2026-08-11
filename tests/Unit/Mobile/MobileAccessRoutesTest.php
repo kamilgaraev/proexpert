@@ -43,4 +43,29 @@ class MobileAccessRoutesTest extends TestCase
         $this->assertSame('mobile', $definition['interface']);
         $this->assertContains('mobile', $definition['interface_access']);
     }
+
+    public function test_machinery_field_roles_have_focused_mobile_permissions(): void
+    {
+        $operator = $this->role('machine_operator');
+        $mechanic = $this->role('mechanic');
+        $storekeeper = $this->role('storekeeper');
+        $foreman = $this->role('foreman');
+
+        $this->assertSame(['mobile'], $operator['interface_access']);
+        $this->assertContains('machinery-operations.shifts.create', $operator['module_permissions']['machinery-operations']);
+        $this->assertNotContains('machinery-operations.shifts.approve', $operator['module_permissions']['machinery-operations']);
+        $this->assertContains('machinery-operations.downtime.manage', $mechanic['module_permissions']['machinery-operations']);
+        $this->assertContains('warehouse.advanced.barcode', $storekeeper['module_permissions']['basic-warehouse']);
+        $this->assertContains('machinery-operations.shifts.approve', $foreman['module_permissions']['machinery-operations']);
+    }
+
+    private function role(string $slug): array
+    {
+        return json_decode(
+            file_get_contents(config_path("RoleDefinitions/mobile/{$slug}.json")),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+    }
 }

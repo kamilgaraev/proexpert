@@ -243,6 +243,65 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_operator_shift_lifecycle_is_idempotent_across_offline_retries(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $asset = MachineryAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'current_project_id' => $project->id,
+            'asset_code' => 'MOB-IDEMPOTENT-1',
+            'name' => 'Idempotent mobile excavator',
+            'status' => 'assigned',
+            'ownership_type' => 'owned',
+            'operating_cost_per_hour' => 1200,
+        ]);
+        $this->createActiveAssignment($asset, (int) $project->id, (int) $context->user->id);
+        $this->allowAccess();
+
+        $payload = [
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'report_date' => now()->toDateString(),
+            'planned_hours' => 8,
+            'actual_hours' => 0,
+            'fuel_consumed' => 0,
+            'meter_start' => 150,
+        ];
+        $first = $this->withHeaders([...$context->authHeaders(), 'Idempotency-Key' => 'operator-shift-start-1'])
+            ->postJson('/api/v1/mobile/machinery-operations/shift-reports', $payload)
+            ->assertCreated();
+        $repeated = $this->withHeaders([...$context->authHeaders(), 'Idempotency-Key' => 'operator-shift-start-1'])
+            ->postJson('/api/v1/mobile/machinery-operations/shift-reports', $payload)
+            ->assertCreated();
+        self::assertSame($first->json('data.id'), $repeated->json('data.id'));
+        $shiftId = (int) $first->json('data.id');
+        $this->assertDatabaseCount('machinery_shift_reports', 1);
+
+        $finishPayload = ['actual_hours' => 7.5, 'fuel_consumed' => 45, 'meter_end' => 157.5];
+        $this->withHeaders([...$context->authHeaders(), 'Idempotency-Key' => 'operator-shift-finish-1'])
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$shiftId}/finish", $finishPayload)
+            ->assertOk()
+            ->assertJsonPath('data.actual_hours', '7.50');
+        $this->withHeaders([...$context->authHeaders(), 'Idempotency-Key' => 'operator-shift-finish-1'])
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$shiftId}/finish", $finishPayload)
+            ->assertOk();
+
+        $this->withHeaders([...$context->authHeaders(), 'Idempotency-Key' => 'operator-shift-submit-1'])
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$shiftId}/submit")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'submitted');
+        $this->withHeaders([...$context->authHeaders(), 'Idempotency-Key' => 'operator-shift-submit-1'])
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$shiftId}/submit")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'submitted');
+
+        $this->withHeaders([...$context->authHeaders(), 'Idempotency-Key' => 'operator-shift-start-1'])
+            ->postJson('/api/v1/mobile/machinery-operations/shift-reports', [...$payload, 'meter_start' => 151])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('machinery_operations.errors.idempotency_conflict'));
+    }
+
     public function test_mobile_machine_actuals_require_real_values(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
