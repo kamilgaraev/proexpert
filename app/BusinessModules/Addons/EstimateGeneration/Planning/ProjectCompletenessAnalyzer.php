@@ -36,12 +36,14 @@ final readonly class ProjectCompletenessAnalyzer
         array $decisions = [],
         array $projection = [],
     ): ProjectCompletenessResult {
+        $allFactsByType = [];
         $factsByType = [];
         $factsById = [];
         foreach ($snapshot->facts as $fact) {
+            $allFactsByType[$fact->type][] = $fact;
+            $factsById[$fact->id] = $fact;
             if ($fact->status === 'confirmed') {
                 $factsByType[$fact->type][] = $fact;
-                $factsById[$fact->id] = $fact;
             }
         }
         $decisionsById = [];
@@ -80,10 +82,21 @@ final readonly class ProjectCompletenessAnalyzer
                 $limitations[] = 'completeness_finding_budget_reached';
                 break;
             }
-            [$applicabilityStatus, $applicabilityEvidence] = $this->evaluateConditions($rule->conditions, $factsByType);
+            [$applicabilityStatus, $applicabilityEvidence, $applicableEntityIds] = $this->evaluateConditions(
+                $rule->conditions,
+                $factsByType,
+            );
             $evidence = array_fill_keys($applicabilityEvidence, true);
             $applicable = $applicabilityStatus === 'applicable';
-            $satisfaction = $factsByType[$rule->satisfactionFactType][0] ?? null;
+            $targetFacts = $this->targetFacts(
+                $allFactsByType[$rule->satisfactionFactType] ?? [],
+                $applicableEntityIds,
+            );
+            $confirmedTargetFacts = array_values(array_filter(
+                $targetFacts,
+                static fn (Fact $fact): bool => $fact->status === 'confirmed',
+            ));
+            $satisfaction = $confirmedTargetFacts[0] ?? null;
             if ($satisfaction instanceof Fact) {
                 $evidence[$satisfaction->id] = true;
             }
@@ -91,8 +104,9 @@ final readonly class ProjectCompletenessAnalyzer
                 $rule->id,
                 $rule->version,
                 $rule->contentHash,
-                array_values(array_unique($applicabilityEvidence)),
-            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+                $this->factStates($this->facts($applicabilityEvidence, $factsById)),
+                $this->factStates($targetFacts),
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
             $exclusion = $this->validExclusion($exclusions[$rule->id] ?? null, $rule, $findingKey, $projection);
             $status = match ($applicabilityStatus) {
                 'not_applicable' => 'not_applicable',
@@ -152,11 +166,14 @@ final readonly class ProjectCompletenessAnalyzer
     private function evaluateConditions(array $conditions, array $factsByType): array
     {
         $evidence = [];
+        $matchedEntities = [];
         $unknown = false;
         foreach ($conditions as $condition) {
             $facts = $factsByType[(string) ($condition['fact_type'] ?? '')] ?? [];
             if ($facts === []) {
-                return ['unknown', $evidence];
+                sort($evidence, SORT_STRING);
+
+                return ['unknown', array_values(array_unique($evidence)), array_keys($matchedEntities)];
             }
             $matched = false;
             foreach ($facts as $fact) {
@@ -170,7 +187,7 @@ final readonly class ProjectCompletenessAnalyzer
                     continue;
                 }
                 $operator = (string) ($condition['operator'] ?? '');
-                $matched = match ($operator) {
+                $factMatches = match ($operator) {
                     'present' => true,
                     '=' => $fact->value === ($condition['value'] ?? null),
                     '!=' => $fact->value !== ($condition['value'] ?? null),
@@ -178,19 +195,115 @@ final readonly class ProjectCompletenessAnalyzer
                     '>', '>=', '<', '<=' => $this->compare($fact->value, $condition['value'] ?? null, $operator),
                     default => throw new InvalidArgumentException('Completeness condition operator is invalid.'),
                 };
-                if ($matched) {
-                    break;
+                if ($factMatches) {
+                    $matched = true;
+                    $matchedEntities[$fact->entityId] = true;
                 }
             }
             if (! $matched && ! $unknown) {
-                return ['not_applicable', array_values(array_unique($evidence))];
+                sort($evidence, SORT_STRING);
+
+                return ['not_applicable', array_values(array_unique($evidence)), array_keys($matchedEntities)];
             }
             if (! $matched) {
                 $unknown = true;
             }
         }
 
-        return [$unknown ? 'unknown' : 'applicable', array_values(array_unique($evidence))];
+        sort($evidence, SORT_STRING);
+        $entities = array_keys($matchedEntities);
+        sort($entities, SORT_STRING);
+
+        return [$unknown ? 'unknown' : 'applicable', array_values(array_unique($evidence)), $entities];
+    }
+
+    /** @param list<Fact> $facts */
+    private function targetFacts(array $facts, array $entityIds): array
+    {
+        $entities = array_fill_keys($entityIds, true);
+        $target = array_values(array_filter(
+            $facts,
+            static fn (Fact $fact): bool => isset($entities[$fact->entityId]),
+        ));
+        usort($target, fn (Fact $left, Fact $right): int => $this->factStateJson($left) <=> $this->factStateJson($right));
+
+        return $target;
+    }
+
+    /** @return list<Fact> */
+    private function facts(array $ids, array $factsById): array
+    {
+        $facts = [];
+        foreach ($ids as $id) {
+            $fact = $factsById[$id] ?? null;
+            if ($fact instanceof Fact) {
+                $facts[$fact->id] = $fact;
+            }
+        }
+
+        return array_values($facts);
+    }
+
+    /** @param list<Fact> $facts */
+    private function factStates(array $facts): array
+    {
+        $states = array_map(fn (Fact $fact): array => $this->factState($fact), $facts);
+        usort($states, static fn (array $left, array $right): int => json_encode(
+            $left,
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
+        ) <=> json_encode(
+            $right,
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
+        ));
+
+        return $states;
+    }
+
+    private function factState(Fact $fact): array
+    {
+        $evidenceIds = $fact->evidenceIds;
+        sort($evidenceIds, SORT_STRING);
+
+        return [
+            'id' => $fact->id,
+            'organization_id' => $fact->organizationId,
+            'project_id' => $fact->projectId,
+            'session_id' => $fact->sessionId,
+            'source_version' => $fact->sourceVersion,
+            'entity_id' => $fact->entityId,
+            'type' => $fact->type,
+            'value' => $this->canonicalValue($fact->value),
+            'unit' => $fact->unit,
+            'confidence' => $fact->confidence,
+            'origin' => $fact->origin,
+            'status' => $fact->status,
+            'evidence_ids' => $evidenceIds,
+            'version' => $fact->version,
+            'supersedes_fact_id' => $fact->supersedesFactId,
+        ];
+    }
+
+    private function factStateJson(Fact $fact): string
+    {
+        return json_encode(
+            $this->factState($fact),
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
+        );
+    }
+
+    private function canonicalValue(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        if (! array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->canonicalValue($item);
+        }
+
+        return $value;
     }
 
     private function validExclusion(?array $exclusion, CompletenessRule $rule, string $findingKey, array $projection): ?array

@@ -41,6 +41,7 @@ final readonly class CompletenessRuleCatalog
             throw new InvalidArgumentException('Completeness rule catalog is invalid.');
         }
         $rules = [];
+        $normalizedRows = [];
         foreach ($rows as $row) {
             if (! is_array($row) || array_is_list($row)) {
                 throw new InvalidArgumentException('Completeness rule entry is invalid.');
@@ -74,6 +75,10 @@ final readonly class CompletenessRuleCatalog
             self::validateConditions($conditions);
             self::validateSatisfaction($satisfaction, (string) ($row['satisfaction_fact_type'] ?? ''));
             self::validatePackage($package);
+            sort($applicability, SORT_STRING);
+            $package = self::normalizePackage($package);
+            $row['applicability_fact_types'] = $applicability;
+            $row['work_package'] = $package;
             $policy = $row['exclusion_policy'] ?? null;
             $policyKeys = ['id', 'version', 'allowed', 'requires_decision', 'requires_actor', 'requires_reason'];
             if (! is_array($policy) || array_is_list($policy)
@@ -89,6 +94,7 @@ final readonly class CompletenessRuleCatalog
             }
             self::validateTechnologyRequirement($row['technology_requirement'] ?? null);
             $canonical = self::canonical($row);
+            $normalizedRows[] = $row;
             $rules[$id] = new CompletenessRule(
                 $id,
                 $ruleVersion,
@@ -105,7 +111,7 @@ final readonly class CompletenessRuleCatalog
                 is_array($row['technology_requirement'] ?? null) ? $row['technology_requirement'] : null,
             );
         }
-        $canonical = self::canonical(['version' => $version, 'rules' => $rows]);
+        $canonical = self::canonical(['version' => $version, 'rules' => $normalizedRows]);
 
         return new self($version, hash('sha256', json_encode($canonical, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)), array_values($rules));
     }
@@ -118,11 +124,7 @@ final readonly class CompletenessRuleCatalog
     private static function canonical(array $value): array
     {
         if (array_is_list($value)) {
-            $canonical = array_map(static fn (mixed $item): mixed => is_array($item) ? self::canonical($item) : $item, $value);
-            usort($canonical, static fn (mixed $left, mixed $right): int => json_encode($left, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
-                <=> json_encode($right, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-
-            return $canonical;
+            return array_map(static fn (mixed $item): mixed => is_array($item) ? self::canonical($item) : $item, $value);
         }
         ksort($value, SORT_STRING);
         foreach ($value as &$item) {
@@ -132,6 +134,25 @@ final readonly class CompletenessRuleCatalog
         }
 
         return $value;
+    }
+
+    private static function normalizePackage(array $package): array
+    {
+        foreach (['assumptions', 'risks'] as $key) {
+            sort($package[$key], SORT_STRING);
+        }
+        foreach ($package['norm_intents'] as &$intent) {
+            sort($intent['candidate_refs'], SORT_STRING);
+        }
+        unset($intent);
+        if (is_array($package['variants'] ?? null)) {
+            ksort($package['variants'], SORT_STRING);
+            foreach ($package['variants'] as $name => $variant) {
+                $package['variants'][$name] = self::normalizePackage($variant);
+            }
+        }
+
+        return $package;
     }
 
     private static function validateConditions(array $conditions): void

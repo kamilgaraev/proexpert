@@ -582,18 +582,36 @@ final class TechnologyRecommendationServiceTest extends TestCase
         self::assertSame(2, $trigger->calls);
     }
 
-    public function test_catalog_hash_is_permutation_stable_and_sensitive_to_meaningful_changes(): void
+    public function test_catalog_hash_preserves_runtime_order_and_normalizes_declared_sets(): void
     {
         $data = require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php';
         $first = TechnologySystemCatalog::fromArray($data);
-        $permuted = $data;
-        $permuted['systems'] = array_reverse($permuted['systems']);
-        foreach ($permuted['systems'] as &$system) {
-            $system['materials'] = array_reverse($system['materials']);
-            $system['works'] = array_reverse($system['works']);
-        }
-        unset($system);
-        self::assertSame($first->contentHash, TechnologySystemCatalog::fromArray($permuted)->contentHash);
+        $systems = $data;
+        $systems['systems'] = array_reverse($systems['systems']);
+        self::assertSame($first->contentHash, TechnologySystemCatalog::fromArray($systems)->contentHash);
+
+        $works = $data;
+        $works['systems'][0]['works'] = array_reverse($works['systems'][0]['works']);
+        $worksCatalog = TechnologySystemCatalog::fromArray($works);
+        self::assertNotSame($first->contentHash, $worksCatalog->contentHash);
+        $systemId = $data['systems'][0]['id'];
+        $originalSystem = current(array_filter(
+            $first->systems,
+            static fn ($system): bool => $system->id === $systemId,
+        ));
+        $changedSystem = current(array_filter(
+            $worksCatalog->systems,
+            static fn ($system): bool => $system->id === $systemId,
+        ));
+        self::assertNotSame($originalSystem->works, $changedSystem->works);
+
+        $sets = $data;
+        $sets['recommendation_required_facts'] = array_reverse($sets['recommendation_required_facts']);
+        $sets['systems'][0]['required_facts'] = array_reverse($sets['systems'][0]['required_facts']);
+        $setsCatalog = TechnologySystemCatalog::fromArray($sets);
+        self::assertSame($first->contentHash, $setsCatalog->contentHash);
+        self::assertSame($first->requiredFacts, $setsCatalog->requiredFacts);
+        self::assertSame($first->systems[0]->requiredFacts, $setsCatalog->systems[0]->requiredFacts);
 
         $changed = $data;
         $changed['systems'][0]['applicability'][1]['minimum_slope_degrees'] = '15';

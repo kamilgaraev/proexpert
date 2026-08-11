@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Planning;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use ReflectionMethod;
 
 final class Stage5PlanningMigrationContractTest extends TestCase
 {
@@ -54,6 +55,30 @@ final class Stage5PlanningMigrationContractTest extends TestCase
         self::assertStringContainsString("'unresolved'", $completeness);
     }
 
+    #[DataProvider('migrations')]
+    public function test_check_comparison_accepts_realistic_postgres_deparsed_in_form(string $file): void
+    {
+        $expected = "CHECK (applicability_status IN ('applicable', 'conditional', 'unavailable'))";
+        $deparsed = <<<'SQL'
+CHECK (((applicability_status)::text = ANY ((ARRAY['applicable'::character varying, 'conditional'::character varying, 'unavailable'::character varying])::text[])))
+SQL;
+
+        self::assertSame($this->canonicalConstraint($file, $expected), $this->canonicalConstraint($file, $deparsed));
+    }
+
+    #[DataProvider('migrations')]
+    public function test_check_comparison_handles_quotes_casts_whitespace_parentheses_and_rejects_wrong_definition(string $file): void
+    {
+        $expected = "CHECK (status IN ('unknown', 'satisfied') AND jsonb_typeof(\"limitations\") = 'array')";
+        $deparsed = " CHECK ( (status)::character varying = ANY (ARRAY['unknown'::text, 'satisfied'::text]::character varying[]) AND jsonb_typeof(limitations) = 'array'::text ) ";
+
+        self::assertSame($this->canonicalConstraint($file, $expected), $this->canonicalConstraint($file, $deparsed));
+        self::assertNotSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, "CHECK (status IN ('unknown', 'excluded'))"),
+        );
+    }
+
     public static function migrations(): array
     {
         $root = dirname(__DIR__, 4);
@@ -62,5 +87,13 @@ final class Stage5PlanningMigrationContractTest extends TestCase
             [$root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000700_create_technology_planning_projections.php'],
             [$root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000710_create_completeness_planning_projections.php'],
         ];
+    }
+
+    private function canonicalConstraint(string $file, string $definition): string
+    {
+        $migration = require $file;
+        $method = new ReflectionMethod($migration, 'canonicalConstraint');
+
+        return $method->invoke($migration, $definition);
     }
 }

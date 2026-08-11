@@ -10,6 +10,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPl
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningPipeline;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitratorFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget;
@@ -31,6 +35,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendat
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -126,6 +131,82 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
         self::assertCount(1, $this->dispatcher->jobs);
     }
 
+    public function test_blocked_retry_without_documents_reconciles_immediately_and_dispatches_once(): void
+    {
+        $repository = $this->repository();
+        $repository->understandingWithinBudget = false;
+        $session = $this->makeBlockedSession();
+        $store = new PlanningWorkflowSessionStateStore($session);
+        $workflow = new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store);
+        $advance = new AdvanceEstimateGeneration($workflow);
+        $readiness = $this->createMock(DocumentGenerationReadinessService::class);
+        $readiness->method('evaluate')->willReturn([
+            'can_generate' => true,
+            'summary' => ['pending_count' => 0, 'action_required_count' => 0],
+        ]);
+        $reconcile = new ReconcileEstimateGenerationDocuments($advance, $readiness, $this->pipeline($repository));
+        $sessionRepository = new PlanningWorkflowRetryRepository($session);
+        $retryDispatcher = new PlanningWorkflowRetryDispatcher;
+        $retry = new RetryEstimateGenerationSession(
+            $sessionRepository,
+            $workflow,
+            $advance,
+            $retryDispatcher,
+            $reconcile,
+            new class extends EstimateGenerationRegionalContextResolver
+            {
+                public function __construct() {}
+
+                public function resolve(array $input): array
+                {
+                    return [];
+                }
+            },
+            static fn (): string => 'retry-attempt',
+        );
+        $command = new RetryEstimateGenerationSessionCommand(30, 10, 20, 3);
+
+        $blockedAgain = $retry->handle($command);
+
+        self::assertSame(EstimateGenerationStatus::InputReviewRequired, $blockedAgain->status);
+        self::assertSame('project_planning_blocked', $blockedAgain->failure_code);
+        self::assertSame(
+            ['status' => 'blocked', 'limitations' => ['budget_exceeded']],
+            $blockedAgain->input_payload['planning_review'],
+        );
+        self::assertSame([[30, 10, 20]], $sessionRepository->locks);
+        self::assertSame([], $retryDispatcher->documents);
+        self::assertSame([], $retryDispatcher->generation);
+        self::assertSame([], $this->dispatcher->jobs);
+
+        try {
+            $retry->handle($command);
+            self::fail('Concurrent-equivalent retry with stale version was accepted.');
+        } catch (StaleEstimateGenerationState) {
+            self::assertSame([], $this->dispatcher->jobs);
+        }
+
+        $repository->understandingWithinBudget = true;
+        $recovered = $retry->handle(new RetryEstimateGenerationSessionCommand(
+            30,
+            10,
+            20,
+            $blockedAgain->state_version,
+        ));
+
+        self::assertSame(EstimateGenerationStatus::Generating, $recovered->status);
+        self::assertArrayNotHasKey('planning_review', $recovered->input_payload);
+        self::assertNull($recovered->failure_code);
+        self::assertSame(1, $repository->technologyPlanningWriteCount);
+        self::assertSame(1, $repository->completenessWriteCount);
+        self::assertCount(1, $this->dispatcher->jobs);
+        self::assertInstanceOf(GenerateEstimateDraftJob::class, $this->dispatcher->jobs[0]);
+
+        $replayed = $reconcile->reconcile($recovered);
+        self::assertSame($recovered->state_version, $replayed->state_version);
+        self::assertCount(1, $this->dispatcher->jobs);
+    }
+
     private function makeSession(): EstimateGenerationSession
     {
         $session = new EstimateGenerationSession([
@@ -149,6 +230,28 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
             'available' => 10,
             'reservation_status' => null,
         ]);
+
+        return $session;
+    }
+
+    private function makeBlockedSession(): EstimateGenerationSession
+    {
+        $session = $this->makeSession();
+        $session->forceFill([
+            'status' => EstimateGenerationStatus::InputReviewRequired,
+            'processing_stage' => 'input_review_required',
+            'state_version' => 3,
+            'failure_code' => 'project_planning_blocked',
+            'input_payload' => [
+                'description' => 'Смета кровли',
+                'generation_requested' => true,
+                'planning_review' => [
+                    'status' => 'blocked',
+                    'limitations' => ['previous_blocker'],
+                ],
+            ],
+        ]);
+        $session->setRelation('documents', collect());
 
         return $session;
     }
@@ -298,5 +401,42 @@ final class PlanningWorkflowRecordingDispatcher implements Dispatcher
     public function map(array $map)
     {
         return $this;
+    }
+}
+
+final class PlanningWorkflowRetryRepository implements RetryableEstimateGenerationSessionRepository
+{
+    public array $locks = [];
+
+    public function __construct(private EstimateGenerationSession $session) {}
+
+    public function withLockedSession(
+        int $sessionId,
+        int $organizationId,
+        int $projectId,
+        callable $operation,
+    ): EstimateGenerationSession {
+        $this->locks[] = [$sessionId, $organizationId, $projectId];
+
+        return $operation($this->session);
+    }
+}
+
+final class PlanningWorkflowRetryDispatcher implements EstimateGenerationRetryDispatcher
+{
+    public array $documents = [];
+
+    public array $generation = [];
+
+    public function dispatchDocuments(array $documentIds): void
+    {
+        $this->documents[] = $documentIds;
+    }
+
+    public function dispatchGeneration(int $sessionId, int $stateVersion, string $attemptId): bool
+    {
+        $this->generation[] = [$sessionId, $stateVersion, $attemptId];
+
+        return true;
     }
 }

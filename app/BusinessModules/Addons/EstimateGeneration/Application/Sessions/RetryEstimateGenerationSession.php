@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
@@ -23,6 +24,7 @@ final class RetryEstimateGenerationSession
         private EstimateGenerationWorkflow $workflow,
         private AdvanceEstimateGeneration $advance,
         private EstimateGenerationRetryDispatcher $dispatcher,
+        private EstimateGenerationSessionReconciler $reconciler,
         private EstimateGenerationRegionalContextResolver $regionalContextResolver,
         ?Closure $attemptIdFactory = null,
     ) {
@@ -31,16 +33,17 @@ final class RetryEstimateGenerationSession
 
     public function handle(RetryEstimateGenerationSessionCommand $command): EstimateGenerationSession
     {
-        return $this->repository->withLockedSession(
+        $reconcileImmediately = false;
+        $session = $this->repository->withLockedSession(
             $command->sessionId,
             $command->organizationId,
             $command->projectId,
-            function (EstimateGenerationSession $session) use ($command): EstimateGenerationSession {
+            function (EstimateGenerationSession $session) use ($command, &$reconcileImmediately): EstimateGenerationSession {
                 if ($session->state_version !== $command->expectedStateVersion) {
                     throw new StaleEstimateGenerationState((int) $session->getKey(), $command->expectedStateVersion);
                 }
                 if ($session->status === EstimateGenerationStatus::InputReviewRequired) {
-                    return $this->retryInputReview($session);
+                    return $this->retryInputReview($session, $reconcileImmediately);
                 }
                 if ($session->status === EstimateGenerationStatus::Generating) {
                     return $this->restartGeneration($session);
@@ -60,10 +63,14 @@ final class RetryEstimateGenerationSession
                 };
             },
         );
+
+        return $reconcileImmediately ? $this->reconciler->reconcile($session) : $session;
     }
 
-    private function retryInputReview(EstimateGenerationSession $session): EstimateGenerationSession
-    {
+    private function retryInputReview(
+        EstimateGenerationSession $session,
+        bool &$reconcileImmediately,
+    ): EstimateGenerationSession {
         $requiresPlanningRecovery = $this->hasBlockedPlanningReview($session);
         $documentIds = $session->documents
             ->filter(static fn ($document): bool => in_array((string) $document->status, [
@@ -94,6 +101,8 @@ final class RetryEstimateGenerationSession
         }
 
         if ($requiresPlanningRecovery) {
+            $reconcileImmediately = true;
+
             return $session;
         }
 

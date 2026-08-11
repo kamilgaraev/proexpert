@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
@@ -274,7 +275,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 'limitations' => ['budget_exceeded'],
             ],
         ]);
-        [$action, , $dispatcher] = $this->action($session);
+        [$action, , $dispatcher, $reconciler] = $this->action($session);
 
         $result = $action->handle($this->command());
 
@@ -283,6 +284,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         self::assertTrue($result->input_payload['generation_requested']);
         self::assertSame([], $dispatcher->generation);
         self::assertSame([], $dispatcher->documents);
+        self::assertSame(1, $reconciler->calls);
     }
 
     #[Test]
@@ -331,7 +333,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         }
     }
 
-    /** @return array{RetryEstimateGenerationSession, RetrySessionRepositoryFake, RetryDispatcherFake} */
+    /** @return array{RetryEstimateGenerationSession, RetrySessionRepositoryFake, RetryDispatcherFake, RetryReconcilerFake} */
     private function action(EstimateGenerationSession $session, ?EstimateGenerationRegionalContextResolver $regionalContextResolver = null): array
     {
         $store = new RetrySessionStateStore($session);
@@ -353,11 +355,13 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store),
                 new AdvanceEstimateGeneration(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store)),
                 $dispatcher,
+                $reconciler = new RetryReconcilerFake,
                 $regionalContextResolver,
                 static fn (): string => 'attempt-new',
             ),
             $repository,
             $dispatcher,
+            $reconciler,
         ];
     }
 
@@ -472,6 +476,18 @@ final class RetryDispatcherFake implements EstimateGenerationRetryDispatcher
         $this->generation[] = [$sessionId, $stateVersion, $attemptId];
 
         return true;
+    }
+}
+
+final class RetryReconcilerFake implements EstimateGenerationSessionReconciler
+{
+    public int $calls = 0;
+
+    public function reconcile(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        $this->calls++;
+
+        return $session;
     }
 }
 

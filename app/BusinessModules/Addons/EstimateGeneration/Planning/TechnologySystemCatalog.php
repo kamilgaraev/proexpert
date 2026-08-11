@@ -42,12 +42,14 @@ final readonly class TechnologySystemCatalog
             throw new InvalidArgumentException('Technology system catalog is invalid.');
         }
         self::uniqueStrings($requiredFacts, 100);
+        sort($requiredFacts, SORT_STRING);
         $mapped = [];
         foreach ($systems as $system) {
             if (! is_array($system) || array_is_list($system)) {
                 throw new InvalidArgumentException('Technology system catalog entry is invalid.');
             }
             self::validateSystem($system);
+            $system = self::normalizeSystem($system);
             $item = new TechnologySystem(
                 id: self::string($system, 'id'),
                 nameKey: self::string($system, 'name_key'),
@@ -71,7 +73,14 @@ final readonly class TechnologySystemCatalog
             $mapped[$item->id] = $item;
         }
         ksort($mapped, SORT_STRING);
-        $canonical = self::canonicalize($data);
+        $canonical = self::canonicalize([
+            'version' => $version,
+            'recommendation_required_facts' => $requiredFacts,
+            'systems' => array_map(
+                static fn (TechnologySystem $system): array => $system->toArray(),
+                array_values($mapped),
+            ),
+        ]);
 
         return new self(
             $version,
@@ -111,11 +120,7 @@ final readonly class TechnologySystemCatalog
     private static function canonicalize(array $value): array
     {
         if (array_is_list($value)) {
-            $canonical = array_map(static fn (mixed $item): mixed => is_array($item) ? self::canonicalize($item) : $item, $value);
-            usort($canonical, static fn (mixed $left, mixed $right): int => json_encode($left, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
-                <=> json_encode($right, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-
-            return $canonical;
+            return array_map(static fn (mixed $item): mixed => is_array($item) ? self::canonicalize($item) : $item, $value);
         }
         ksort($value, SORT_STRING);
         foreach ($value as $key => $item) {
@@ -125,6 +130,15 @@ final readonly class TechnologySystemCatalog
         }
 
         return $value;
+    }
+
+    private static function normalizeSystem(array $system): array
+    {
+        foreach (['required_facts', 'risks', 'assumptions'] as $key) {
+            sort($system[$key], SORT_STRING);
+        }
+
+        return $system;
     }
 
     private static function validateSystem(array $system): void

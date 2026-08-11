@@ -41,6 +41,12 @@ final class ProjectCompletenessCoordinatorTest extends TestCase
         self::assertCount(2, $repository->completenessHistory);
         self::assertCount(1, array_filter($repository->completenessHistory, static fn (array $run): bool => $run['is_current']));
 
+        $data['rules'] = array_reverse($data['rules']);
+        $reordered = $this->coordinator($repository, $data)->refresh(10, 20, 30, $planning);
+        self::assertNotSame($changed->ruleCatalogHash, $reordered->ruleCatalogHash);
+        self::assertSame(3, $repository->completenessWriteCount);
+        self::assertCount(3, $repository->completenessHistory);
+
         $repository->invalidateSourceVersion(10, 20, 30, self::SOURCE, 'sha256:'.str_repeat('c', 64));
         self::assertNull($repository->currentCompleteness(10, 20, 30));
     }

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\BusinessModules\Addons\EstimateGeneration\Database\PostgresCheckConstraintDefinition;
 use App\Contracts\Database\ForwardOnlyMigration;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
@@ -175,15 +176,7 @@ SQL, [$this->unquote($schema), $table, $name]);
 
     private function canonicalConstraint(string $definition): string
     {
-        $canonical = strtolower(str_replace('"', '', $definition));
-        $canonical = preg_replace('/::(?:text|character varying|bpchar)/', '', $canonical);
-        $canonical = preg_replace('/\s+/', '', (string) $canonical);
-        do {
-            $previous = $canonical;
-            $canonical = str_replace(['((', '))'], ['(', ')'], $canonical);
-        } while ($canonical !== $previous);
-
-        return $canonical;
+        return PostgresCheckConstraintDefinition::canonical($definition);
     }
 
     private function constraints(string $schema): void

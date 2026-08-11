@@ -51,6 +51,18 @@ SQL, [$index]);
             self::assertTrue((bool) $state->indisready, $index.' is not ready.');
             self::assertStringContainsString('estimate_generation_', (string) $state->definition);
         }
+        $constraint = DB::selectOne(<<<'SQL'
+SELECT pg_get_constraintdef(constraint_state.oid, true) AS definition
+FROM pg_constraint AS constraint_state
+JOIN pg_class AS constraint_table ON constraint_table.oid = constraint_state.conrelid
+JOIN pg_namespace AS constraint_schema ON constraint_schema.oid = constraint_table.relnamespace
+WHERE constraint_schema.nspname = current_schema()
+  AND constraint_table.relname = 'estimate_generation_technology_recommendation_options'
+  AND constraint_state.conname = 'eg_tech_option_payload_ck'
+  AND constraint_state.contype = 'c'
+SQL);
+        self::assertNotNull($constraint);
+        self::assertStringContainsString('ANY (ARRAY[', (string) $constraint->definition);
     }
 
     #[Test]
@@ -94,6 +106,9 @@ SQL, [$index]);
             DB::statement('CREATE TABLE IF NOT EXISTS stage5_collision.constraint_holder (value integer)');
             DB::statement('ALTER TABLE stage5_collision.constraint_holder DROP CONSTRAINT IF EXISTS eg_tech_plan_scope_ck');
             DB::statement('ALTER TABLE stage5_collision.constraint_holder ADD CONSTRAINT eg_tech_plan_scope_ck CHECK (value >= 0)');
+            DB::statement('CREATE TABLE IF NOT EXISTS constraint_holder (value integer)');
+            DB::statement('ALTER TABLE constraint_holder DROP CONSTRAINT IF EXISTS eg_tech_plan_scope_ck');
+            DB::statement('ALTER TABLE constraint_holder ADD CONSTRAINT eg_tech_plan_scope_ck CHECK (value < 0)');
             DB::statement('ALTER TABLE estimate_generation_technology_planning_runs DROP CONSTRAINT IF EXISTS eg_tech_plan_scope_ck');
 
             $file = glob(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/*_000700_create_technology_planning_projections.php');

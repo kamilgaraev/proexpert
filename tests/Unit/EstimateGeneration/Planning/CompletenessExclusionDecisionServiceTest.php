@@ -104,6 +104,58 @@ final class CompletenessExclusionDecisionServiceTest extends TestCase
         self::assertCount(1, $repository->decisions);
     }
 
+    public function test_real_pipeline_invalidates_exclusion_after_target_fact_replacement(): void
+    {
+        [$repository, $pipeline, $actor, $session, $context] = $this->fixture(true);
+        $pipeline->refresh(10, 20, 30, '123e4567-e89b-42d3-a456-426614174020', 1);
+        $projection = $repository->currentCompleteness(10, 20, 30);
+        self::assertNotNull($projection);
+        $finding = $this->finding($projection, 'base_preparation');
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturn(true);
+        $service = new CompletenessExclusionDecisionService(
+            $repository,
+            $authorization,
+            new class($pipeline) implements PlanningReanalysisTrigger
+            {
+                public function __construct(private ProjectPlanningPipeline $pipeline) {}
+
+                public function trigger(int $sessionId, ActorContext $context): void
+                {
+                    $this->pipeline->refresh(
+                        $context->organizationId,
+                        $context->projectId,
+                        $sessionId,
+                        '123e4567-e89b-42d3-a456-426614174021',
+                        2,
+                    );
+                }
+            },
+            static fn (string $key): string => 'Доступ запрещён',
+        );
+        $service->exclude(
+            $actor,
+            $session,
+            $context,
+            (int) $projection['run_id'],
+            $finding->stableKey,
+            'Осознанно исключено пользователем',
+        );
+        self::assertSame('excluded', $this->finding($repository->currentCompleteness(10, 20, 30), 'base_preparation')->status);
+
+        $repository->saveSourceModel([], [new Fact(
+            'fact:base-preparation-v2', 10, 20, 30, self::SOURCE, 'entity:project',
+            'foundation_base_preparation', true, null, 1, 'document', 'confirmed', ['evidence:2'], 2,
+            'fact:base-preparation',
+        )], [new Evidence('evidence:2', 10, 20, 30, self::SOURCE, 'artifact:2', 'document', page: 2)]);
+        $pipeline->refresh(10, 20, 30, '123e4567-e89b-42d3-a456-426614174022', 3);
+
+        $current = $repository->currentCompleteness(10, 20, 30);
+        self::assertNotNull($current);
+        self::assertSame('satisfied', $this->finding($current, 'base_preparation')->status);
+        self::assertNull($this->finding($current, 'base_preparation')->exclusionDecision);
+    }
+
     public function test_exclusion_boundary_rejects_payload_mismatch_stale_run_and_missing_abac(): void
     {
         [$repository, $pipeline, $actor, $session, $context] = $this->fixture(true);

@@ -135,6 +135,84 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         self::assertSame('not_applicable', $unknown->finding('waterproofing')?->status);
     }
 
+    public function test_exclusion_fence_changes_with_target_fact_identity_value_version_status_and_evidence(): void
+    {
+        $projection = $this->projection();
+        $applicability = $this->scopedFact('fact:foundation-type', 'foundation_type', 'slab');
+        $target = $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false);
+        [$exclusion, $decision, $stableKey] = $this->exclusionFor($applicability, $target, $projection);
+
+        $excluded = $this->analyzeExclusion([$applicability, $target], $exclusion, $decision, $projection);
+        self::assertSame('excluded', $excluded->status);
+        self::assertSame($stableKey, $excluded->stableKey);
+
+        $mutations = [
+            $this->scopedFact('fact:base-v2', 'foundation_base_preparation', true, version: 2, supersedesFactId: $target->id),
+            $this->scopedFact('fact:base-v2', 'foundation_base_preparation', false, version: 2, supersedesFactId: $target->id),
+            $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false, status: 'candidate'),
+            $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false, status: 'conflicted'),
+            $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false, status: 'unresolved'),
+            $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false, status: 'invalidated'),
+            $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false, evidenceIds: ['evidence:replacement']),
+            $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false, unit: 'item'),
+        ];
+        foreach ($mutations as $mutation) {
+            $finding = $this->analyzeExclusion([$applicability, $mutation], $exclusion, $decision, $projection);
+            self::assertNotSame('excluded', $finding->status);
+            self::assertNotSame($stableKey, $finding->stableKey);
+        }
+
+        $trueTarget = $this->scopedFact('fact:base-true-v1', 'foundation_base_preparation', true);
+        [$trueExclusion, $trueDecision, $trueKey] = $this->exclusionFor($applicability, $trueTarget, $projection);
+        $becameFalse = $this->analyzeExclusion([
+            $applicability,
+            $this->scopedFact(
+                'fact:base-false-v2',
+                'foundation_base_preparation',
+                false,
+                version: 2,
+                supersedesFactId: $trueTarget->id,
+            ),
+        ], $trueExclusion, $trueDecision, $projection);
+        self::assertSame('proven_missing', $becameFalse->status);
+        self::assertNotSame($trueKey, $becameFalse->stableKey);
+    }
+
+    public function test_target_fence_is_deterministic_and_ignores_unrelated_or_cross_scope_facts(): void
+    {
+        $projection = $this->projection();
+        $applicability = $this->scopedFact('fact:foundation-type', 'foundation_type', 'slab');
+        $target = $this->scopedFact('fact:base-v1', 'foundation_base_preparation', false);
+        [$exclusion, $decision, $stableKey] = $this->exclusionFor($applicability, $target, $projection);
+        $unrelated = $this->scopedFact('fact:roof-type', 'roof_type', 'flat');
+        $otherEntity = $this->scopedFact(
+            'fact:other-entity-base',
+            'foundation_base_preparation',
+            true,
+            entityId: 'entity:other',
+        );
+        foreach ([
+            [$applicability, $target, $unrelated, $otherEntity],
+            [$otherEntity, $unrelated, $target, $applicability],
+        ] as $facts) {
+            $finding = $this->analyzeExclusion($facts, $exclusion, $decision, $projection);
+            self::assertSame('excluded', $finding->status);
+            self::assertSame($stableKey, $finding->stableKey);
+        }
+
+        $this->expectException(InvalidArgumentException::class);
+        new ProjectModelSnapshot([], [
+            $applicability,
+            $target,
+            $this->scopedFact(
+                'fact:other-tenant-base',
+                'foundation_base_preparation',
+                true,
+                organizationId: 11,
+            ),
+        ], [], []);
+    }
+
     public function test_work_packages_are_complete_deduplicated_and_never_guess_quantities(): void
     {
         $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
@@ -221,13 +299,17 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         CompletenessRuleCatalog::fromArray($data);
     }
 
-    public function test_rule_hash_is_permutation_stable_for_dag_edges_and_tracks_meaningful_changes(): void
+    public function test_rule_hash_preserves_runtime_order_and_normalizes_declared_sets(): void
     {
         $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
         $base = CompletenessRuleCatalog::fromArray($data);
         $permuted = $data;
         $permuted['rules'] = array_reverse($permuted['rules']);
-        self::assertSame($base->contentHash, CompletenessRuleCatalog::fromArray($permuted)->contentHash);
+        self::assertNotSame($base->contentHash, CompletenessRuleCatalog::fromArray($permuted)->contentHash);
+
+        $works = $data;
+        $works['rules'][0]['work_package']['works'] = array_reverse($works['rules'][0]['work_package']['works']);
+        self::assertNotSame($base->contentHash, CompletenessRuleCatalog::fromArray($works)->contentHash);
 
         $changed = $data;
         $changed['rules'][3]['conditions'][0]['value'] = 4;
@@ -245,7 +327,45 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         $dependencyOrder['rules'][0]['work_package']['dependencies'] = array_reverse(
             $dependencyOrder['rules'][0]['work_package']['dependencies'],
         );
-        self::assertSame($orderedHash, CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash);
+        self::assertNotSame($orderedHash, CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash);
+
+        $setOrder = $data;
+        $setOrder['rules'][0]['applicability_fact_types'][] = 'site_leveling_specification';
+        $setOrderReversed = $setOrder;
+        $setOrderReversed['rules'][0]['applicability_fact_types'] = array_reverse(
+            $setOrderReversed['rules'][0]['applicability_fact_types'],
+        );
+        $setCatalog = CompletenessRuleCatalog::fromArray($setOrder);
+        $setCatalogReversed = CompletenessRuleCatalog::fromArray($setOrderReversed);
+        self::assertSame($setCatalog->contentHash, $setCatalogReversed->contentHash);
+        self::assertSame(
+            $setCatalog->rules()[0]->applicabilityFactTypes,
+            $setCatalogReversed->rules()[0]->applicabilityFactTypes,
+        );
+    }
+
+    public function test_rule_order_changes_max_rules_result_and_catalog_identity(): void
+    {
+        $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
+        $reversed = $data;
+        $reversed['rules'] = array_reverse($reversed['rules']);
+        $snapshot = new ProjectModelSnapshot([], [
+            $this->fact('site_work', true),
+            $this->fact('external_site_disturbance', true),
+        ], [], []);
+        $first = new ProjectCompletenessAnalyzer(
+            CompletenessRuleCatalog::fromArray($data), $this->builder(), 50, 50, 200, maxRules: 1,
+        );
+        $last = new ProjectCompletenessAnalyzer(
+            CompletenessRuleCatalog::fromArray($reversed), $this->builder(), 50, 50, 200, maxRules: 1,
+        );
+
+        self::assertSame('site_leveling', $first->analyze($snapshot, [])->findings[0]->ruleId);
+        self::assertSame('landscaping_restoration', $last->analyze($snapshot, [])->findings[0]->ruleId);
+        self::assertNotSame(
+            CompletenessRuleCatalog::fromArray($data)->contentHash,
+            CompletenessRuleCatalog::fromArray($reversed)->contentHash,
+        );
     }
 
     public function test_rule_catalog_rejects_incomplete_or_mistyped_runtime_contracts(): void
@@ -438,6 +558,100 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             unit: $unit, confidence: 1.0, origin: $origin, status: 'confirmed',
             evidenceIds: $origin === 'user_assumption' ? [] : ['evidence:'.$type],
         );
+    }
+
+    private function projection(): array
+    {
+        return [
+            'source_version' => self::SOURCE_VERSION,
+            'input_fingerprint' => str_repeat('b', 64),
+            'catalog_version' => '2026.08.11-v1',
+            'catalog_hash' => str_repeat('c', 64),
+            'rule_catalog_version' => '2026.08.11-v1',
+            'rule_catalog_hash' => CompletenessRuleCatalog::fromArray(
+                require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php',
+            )->contentHash,
+        ];
+    }
+
+    private function scopedFact(
+        string $id,
+        string $type,
+        mixed $value,
+        string $status = 'confirmed',
+        array $evidenceIds = ['evidence:target'],
+        int $version = 1,
+        ?string $supersedesFactId = null,
+        string $entityId = 'entity:project',
+        int $organizationId = 10,
+        ?string $unit = null,
+    ): Fact {
+        return new Fact(
+            $id,
+            $organizationId,
+            20,
+            30,
+            self::SOURCE_VERSION,
+            $entityId,
+            $type,
+            $value,
+            $unit,
+            1.0,
+            'document',
+            $status,
+            $evidenceIds,
+            $version,
+            $supersedesFactId,
+        );
+    }
+
+    private function exclusionFor(Fact $applicability, Fact $target, array $projection): array
+    {
+        $baseline = $this->analyzer()->analyze(
+            new ProjectModelSnapshot([], [$applicability, $target], [], []),
+            [],
+            [],
+            $projection,
+        )->finding('base_preparation');
+        self::assertNotNull($baseline);
+        $exclusion = new Fact(
+            'fact:exclusion',
+            10,
+            20,
+            30,
+            self::SOURCE_VERSION,
+            'entity:project',
+            'completeness_exclusion.base',
+            $baseline->exclusionValue($projection, 'decision:exclude-base', '7', 'Основание исключено'),
+            null,
+            1.0,
+            'user_assumption',
+            'confirmed',
+            [],
+        );
+        $decision = new Decision(
+            'decision:exclude-base', 10, 20, 30, self::SOURCE_VERSION, 'fact', $exclusion->id,
+            $exclusion->id, 'user', '7', 'Основание исключено', 1,
+        );
+
+        return [$exclusion, $decision, $baseline->stableKey];
+    }
+
+    private function analyzeExclusion(
+        array $facts,
+        Fact $exclusion,
+        Decision $decision,
+        array $projection,
+    ): \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding {
+        $finding = $this->analyzer()->analyze(
+            new ProjectModelSnapshot([], [...$facts, $exclusion], [], []),
+            [],
+            [$decision],
+            $projection,
+        )->finding('base_preparation');
+        self::assertNotNull($finding);
+
+        return $finding;
     }
 
     private function ids(array $findings): array

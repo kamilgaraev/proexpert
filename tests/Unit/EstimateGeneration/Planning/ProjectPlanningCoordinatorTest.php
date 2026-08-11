@@ -57,6 +57,18 @@ final class ProjectPlanningCoordinatorTest extends TestCase
         self::assertCount(2, $repository->technologyPlanningHistory);
         self::assertCount(1, array_filter($repository->technologyPlanningHistory, static fn (array $run): bool => $run['is_current']));
 
+        $catalogData['systems'][0]['works'] = array_reverse($catalogData['systems'][0]['works']);
+        $reordered = $this->coordinator($repository, $catalogData)->refresh(
+            10,
+            20,
+            30,
+            new OrganizationPreferenceContext(10, []),
+            $understanding,
+        );
+        self::assertNotSame($changed->catalogHash, $reordered->catalogHash);
+        self::assertSame(3, $repository->technologyPlanningWriteCount);
+        self::assertCount(3, $repository->technologyPlanningHistory);
+
         $repository->invalidateSourceVersion(
             10,
             20,
