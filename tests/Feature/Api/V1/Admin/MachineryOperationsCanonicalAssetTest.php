@@ -46,6 +46,17 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
         $canonicalId = (int) $created->json('data.organization_asset_id');
         self::assertGreaterThan(0, $canonicalId);
 
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/machinery-operations/assets', [
+            'asset_code' => 'CAN-OTHER-2',
+            'name' => 'Other asset',
+            'inventory_number' => 'OTHER-INV-2',
+        ])->assertCreated();
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/machinery-operations/assets?search=can-inv-1')
+            ->assertOk()
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('data.0.id', $legacyId);
+
         $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/machinery-operations/assets/{$legacyId}/assign", [
             'project_id' => $project->id,
             'planned_start_at' => now()->toIso8601String(),

@@ -35,6 +35,18 @@ final class MachineryAssetReadRepository
                     ->orWhereHas('organizationAsset', fn ($canonical) => $canonical->where('current_project_id', $projectId)));
             })
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(trim((string) ($filters['search'] ?? '')) !== '', function ($query) use ($filters): void {
+                $search = '%'.str_replace(['%', '_'], ['\\%', '\\_'], trim((string) $filters['search'])).'%';
+                $query->where(function ($searchQuery) use ($search): void {
+                    $searchQuery->where('name', 'ilike', $search)
+                        ->orWhere('asset_code', 'ilike', $search)
+                        ->orWhere('inventory_number', 'ilike', $search)
+                        ->orWhereHas('organizationAsset', fn ($canonical) => $canonical
+                            ->where('name', 'ilike', $search)
+                            ->orWhere('inventory_number', 'ilike', $search)
+                            ->orWhere('serial_number', 'ilike', $search));
+                });
+            })
             ->orderBy('name')
             ->paginate($perPage);
     }
