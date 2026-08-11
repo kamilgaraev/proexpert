@@ -485,18 +485,6 @@ jobs:
                 && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' \
                 && docker compose exec -T clamav clamdscan --ping 1 \
                 && docker compose exec -T geometry-worker /usr/local/bin/geometry-runtime-smoke; then
-                if asset_cutover_report="$(docker compose exec -T api php artisan assets:verify-cutover --format=json 2>&1)"; then
-                  echo "Asset registry cutover observation (GO): ${asset_cutover_report}"
-                else
-                  echo "Asset registry cutover observation (NO-GO): ${asset_cutover_report}"
-                fi
-                asset_cutover_log='storage/logs/asset-registry-cutover.log'
-                if [ -f "${asset_cutover_log}" ]; then
-                  asset_cutover_samples="$(tail -n 24 "${asset_cutover_log}" | grep -c '"ready":true' || true)"
-                  echo "Asset registry successful hourly samples in latest log window: ${asset_cutover_samples}/24"
-                else
-                  echo 'Asset registry hourly observation log has no samples yet.'
-                fi
                 systemctl start nginx
                 systemctl is-active --quiet nginx
                 trap - ERR
