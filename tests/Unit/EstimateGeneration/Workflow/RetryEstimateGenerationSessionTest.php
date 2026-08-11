@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
@@ -19,6 +20,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 final class RetryEstimateGenerationSessionTest extends TestCase
 {
@@ -61,7 +63,8 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 'normative_dataset_version' => 'fsnb-2022',
             ],
         ];
-        [$action] = $this->action($session, new class extends EstimateGenerationRegionalContextResolver {
+        [$action] = $this->action($session, new class extends EstimateGenerationRegionalContextResolver
+        {
             public function __construct() {}
 
             public function resolve(array $input): array
@@ -93,7 +96,8 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 'normative_dataset_version' => 'fsnb-2022',
             ],
         ];
-        $resolver = new class extends EstimateGenerationRegionalContextResolver {
+        $resolver = new class extends EstimateGenerationRegionalContextResolver
+        {
             /** @var array<string, mixed> */
             public array $resolvedInput = [];
 
@@ -262,6 +266,84 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     #[Test]
+    public function planning_review_retry_returns_to_reanalysis_without_bypassing_stage_four(): void
+    {
+        $session = $this->inputReview([
+            'description' => 'Дом',
+            'generation_requested' => true,
+            'planning_review' => [
+                'status' => 'blocked',
+                'limitations' => ['budget_exceeded'],
+            ],
+        ]);
+        [$action, , $dispatcher, $reconciler] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $result->status);
+        self::assertArrayNotHasKey('planning_review', $result->input_payload);
+        self::assertTrue($result->input_payload['generation_requested']);
+        self::assertSame([], $dispatcher->generation);
+        self::assertSame([], $dispatcher->documents);
+        self::assertSame(1, $reconciler->calls);
+        self::assertSame(
+            [['status' => 'blocked', 'limitations' => ['budget_exceeded']]],
+            $reconciler->planningReviews,
+        );
+    }
+
+    #[Test]
+    public function planning_review_retry_keeps_last_actionable_limitation_when_immediate_reconcile_throws(): void
+    {
+        $session = $this->inputReview([
+            'description' => 'Дом',
+            'generation_requested' => true,
+            'planning_review' => [
+                'status' => 'blocked',
+                'limitations' => ['provider_unavailable'],
+            ],
+        ]);
+        $reconciler = new RetryReconcilerFake(throwOnReconcile: true);
+        [$action] = $this->action($session, reconciler: $reconciler);
+
+        try {
+            $action->handle($this->command());
+            self::fail('Expected immediate reconcile failure.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('Immediate reconcile failed.', $exception->getMessage());
+        }
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $session->status);
+        self::assertSame(
+            ['status' => 'blocked', 'limitations' => ['provider_unavailable']],
+            $session->input_payload['planning_review'],
+        );
+        self::assertSame(1, $reconciler->calls);
+    }
+
+    #[Test]
+    public function planning_review_retry_still_dispatches_corrected_documents_before_reanalysis(): void
+    {
+        $session = $this->inputReview([
+            'description' => 'Дом',
+            'generation_requested' => true,
+            'planning_review' => ['status' => 'blocked', 'limitations' => ['empty_facts']],
+        ]);
+        $session->setRelation('documents', collect([$this->document(13, 'needs_review')]));
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $result->status);
+        self::assertSame([13], $dispatcher->documents);
+        self::assertSame([], $dispatcher->generation);
+        self::assertSame(
+            ['status' => 'blocked', 'limitations' => ['empty_facts']],
+            $result->input_payload['planning_review'],
+        );
+    }
+
+    #[Test]
     public function input_review_without_eligible_documents_or_description_stays_actionable(): void
     {
         $session = $this->inputReview([]);
@@ -289,13 +371,17 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         }
     }
 
-    /** @return array{RetryEstimateGenerationSession, RetrySessionRepositoryFake, RetryDispatcherFake} */
-    private function action(EstimateGenerationSession $session, ?EstimateGenerationRegionalContextResolver $regionalContextResolver = null): array
-    {
+    /** @return array{RetryEstimateGenerationSession, RetrySessionRepositoryFake, RetryDispatcherFake, RetryReconcilerFake} */
+    private function action(
+        EstimateGenerationSession $session,
+        ?EstimateGenerationRegionalContextResolver $regionalContextResolver = null,
+        ?RetryReconcilerFake $reconciler = null,
+    ): array {
         $store = new RetrySessionStateStore($session);
         $repository = new RetrySessionRepositoryFake($session);
         $dispatcher = new RetryDispatcherFake;
-        $regionalContextResolver ??= new class extends EstimateGenerationRegionalContextResolver {
+        $regionalContextResolver ??= new class extends EstimateGenerationRegionalContextResolver
+        {
             public function __construct() {}
 
             public function resolve(array $input): array
@@ -310,11 +396,13 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store),
                 new AdvanceEstimateGeneration(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store)),
                 $dispatcher,
+                $reconciler ??= new RetryReconcilerFake,
                 $regionalContextResolver,
                 static fn (): string => 'attempt-new',
             ),
             $repository,
             $dispatcher,
+            $reconciler,
         ];
     }
 
@@ -429,6 +517,29 @@ final class RetryDispatcherFake implements EstimateGenerationRetryDispatcher
         $this->generation[] = [$sessionId, $stateVersion, $attemptId];
 
         return true;
+    }
+}
+
+final class RetryReconcilerFake implements EstimateGenerationSessionReconciler
+{
+    public int $calls = 0;
+
+    public array $planningReviews = [];
+
+    public function __construct(private readonly bool $throwOnReconcile = false) {}
+
+    public function reconcile(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        $this->calls++;
+        $this->planningReviews[] = $session->input_payload['planning_review'] ?? null;
+        if ($this->throwOnReconcile) {
+            throw new RuntimeException('Immediate reconcile failed.');
+        }
+        $payload = $session->input_payload;
+        unset($payload['planning_review']);
+        $session->forceFill(['input_payload' => $payload]);
+
+        return $session;
     }
 }
 

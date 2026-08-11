@@ -25,12 +25,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Eloquent
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitDispatchStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitExhaustionHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EvidenceSourceReplacementInvalidator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelDocumentSourceReplacementTransaction;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelEstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProductionDocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverStalledEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
@@ -520,6 +522,66 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog => \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::fromArray(
+                config('estimate-generation-technology-systems'),
+            ),
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationDecisionService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessExclusionDecisionService::class);
+        $this->app->bind(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\SynchronousPlanningReanalysisTrigger::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class),
+                maxFacts: (int) config('estimate-generation.project_planning.max_facts'),
+                maxRecommendations: (int) config('estimate-generation.project_planning.max_recommendations'),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog => \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::fromArray(
+                config('estimate-generation-completeness-rules'),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder => new \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder(
+                static fn (string $key): string => trans_message($key),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer => new \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder::class),
+                maxFindings: (int) config('estimate-generation.project_planning.max_findings'),
+                maxPackages: (int) config('estimate-generation.project_planning.max_work_packages'),
+                maxEvidence: (int) config('estimate-generation.project_planning.max_finding_evidence'),
+                maxRules: (int) config('estimate-generation.project_planning.max_completeness_rules'),
+                maxEvidenceBytes: (int) config('estimate-generation.project_planning.max_finding_evidence_bytes'),
+                translate: static fn (string $key): string => trans_message($key),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class),
+                maxFacts: (int) config('estimate-generation.project_planning.max_facts'),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningPipeline::class,
+        );
         $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
             $app->make('db')->connection(),
         ));
@@ -620,6 +682,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(GeneratedEstimateNumberAllocator::class, LaravelGeneratedEstimateNumberAllocator::class);
         $this->app->singleton(RetryableEstimateGenerationSessionRepository::class, EloquentRetryableEstimateGenerationSessionRepository::class);
         $this->app->singleton(EstimateGenerationRetryDispatcher::class, LaravelEstimateGenerationRetryDispatcher::class);
+        $this->app->singleton(EstimateGenerationSessionReconciler::class, ReconcileEstimateGenerationDocuments::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminSessionOperationAuthorizer::class,
             \App\BusinessModules\Addons\EstimateGeneration\Operations\SystemAdminSessionOperationAuthorizer::class,

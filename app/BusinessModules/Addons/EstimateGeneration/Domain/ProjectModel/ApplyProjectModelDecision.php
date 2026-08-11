@@ -22,6 +22,52 @@ final readonly class ApplyProjectModelDecision
         string $reason,
         string $decisionId,
     ): Decision {
+        [$decision, $selected] = $this->build(
+            $organizationId, $projectId, $sessionId, $sourceVersion, $factId,
+            $value, $unit, $actorId, $reason, $decisionId,
+        );
+        $this->models->applyDecision($decision, $selected);
+
+        return $decision;
+    }
+
+    public function applyTechnologyChoice(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $factId,
+        mixed $value,
+        ?string $unit,
+        string $actorId,
+        string $reason,
+        string $decisionId,
+        string $inputFingerprint,
+        int $planningRunId,
+    ): Decision {
+        [$decision, $selected] = $this->build(
+            $organizationId, $projectId, $sessionId, $sourceVersion, $factId,
+            $value, $unit, $actorId, $reason, $decisionId,
+        );
+        if (! $this->models->applyTechnologyDecision($decision, $selected, $inputFingerprint, $planningRunId)) {
+            throw new InvalidArgumentException('Technology recommendation changed before decision persistence.');
+        }
+
+        return $decision;
+    }
+
+    private function build(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $factId,
+        mixed $value,
+        ?string $unit,
+        string $actorId,
+        string $reason,
+        string $decisionId,
+    ): array {
         $original = $this->models->fact($organizationId, $projectId, $sessionId, $factId);
         if (! $original instanceof Fact || $original->sourceVersion !== $sourceVersion) {
             throw new InvalidArgumentException('Project model decision target is outside the requested scope.');
@@ -69,9 +115,8 @@ final readonly class ApplyProjectModelDecision
             version: $selected->version,
             evidenceIds: $original->evidenceIds,
         );
-        $this->models->applyDecision($decision, $selected);
 
-        return $decision;
+        return [$decision, $selected];
     }
 
     private function selectedFactId(string $decisionId, string $factId): string

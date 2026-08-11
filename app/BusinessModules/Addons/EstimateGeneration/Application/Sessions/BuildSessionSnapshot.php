@@ -10,14 +10,20 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
+use Closure;
 
 use function trans_message;
 
 final class BuildSessionSnapshot
 {
+    private Closure $translator;
+
     public function __construct(
         private readonly AiEstimateQuotaService $aiEstimateQuota,
-    ) {}
+        ?Closure $translator = null,
+    ) {
+        $this->translator = $translator ?? static fn (string $key): string => trans_message($key);
+    }
 
     /** @var array<string, list<EstimateGenerationAction>> */
     private const STATUS_ACTIONS = [
@@ -60,7 +66,10 @@ final class BuildSessionSnapshot
         $status = $session->status instanceof EstimateGenerationStatus
             ? $session->status
             : EstimateGenerationStatus::from((string) $session->status);
-        $blockers = $this->list($readinessSummary['blockers'] ?? []);
+        $blockers = $this->uniqueIssues([
+            ...$this->list($readinessSummary['blockers'] ?? []),
+            ...$this->planningBlockers($session),
+        ]);
         $warnings = $this->list($readinessSummary['warnings'] ?? []);
         $actions = $this->availableActions(
             $session,
@@ -222,5 +231,45 @@ final class BuildSessionSnapshot
     private function list(mixed $value): array
     {
         return is_array($value) ? array_values(array_filter($value, 'is_array')) : [];
+    }
+
+    private function planningBlockers(EstimateGenerationSession $session): array
+    {
+        $review = is_array($session->input_payload['planning_review'] ?? null)
+            ? $session->input_payload['planning_review']
+            : [];
+        $limitations = is_array($review['limitations'] ?? null) ? $review['limitations'] : [];
+        $issues = [];
+        foreach ($limitations as $limitation) {
+            if (! is_string($limitation) || preg_match('/^[a-z][a-z0-9_.-]{0,190}$/D', $limitation) !== 1) {
+                continue;
+            }
+            $messageKey = match ($limitation) {
+                'budget_exceeded' => 'estimate_generation.project_model.operation_limit',
+                'empty_facts', 'insufficient_evidence' => 'estimate_generation.project_model.insufficient_evidence',
+                'provider_unavailable' => 'estimate_generation.project_model.arbitration_unavailable',
+                'stale_snapshot' => 'estimate_generation.project_model.stale_snapshot',
+                default => 'estimate_generation.planning.blocking_reason',
+            };
+            $issues[] = [
+                'code' => $limitation,
+                'message_key' => $messageKey,
+                'message' => ($this->translator)($messageKey),
+            ];
+        }
+
+        return $issues;
+    }
+
+    private function uniqueIssues(array $issues): array
+    {
+        $unique = [];
+        foreach ($issues as $issue) {
+            if (is_array($issue) && is_string($issue['code'] ?? null)) {
+                $unique[$issue['code']] = $issue;
+            }
+        }
+
+        return array_values($unique);
     }
 }

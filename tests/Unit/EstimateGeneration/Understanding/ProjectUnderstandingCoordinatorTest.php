@@ -45,6 +45,10 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         self::assertSame(0, $factory->calls);
         self::assertSame($first->links, $models->currentUnderstanding(1, 2, 3)['links']);
         self::assertNull($models->currentUnderstanding(99, 2, 3));
+        self::assertTrue($first->isReadyForPlanning());
+        self::assertTrue($second->isReadyForPlanning());
+        self::assertSame($models->currentUnderstanding(1, 2, 3)['source_version'], $first->sourceVersion);
+        self::assertSame($models->currentUnderstanding(1, 2, 3)['input_fingerprint'], $first->inputFingerprint);
     }
 
     public static function deterministicCases(): array
@@ -141,6 +145,8 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         self::assertSame($result->links, $replayed->links);
         self::assertSame($result->questions, $replayed->questions);
         self::assertNotNull($models->currentUnderstanding(1, 2, 3));
+        self::assertFalse($result->isReadyForPlanning());
+        self::assertFalse($replayed->isReadyForPlanning());
     }
 
     #[Test]
@@ -168,6 +174,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         self::assertSame(0, $factory->calls);
         self::assertSame(11, $models->lastSnapshotFactLimit);
         self::assertNotSame([], $result->limitations);
+        self::assertFalse($result->isReadyForPlanning());
         $models->invalidateSourceVersion(1, 2, 3, $this->evidenceSource(), 'sha256:'.str_repeat('c', 64));
         self::assertNull($models->currentUnderstanding(1, 2, 3));
         self::assertSame([], $models->currentFacts(1, 2, 3));
@@ -186,6 +193,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         self::assertSame(0, $models->snapshotCalls);
         self::assertSame(0, $factory->calls);
         self::assertNotSame([], $result->limitations);
+        self::assertFalse($result->isReadyForPlanning());
     }
 
     #[Test]

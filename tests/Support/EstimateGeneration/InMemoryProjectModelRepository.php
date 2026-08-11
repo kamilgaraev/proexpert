@@ -42,7 +42,23 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public array $understanding = [];
 
+    public array $technologyPlanningHistory = [];
+
+    public int $technologyPlanningWriteCount = 0;
+
+    public array $completenessHistory = [];
+
+    public int $completenessWriteCount = 0;
+
     public ?Closure $beforeUnderstandingSave = null;
+
+    public ?Closure $beforeTechnologyReplayLock = null;
+
+    public ?Closure $beforeCompletenessReplayLock = null;
+
+    public ?Closure $beforeTechnologyDecisionLock = null;
+
+    public ?Closure $beforeCompletenessDecisionLock = null;
 
     private array $projection = [];
 
@@ -123,6 +139,76 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 $this->understanding[$key]['is_current'] = false;
             }
         }
+        foreach ($this->technologyPlanningHistory as $key => $run) {
+            if (str_starts_with($key, $prefix)) {
+                $this->technologyPlanningHistory[$key]['is_current'] = false;
+            }
+        }
+        foreach ($this->completenessHistory as $key => $run) {
+            if (str_starts_with($key, $prefix)) {
+                $this->completenessHistory[$key]['is_current'] = false;
+            }
+        }
+    }
+
+    public function applyTechnologyDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $planningRunId,
+    ): bool {
+        if ($this->beforeTechnologyDecisionLock !== null) {
+            $hook = $this->beforeTechnologyDecisionLock;
+            $this->beforeTechnologyDecisionLock = null;
+            $hook();
+        }
+        $current = $this->currentTechnologyRecommendations(
+            $decision->organizationId,
+            $decision->projectId,
+            $decision->sessionId,
+        );
+        if ($current === null || ($current['run_id'] ?? null) !== $planningRunId
+            || ! hash_equals($inputFingerprint, $current['input_fingerprint'])
+            || ! hash_equals($inputFingerprint, $this->understandingSnapshotToken(
+                $decision->organizationId,
+                $decision->projectId,
+                $decision->sessionId,
+            ))) {
+            return false;
+        }
+        $this->applyDecision($decision, $selectedFact);
+
+        return true;
+    }
+
+    public function applyCompletenessExclusionDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $completenessRunId,
+    ): bool {
+        if ($this->beforeCompletenessDecisionLock !== null) {
+            $hook = $this->beforeCompletenessDecisionLock;
+            $this->beforeCompletenessDecisionLock = null;
+            $hook();
+        }
+        $current = $this->currentCompleteness(
+            $decision->organizationId,
+            $decision->projectId,
+            $decision->sessionId,
+        );
+        if ($current === null || ($current['run_id'] ?? null) !== $completenessRunId
+            || ! hash_equals($inputFingerprint, (string) ($current['input_fingerprint'] ?? ''))
+            || ! hash_equals($inputFingerprint, $this->understandingSnapshotToken(
+                $decision->organizationId,
+                $decision->projectId,
+                $decision->sessionId,
+            ))) {
+            return false;
+        }
+        $this->applyDecision($decision, $selectedFact);
+
+        return true;
     }
 
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void
@@ -250,6 +336,17 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return null;
     }
 
+    public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array
+    {
+        $ids = array_fill_keys($decisionIds, true);
+
+        return array_values(array_filter(
+            $this->decisions,
+            fn (Decision $decision): bool => $this->scope($decision) === [$organizationId, $projectId, $sessionId]
+                && isset($ids[$decision->id]),
+        ));
+    }
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array
     {
         return array_values(array_filter(
@@ -359,6 +456,217 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return $matches === [] ? null : end($matches);
     }
 
+    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    {
+        return $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit);
+    }
+
+    public function replaceTechnologyRecommendations(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        array $recommendations,
+        array $limitations,
+    ): bool {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return false;
+        }
+        $scope = implode(':', [$organizationId, $projectId, $sessionId]);
+        $key = implode(':', [$scope, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash]);
+        if (isset($this->technologyPlanningHistory[$key])) {
+            if ($this->latestProjectionKey($this->technologyPlanningHistory, $scope, $sourceVersion, $inputFingerprint) !== $key) {
+                return false;
+            }
+            $existing = $this->technologyPlanningHistory[$key];
+            if ([$existing['recommendations'], $existing['limitations']] !== [$recommendations, $limitations]) {
+                throw new InvalidArgumentException('Technology recommendation replay content differs.');
+            }
+
+            return true;
+        }
+        foreach ($this->technologyPlanningHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $scope.':')) {
+                $this->technologyPlanningHistory[$existingKey]['is_current'] = false;
+            }
+        }
+        $this->technologyPlanningHistory[$key] = [
+            'run_id' => count($this->technologyPlanningHistory) + 1,
+            'source_version' => $sourceVersion,
+            'input_fingerprint' => $inputFingerprint,
+            'catalog_version' => $catalogVersion,
+            'catalog_hash' => $catalogHash,
+            'recommendations' => $recommendations,
+            'limitations' => $limitations,
+            'is_current' => true,
+        ];
+        $this->technologyPlanningWriteCount++;
+
+        return true;
+    }
+
+    public function replayTechnologyRecommendations(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+    ): ?array {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return null;
+        }
+        $key = implode(':', [
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $inputFingerprint,
+            $catalogVersion,
+            $catalogHash,
+        ]);
+        if (! isset($this->technologyPlanningHistory[$key])) {
+            return null;
+        }
+        if ($this->beforeTechnologyReplayLock !== null) {
+            $hook = $this->beforeTechnologyReplayLock;
+            $this->beforeTechnologyReplayLock = null;
+            $hook();
+        }
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+            || $this->latestProjectionKey($this->technologyPlanningHistory, implode(':', [$organizationId, $projectId, $sessionId]), $sourceVersion, $inputFingerprint) !== $key) {
+            return null;
+        }
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach ($this->technologyPlanningHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $prefix)) {
+                $this->technologyPlanningHistory[$existingKey]['is_current'] = $existingKey === $key;
+            }
+        }
+
+        return $this->technologyPlanningHistory[$key];
+    }
+
+    public function currentTechnologyRecommendations(int $organizationId, int $projectId, int $sessionId): ?array
+    {
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach (array_reverse($this->technologyPlanningHistory, true) as $key => $run) {
+            if (str_starts_with($key, $prefix) && $run['is_current']) {
+                return hash_equals($run['input_fingerprint'], $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+                    ? $run
+                    : null;
+            }
+        }
+
+        return null;
+    }
+
+    public function replaceCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+        array $findings,
+        array $limitations,
+    ): bool {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return false;
+        }
+        $scope = implode(':', [$organizationId, $projectId, $sessionId]);
+        $key = implode(':', [$scope, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash, $ruleCatalogVersion, $ruleCatalogHash]);
+        if (isset($this->completenessHistory[$key])) {
+            if ($this->latestProjectionKey($this->completenessHistory, $scope, $sourceVersion, $inputFingerprint) !== $key) {
+                return false;
+            }
+            $existing = $this->completenessHistory[$key];
+            if ([$existing['findings'], $existing['limitations']] !== [$findings, $limitations]) {
+                throw new InvalidArgumentException('Completeness replay content differs.');
+            }
+
+            return true;
+        }
+        foreach ($this->completenessHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $scope.':')) {
+                $this->completenessHistory[$existingKey]['is_current'] = false;
+            }
+        }
+        $this->completenessHistory[$key] = [
+            'run_id' => count($this->completenessHistory) + 1,
+            'source_version' => $sourceVersion,
+            'input_fingerprint' => $inputFingerprint,
+            'catalog_version' => $catalogVersion,
+            'catalog_hash' => $catalogHash,
+            'rule_catalog_version' => $ruleCatalogVersion,
+            'rule_catalog_hash' => $ruleCatalogHash,
+            'findings' => $findings,
+            'limitations' => $limitations,
+            'is_current' => true,
+        ];
+        $this->completenessWriteCount++;
+
+        return true;
+    }
+
+    public function replayCompleteness(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        string $ruleCatalogVersion,
+        string $ruleCatalogHash,
+    ): ?array {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return null;
+        }
+        $key = implode(':', [$organizationId, $projectId, $sessionId, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash, $ruleCatalogVersion, $ruleCatalogHash]);
+        if (! isset($this->completenessHistory[$key])) {
+            return null;
+        }
+        if ($this->beforeCompletenessReplayLock !== null) {
+            $hook = $this->beforeCompletenessReplayLock;
+            $this->beforeCompletenessReplayLock = null;
+            $hook();
+        }
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+            || $this->latestProjectionKey($this->completenessHistory, implode(':', [$organizationId, $projectId, $sessionId]), $sourceVersion, $inputFingerprint) !== $key) {
+            return null;
+        }
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach ($this->completenessHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $prefix)) {
+                $this->completenessHistory[$existingKey]['is_current'] = $existingKey === $key;
+            }
+        }
+
+        return $this->completenessHistory[$key];
+    }
+
+    public function currentCompleteness(int $organizationId, int $projectId, int $sessionId): ?array
+    {
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach (array_reverse($this->completenessHistory, true) as $key => $run) {
+            if (str_starts_with($key, $prefix) && $run['is_current']) {
+                return hash_equals($run['input_fingerprint'], $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+                    ? $run
+                    : null;
+            }
+        }
+
+        return null;
+    }
+
     public function invalidateSourceVersion(
         int $organizationId,
         int $projectId,
@@ -392,6 +700,16 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 $this->understanding[$key]['is_current'] = false;
             }
         }
+        foreach (array_keys($this->technologyPlanningHistory) as $key) {
+            if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
+                $this->technologyPlanningHistory[$key]['is_current'] = false;
+            }
+        }
+        foreach (array_keys($this->completenessHistory) as $key) {
+            if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
+                $this->completenessHistory[$key]['is_current'] = false;
+            }
+        }
     }
 
     public function removeProjection(string $factId): void
@@ -401,6 +719,19 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 unset($this->projection[$key]);
             }
         }
+    }
+
+    private function latestProjectionKey(array $history, string $scope, string $sourceVersion, string $inputFingerprint): ?string
+    {
+        $prefix = implode(':', [$scope, $sourceVersion, $inputFingerprint]).':';
+        $latest = null;
+        foreach ($history as $key => $run) {
+            if (str_starts_with($key, $prefix)) {
+                $latest = $key;
+            }
+        }
+
+        return $latest;
     }
 
     private function factById(object $scope, string $factId): Fact

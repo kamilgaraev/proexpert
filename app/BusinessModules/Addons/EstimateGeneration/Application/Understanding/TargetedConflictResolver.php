@@ -40,22 +40,22 @@ final readonly class TargetedConflictResolver
 
     public function insufficientEvidence(): string
     {
-        return ($this->translator)('estimate_generation.project_model.insufficient_evidence', []);
+        return 'insufficient_evidence';
     }
 
     public function budgetExceeded(): string
     {
-        return ($this->translator)('estimate_generation.project_model.operation_limit', []);
+        return 'budget_exceeded';
     }
 
     public function providerUnavailable(): string
     {
-        return ($this->translator)('estimate_generation.project_model.arbitration_unavailable', []);
+        return 'provider_unavailable';
     }
 
     public function staleSnapshot(): string
     {
-        return ($this->translator)('estimate_generation.project_model.stale_snapshot', []);
+        return 'stale_snapshot';
     }
 
     public function unresolvedQuestion(string $id, array $facts = [], array $evidenceById = []): array
