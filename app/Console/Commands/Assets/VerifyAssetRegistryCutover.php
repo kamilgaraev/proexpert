@@ -336,6 +336,17 @@ final class VerifyAssetRegistryCutover extends Command
                 'asset_id' => $assetId,
                 'organization_id' => $organizationId,
                 'foreign_assignment_project_ids' => $foreignAssignmentProjectIds,
+                'accessible_foreign_assignment_project_ids' => Schema::hasTable('project_organization')
+                    ? DB::table('project_organization')
+                        ->where('organization_id', $organizationId)
+                        ->where('is_active', true)
+                        ->whereIn('project_id', $foreignAssignmentProjectIds)
+                        ->distinct()
+                        ->orderBy('project_id')
+                        ->pluck('project_id')
+                        ->map(static fn ($id): int => (int) $id)
+                        ->all()
+                    : [],
                 'legacy_current_project_id' => $legacyCurrentProjectId,
                 'legacy_current_project_is_local' => $legacyCurrentProjectId !== null && DB::table('projects')
                     ->where('id', $legacyCurrentProjectId)
