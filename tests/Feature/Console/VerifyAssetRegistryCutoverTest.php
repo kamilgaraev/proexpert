@@ -10,6 +10,7 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Models\Project;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
@@ -17,8 +18,17 @@ use Tests\TestCase;
 
 final class VerifyAssetRegistryCutoverTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        CarbonImmutable::setTestNow();
+
+        parent::tearDown();
+    }
+
     public function test_command_returns_go_only_when_every_cutover_gate_is_zero(): void
     {
+        CarbonImmutable::setTestNow('2026-08-12T00:00:00Z');
+        config(['asset_registry.release_sha' => 'release-test-sha']);
         $context = AdminApiTestContext::create();
         app(MachineryOperationsService::class)->createAsset((int) $context->organization->id, [
             'asset_code' => 'CUTOVER-READY',
@@ -36,7 +46,77 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
             'operations_without_organization_asset_id' => 0,
             'open_assignments_with_inconsistent_placement' => 0,
             'ready' => true,
+            'observed_at' => '2026-08-12T00:00:00+00:00',
+            'release_sha' => 'release-test-sha',
         ], $this->jsonOutput());
+    }
+
+    public function test_details_prove_an_ordered_operational_cycle_inside_the_observation_window(): void
+    {
+        $observationStartedAt = CarbonImmutable::parse('2026-08-12T00:00:00Z');
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $userId = (int) $context->user->id;
+        $intakeProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $workProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $service = app(MachineryOperationsService::class);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinute());
+        $asset = $service->createAsset($organizationId, [
+            'asset_code' => 'CUTOVER-CYCLE',
+            'name' => 'Единица контрольного цикла',
+            'inventory_number' => 'CUTOVER-CYCLE',
+            'current_project_id' => (int) $intakeProject->id,
+        ]);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinutes(2));
+        $assignment = $service->assignAsset($asset, $userId, [
+            'project_id' => (int) $workProject->id,
+            'planned_start_at' => now(),
+        ]);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinutes(3));
+        $shift = $service->createShiftReport($organizationId, $userId, [
+            'asset_id' => (int) $asset->id,
+            'project_id' => (int) $workProject->id,
+            'assignment_id' => (int) $assignment->id,
+            'report_date' => now()->toDateString(),
+            'actual_hours' => 1,
+            'fuel_consumed' => 0,
+        ]);
+        $service->submitShift($shift);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinutes(4));
+        $service->approveShift($shift->refresh(), $userId);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinutes(5));
+        $exitCode = Artisan::call('assets:verify-cutover', [
+            '--format' => 'json',
+            '--details' => true,
+            '--since' => $observationStartedAt->toIso8601String(),
+        ]);
+        $activity = $this->jsonOutput()['details']['activity'];
+
+        self::assertSame(0, $exitCode);
+        self::assertSame('2026-08-12T00:00:00+00:00', $activity['since']);
+        self::assertSame(1, $activity['intake_events']);
+        self::assertSame(1, $activity['assignment_events']);
+        self::assertSame(1, $activity['assignments']);
+        self::assertSame(1, $activity['shift_reports']);
+        self::assertSame(1, $activity['approved_shift_reports']);
+        self::assertSame(1, $activity['completed_operational_cycles']);
+    }
+
+    public function test_command_rejects_an_invalid_observation_start(): void
+    {
+        $exitCode = Artisan::call('assets:verify-cutover', [
+            '--format' => 'json',
+            '--details' => true,
+            '--since' => 'yesterday',
+        ]);
+
+        self::assertSame(1, $exitCode);
+        self::assertStringContainsString('Некорректное значение --since', Artisan::output());
     }
 
     public function test_command_returns_no_go_and_reports_every_broken_invariant(): void
