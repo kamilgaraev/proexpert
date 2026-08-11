@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Services;
 
 use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetOperationalMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -61,6 +62,14 @@ final readonly class MachineryWorkflowPolicy
             return [];
         }
 
+        $canonical = $asset->organizationAsset;
+        $profile = $canonical?->relationLoaded('operationProfile')
+            ? $canonical->getRelation('operationProfile')
+            : null;
+        if ($profile?->operational_mode === AssetOperationalMode::Custody) {
+            return [];
+        }
+
         $actions = match ($this->status($asset)) {
             'available' => ['assign', 'maintenance', 'unavailable', 'archive'],
             'assigned' => ['start_operation', 'return_available', 'maintenance'],
@@ -69,6 +78,14 @@ final readonly class MachineryWorkflowPolicy
             'unavailable' => ['return_available', 'maintenance', 'archive'],
             default => [],
         };
+
+        if ($profile?->operational_mode !== AssetOperationalMode::ShiftOperation) {
+            $actions = array_values(array_diff($actions, ['start_operation']));
+        }
+
+        if ($profile !== null && ! $profile->maintenance_enabled) {
+            $actions = array_values(array_diff($actions, ['maintenance']));
+        }
         $context = ['organization_id' => (int) $asset->organization_id];
 
         return array_values(array_filter(

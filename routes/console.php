@@ -9,6 +9,15 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
+Schedule::command('assets:verify-cutover --format=json')
+    ->hourly()
+    ->withoutOverlapping(10)
+    ->onOneServer()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Asset registry cutover verification failed.');
+    })
+    ->appendOutputTo(storage_path('logs/asset-registry-cutover.log'));
+
 Schedule::job(new ScheduleDueReportSubscriptionsJob)->everyMinute()->withoutOverlapping(5)->onOneServer();
 Schedule::job(new ExpireReportSubscriptionExecutionsJob)->everyFiveMinutes()->withoutOverlapping(10)->onOneServer();
 Schedule::job(new PruneReportSubscriptionDeliveriesJob)->daily()->withoutOverlapping(30)->onOneServer();

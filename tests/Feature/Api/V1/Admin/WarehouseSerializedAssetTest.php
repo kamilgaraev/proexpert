@@ -8,6 +8,9 @@ use App\BusinessModules\Core\AssetManagement\Models\AssetCustodyEvent;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetReadRepository;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryWorkflowPolicy;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -94,6 +97,17 @@ final class WarehouseSerializedAssetTest extends TestCase
         self::assertNotSame($instances[0]->qr_code, $instances[1]->qr_code);
         self::assertSame($warehouse->id, $instances[0]->current_warehouse_id);
         self::assertSame(2, AssetCustodyEvent::query()->where('event_type', 'created')->count());
+        self::assertSame(2, MachineryAsset::query()->count());
+        self::assertSame(
+            $instances->pluck('id')->all(),
+            MachineryAsset::query()->orderBy('inventory_number')->pluck('organization_asset_id')->all(),
+        );
+
+        $registry = app(MachineryAssetReadRepository::class)->paginate((int) $context->organization->id, 20);
+        self::assertSame(2, $registry->total());
+        $registryAsset = $registry->items()[0];
+        self::assertSame('custody', $registryAsset->organizationAsset->operationProfile->operational_mode->value);
+        self::assertSame([], app(MachineryWorkflowPolicy::class)->availableActions($registryAsset, $context->user));
 
         $generatedQr = $instances[0]->qr_code;
         $this

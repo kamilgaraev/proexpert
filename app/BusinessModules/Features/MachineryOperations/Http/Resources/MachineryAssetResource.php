@@ -27,9 +27,19 @@ final class MachineryAssetResource extends JsonResource
         $status = (string) $view['status'];
         $machinery = $asset->organizationAsset?->machinery ?? $asset->machinery;
         $currentProject = $asset->organizationAsset?->currentProject ?? $asset->currentProject;
+        $operationProfile = $asset->organizationAsset?->operationProfile;
 
         return [
             ...$view,
+            'operational_mode' => $operationProfile?->operational_mode?->value,
+            'operation_profile' => $operationProfile ? [
+                'operational_mode' => $operationProfile->operational_mode->value,
+                'tracks_meter' => $operationProfile->tracks_meter,
+                'tracks_fuel' => $operationProfile->tracks_fuel,
+                'tracks_production' => $operationProfile->tracks_production,
+                'maintenance_enabled' => $operationProfile->maintenance_enabled,
+                'meter_unit' => $operationProfile->meter_unit,
+            ] : null,
             'status_label' => trans_message("machinery_operations.asset_statuses.{$status}"),
             'workflow_summary' => [
                 'stage' => $status,
