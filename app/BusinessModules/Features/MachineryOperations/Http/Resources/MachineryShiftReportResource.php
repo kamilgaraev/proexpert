@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Http\Resources;
 
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -15,16 +17,29 @@ final class MachineryShiftReportResource extends JsonResource
     {
         /** @var MachineryShiftReport $shift */
         $shift = $this->resource;
-        $actions = match ($shift->status) {
+        $candidateActions = match ($shift->status) {
             'draft' => ['submit'],
             'submitted' => ['approve', 'reject'],
             default => [],
         };
+        $actor = $request->user();
+        $actions = $actor instanceof User
+            ? array_values(array_filter($candidateActions, function (string $action) use ($actor, $shift): bool {
+                $permission = $action === 'submit'
+                    ? 'machinery-operations.shifts.create'
+                    : 'machinery-operations.shifts.approve';
+
+                return app(AuthorizationService::class)->can($actor, $permission, [
+                    'organization_id' => (int) $shift->organization_id,
+                ]);
+            }))
+            : [];
 
         return [
             'id' => $shift->id,
             'organization_id' => $shift->organization_id,
             'asset_id' => $shift->asset_id,
+            'organization_asset_id' => $shift->organization_asset_id,
             'project_id' => $shift->project_id,
             'assignment_id' => $shift->assignment_id,
             'reported_by_user_id' => $shift->reported_by_user_id,
@@ -56,6 +71,7 @@ final class MachineryShiftReportResource extends JsonResource
             'available_actions' => $actions,
             'linked_entities' => [
                 'asset_id' => $shift->asset_id,
+                'organization_asset_id' => $shift->organization_asset_id,
                 'project_id' => $shift->project_id,
                 'assignment_id' => $shift->assignment_id,
             ],

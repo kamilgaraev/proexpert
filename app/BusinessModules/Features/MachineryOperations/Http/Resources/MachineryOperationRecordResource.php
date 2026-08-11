@@ -9,6 +9,8 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryFuelIssue;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryProductionRecord;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -21,7 +23,7 @@ final class MachineryOperationRecordResource extends JsonResource
             $this->resource instanceof MachineryDowntime => $this->downtime($this->resource),
             $this->resource instanceof MachineryFuelIssue => $this->fuelIssue($this->resource),
             $this->resource instanceof MachineryProductionRecord => $this->productionRecord($this->resource),
-            $this->resource instanceof MachineryMaintenanceOrder => $this->maintenanceOrder($this->resource),
+            $this->resource instanceof MachineryMaintenanceOrder => $this->maintenanceOrder($request, $this->resource),
             default => [],
         };
     }
@@ -31,6 +33,7 @@ final class MachineryOperationRecordResource extends JsonResource
         return [
             'id' => $assignment->id,
             'asset_id' => $assignment->asset_id,
+            'organization_asset_id' => $assignment->organization_asset_id,
             'project_id' => $assignment->project_id,
             'schedule_task_id' => $assignment->schedule_task_id,
             'requested_by_user_id' => $assignment->requested_by_user_id,
@@ -44,6 +47,7 @@ final class MachineryOperationRecordResource extends JsonResource
             'comment' => $assignment->comment,
             'linked_entities' => [
                 'asset_id' => $assignment->asset_id,
+                'organization_asset_id' => $assignment->organization_asset_id,
                 'project_id' => $assignment->project_id,
                 'schedule_task_id' => $assignment->schedule_task_id,
             ],
@@ -55,6 +59,7 @@ final class MachineryOperationRecordResource extends JsonResource
         return [
             'id' => $downtime->id,
             'asset_id' => $downtime->asset_id,
+            'organization_asset_id' => $downtime->organization_asset_id,
             'project_id' => $downtime->project_id,
             'shift_report_id' => $downtime->shift_report_id,
             'reason' => $downtime->reason,
@@ -70,6 +75,7 @@ final class MachineryOperationRecordResource extends JsonResource
         return [
             'id' => $fuelIssue->id,
             'asset_id' => $fuelIssue->asset_id,
+            'organization_asset_id' => $fuelIssue->organization_asset_id,
             'project_id' => $fuelIssue->project_id,
             'issued_by_user_id' => $fuelIssue->issued_by_user_id,
             'issued_at' => $fuelIssue->issued_at?->toIso8601String(),
@@ -86,6 +92,7 @@ final class MachineryOperationRecordResource extends JsonResource
         return [
             'id' => $record->id,
             'asset_id' => $record->asset_id,
+            'organization_asset_id' => $record->organization_asset_id,
             'project_id' => $record->project_id,
             'shift_report_id' => $record->shift_report_id,
             'recorded_by_user_id' => $record->recorded_by_user_id,
@@ -96,16 +103,23 @@ final class MachineryOperationRecordResource extends JsonResource
         ];
     }
 
-    private function maintenanceOrder(MachineryMaintenanceOrder $order): array
+    private function maintenanceOrder(Request $request, MachineryMaintenanceOrder $order): array
     {
-        $actions = match ($order->status) {
+        $candidateActions = match ($order->status) {
             'open', 'in_progress' => ['complete'],
             default => [],
         };
+        $actor = $request->user();
+        $actions = $actor instanceof User && app(AuthorizationService::class)->can(
+            $actor,
+            'machinery-operations.downtime.manage',
+            ['organization_id' => (int) $order->organization_id],
+        ) ? $candidateActions : [];
 
         return [
             'id' => $order->id,
             'asset_id' => $order->asset_id,
+            'organization_asset_id' => $order->organization_asset_id,
             'project_id' => $order->project_id,
             'requested_by_user_id' => $order->requested_by_user_id,
             'completed_by_user_id' => $order->completed_by_user_id,
@@ -134,6 +148,7 @@ final class MachineryOperationRecordResource extends JsonResource
             'available_actions' => $actions,
             'linked_entities' => [
                 'asset_id' => $order->asset_id,
+                'organization_asset_id' => $order->organization_asset_id,
                 'project_id' => $order->project_id,
             ],
         ];
