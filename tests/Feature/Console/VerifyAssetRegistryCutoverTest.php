@@ -138,6 +138,8 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         self::assertSame(2, $report['details']['assignments']['currently_effective']);
         self::assertSame(1, $report['details']['assignments']['overlapping_pairs']);
         self::assertSame(1, $report['details']['assignments']['distinct_projects']);
+        self::assertSame(0, $report['details']['assignments']['assignment_organization_mismatches']);
+        self::assertSame(0, $report['details']['assignments']['project_organization_mismatches']);
         self::assertSame(2, DB::table('machinery_assignments')->whereNull('organization_asset_id')->count());
     }
 

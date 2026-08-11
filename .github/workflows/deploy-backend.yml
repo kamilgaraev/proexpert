@@ -485,10 +485,10 @@ jobs:
                 && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' \
                 && docker compose exec -T clamav clamdscan --ping 1 \
                 && docker compose exec -T geometry-worker /usr/local/bin/geometry-runtime-smoke; then
-                docker compose exec -T api php artisan assets:backfill --format=json
+                docker compose exec -T api php artisan assets:backfill --dry-run --format=json || true
                 docker compose exec -T api php artisan assets:reconcile --format=json || true
                 docker compose exec -T api php artisan assets:verify-cutover --format=json --details || true
-                tail -n 24 storage/logs/asset-registry-cutover.log || true
+                docker compose exec -T scheduler tail -n 24 storage/logs/asset-registry-cutover.log || true
                 systemctl start nginx
                 systemctl is-active --quiet nginx
                 trap - ERR

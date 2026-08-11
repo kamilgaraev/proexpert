@@ -171,11 +171,11 @@ final class VerifyAssetRegistryCutover extends Command
         return $counts;
     }
 
-    /** @return array{active: int, currently_effective: int, overlapping_pairs: int, distinct_projects: int} */
+    /** @return array{active: int, currently_effective: int, overlapping_pairs: int, distinct_projects: int, assignment_organization_mismatches: int, project_organization_mismatches: int} */
     private function assignmentRiskBreakdown(): array
     {
         if (! Schema::hasTable('machinery_assignments')) {
-            return ['active' => 0, 'currently_effective' => 0, 'overlapping_pairs' => 0, 'distinct_projects' => 0];
+            return ['active' => 0, 'currently_effective' => 0, 'overlapping_pairs' => 0, 'distinct_projects' => 0, 'assignment_organization_mismatches' => 0, 'project_organization_mismatches' => 0];
         }
 
         $active = DB::table('machinery_assignments')
@@ -208,6 +208,15 @@ final class VerifyAssetRegistryCutover extends Command
             'currently_effective' => (int) $currentlyEffective,
             'overlapping_pairs' => (int) $overlappingPairs,
             'distinct_projects' => (int) (clone $active)->distinct()->count('project_id'),
+            'assignment_organization_mismatches' => (int) DB::table('machinery_assignments as assignment')
+                ->join('machinery_assets as asset', 'asset.id', '=', 'assignment.asset_id')
+                ->whereColumn('assignment.organization_id', '<>', 'asset.organization_id')
+                ->count(),
+            'project_organization_mismatches' => (int) DB::table('machinery_assignments as assignment')
+                ->join('machinery_assets as asset', 'asset.id', '=', 'assignment.asset_id')
+                ->join('projects as project', 'project.id', '=', 'assignment.project_id')
+                ->whereColumn('project.organization_id', '<>', 'asset.organization_id')
+                ->count(),
         ];
     }
 
