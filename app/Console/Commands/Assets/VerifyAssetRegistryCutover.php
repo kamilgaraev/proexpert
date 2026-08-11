@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Console\Commands\Assets;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Throwable;
 
 final class VerifyAssetRegistryCutover extends Command
 {
@@ -23,34 +26,48 @@ final class VerifyAssetRegistryCutover extends Command
         'maintenance_inspections',
     ];
 
-    protected $signature = 'assets:verify-cutover {--format=table : table или json} {--details : Добавить агрегированную диагностику}';
+    protected $signature = 'assets:verify-cutover
+        {--format=table : table или json}
+        {--details : Добавить агрегированную диагностику}
+        {--since= : Начало окна наблюдения в ISO-8601; по умолчанию используется observation_hours}';
 
     protected $description = 'Проверяет go/no-go условия перехода на единый реестр имущества';
 
     public function handle(): int
     {
-        $report = [
+        $observedAt = CarbonImmutable::instance(now())->utc();
+        $observationStartedAt = $this->observationStartedAt($observedAt);
+        if ($observationStartedAt === false) {
+            return self::FAILURE;
+        }
+
+        $gates = [
             'missing_links' => $this->missingLinks(),
             'duplicate_canonical_assets' => $this->duplicateCanonicalAssets(),
             'dual_write_divergence' => $this->dualWriteDivergence(),
             'operations_without_organization_asset_id' => $this->operationsWithoutCanonicalId(),
             'open_assignments_with_inconsistent_placement' => $this->inconsistentOpenAssignments(),
         ];
-        $report['ready'] = array_sum($report) === 0;
+        $report = [
+            ...$gates,
+            'ready' => array_sum($gates) === 0,
+            'observed_at' => $observedAt->toIso8601String(),
+            'release_sha' => $this->releaseSha(),
+        ];
         if ((bool) $this->option('details')) {
             $report['details'] = [
                 'missing_links' => $this->missingLinksBreakdown(),
                 'operations_without_canonical_id' => $this->operationsWithoutCanonicalIdBreakdown(),
                 'assignments' => $this->assignmentRiskBreakdown(),
                 'scope_repair_evidence' => $this->scopeRepairEvidence(),
+                'activity' => $this->activityBreakdown($observationStartedAt, $observedAt),
             ];
         }
 
         if ($this->option('format') === 'json') {
             $this->line((string) json_encode($report, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         } else {
-            $this->table(['gate', 'count'], collect($report)
-                ->except('ready')
+            $this->table(['gate', 'count'], collect($gates)
                 ->map(fn (int $count, string $gate): array => [$gate, $count])
                 ->values()
                 ->all());
@@ -58,6 +75,100 @@ final class VerifyAssetRegistryCutover extends Command
         }
 
         return $report['ready'] ? self::SUCCESS : self::FAILURE;
+    }
+
+    private function observationStartedAt(CarbonImmutable $observedAt): CarbonImmutable|false
+    {
+        $value = $this->option('since');
+        if ($value === null || trim((string) $value) === '') {
+            return $observedAt->subHours((int) config('asset_registry.observation_hours', 24));
+        }
+
+        $value = trim((string) $value);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/', $value) !== 1) {
+            $this->error('Некорректное значение --since: требуется дата и время ISO-8601.');
+
+            return false;
+        }
+
+        try {
+            $since = CarbonImmutable::parse($value)->utc();
+        } catch (Throwable) {
+            $this->error('Некорректное значение --since: требуется дата и время ISO-8601.');
+
+            return false;
+        }
+
+        if ($since->isAfter($observedAt)) {
+            $this->error('Некорректное значение --since: начало окна находится в будущем.');
+
+            return false;
+        }
+
+        return $since;
+    }
+
+    private function releaseSha(): ?string
+    {
+        $releaseSha = trim((string) config('asset_registry.release_sha', ''));
+
+        return $releaseSha !== '' ? $releaseSha : null;
+    }
+
+    /**
+     * @return array{since: string, until: string, intake_events: int, assignment_events: int, assignments: int, shift_reports: int, approved_shift_reports: int, completed_operational_cycles: int}
+     */
+    private function activityBreakdown(CarbonImmutable $since, CarbonImmutable $until): array
+    {
+        $custodyEvents = DB::table('asset_custody_events')
+            ->whereBetween('occurred_at', [$since, $until]);
+        $assignments = DB::table('machinery_assignments')
+            ->whereNull('deleted_at')
+            ->whereBetween('created_at', [$since, $until]);
+        $shifts = DB::table('machinery_shift_reports')
+            ->whereNull('deleted_at')
+            ->whereBetween('created_at', [$since, $until]);
+
+        $completedCycles = DB::table('machinery_shift_reports as shift')
+            ->join('machinery_assignments as assignment', static function (JoinClause $join): void {
+                $join->on('assignment.id', '=', 'shift.assignment_id')
+                    ->on('assignment.organization_asset_id', '=', 'shift.organization_asset_id');
+            })
+            ->whereNotNull('shift.organization_asset_id')
+            ->whereNull('shift.deleted_at')
+            ->whereNull('assignment.deleted_at')
+            ->whereBetween('assignment.created_at', [$since, $until])
+            ->whereBetween('shift.created_at', [$since, $until])
+            ->whereBetween('shift.approved_at', [$since, $until])
+            ->whereColumn('assignment.created_at', '<=', 'shift.created_at')
+            ->whereColumn('shift.created_at', '<=', 'shift.approved_at')
+            ->whereExists(static fn (Builder $query) => $query
+                ->selectRaw('1')
+                ->from('asset_custody_events as intake')
+                ->whereColumn('intake.organization_asset_id', 'shift.organization_asset_id')
+                ->where('intake.event_type', 'created')
+                ->where('intake.occurred_at', '>=', $since)
+                ->whereColumn('intake.occurred_at', '<=', 'assignment.created_at'))
+            ->whereExists(static fn (Builder $query) => $query
+                ->selectRaw('1')
+                ->from('asset_custody_events as dispatch')
+                ->whereColumn('dispatch.organization_asset_id', 'shift.organization_asset_id')
+                ->whereIn('dispatch.event_type', ['machinery_assigned', 'issued'])
+                ->whereColumn('dispatch.occurred_at', '>=', 'assignment.created_at')
+                ->whereColumn('dispatch.occurred_at', '<=', 'shift.created_at'))
+            ->distinct()
+            ->count('shift.organization_asset_id');
+
+        return [
+            'since' => $since->toIso8601String(),
+            'until' => $until->toIso8601String(),
+            'intake_events' => (int) (clone $custodyEvents)->where('event_type', 'created')->count(),
+            'assignment_events' => (int) (clone $custodyEvents)->whereIn('event_type', ['machinery_assigned', 'issued'])->count(),
+            'assignments' => (int) $assignments->count(),
+            'shift_reports' => (int) $shifts->count(),
+            'approved_shift_reports' => (int) (clone $shifts)->whereBetween('approved_at', [$since, $until])->count(),
+            'completed_operational_cycles' => (int) $completedCycles,
+        ];
     }
 
     private function missingLinks(): int
