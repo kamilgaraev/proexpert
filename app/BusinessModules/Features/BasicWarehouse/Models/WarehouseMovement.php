@@ -28,6 +28,7 @@ class WarehouseMovement extends Model
 
     protected $fillable = [
         'organization_id',
+        'organization_asset_id',
         'warehouse_id',
         'cell_id',
         'material_id',
@@ -56,33 +57,50 @@ class WarehouseMovement extends Model
 
     // Типы движений
     const TYPE_RECEIPT = 'receipt';
+
     const TYPE_WRITE_OFF = 'write_off';
+
     const TYPE_TRANSFER_IN = 'transfer_in';
+
     const TYPE_TRANSFER_OUT = 'transfer_out';
+
     const TYPE_ADJUSTMENT = 'adjustment';
+
     const TYPE_RETURN = 'return';
 
     const CATEGORY_PROJECT_DELIVERY = 'project_delivery';
+
     const CATEGORY_RESPONSIBLE_ISSUE = 'responsible_issue';
+
     const CATEGORY_RESPONSIBLE_RETURN = 'responsible_return';
+
     const CATEGORY_PRODUCTION_USAGE = 'production_usage';
+
     const CATEGORY_LOSS = 'loss';
+
     const CATEGORY_DAMAGE = 'damage';
+
     const CATEGORY_DISPOSAL = 'disposal';
+
     const CATEGORY_INVENTORY_ADJUSTMENT = 'inventory_adjustment';
 
     public function operationCategoryLabel(): ?string
     {
-        if (!$this->operation_category) {
+        if (! $this->operation_category) {
             return null;
         }
 
-        return trans_message('basic_warehouse.operation_categories.' . $this->operation_category);
+        return trans_message('basic_warehouse.operation_categories.'.$this->operation_category);
     }
 
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    public function organizationAsset(): BelongsTo
+    {
+        return $this->belongsTo(\App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset::class);
     }
 
     public function warehouse(): BelongsTo

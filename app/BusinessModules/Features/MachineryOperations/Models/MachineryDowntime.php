@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\MachineryOperations\Models;
 
+use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\Models\Project;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -13,6 +14,7 @@ final class MachineryDowntime extends Model
 {
     protected $fillable = [
         'organization_id',
+        'organization_asset_id',
         'asset_id',
         'project_id',
         'shift_report_id',
@@ -31,6 +33,11 @@ final class MachineryDowntime extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(MachineryAsset::class, 'asset_id');
+    }
+
+    public function organizationAsset(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationAsset::class);
     }
 
     public function project(): BelongsTo

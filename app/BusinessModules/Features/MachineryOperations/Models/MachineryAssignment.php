@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\MachineryOperations\Models;
 
+use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\Models\Project;
 use App\Models\ScheduleTask;
 use App\Models\User;
@@ -18,6 +19,7 @@ final class MachineryAssignment extends Model
 
     protected $fillable = [
         'organization_id',
+        'organization_asset_id',
         'asset_id',
         'project_id',
         'schedule_task_id',
@@ -42,6 +44,11 @@ final class MachineryAssignment extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(MachineryAsset::class, 'asset_id');
+    }
+
+    public function organizationAsset(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationAsset::class);
     }
 
     public function project(): BelongsTo
