@@ -10,6 +10,7 @@ use App\BusinessModules\Core\AssetManagement\Enums\AssetAccountingMode;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Core\AssetManagement\Services\OrganizationAssetService;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetRegistryProjector;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
@@ -18,7 +19,10 @@ use Illuminate\Support\Str;
 
 final readonly class SerializedAssetReceiptService
 {
-    public function __construct(private OrganizationAssetService $organizationAssets) {}
+    public function __construct(
+        private OrganizationAssetService $organizationAssets,
+        private MachineryAssetRegistryProjector $registryProjector,
+    ) {}
 
     /**
      * @param  list<array{inventory_number: string, serial_number?: string|null, qr_code?: string|null}>  $instances
@@ -53,7 +57,7 @@ final readonly class SerializedAssetReceiptService
                     ? trim((string) $instance['qr_code'])
                     : 'OA-'.$organizationId.'-'.Str::uuid()->toString();
 
-                $created->push($this->organizationAssets->create(
+                $asset = $this->organizationAssets->create(
                     $organizationId,
                     new CreateOrganizationAssetData(
                         name: $material->name.' — '.$inventoryNumber,
@@ -66,7 +70,9 @@ final readonly class SerializedAssetReceiptService
                         actorId: $actorId,
                         metadata: ['warehouse_receipt' => ['material_id' => (int) $material->id]],
                     ),
-                ));
+                );
+                $this->registryProjector->project($asset);
+                $created->push($asset);
             }
 
             return $created;

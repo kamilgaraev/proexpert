@@ -74,6 +74,10 @@ final class MachineryOperationsService
 
     public function createAsset(int $organizationId, array $data): MachineryAsset
     {
+        if (! (bool) config('asset_registry.legacy_asset_writes_enabled')) {
+            throw new DomainException(trans_message('machinery_operations.errors.legacy_asset_writes_disabled'));
+        }
+
         $this->assertOptionalMachineryBelongsToOrganization($data['machinery_id'] ?? null, $organizationId);
         $this->assertOptionalProjectBelongsToOrganization($data['current_project_id'] ?? null, $organizationId);
         $this->assertOptionalScheduleTaskBelongsToOrganization($data['current_schedule_task_id'] ?? null, $organizationId);

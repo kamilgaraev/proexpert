@@ -6,6 +6,8 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetReadRepository;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Middleware\WebInterfaceSecurityMiddleware;
@@ -84,6 +86,36 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
         $canonical->refresh();
         self::assertSame(AssetTechnicalStatus::Serviceable, $canonical->technical_status);
         self::assertSame('serviceable', $canonical->metadata['last_control_inspection']['result']);
+    }
+
+    public function test_cutover_flags_hide_unlinked_rows_and_disable_legacy_create_endpoint(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->actingAs($context->user, 'api_admin');
+        $this->allowAccess();
+        MachineryAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'asset_code' => 'UNLINKED-LEGACY',
+            'name' => 'Legacy only',
+            'ownership_type' => 'owned',
+            'status' => 'available',
+            'operating_cost_per_hour' => 0,
+            'meter_hours' => 0,
+        ]);
+        config()->set('asset_registry.strict_canonical_reads', true);
+
+        self::assertSame(0, app(MachineryAssetReadRepository::class)
+            ->paginate((int) $context->organization->id, 20)
+            ->total());
+
+        config()->set('asset_registry.legacy_asset_writes_enabled', false);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/machinery-operations/assets', [
+                'asset_code' => 'BLOCKED',
+                'name' => 'Blocked legacy create',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Создание физической единицы перенесено в единый складской реестр.');
     }
 
     private function allowAccess(): void
