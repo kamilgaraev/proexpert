@@ -138,6 +138,9 @@ final readonly class CompletenessRuleCatalog
 
     private static function normalizePackage(array $package): array
     {
+        usort($package['dependencies'], static function (array $left, array $right): int {
+            return [$left['from'], $left['to']] <=> [$right['from'], $right['to']];
+        });
         foreach (['assumptions', 'risks'] as $key) {
             sort($package[$key], SORT_STRING);
         }

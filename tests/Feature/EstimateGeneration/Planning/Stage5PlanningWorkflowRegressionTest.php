@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Planning;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator;
@@ -41,6 +42,7 @@ use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use RuntimeException;
 use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class Stage5PlanningWorkflowRegressionTest extends TestCase
@@ -203,6 +205,65 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
         self::assertInstanceOf(GenerateEstimateDraftJob::class, $this->dispatcher->jobs[0]);
 
         $replayed = $reconcile->reconcile($recovered);
+        self::assertSame($recovered->state_version, $replayed->state_version);
+        self::assertCount(1, $this->dispatcher->jobs);
+    }
+
+    public function test_immediate_reconcile_failure_preserves_limitation_and_recovery_continues_once(): void
+    {
+        $repository = $this->repository();
+        $session = $this->makeBlockedSession();
+        $store = new PlanningWorkflowSessionStateStore($session);
+        $workflow = new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store);
+        $advance = new AdvanceEstimateGeneration($workflow);
+        $readiness = $this->createMock(DocumentGenerationReadinessService::class);
+        $readiness->method('evaluate')->willReturn([
+            'can_generate' => true,
+            'summary' => ['pending_count' => 0, 'action_required_count' => 0],
+        ]);
+        $canonicalReconciler = new ReconcileEstimateGenerationDocuments(
+            $advance,
+            $readiness,
+            $this->pipeline($repository),
+        );
+        $retry = new RetryEstimateGenerationSession(
+            new PlanningWorkflowRetryRepository($session),
+            $workflow,
+            $advance,
+            new PlanningWorkflowRetryDispatcher,
+            new PlanningWorkflowFailingReconciler,
+            new class extends EstimateGenerationRegionalContextResolver
+            {
+                public function __construct() {}
+
+                public function resolve(array $input): array
+                {
+                    return [];
+                }
+            },
+            static fn (): string => 'retry-attempt',
+        );
+
+        try {
+            $retry->handle(new RetryEstimateGenerationSessionCommand(30, 10, 20, 3));
+            self::fail('Expected immediate reconcile failure.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('Immediate reconcile failed.', $exception->getMessage());
+        }
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $session->status);
+        self::assertSame(
+            ['status' => 'blocked', 'limitations' => ['previous_blocker']],
+            $session->input_payload['planning_review'],
+        );
+        self::assertSame([], $this->dispatcher->jobs);
+
+        $recovered = $canonicalReconciler->reconcile($session);
+        self::assertSame(EstimateGenerationStatus::Generating, $recovered->status);
+        self::assertArrayNotHasKey('planning_review', $recovered->input_payload);
+        self::assertCount(1, $this->dispatcher->jobs);
+
+        $replayed = $canonicalReconciler->reconcile($recovered);
         self::assertSame($recovered->state_version, $replayed->state_version);
         self::assertCount(1, $this->dispatcher->jobs);
     }
@@ -438,5 +499,13 @@ final class PlanningWorkflowRetryDispatcher implements EstimateGenerationRetryDi
         $this->generation[] = [$sessionId, $stateVersion, $attemptId];
 
         return true;
+    }
+}
+
+final class PlanningWorkflowFailingReconciler implements EstimateGenerationSessionReconciler
+{
+    public function reconcile(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        throw new RuntimeException('Immediate reconcile failed.');
     }
 }

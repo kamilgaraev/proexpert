@@ -323,11 +323,32 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         $dependencyOrder['rules'][0]['work_package']['dependencies'][] = [
             'from' => 'work:site_leveling:execute', 'to' => 'work:site_leveling:finish',
         ];
-        $orderedHash = CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash;
+        $orderedCatalog = CompletenessRuleCatalog::fromArray($dependencyOrder);
+        $orderedHash = $orderedCatalog->contentHash;
         $dependencyOrder['rules'][0]['work_package']['dependencies'] = array_reverse(
             $dependencyOrder['rules'][0]['work_package']['dependencies'],
         );
-        self::assertNotSame($orderedHash, CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash);
+        $permutedDependencies = CompletenessRuleCatalog::fromArray($dependencyOrder);
+        self::assertSame($orderedHash, $permutedDependencies->contentHash);
+        self::assertSame(
+            $orderedCatalog->rules()[0]->workPackage['dependencies'],
+            $permutedDependencies->rules()[0]->workPackage['dependencies'],
+        );
+        self::assertEquals(
+            $this->builder()->build($orderedCatalog->rules()[0], []),
+            $this->builder()->build($permutedDependencies->rules()[0], []),
+        );
+
+        $directed = $dependencyOrder;
+        $lastDependency = array_key_last($directed['rules'][0]['work_package']['dependencies']);
+        $directed['rules'][0]['work_package']['dependencies'][$lastDependency] = [
+            'from' => 'work:site_leveling:finish', 'to' => 'work:site_leveling:execute',
+        ];
+        self::assertNotSame($orderedHash, CompletenessRuleCatalog::fromArray($directed)->contentHash);
+
+        $removed = $dependencyOrder;
+        array_pop($removed['rules'][0]['work_package']['dependencies']);
+        self::assertNotSame($orderedHash, CompletenessRuleCatalog::fromArray($removed)->contentHash);
 
         $setOrder = $data;
         $setOrder['rules'][0]['applicability_fact_types'][] = 'site_leveling_specification';
@@ -342,6 +363,16 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             $setCatalog->rules()[0]->applicabilityFactTypes,
             $setCatalogReversed->rules()[0]->applicabilityFactTypes,
         );
+    }
+
+    public function test_rule_catalog_rejects_duplicate_dependency_edges(): void
+    {
+        $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
+        $data['rules'][0]['work_package']['dependencies'][] =
+            $data['rules'][0]['work_package']['dependencies'][0];
+
+        $this->expectException(InvalidArgumentException::class);
+        CompletenessRuleCatalog::fromArray($data);
     }
 
     public function test_rule_order_changes_max_rules_result_and_catalog_identity(): void

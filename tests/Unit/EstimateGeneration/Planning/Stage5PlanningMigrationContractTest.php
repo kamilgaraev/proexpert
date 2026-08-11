@@ -79,6 +79,76 @@ SQL;
         );
     }
 
+    #[DataProvider('migrations')]
+    public function test_check_comparison_preserves_string_literal_bytes(string $file): void
+    {
+        $expected = "CHECK (status IN ('unknown', 'owner''s review', E'line\\\\nitem'))";
+
+        self::assertSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint(
+                $file,
+                " check (((status)::text = any ((array['unknown'::varchar, 'owner''s review'::text, E'line\\\\nitem'::text])::text[]))) ",
+            ),
+        );
+        self::assertNotSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, "CHECK (status IN ('UNKNOWN', 'owner''s review', E'line\\\\nitem'))"),
+        );
+        self::assertNotSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, "CHECK (status IN ('unknown', 'owner''sreview', E'line\\\\nitem'))"),
+        );
+        self::assertNotSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, "CHECK (status IN ('unknown', 'owner''s review', E'line\\nitem'))"),
+        );
+    }
+
+    #[DataProvider('migrations')]
+    public function test_check_comparison_preserves_semantically_observable_structure(string $file): void
+    {
+        $expected = "CHECK (status IN ('unknown', 'satisfied'))";
+        $different = [
+            "CHECK (status IN ('satisfied', 'unknown'))",
+            "CHECK (status IN ('unknown', 'unknown', 'satisfied'))",
+            "CHECK (status IN ('unknown', 'satisfied', NULL))",
+            "CHECK (NOT status IN ('unknown', 'satisfied'))",
+            "CHECK (status IN ('unknown', 'satisfied') AND enabled)",
+            "CHECK (status IN ('unknown', 'satisfied') OR enabled)",
+            "CHECK (status NOT IN ('unknown', 'satisfied'))",
+            "CHECK ((status::integer) IN ('unknown', 'satisfied'))",
+        ];
+
+        foreach ($different as $definition) {
+            self::assertNotSame(
+                $this->canonicalConstraint($file, $expected),
+                $this->canonicalConstraint($file, $definition),
+                $definition,
+            );
+        }
+    }
+
+    #[DataProvider('migrations')]
+    public function test_check_comparison_fails_closed_for_malformed_or_unsupported_sql(string $file): void
+    {
+        $expected = "CHECK (status IN ('unknown', 'satisfied'))";
+
+        foreach ([
+            "CHECK (status IN ('unknown', 'satisfied')",
+            'CHECK (status IN ($$unknown$$, \'satisfied\'))',
+            "CHECK (status IN ('unknown' /* hidden */, 'satisfied'))",
+            "status IN ('unknown', 'satisfied')",
+        ] as $definition) {
+            self::assertStringStartsWith('incompatible:', $this->canonicalConstraint($file, $definition));
+            self::assertNotSame(
+                $this->canonicalConstraint($file, $expected),
+                $this->canonicalConstraint($file, $definition),
+                $definition,
+            );
+        }
+    }
+
     public static function migrations(): array
     {
         $root = dirname(__DIR__, 4);

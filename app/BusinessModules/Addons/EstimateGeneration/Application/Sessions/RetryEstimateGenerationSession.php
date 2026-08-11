@@ -91,7 +91,6 @@ final class RetryEstimateGenerationSession
             'processing_progress' => 5,
             'last_error' => null,
             'failure_code' => null,
-            'input_payload' => $this->withoutPlanningReview($session),
         ]);
 
         if ($documentIds !== []) {
@@ -225,15 +224,6 @@ final class RetryEstimateGenerationSession
             'last_error' => null,
             'failure_code' => null,
         ]);
-    }
-
-    /** @return array<string, mixed> */
-    private function withoutPlanningReview(EstimateGenerationSession $session): array
-    {
-        $payload = is_array($session->input_payload) ? $session->input_payload : [];
-        unset($payload['planning_review']);
-
-        return $payload;
     }
 
     private function hasBlockedPlanningReview(EstimateGenerationSession $session): bool

@@ -8,6 +8,7 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
@@ -146,6 +147,47 @@ SQL));
         } finally {
             DB::rollBack();
         }
+    }
+
+    #[Test]
+    #[DataProvider('wrongLiteralDefinitions')]
+    public function wrong_literal_bytes_in_target_constraint_fail_fast(string $check): void
+    {
+        $this->requireEnvironment();
+        DB::beginTransaction();
+        try {
+            DB::statement('ALTER TABLE estimate_generation_completeness_findings '
+                .'DROP CONSTRAINT IF EXISTS eg_completeness_finding_ck');
+            DB::statement('ALTER TABLE estimate_generation_completeness_findings '
+                .'ADD CONSTRAINT eg_completeness_finding_ck CHECK ('.$check.')');
+            $file = glob(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/'
+                .'*_000710_create_completeness_planning_projections.php');
+            self::assertCount(1, $file);
+
+            $this->expectException(RuntimeException::class);
+            (require $file[0])->up();
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    public static function wrongLiteralDefinitions(): array
+    {
+        $template = <<<'SQL'
+finding_stable_key ~ '^[a-f0-9]{64}$' AND finding_version BETWEEN 1 AND 65535
+AND classification IN (%s, 'technology_required', 'optional_recommendation', 'technology_conditional', 'not_applicable')
+AND status IN (%s, 'unresolved', 'proven_missing', 'satisfied', 'not_applicable', 'excluded')
+AND confidence BETWEEN 0 AND 1 AND octet_length(evidence_fact_ids::text) <= 65536
+AND octet_length(related_entity_ids::text) <= 32768 AND octet_length(related_fact_types::text) <= 32768
+AND jsonb_typeof(applicability) = 'object' AND octet_length(applicability::text) <= 65536
+AND octet_length(exclusion_policy::text) <= 32768
+AND (exclusion_decision IS NULL OR octet_length(exclusion_decision::text) <= 32768)
+SQL;
+
+        return [
+            'literal case' => [sprintf($template, "'document_missing'", "'UNKNOWN'")],
+            'literal space' => [sprintf($template, "'document missing'", "'unknown'")],
+        ];
     }
 
     private function requireEnvironment(): void
