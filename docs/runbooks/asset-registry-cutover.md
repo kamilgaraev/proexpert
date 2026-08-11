@@ -43,6 +43,8 @@ ASSET_REGISTRY_LEGACY_WRITES_ENABLED=true
 5. В production оставить dual-write и compatibility-read минимум на `ASSET_REGISTRY_OBSERVATION_HOURS` (не менее 24 часов и не менее одного фактического цикла приёмки → назначения/выдачи → смены/возврата → утверждения).
 6. Зафиксировать для начала и конца интервала: release SHA, UTC-время, JSON команды, число scheduler-запусков и отсутствие ошибок записи.
 
+Штатный backend workflow печатает текущий JSON go/no-go и число успешных почасовых образцов в последнем 24-строчном окне. Для финального снимка повторно запускается тот же workflow на `main`; отдельный workflow или SSH-контур не создаётся.
+
 Production readiness нельзя подтверждать только тестами или единичным запуском команды.
 
 ## Фаза B — read cutover и запрет legacy create
