@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
  * Модель Asset расширяет Material для работы со всеми типами активов
- * 
+ *
  * Поддерживаемые типы активов:
  * - materials (материалы)
  * - equipment (оборудование)
@@ -26,6 +26,7 @@ class Asset extends Material
         'asset_category',
         'asset_subcategory',
         'asset_attributes',
+        'accounting_mode',
         'photo_gallery',
     ];
 
@@ -33,14 +34,20 @@ class Asset extends Material
      * Указываем что используем ту же таблицу что и Material
      */
     protected $table = 'materials';
+
     /**
      * Типы активов
      */
     const TYPE_MATERIAL = 'material';
+
     const TYPE_EQUIPMENT = 'equipment';
+
     const TYPE_TOOL = 'tool';
+
     const TYPE_FURNITURE = 'furniture';
+
     const TYPE_CONSUMABLE = 'consumable';
+
     const TYPE_STRUCTURE = 'structure';
 
     /**
@@ -74,6 +81,11 @@ class Asset extends Material
         $properties = $this->additional_properties ?? [];
         $properties['asset_type'] = $value;
         $this->additional_properties = $properties;
+    }
+
+    public function getAccountingModeAttribute(): string
+    {
+        return $this->additional_properties['accounting_mode'] ?? 'quantitative';
     }
 
     /**
@@ -173,7 +185,7 @@ class Asset extends Material
     public function scopeOfType($query, string $type)
     {
         $driver = $query->getConnection()->getDriverName();
-        
+
         if ($driver === 'pgsql') {
             return $query->whereRaw("additional_properties->>'asset_type' = ?", [$type]);
         } else {
@@ -188,7 +200,7 @@ class Asset extends Material
     public function scopeOfCategory($query, string $category)
     {
         $driver = $query->getConnection()->getDriverName();
-        
+
         if ($driver === 'pgsql') {
             return $query->whereRaw("additional_properties->>'asset_category' = ?", [$category]);
         } else {
@@ -261,4 +273,3 @@ class Asset extends Material
         ])->values()->all();
     }
 }
-

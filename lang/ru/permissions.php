@@ -164,6 +164,7 @@ return [
         'admin.organizations.view' => 'Просмотр организаций',
         'admin.organizations.edit' => 'Редактирование организаций',
         'warehouse.view' => 'Просмотр склада',
+        'assets.settings.manage' => 'Настройка способа учёта имущества',
         'procurement.chain.view' => 'Просмотр закупочной цепочки',
         'warehouse.manage_stock' => 'Управление остатками склада',
         'warehouse.issue_to_responsible' => 'Выдача материалов ответственным',

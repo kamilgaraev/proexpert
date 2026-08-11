@@ -68,9 +68,15 @@ final readonly class OrganizationAssetService
         });
     }
 
-    public function move(OrganizationAsset $asset, AssetPlacementData $placement, int $actorId): OrganizationAsset
-    {
-        return DB::transaction(function () use ($asset, $placement, $actorId): OrganizationAsset {
+    /** @param array<string, mixed>|null $metadata */
+    public function move(
+        OrganizationAsset $asset,
+        AssetPlacementData $placement,
+        int $actorId,
+        string $eventType = 'moved',
+        ?array $metadata = null,
+    ): OrganizationAsset {
+        return DB::transaction(function () use ($asset, $placement, $actorId, $eventType, $metadata): OrganizationAsset {
             $lockedAsset = OrganizationAsset::query()->lockForUpdate()->find($asset->getKey());
 
             if ($lockedAsset === null) {
@@ -92,7 +98,7 @@ final readonly class OrganizationAssetService
             ];
 
             $lockedAsset->update($this->placementAttributes($placement));
-            $this->recordCustodyEvent($lockedAsset, $placement, $actorId, 'moved', $from);
+            $this->recordCustodyEvent($lockedAsset, $placement, $actorId, $eventType, $from, $metadata);
 
             return $lockedAsset->refresh()->load('operationProfile');
         });
@@ -228,6 +234,7 @@ final readonly class OrganizationAssetService
         ?int $actorId,
         string $eventType,
         array $from = [],
+        ?array $metadata = null,
     ): AssetCustodyEvent {
         return $asset->custodyEvents()->create([
             'organization_id' => $asset->organization_id,
@@ -239,6 +246,7 @@ final readonly class OrganizationAssetService
             'to_warehouse_id' => $placement->warehouseId,
             'to_project_id' => $placement->projectId,
             'to_user_id' => $placement->userId,
+            'metadata' => $metadata,
             'occurred_at' => now(),
         ]);
     }
