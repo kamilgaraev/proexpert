@@ -68,6 +68,33 @@ interface ProjectModelRepository
 
     public function currentUnderstanding(int $organizationId, int $projectId, int $sessionId): ?array;
 
+    /** @return array{snapshot:ProjectModelSnapshot,token:string} */
+    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit): array;
+
+    public function replaceTechnologyRecommendations(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        array $recommendations,
+        array $limitations,
+    ): bool;
+
+    public function replayTechnologyRecommendations(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+    ): ?array;
+
+    public function currentTechnologyRecommendations(int $organizationId, int $projectId, int $sessionId): ?array;
+
     public function invalidateSourceVersion(
         int $organizationId,
         int $projectId,

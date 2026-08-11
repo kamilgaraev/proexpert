@@ -520,6 +520,24 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog => \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::fromArray(
+                config('estimate-generation-technology-systems'),
+            ),
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationDecisionService::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class),
+                maxFacts: (int) config('estimate-generation.project_planning.max_facts'),
+                maxRecommendations: (int) config('estimate-generation.project_planning.max_recommendations'),
+            ),
+        );
         $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
             $app->make('db')->connection(),
         ));

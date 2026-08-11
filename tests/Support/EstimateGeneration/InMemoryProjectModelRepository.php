@@ -42,6 +42,10 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public array $understanding = [];
 
+    public array $technologyPlanningHistory = [];
+
+    public int $technologyPlanningWriteCount = 0;
+
     public ?Closure $beforeUnderstandingSave = null;
 
     private array $projection = [];
@@ -121,6 +125,11 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         foreach ($this->understanding as $key => $run) {
             if (str_starts_with($key, $prefix)) {
                 $this->understanding[$key]['is_current'] = false;
+            }
+        }
+        foreach ($this->technologyPlanningHistory as $key => $run) {
+            if (str_starts_with($key, $prefix)) {
+                $this->technologyPlanningHistory[$key]['is_current'] = false;
             }
         }
     }
@@ -359,6 +368,95 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return $matches === [] ? null : end($matches);
     }
 
+    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    {
+        return $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit);
+    }
+
+    public function replaceTechnologyRecommendations(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+        array $recommendations,
+        array $limitations,
+    ): bool {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return false;
+        }
+        $scope = implode(':', [$organizationId, $projectId, $sessionId]);
+        $key = implode(':', [$scope, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash]);
+        if (isset($this->technologyPlanningHistory[$key])) {
+            return true;
+        }
+        foreach ($this->technologyPlanningHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $scope.':')) {
+                $this->technologyPlanningHistory[$existingKey]['is_current'] = false;
+            }
+        }
+        $this->technologyPlanningHistory[$key] = [
+            'source_version' => $sourceVersion,
+            'input_fingerprint' => $inputFingerprint,
+            'catalog_version' => $catalogVersion,
+            'catalog_hash' => $catalogHash,
+            'recommendations' => $recommendations,
+            'limitations' => $limitations,
+            'is_current' => true,
+        ];
+        $this->technologyPlanningWriteCount++;
+
+        return true;
+    }
+
+    public function replayTechnologyRecommendations(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+        string $catalogVersion,
+        string $catalogHash,
+    ): ?array {
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            return null;
+        }
+        $key = implode(':', [
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $inputFingerprint,
+            $catalogVersion,
+            $catalogHash,
+        ]);
+        if (! isset($this->technologyPlanningHistory[$key])) {
+            return null;
+        }
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach ($this->technologyPlanningHistory as $existingKey => $run) {
+            if (str_starts_with($existingKey, $prefix)) {
+                $this->technologyPlanningHistory[$existingKey]['is_current'] = $existingKey === $key;
+            }
+        }
+
+        return $this->technologyPlanningHistory[$key];
+    }
+
+    public function currentTechnologyRecommendations(int $organizationId, int $projectId, int $sessionId): ?array
+    {
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach (array_reverse($this->technologyPlanningHistory, true) as $key => $run) {
+            if (str_starts_with($key, $prefix) && $run['is_current']) {
+                return $run;
+            }
+        }
+
+        return null;
+    }
+
     public function invalidateSourceVersion(
         int $organizationId,
         int $projectId,
@@ -390,6 +488,11 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         foreach (array_keys($this->understanding) as $key) {
             if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
                 $this->understanding[$key]['is_current'] = false;
+            }
+        }
+        foreach (array_keys($this->technologyPlanningHistory) as $key) {
+            if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
+                $this->technologyPlanningHistory[$key]['is_current'] = false;
             }
         }
     }
