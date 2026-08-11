@@ -119,7 +119,7 @@ final class MachineryOperationsController extends Controller
             return $this->paginated($this->service->paginateAssets(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
-                $request->only(['project_id', 'status'])
+                $request->only(['project_id', 'status', 'search'])
             ), MachineryAssetResource::class);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'assets.index');
