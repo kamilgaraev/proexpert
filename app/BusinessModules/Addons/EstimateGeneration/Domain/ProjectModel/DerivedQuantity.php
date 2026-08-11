@@ -18,6 +18,8 @@ final readonly class DerivedQuantity
 
     public array $unresolvedInputs;
 
+    public array $snapshotIdentity;
+
     public function __construct(
         public string $id,
         public int $organizationId,
@@ -33,6 +35,12 @@ final readonly class DerivedQuantity
         public int $roundingScale,
         array $evidenceIds,
         string $status,
+        public ?string $formulaIdentity = null,
+        public ?string $formulaVersion = null,
+        public string $roundingBoundary = 'formula_result',
+        public string $unitCompatibility = 'exact',
+        array $snapshotIdentity = [],
+        public ?string $technologyDecisionId = null,
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Derived quantity');
@@ -46,16 +54,11 @@ final readonly class DerivedQuantity
         $normalizedOperands = [];
         $unresolvedInputs = [];
         foreach ($operands as $operand) {
-            if (! is_array($operand) || array_keys($operand) !== [
-                'fact_id',
-                'projection_version',
-                'status',
-                'current',
-                'value',
-                'unit',
-                'evidence_ids',
-                'decision_id',
-            ]
+            if (! is_array($operand)
+                || array_diff([
+                    'fact_id', 'projection_version', 'status', 'current', 'value', 'unit',
+                    'evidence_ids', 'decision_id',
+                ], array_keys($operand)) !== []
                 || ! is_string($operand['fact_id']) || ! is_string($operand['unit'])
                 || ! is_string($operand['value']) || ! is_int($operand['projection_version'])
                 || $operand['projection_version'] <= 0 || ! is_bool($operand['current'])
@@ -65,6 +68,12 @@ final readonly class DerivedQuantity
             }
             ProjectModelInvariant::id($operand['fact_id'], 'Derived quantity operand fact');
             $operand['value'] = DecimalValue::canonical($operand['value']);
+            if (isset($operand['source_value'])) {
+                if (! is_string($operand['source_value'])) {
+                    throw new InvalidArgumentException('Derived quantity source operand is invalid.');
+                }
+                $operand['source_value'] = DecimalValue::canonical($operand['source_value']);
+            }
             $operand['evidence_ids'] = ProjectModelInvariant::uniqueIds(
                 $operand['evidence_ids'],
                 'Derived quantity operand evidence',
@@ -95,6 +104,17 @@ final readonly class DerivedQuantity
             'Derived quantity evidence',
             $this->status === 'unresolved' || $this->hasDecisionLineage($normalizedOperands),
         );
+        if (($formulaIdentity !== null && preg_match('/^[a-z0-9._:-]{1,120}$/D', $formulaIdentity) !== 1)
+            || ($formulaVersion !== null && preg_match('/^[a-zA-Z0-9._:-]{1,80}$/D', $formulaVersion) !== 1)
+            || ! in_array($roundingBoundary, ['formula_result', 'irrational_operation_then_formula_result'], true)
+            || ! in_array($unitCompatibility, ['exact', 'canonical_conversion'], true)
+            || ($snapshotIdentity !== [] && array_is_list($snapshotIdentity))) {
+            throw new InvalidArgumentException('Derived quantity formula contract is invalid.');
+        }
+        if ($technologyDecisionId !== null) {
+            ProjectModelInvariant::id($technologyDecisionId, 'Derived quantity technology decision');
+        }
+        $this->snapshotIdentity = $snapshotIdentity;
     }
 
     public static function assertRoundingScale(?string $value, string $status, int $roundingScale): void
