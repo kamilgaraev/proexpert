@@ -13,6 +13,9 @@ final readonly class TechnologySystemOption
         public bool $recommended,
         public string $label,
         public string $explanation,
+        public string $applicabilityStatus = 'conditional',
+        public array $applicabilityReasons = [],
+        public array $applicabilityEvidence = [],
     ) {}
 
     public function toArray(): array
@@ -24,6 +27,9 @@ final readonly class TechnologySystemOption
             'recommended' => $this->recommended,
             'label' => $this->label,
             'explanation' => $this->explanation,
+            'applicability_status' => $this->applicabilityStatus,
+            'applicability_reasons' => $this->applicabilityReasons,
+            'applicability_evidence' => $this->applicabilityEvidence,
         ];
     }
 
@@ -36,6 +42,9 @@ final readonly class TechnologySystemOption
             $data['recommended'],
             $data['label'],
             $data['explanation'],
+            $data['applicability_status'] ?? 'conditional',
+            $data['applicability_reasons'] ?? [],
+            $data['applicability_evidence'] ?? [],
         );
     }
 }

@@ -37,15 +37,25 @@ final readonly class TechnologyRecommendationService
                 throw new InvalidArgumentException('Technology recommendation contains a cross-scope fact.');
             }
             if ($fact->status === 'confirmed') {
-                $facts[$fact->type][] = $fact->value;
+                $facts[$fact->type][] = $fact;
             }
         }
         $ranked = [];
         foreach ($this->catalog->systems as $system) {
             [$score, $contributions] = $this->score($system, $facts, $preferences);
-            $ranked[] = ['system' => $system, 'score' => $score, 'contributions' => $contributions];
+            [$applicability, $reasons, $evidence] = $this->applicability($system, $facts);
+            $ranked[] = [
+                'system' => $system,
+                'score' => $score,
+                'contributions' => $contributions,
+                'applicability' => $applicability,
+                'reasons' => $reasons,
+                'evidence' => $evidence,
+            ];
         }
-        usort($ranked, static fn (array $left, array $right): int => ($right['score'] <=> $left['score'])
+        $priority = ['unavailable' => 0, 'conditional' => 1, 'applicable' => 2];
+        usort($ranked, static fn (array $left, array $right): int => ($priority[$right['applicability']] <=> $priority[$left['applicability']])
+            ?: ($right['score'] <=> $left['score'])
             ?: ($left['system']->id <=> $right['system']->id));
         $commonRequiredFacts = array_values(array_intersect(...array_map(
             static fn (TechnologySystem $system): array => $system->requiredFacts,
@@ -61,19 +71,25 @@ final readonly class TechnologyRecommendationService
         ));
         sort($missingFacts, SORT_STRING);
         $options = [];
-        foreach ($ranked as $index => $item) {
+        $recommendedAssigned = false;
+        foreach ($ranked as $item) {
+            $recommended = ! $recommendedAssigned && $item['applicability'] === 'applicable';
+            $recommendedAssigned = $recommendedAssigned || $recommended;
             $options[] = new TechnologySystemOption(
                 system: $item['system'],
                 score: $item['score'],
                 scoreContributions: $item['contributions'],
-                recommended: $index === 0,
+                recommended: $recommended,
                 label: ($this->translator)($item['system']->nameKey),
                 explanation: ($this->translator)('estimate_generation.planning.technology.explanation.'.$item['system']->id),
+                applicabilityStatus: $item['applicability'],
+                applicabilityReasons: $item['reasons'],
+                applicabilityEvidence: $item['evidence'],
             );
         }
 
         return new TechnologyRecommendation(
-            decisionKey: 'roof_covering_system',
+            decisionKey: 'roof_covering_system.'.substr(hash('sha256', $unresolvedDecision->entityId), 0, 24),
             targetFactId: $unresolvedDecision->id,
             organizationId: $unresolvedDecision->organizationId,
             projectId: $unresolvedDecision->projectId,
@@ -87,7 +103,7 @@ final readonly class TechnologyRecommendationService
                 ['value' => 'leave_unresolved', 'label' => ($this->translator)('estimate_generation.planning.technology.leave_unresolved')],
             ],
             question: ($this->translator)('estimate_generation.planning.technology.roof_question'),
-            conditional: $missingFacts !== [],
+            conditional: $missingFacts !== [] || ! $recommendedAssigned,
             missingFacts: $missingFacts,
         );
     }
@@ -102,7 +118,7 @@ final readonly class TechnologyRecommendationService
                 || ! is_string($rule['reason'] ?? null)) {
                 throw new InvalidArgumentException('Technology system score rule is invalid.');
             }
-            $values = $facts[$rule['fact_type']] ?? [];
+            $values = array_map(static fn (Fact $fact): mixed => $fact->value, $facts[$rule['fact_type']] ?? []);
             $matched = is_array($rule['values'] ?? null)
                 ? array_intersect($values, $rule['values']) !== []
                 : $this->matchesRange($values, $rule);
@@ -121,6 +137,64 @@ final readonly class TechnologyRecommendationService
         }
 
         return [$score, $contributions];
+    }
+
+    private function applicability(TechnologySystem $system, array $facts): array
+    {
+        $conditional = false;
+        $reasons = [];
+        $evidence = [];
+        foreach ($system->applicability as $condition) {
+            if (! is_array($condition) || count($condition) !== 1) {
+                throw new InvalidArgumentException('Technology applicability condition is invalid.');
+            }
+            $key = (string) array_key_first($condition);
+            $expected = $condition[$key];
+            $factType = match ($key) {
+                'minimum_slope_degrees', 'maximum_slope_degrees' => 'roof_slope_degrees',
+                'regions' => 'region',
+                'climate_zones' => 'climate_zone',
+                'building_purposes' => 'building_purpose',
+                'substrate_requirements' => 'substrate_type',
+                'substrate_requirement' => 'substrate_type',
+                default => $key,
+            };
+            $candidates = $facts[$factType] ?? [];
+            if ($candidates === []) {
+                $conditional = true;
+                $reasons[] = ['condition' => $key, 'status' => 'missing', 'catalog_version' => $this->catalog->version, 'catalog_hash' => $this->catalog->contentHash];
+
+                continue;
+            }
+            $matched = false;
+            foreach ($candidates as $fact) {
+                $evidence[$fact->id] = ['fact_id' => $fact->id, 'type' => $fact->type, 'value' => $fact->value, 'unit' => $fact->unit];
+                if (in_array($key, ['minimum_slope_degrees', 'maximum_slope_degrees'], true)) {
+                    if ($fact->unit !== null && $fact->unit !== 'degree') {
+                        $reasons[] = ['condition' => $key, 'status' => 'invalid_unit', 'fact_id' => $fact->id];
+
+                        return ['unavailable', $reasons, array_values($evidence)];
+                    }
+                    if (is_numeric($fact->value) && is_numeric($expected)) {
+                        $number = (float) $fact->value;
+                        $boundary = (float) $expected;
+                        $matched = $key === 'minimum_slope_degrees' ? $number >= $boundary : $number <= $boundary;
+                    }
+                } else {
+                    $allowed = is_array($expected) ? $expected : [$expected];
+                    $matched = in_array($fact->value, $allowed, true);
+                }
+                if ($matched) {
+                    break;
+                }
+            }
+            $reasons[] = ['condition' => $key, 'status' => $matched ? 'matched' : 'incompatible', 'catalog_version' => $this->catalog->version, 'catalog_hash' => $this->catalog->contentHash];
+            if (! $matched) {
+                return ['unavailable', $reasons, array_values($evidence)];
+            }
+        }
+
+        return [$conditional ? 'conditional' : 'applicable', $reasons, array_values($evidence)];
     }
 
     private function matchesRange(array $values, array $rule): bool

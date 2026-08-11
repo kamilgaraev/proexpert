@@ -101,6 +101,43 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         }, 3);
     }
 
+    public function applyTechnologyDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $planningRunId,
+    ): bool {
+        return $this->database->connection()->transaction(function () use (
+            $decision,
+            $selectedFact,
+            $inputFingerprint,
+            $planningRunId,
+        ): bool {
+            $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
+            $run = $this->database->table('estimate_generation_technology_planning_runs')
+                ->where('id', $planningRunId)
+                ->where('organization_id', $decision->organizationId)
+                ->where('project_id', $decision->projectId)
+                ->where('session_id', $decision->sessionId)
+                ->where('is_current', true)
+                ->lockForUpdate()
+                ->first(['id', 'input_fingerprint']);
+            $capture = $this->snapshotForPlanning(
+                $decision->organizationId,
+                $decision->projectId,
+                $decision->sessionId,
+                10001,
+            );
+            if ($run === null || ! hash_equals($inputFingerprint, (string) $run->input_fingerprint)
+                || ! hash_equals($inputFingerprint, $capture['token'])) {
+                return false;
+            }
+            $this->applyDecision($decision, $selectedFact);
+
+            return true;
+        }, 3);
+    }
+
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot
     {
         $facts = $this->currentFacts($organizationId, $projectId, $sessionId, limit: $factLimit);
@@ -1339,6 +1376,9 @@ SQL, [
                 ->where('catalog_hash', $catalogHash)
                 ->first();
             if ($existing !== null) {
+                if (! $this->isLatestTechnologyRun($existing, $organizationId, $projectId, $sessionId, $sourceVersion, $inputFingerprint)) {
+                    return false;
+                }
                 if (! hash_equals((string) $existing->result_fingerprint, $resultFingerprint)) {
                     throw new InvalidArgumentException('Technology recommendation replay content differs.');
                 }
@@ -1384,6 +1424,9 @@ SQL, [
                         'score' => $option['score'],
                         'label' => $option['label'],
                         'explanation' => $option['explanation'],
+                        'applicability_status' => $option['applicability_status'],
+                        'applicability_reasons' => $this->json($option['applicability_reasons']),
+                        'applicability_evidence' => $this->json($option['applicability_evidence']),
                         'score_contributions' => $this->json($option['score_contributions']),
                         'system_payload' => $this->json($option['system']),
                         'created_at' => now(),
@@ -1419,12 +1462,26 @@ SQL, [
         if ($row === null) {
             return null;
         }
-        $this->database->connection()->transaction(function () use ($row, $organizationId, $projectId, $sessionId): void {
-            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
-            $this->activateTechnologyPlanningRun($row, $organizationId, $projectId, $sessionId);
-        }, 3);
 
-        return $this->technologyPlanningRun($row);
+        return $this->database->connection()->transaction(function () use (
+            $row,
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $inputFingerprint,
+        ): ?array {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $locked = $this->database->table('estimate_generation_technology_planning_runs')->where('id', $row->id)->first();
+            $capture = $this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
+            if ($locked === null || ! hash_equals($inputFingerprint, $capture['token'])
+                || ! $this->isLatestTechnologyRun($locked, $organizationId, $projectId, $sessionId, $sourceVersion, $inputFingerprint)) {
+                return null;
+            }
+            $this->activateTechnologyPlanningRun($locked, $organizationId, $projectId, $sessionId);
+
+            return $this->technologyPlanningRun($locked);
+        }, 3);
     }
 
     public function currentTechnologyRecommendations(int $organizationId, int $projectId, int $sessionId): ?array
@@ -1433,7 +1490,14 @@ SQL, [
             ->where('organization_id', $organizationId)->where('project_id', $projectId)
             ->where('session_id', $sessionId)->where('is_current', true)->orderByDesc('id')->first();
 
-        return $row === null ? null : $this->technologyPlanningRun($row);
+        if ($row === null) {
+            return null;
+        }
+        $capture = $this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
+
+        return hash_equals((string) $row->input_fingerprint, $capture['token'])
+            ? $this->technologyPlanningRun($row)
+            : null;
     }
 
     public function replaceCompleteness(
@@ -1480,6 +1544,9 @@ SQL, [
                 ->where('rule_catalog_hash', $ruleCatalogHash);
             $existing = $query->first();
             if ($existing !== null) {
+                if (! $this->isLatestCompletenessRun($existing, $organizationId, $projectId, $sessionId, $sourceVersion, $inputFingerprint)) {
+                    return false;
+                }
                 if (! hash_equals((string) $existing->result_fingerprint, $resultFingerprint)) {
                     throw new InvalidArgumentException('Completeness replay content differs.');
                 }
@@ -1503,12 +1570,14 @@ SQL, [
                 $findingId = (int) $this->database->table('estimate_generation_completeness_findings')->insertGetId([
                     'completeness_run_id' => $runId, 'rule_id' => $finding['ruleId'],
                     'rule_version' => $finding['ruleVersion'], 'rule_hash' => $finding['ruleHash'],
+                    'finding_stable_key' => $finding['stableKey'], 'finding_version' => $finding['version'],
                     'classification' => $finding['classification'], 'status' => $finding['status'],
                     'severity' => $finding['severity'], 'impact' => $finding['impact'],
                     'confidence' => (string) $finding['confidence'],
                     'evidence_fact_ids' => $this->json($finding['evidenceFactIds']),
                     'related_entity_ids' => $this->json($finding['relatedEntityIds']),
                     'related_fact_types' => $this->json($finding['relatedFactTypes']),
+                    'applicability' => $this->json($finding['applicability']),
                     'exclusion_policy' => $this->json($finding['exclusionPolicy']),
                     'exclusion_decision' => $finding['exclusionDecision'] === null ? null : $this->json($finding['exclusionDecision']),
                     'created_at' => now(),
@@ -1556,12 +1625,26 @@ SQL, [
         if ($row === null) {
             return null;
         }
-        $this->database->connection()->transaction(function () use ($row, $organizationId, $projectId, $sessionId): void {
-            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
-            $this->activateCompletenessRun($row, $organizationId, $projectId, $sessionId);
-        }, 3);
 
-        return $this->completenessRun($row);
+        return $this->database->connection()->transaction(function () use (
+            $row,
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $inputFingerprint,
+        ): ?array {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $locked = $this->database->table('estimate_generation_completeness_runs')->where('id', $row->id)->first();
+            $capture = $this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
+            if ($locked === null || ! hash_equals($inputFingerprint, $capture['token'])
+                || ! $this->isLatestCompletenessRun($locked, $organizationId, $projectId, $sessionId, $sourceVersion, $inputFingerprint)) {
+                return null;
+            }
+            $this->activateCompletenessRun($locked, $organizationId, $projectId, $sessionId);
+
+            return $this->completenessRun($locked);
+        }, 3);
     }
 
     public function currentCompleteness(int $organizationId, int $projectId, int $sessionId): ?array
@@ -1570,7 +1653,14 @@ SQL, [
             ->where('organization_id', $organizationId)->where('project_id', $projectId)
             ->where('session_id', $sessionId)->where('is_current', true)->orderByDesc('id')->first();
 
-        return $row === null ? null : $this->completenessRun($row);
+        if ($row === null) {
+            return null;
+        }
+        $capture = $this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
+
+        return hash_equals((string) $row->input_fingerprint, $capture['token'])
+            ? $this->completenessRun($row)
+            : null;
     }
 
     public function invalidateSourceVersion(
@@ -1650,6 +1740,26 @@ SQL, [
         ]);
     }
 
+    private function isLatestTechnologyRun(
+        object $run,
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+    ): bool {
+        $latest = $this->database->table('estimate_generation_technology_planning_runs')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('source_version', $sourceVersion)
+            ->where('input_fingerprint', $inputFingerprint)
+            ->orderByDesc('id')
+            ->first(['id']);
+
+        return $latest !== null && (int) $latest->id === (int) $run->id;
+    }
+
     private function technologyPlanningRun(object $run): array
     {
         $recommendations = [];
@@ -1668,6 +1778,9 @@ SQL, [
                     'recommended' => (bool) $option->recommended,
                     'label' => (string) $option->label,
                     'explanation' => (string) $option->explanation,
+                    'applicability_status' => (string) $option->applicability_status,
+                    'applicability_reasons' => array_values($this->decode($option->applicability_reasons)),
+                    'applicability_evidence' => array_values($this->decode($option->applicability_evidence)),
                 ];
             }
         }
@@ -1691,6 +1804,7 @@ SQL, [
         }
 
         return [
+            'run_id' => (int) $run->id,
             'source_version' => (string) $run->source_version,
             'input_fingerprint' => (string) $run->input_fingerprint,
             'catalog_version' => (string) $run->catalog_version,
@@ -1711,6 +1825,26 @@ SQL, [
             'is_current' => true,
             'invalidated_at' => null,
         ]);
+    }
+
+    private function isLatestCompletenessRun(
+        object $run,
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $inputFingerprint,
+    ): bool {
+        $latest = $this->database->table('estimate_generation_completeness_runs')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('source_version', $sourceVersion)
+            ->where('input_fingerprint', $inputFingerprint)
+            ->orderByDesc('id')
+            ->first(['id']);
+
+        return $latest !== null && (int) $latest->id === (int) $run->id;
     }
 
     private function completenessRun(object $run): array
@@ -1743,6 +1877,8 @@ SQL, [
                 (string) $row->rule_id,
                 (string) $row->rule_version,
                 (string) $row->rule_hash,
+                (string) $row->finding_stable_key,
+                (int) $row->finding_version,
                 (string) $row->classification,
                 (string) $row->status,
                 (string) $row->severity,
@@ -1751,6 +1887,7 @@ SQL, [
                 array_values($this->decode($row->evidence_fact_ids)),
                 array_values($this->decode($row->related_entity_ids)),
                 array_values($this->decode($row->related_fact_types)),
+                $this->decode($row->applicability),
                 $this->decode($row->exclusion_policy),
                 $row->exclusion_decision === null ? null : $this->decode($row->exclusion_decision),
                 $packages[(int) $row->id] ?? null,
@@ -1758,6 +1895,7 @@ SQL, [
         }
 
         return [
+            'run_id' => (int) $run->id,
             'source_version' => (string) $run->source_version,
             'input_fingerprint' => (string) $run->input_fingerprint,
             'catalog_version' => (string) $run->catalog_version,

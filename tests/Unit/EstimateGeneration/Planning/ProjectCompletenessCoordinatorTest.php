@@ -55,10 +55,34 @@ final class ProjectCompletenessCoordinatorTest extends TestCase
             ->refresh(11, 20, 30, $planning);
     }
 
+    public function test_historical_completeness_replay_rechecks_exact_snapshot_under_scope_lock(): void
+    {
+        $repository = $this->repository();
+        $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
+        $planning = $this->planning($repository);
+        $coordinator = $this->coordinator($repository, $data);
+        $coordinator->refresh(10, 20, 30, $planning);
+        $repository->beforeCompletenessReplayLock = function () use ($repository): void {
+            $repository->saveSourceModel([], [new Fact(
+                'fact:foundation:v2', 10, 20, 30, self::SOURCE, 'entity:project',
+                'foundation_type', 'strip', null, 1.0, 'user_assumption', 'confirmed', [], 2,
+                'fact:foundation',
+            )], []);
+        };
+
+        try {
+            $coordinator->refresh(10, 20, 30, $planning);
+            self::fail('Stale completeness replay was accepted.');
+        } catch (InvalidArgumentException) {
+            self::assertNull($repository->currentCompleteness(10, 20, 30));
+            self::assertSame(1, $repository->completenessWriteCount);
+        }
+    }
+
     public function test_production_di_caller_persistence_and_forward_only_migration_are_present(): void
     {
         $root = dirname(__DIR__, 4);
-        $caller = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/ReconcileEstimateGenerationDocuments.php');
+        $caller = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Planning/ProjectPlanningPipeline.php');
         $provider = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
         $migration = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000710_create_completeness_planning_projections.php');
 
@@ -98,7 +122,7 @@ final class ProjectCompletenessCoordinatorTest extends TestCase
 
         return new ProjectCompletenessCoordinator(
             $repository,
-            new ProjectCompletenessAnalyzer($catalog, new TechnologyWorkPackageBuilder, 50, 50, 200),
+            new ProjectCompletenessAnalyzer($catalog, new TechnologyWorkPackageBuilder(static fn (string $key): string => 'Человекочитаемое название'), 50, 50, 200),
             $catalog,
             maxFacts: 100,
         );

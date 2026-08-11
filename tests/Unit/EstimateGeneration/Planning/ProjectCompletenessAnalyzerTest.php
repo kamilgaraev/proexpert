@@ -8,7 +8,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\OrganizationPreferenceContext;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
@@ -28,7 +31,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             $this->fact('demolition_or_waste_generation', true),
             $this->fact('engineering_system', 'water_supply'),
             $this->fact('external_site_disturbance', true),
-        ], [], []), []);
+        ], [], []), [$this->roofRecommendation()]);
 
         self::assertSame([
             'base_preparation', 'fasteners', 'landscaping_restoration', 'scaffolding',
@@ -49,12 +52,23 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
     public function test_unknown_proven_missing_not_applicable_and_explicit_decision_exclusion_are_distinct(): void
     {
-        $exclusion = $this->fact('completeness_exclusion', [
-            'rule_id' => 'base_preparation',
-            'decision_id' => 'decision:exclude-base',
-            'actor' => '7',
-            'reason' => 'Основание выполнено ранее',
-        ], origin: 'user_assumption');
+        $projection = [
+            'source_version' => self::SOURCE_VERSION,
+            'input_fingerprint' => str_repeat('b', 64),
+            'catalog_version' => '2026.08.11-v1',
+            'catalog_hash' => str_repeat('c', 64),
+        ];
+        $baseline = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $this->fact('foundation_type', 'slab'),
+            $this->fact('foundation_base_preparation', false),
+        ], [], []), [], [], $projection)->finding('base_preparation');
+        self::assertNotNull($baseline);
+        $exclusion = $this->fact('completeness_exclusion', $baseline->exclusionValue(
+            $projection,
+            'decision:exclude-base',
+            '7',
+            'Основание выполнено ранее',
+        ), origin: 'user_assumption');
         $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
@@ -62,30 +76,57 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         ], [], []), [], [new Decision(
             'decision:exclude-base', 10, 20, 30, self::SOURCE_VERSION, 'fact', 'fact:base-preparation',
             $exclusion->id, 'user', '7', 'Основание выполнено ранее', 1,
-        )]);
+        )], $projection);
 
         $base = $result->finding('base_preparation');
         self::assertSame('excluded', $base?->status);
         self::assertSame('decision:exclude-base', $base?->exclusionDecision['decision_id'] ?? null);
-        self::assertSame('not_applicable', $result->finding('scaffolding')?->classification);
-        self::assertSame('not_applicable', $result->finding('scaffolding')?->status);
+        self::assertSame('technology_conditional', $result->finding('scaffolding')?->classification);
+        self::assertSame('unknown', $result->finding('scaffolding')?->status);
+
+        $staleProjection = $projection;
+        $staleProjection['input_fingerprint'] = str_repeat('d', 64);
+        $stale = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $this->fact('foundation_type', 'slab'),
+            $this->fact('foundation_base_preparation', false),
+            $exclusion,
+        ], [], []), [], [new Decision(
+            'decision:exclude-base', 10, 20, 30, self::SOURCE_VERSION, 'fact', 'fact:base-preparation',
+            $exclusion->id, 'user', '7', 'Основание выполнено ранее', 1,
+        )], $staleProjection);
+        self::assertSame('proven_missing', $stale->finding('base_preparation')?->status);
+
+        $updatedRules = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
+        $updatedRules['rules'][1]['version'] = '1.0.1';
+        $updatedAnalyzer = new ProjectCompletenessAnalyzer(
+            CompletenessRuleCatalog::fromArray($updatedRules), $this->builder(), 50, 50, 200,
+        );
+        $updated = $updatedAnalyzer->analyze(new ProjectModelSnapshot([], [
+            $this->fact('foundation_type', 'slab'),
+            $this->fact('foundation_base_preparation', false),
+            $exclusion,
+        ], [], []), [], [new Decision(
+            'decision:exclude-base', 10, 20, 30, self::SOURCE_VERSION, 'fact', 'fact:base-preparation',
+            $exclusion->id, 'user', '7', 'Основание выполнено ранее', 1,
+        )], $projection);
+        self::assertSame('proven_missing', $updated->finding('base_preparation')?->status);
 
         $unverified = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
             $this->fact('foundation_type', 'slab'),
             $exclusion,
-        ], [], []), []);
+        ], [], []), [$this->roofRecommendation()]);
         self::assertSame('unknown', $unverified->finding('base_preparation')?->status);
 
         $withoutExclusion = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
-        ], [], []), []);
+        ], [], []), [$this->roofRecommendation()]);
         self::assertSame('proven_missing', $withoutExclusion->finding('base_preparation')?->status);
 
         $unknown = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('below_grade_structure', false),
-        ], [], []), []);
+        ], [], []), [$this->roofRecommendation()]);
         self::assertSame('unknown', $unknown->finding('base_preparation')?->status);
         self::assertSame('not_applicable', $unknown->finding('waterproofing')?->status);
     }
@@ -95,7 +136,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
             $this->fact('roof_type', 'pitched'),
             $this->fact('roof_area', '120.50', 'm2'),
-        ], [], []), []);
+        ], [], []), [$this->roofRecommendation()]);
         $package = $result->finding('fasteners')?->workPackage;
 
         self::assertNotNull($package);
@@ -125,7 +166,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
     {
         $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
             $this->fact('roof_type', 'pitched'),
-        ], [], []), []);
+        ], [], []), [$this->roofRecommendation()]);
         self::assertSame(['roof_area'], $result->finding('fasteners')?->workPackage?->quantityFormulas[0]['unresolved_inputs']);
 
         $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
@@ -133,18 +174,21 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             ['from' => 'work:a', 'to' => 'work:b'],
             ['from' => 'work:b', 'to' => 'work:a'],
         ];
-        $data['rules'][0]['work_package']['works'] = [['id' => 'work:a'], ['id' => 'work:b']];
+        $data['rules'][0]['work_package']['works'] = [
+            ['id' => 'work:a', 'name_key' => 'estimate_generation.planning.completeness.site_leveling.prepare'],
+            ['id' => 'work:b', 'name_key' => 'estimate_generation.planning.completeness.site_leveling.execute'],
+        ];
         $catalog = CompletenessRuleCatalog::fromArray($data);
 
         $this->expectException(InvalidArgumentException::class);
-        (new TechnologyWorkPackageBuilder)->build($catalog->rules()[0], []);
+        $this->builder()->build($catalog->rules()[0], []);
     }
 
     public function test_global_budgets_fail_closed_without_losing_existing_facts(): void
     {
         $analyzer = new ProjectCompletenessAnalyzer(
             CompletenessRuleCatalog::fromArray(require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php'),
-            new TechnologyWorkPackageBuilder,
+            $this->builder(),
             maxFindings: 2,
             maxPackages: 2,
             maxEvidence: 16,
@@ -173,15 +217,151 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         CompletenessRuleCatalog::fromArray($data);
     }
 
+    public function test_rule_hash_is_permutation_stable_but_tracks_conditions_and_dependency_order(): void
+    {
+        $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
+        $base = CompletenessRuleCatalog::fromArray($data);
+        $permuted = $data;
+        $permuted['rules'] = array_reverse($permuted['rules']);
+        self::assertSame($base->contentHash, CompletenessRuleCatalog::fromArray($permuted)->contentHash);
+
+        $changed = $data;
+        $changed['rules'][3]['conditions'][0]['value'] = 4;
+        self::assertNotSame($base->contentHash, CompletenessRuleCatalog::fromArray($changed)->contentHash);
+
+        $dependencyOrder = $data;
+        $dependencyOrder['rules'][0]['work_package']['works'][] = [
+            'id' => 'work:site_leveling:finish',
+            'name_key' => 'estimate_generation.planning.completeness.site_leveling.execute',
+        ];
+        $dependencyOrder['rules'][0]['work_package']['dependencies'][] = [
+            'from' => 'work:site_leveling:execute', 'to' => 'work:site_leveling:finish',
+        ];
+        $orderedHash = CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash;
+        $dependencyOrder['rules'][0]['work_package']['dependencies'] = array_reverse(
+            $dependencyOrder['rules'][0]['work_package']['dependencies'],
+        );
+        self::assertNotSame($orderedHash, CompletenessRuleCatalog::fromArray($dependencyOrder)->contentHash);
+    }
+
+    public function test_typed_conditions_distinguish_flat_roof_low_height_null_zero_and_false(): void
+    {
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $this->fact('roof_type', 'flat'),
+            $this->fact('work_height_m', 1, 'm'),
+            $this->fact('foundation_type', 'slab'),
+            $this->fact('foundation_base_preparation', null),
+        ], [], []), []);
+
+        self::assertSame('not_applicable', $result->finding('fasteners')?->status);
+        self::assertSame('not_applicable', $result->finding('fasteners')?->applicability['status'] ?? null);
+        self::assertNotEmpty($result->finding('fasteners')?->applicability['evidence_fact_ids'] ?? []);
+        self::assertSame('not_applicable', $result->finding('scaffolding')?->status);
+        self::assertSame('unknown', $result->finding('base_preparation')?->status);
+
+        foreach ([0, '0'] as $value) {
+            $satisfied = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+                $this->fact('foundation_type', 'slab'),
+                $this->fact('foundation_base_preparation', $value),
+            ], [], []), []);
+            self::assertSame('satisfied', $satisfied->finding('base_preparation')?->status);
+        }
+        $missing = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $this->fact('foundation_type', 'slab'),
+            $this->fact('foundation_base_preparation', false),
+        ], [], []), []);
+        self::assertSame('proven_missing', $missing->finding('base_preparation')?->status);
+    }
+
+    public function test_foundation_types_select_distinct_work_packages(): void
+    {
+        $ids = [];
+        foreach (['slab', 'strip', 'pile', 'columnar'] as $type) {
+            $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+                $this->fact('foundation_type', $type),
+            ], [], []), []);
+            $ids[] = $result->finding('base_preparation')?->workPackage?->id;
+        }
+
+        self::assertSame([
+            'package:base_preparation_slab',
+            'package:base_preparation_strip',
+            'package:base_preparation_pile',
+            'package:base_preparation_columnar',
+        ], $ids);
+    }
+
+    public function test_conditional_or_missing_recommendation_never_creates_required_fastener_package(): void
+    {
+        $snapshot = new ProjectModelSnapshot([], [$this->fact('roof_type', 'pitched')], [], []);
+        $without = $this->analyzer()->analyze($snapshot, []);
+        $conditional = $this->analyzer()->analyze($snapshot, [$this->roofRecommendation(includeSlope: false)]);
+
+        self::assertSame('technology_conditional', $without->finding('fasteners')?->classification);
+        self::assertSame('unresolved', $without->finding('fasteners')?->status);
+        self::assertNull($without->finding('fasteners')?->workPackage);
+        self::assertSame('unresolved', $conditional->finding('fasteners')?->status);
+        self::assertNull($conditional->finding('fasteners')?->workPackage);
+    }
+
+    public function test_confirmed_selected_system_enables_technology_rule_without_a_recommendation(): void
+    {
+        $selected = $this->fact('roof_covering_system', [
+            'kind' => 'catalog_system',
+            'system_id' => 'pitched_roof.standing_seam',
+            'decision_key' => 'roof_covering_system.1234567890abcdef12345678',
+        ], origin: 'user_assumption');
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $this->fact('roof_type', 'pitched'),
+            $selected,
+        ], [], []), []);
+
+        self::assertSame('unknown', $result->finding('fasteners')?->status);
+        self::assertNotNull($result->finding('fasteners')?->workPackage);
+    }
+
+    public function test_user_assumption_does_not_hide_a_missing_required_document(): void
+    {
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $this->fact('engineering_system', 'heating'),
+            $this->fact('test_program', true, origin: 'user_assumption'),
+        ], [], []), []);
+
+        self::assertSame('document_missing', $result->finding('system_testing')?->classification);
+        self::assertSame('unknown', $result->finding('system_testing')?->status);
+    }
+
     private function analyzer(): ProjectCompletenessAnalyzer
     {
         return new ProjectCompletenessAnalyzer(
             CompletenessRuleCatalog::fromArray(require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php'),
-            new TechnologyWorkPackageBuilder,
+            $this->builder(),
             maxFindings: 50,
             maxPackages: 50,
             maxEvidence: 200,
         );
+    }
+
+    private function roofRecommendation(bool $includeSlope = true): \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendation
+    {
+        $facts = [$this->fact('roof_type', 'pitched')];
+        if ($includeSlope) {
+            $facts[] = $this->fact('roof_slope_degrees', '20', 'degree');
+        }
+        $target = new Fact(
+            'fact:roof-target', 10, 20, 30, self::SOURCE_VERSION, 'entity:project',
+            'roof_covering_system', null, null, 0, 'unresolved', 'unresolved', [],
+        );
+
+        return (new TechnologyRecommendationService(
+            TechnologySystemCatalog::fromArray(require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php'),
+            static fn (string $key): string => $key,
+        ))->recommend(new ProjectModelSnapshot([], $facts, [], []), $target, new OrganizationPreferenceContext(10, []));
+    }
+
+    private function builder(): TechnologyWorkPackageBuilder
+    {
+        return new TechnologyWorkPackageBuilder(static fn (string $key): string => 'Человекочитаемое название');
     }
 
     private function fact(string $type, mixed $value, ?string $unit = null, string $origin = 'document'): Fact

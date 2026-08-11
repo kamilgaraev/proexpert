@@ -11,11 +11,14 @@ final readonly class CompletenessRule
         public string $version,
         public string $contentHash,
         public array $applicabilityFactTypes,
+        public array $conditions,
         public string $satisfactionFactType,
+        public array $satisfaction,
         public string $classification,
         public string $severity,
         public string $impact,
         public array $exclusionPolicy,
         public array $workPackage,
+        public ?array $technologyRequirement = null,
     ) {}
 }

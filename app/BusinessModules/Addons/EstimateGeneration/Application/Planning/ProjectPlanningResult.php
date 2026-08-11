@@ -16,12 +16,21 @@ final readonly class ProjectPlanningResult
         public string $catalogHash,
         public array $recommendations,
         public array $limitations,
+        public string $status = 'current',
     ) {
+        if (! in_array($status, ['current', 'unresolved', 'stale'], true)) {
+            throw new InvalidArgumentException('Project planning status is invalid.');
+        }
         foreach ($recommendations as $recommendation) {
             if (! $recommendation instanceof TechnologyRecommendation) {
                 throw new InvalidArgumentException('Project planning recommendation is invalid.');
             }
         }
+    }
+
+    public function isReadyForCompleteness(): bool
+    {
+        return $this->status === 'current';
     }
 
     public function fingerprint(): string
@@ -33,6 +42,7 @@ final readonly class ProjectPlanningResult
             $this->catalogHash,
             $this->recommendations,
             $this->limitations,
+            $this->status,
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
     }
 }

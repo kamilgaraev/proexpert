@@ -29,6 +29,9 @@ final readonly class ProjectCompletenessCoordinator
         int $sessionId,
         ProjectPlanningResult $planning,
     ): ProjectCompletenessProjectionResult {
+        if (! $planning->isReadyForCompleteness()) {
+            throw new InvalidArgumentException('Completeness requires a current technology planning result.');
+        }
         $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts + 1);
         if (count($capture['snapshot']->facts) > $this->maxFacts
             || ! hash_equals($planning->inputFingerprint, $capture['token'])) {
@@ -61,7 +64,12 @@ final readonly class ProjectCompletenessCoordinator
             $sessionId,
             array_slice(array_values(array_unique($decisionIds)), 0, 100),
         );
-        $analysis = $this->analyzer->analyze($capture['snapshot'], $planning->recommendations, $decisions);
+        $analysis = $this->analyzer->analyze($capture['snapshot'], $planning->recommendations, $decisions, [
+            'source_version' => $planning->sourceVersion,
+            'input_fingerprint' => $planning->inputFingerprint,
+            'catalog_version' => $planning->catalogVersion,
+            'catalog_hash' => $planning->catalogHash,
+        ]);
         $saved = $this->models->replaceCompleteness(
             $organizationId, $projectId, $sessionId, $planning->sourceVersion, $planning->inputFingerprint,
             $planning->catalogVersion, $planning->catalogHash, $this->rules->version, $this->rules->contentHash,

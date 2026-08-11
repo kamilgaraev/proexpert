@@ -19,7 +19,7 @@ $unavailableCost = [
     'reason' => 'requires_quantities_and_regional_prices',
 ];
 
-return [
+$catalog = [
     'version' => '2026.08.11-v1',
     'recommendation_required_facts' => ['roof_type', 'roof_slope_degrees', 'roof_geometry'],
     'systems' => [
@@ -133,3 +133,42 @@ return [
         ],
     ],
 ];
+
+$unitByOperand = [
+    'roof_area' => 'm2',
+    'waste_factor' => 'ratio',
+    'batten_spacing' => 'm',
+    'effective_panel_width' => 'm',
+];
+foreach ($catalog['systems'] as &$system) {
+    foreach (['materials', 'works', 'machinery'] as $collection) {
+        foreach ($system[$collection] as &$item) {
+            $item['id'] = $collection.'.'.$item['intent'];
+        }
+        unset($item);
+    }
+    foreach ($system['norm_intents'] as &$intent) {
+        $intent['id'] = $intent['stable_intent'];
+    }
+    unset($intent);
+    foreach ($system['quantity_formulas'] as &$formula) {
+        $formula['expression'] = str_replace('roof_slope_area', 'roof_area', $formula['expression']);
+        $operandNames = array_map(
+            static fn (string $name): string => $name === 'roof_slope_area' ? 'roof_area' : $name,
+            $formula['operands'],
+        );
+        $formula['result_unit'] = str_contains($formula['id'], 'area') ? 'm2' : 'm';
+        $formula['operands'] = array_map(
+            static fn (string $name): array => [
+                'name' => $name,
+                'type' => $name === 'roof_area' ? 'fact' : 'parameter',
+                'unit' => $unitByOperand[$name],
+            ],
+            $operandNames,
+        );
+    }
+    unset($formula);
+}
+unset($system);
+
+return $catalog;

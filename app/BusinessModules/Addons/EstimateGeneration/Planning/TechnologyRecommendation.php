@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Planning;
 
 final readonly class TechnologyRecommendation
 {
-    public TechnologySystemOption $recommended;
+    public ?TechnologySystemOption $recommended;
 
     public function __construct(
         public string $decisionKey,
@@ -25,10 +25,15 @@ final readonly class TechnologyRecommendation
         public bool $autoApply = false,
     ) {
         $recommended = array_values(array_filter($options, static fn (TechnologySystemOption $option): bool => $option->recommended));
-        if (count($recommended) !== 1) {
-            throw new \InvalidArgumentException('Technology recommendation must have one recommended option.');
+        if (count($recommended) > 1) {
+            throw new \InvalidArgumentException('Technology recommendation has multiple recommended options.');
         }
-        $this->recommended = $recommended[0];
+        $this->recommended = $recommended[0] ?? null;
+    }
+
+    public function recommendedOption(): ?TechnologySystemOption
+    {
+        return $this->recommended;
     }
 
     public function toArray(): array

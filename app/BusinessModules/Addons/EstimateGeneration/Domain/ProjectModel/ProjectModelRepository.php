@@ -10,6 +10,13 @@ interface ProjectModelRepository
 
     public function applyDecision(Decision $decision, Fact $selectedFact): void;
 
+    public function applyTechnologyDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $planningRunId,
+    ): bool;
+
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void;
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot;

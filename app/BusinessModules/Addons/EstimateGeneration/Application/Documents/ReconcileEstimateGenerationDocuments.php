@@ -4,17 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningPipeline;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
-use App\BusinessModules\Addons\EstimateGeneration\Planning\OrganizationPreferenceContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Support\Str;
 
@@ -23,9 +20,7 @@ final class ReconcileEstimateGenerationDocuments
     public function __construct(
         private AdvanceEstimateGeneration $advance,
         private DocumentGenerationReadinessService $readiness,
-        private ProjectUnderstandingCoordinator $understanding,
-        private ProjectPlanningCoordinator $planning,
-        private ProjectCompletenessCoordinator $completeness,
+        private ProjectPlanningPipeline $planning,
     ) {}
 
     public function changed(EstimateGenerationSession $session): EstimateGenerationSession
@@ -87,25 +82,16 @@ final class ReconcileEstimateGenerationDocuments
             return $session;
         }
 
-        $this->understanding->refresh(
+        $planning = $this->planning->refresh(
             (int) $session->organization_id,
             (int) $session->project_id,
             (int) $session->getKey(),
             (string) Str::uuid(),
             max(1, (int) $session->state_version),
         );
-        $planning = $this->planning->refresh(
-            (int) $session->organization_id,
-            (int) $session->project_id,
-            (int) $session->getKey(),
-            new OrganizationPreferenceContext((int) $session->organization_id, []),
-        );
-        $this->completeness->refresh(
-            (int) $session->organization_id,
-            (int) $session->project_id,
-            (int) $session->getKey(),
-            $planning,
-        );
+        if (! $planning->isReadyForCompleteness()) {
+            return $this->advance->documentsNeedReview($session);
+        }
         $session = $this->advance->documentsReady($session);
         if (($session->input_payload['generation_requested'] ?? false) !== true) {
             return $session;

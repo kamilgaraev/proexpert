@@ -59,7 +59,7 @@ final readonly class ProjectUnderstandingCoordinator
             return $this->budgetLimitation();
         }
         if ($snapshot->facts === []) {
-            return new ProjectUnderstandingResult([], [], [], [$this->conflicts->insufficientEvidence()], 0);
+            return ProjectUnderstandingResult::unresolved([$this->conflicts->insufficientEvidence()]);
         }
         $sourceVersions = array_values(array_unique(array_map(
             static fn (Fact $fact): string => $fact->sourceVersion,
@@ -77,12 +77,15 @@ final readonly class ProjectUnderstandingCoordinator
             $inputFingerprint,
         );
         if ($replayed !== null) {
-            return new ProjectUnderstandingResult(
+            return $this->persistedResult(
+                $sourceVersion,
+                $inputFingerprint,
                 $replayed['links'] ?? [],
                 $replayed['conflicts'] ?? [],
                 $replayed['questions'] ?? [],
                 $replayed['limitations'] ?? [],
                 (int) ($replayed['provider_calls'] ?? 0),
+                $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts),
             );
         }
         $linker = new CrossDocumentFactLinker(
@@ -111,15 +114,72 @@ final readonly class ProjectUnderstandingCoordinator
             $result->providerCalls,
         );
         if (! $saved) {
-            return new ProjectUnderstandingResult([], [], [], [$this->conflicts->staleSnapshot()], $result->providerCalls);
+            return ProjectUnderstandingResult::stale([$this->conflicts->staleSnapshot()], $result->providerCalls);
         }
 
-        return $result;
+        return $this->persistedResult(
+            $sourceVersion,
+            $inputFingerprint,
+            $result->links,
+            $result->conflicts,
+            $result->questions,
+            $result->limitations,
+            $result->providerCalls,
+            $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts),
+        );
     }
 
     private function budgetLimitation(): ProjectUnderstandingResult
     {
-        return new ProjectUnderstandingResult([], [], [], [$this->conflicts->budgetExceeded()], 0);
+        return ProjectUnderstandingResult::unresolved([$this->conflicts->budgetExceeded()]);
+    }
+
+    private function persistedResult(
+        string $sourceVersion,
+        string $inputFingerprint,
+        array $links,
+        array $conflicts,
+        array $questions,
+        array $limitations,
+        int $providerCalls,
+        bool $hasOnlyPlanningUnresolvedFacts,
+    ): ProjectUnderstandingResult {
+        if ($limitations !== [] && (! $hasOnlyPlanningUnresolvedFacts || $questions !== [] || $conflicts !== [])) {
+            return ProjectUnderstandingResult::unresolved(
+                $limitations,
+                $links,
+                $conflicts,
+                $questions,
+                $providerCalls,
+                $sourceVersion,
+                $inputFingerprint,
+            );
+        }
+
+        return ProjectUnderstandingResult::current(
+            $sourceVersion,
+            $inputFingerprint,
+            $links,
+            $conflicts,
+            $questions,
+            $providerCalls,
+            $limitations,
+        );
+    }
+
+    private function hasOnlyPlanningUnresolvedFacts(array $facts): bool
+    {
+        foreach ($facts as $fact) {
+            if (! $fact instanceof Fact || $fact->status === 'confirmed') {
+                continue;
+            }
+            if ($fact->origin !== 'unresolved'
+                || ! in_array($fact->type, ['material', 'material_name', 'roof_covering_system'], true)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function preflightVersion(array $preflight): string

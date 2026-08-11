@@ -5,14 +5,31 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Planning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use Closure;
 use InvalidArgumentException;
 
 final class TechnologyWorkPackageBuilder
 {
+    private Closure $translate;
+
+    public function __construct(?Closure $translate = null)
+    {
+        $this->translate = $translate ?? static fn (string $key): string => $key;
+    }
+
     public function build(CompletenessRule $rule, array $factsByType): TechnologyWorkPackage
     {
         $package = $rule->workPackage;
-        $works = $this->unique($package['works'] ?? []);
+        $variantFactType = $package['variant_fact_type'] ?? null;
+        if (is_string($variantFactType)) {
+            $variant = $factsByType[$variantFactType][0]->value ?? null;
+            $selected = is_string($variant) ? ($package['variants'][$variant] ?? null) : null;
+            if (! is_array($selected)) {
+                throw new InvalidArgumentException('Technology work package variant is unresolved.');
+            }
+            $package = $selected;
+        }
+        $works = $this->labels($this->unique($package['works'] ?? []));
         $dependencies = $package['dependencies'] ?? [];
         $this->assertDag($works, $dependencies);
         $formulas = [];
@@ -37,10 +54,10 @@ final class TechnologyWorkPackageBuilder
         }
 
         return new TechnologyWorkPackage(
-            id: 'package:'.$rule->id,
+            id: (string) ($package['id'] ?? 'package:'.$rule->id),
             works: $works,
-            materials: $this->unique($package['materials'] ?? []),
-            machinery: $this->unique($package['machinery'] ?? []),
+            materials: $this->labels($this->unique($package['materials'] ?? [])),
+            machinery: $this->labels($this->unique($package['machinery'] ?? [])),
             normIntents: array_slice($this->unique($package['norm_intents'] ?? []), 0, 20),
             quantityFormulas: $formulas,
             dependencies: $dependencies,
@@ -63,6 +80,19 @@ final class TechnologyWorkPackageBuilder
         }
 
         return array_values($result);
+    }
+
+    private function labels(array $items): array
+    {
+        return array_map(function (array $item): array {
+            $key = (string) ($item['name_key'] ?? '');
+            $label = $key === '' ? '' : ($this->translate)($key);
+            if ($label === '' || $label === $key) {
+                throw new InvalidArgumentException('Technology work package translation is missing.');
+            }
+
+            return [...$item, 'label' => $label];
+        }, $items);
     }
 
     private function assertDag(array $works, array $dependencies): void

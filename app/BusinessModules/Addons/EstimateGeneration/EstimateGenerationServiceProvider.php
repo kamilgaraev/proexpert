@@ -528,6 +528,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationService::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationDecisionService::class);
+        $this->app->bind(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\SynchronousPlanningReanalysisTrigger::class,
+        );
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator::class,
             static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator(
@@ -544,7 +548,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 config('estimate-generation-completeness-rules'),
             ),
         );
-        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder => new \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackageBuilder(
+                static fn (string $key): string => trans_message($key),
+            ),
+        );
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer::class,
             static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer => new \App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer(
@@ -566,6 +575,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class),
                 maxFacts: (int) config('estimate-generation.project_planning.max_facts'),
             ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningPipeline::class,
         );
         $this->app->singleton(EloquentEvaluationCorpusRepository::class, fn ($app) => new EloquentEvaluationCorpusRepository(
             $app->make('db')->connection(),

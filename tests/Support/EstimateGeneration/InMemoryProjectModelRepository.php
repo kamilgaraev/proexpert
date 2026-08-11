@@ -52,6 +52,12 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public ?Closure $beforeUnderstandingSave = null;
 
+    public ?Closure $beforeTechnologyReplayLock = null;
+
+    public ?Closure $beforeCompletenessReplayLock = null;
+
+    public ?Closure $beforeTechnologyDecisionLock = null;
+
     private array $projection = [];
 
     public function saveSourceModel(array $entities, array $facts, array $evidence, array $conflicts = []): void
@@ -141,6 +147,36 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 $this->completenessHistory[$key]['is_current'] = false;
             }
         }
+    }
+
+    public function applyTechnologyDecision(
+        Decision $decision,
+        Fact $selectedFact,
+        string $inputFingerprint,
+        int $planningRunId,
+    ): bool {
+        if ($this->beforeTechnologyDecisionLock !== null) {
+            $hook = $this->beforeTechnologyDecisionLock;
+            $this->beforeTechnologyDecisionLock = null;
+            $hook();
+        }
+        $current = $this->currentTechnologyRecommendations(
+            $decision->organizationId,
+            $decision->projectId,
+            $decision->sessionId,
+        );
+        if ($current === null || ($current['run_id'] ?? null) !== $planningRunId
+            || ! hash_equals($inputFingerprint, $current['input_fingerprint'])
+            || ! hash_equals($inputFingerprint, $this->understandingSnapshotToken(
+                $decision->organizationId,
+                $decision->projectId,
+                $decision->sessionId,
+            ))) {
+            return false;
+        }
+        $this->applyDecision($decision, $selectedFact);
+
+        return true;
     }
 
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void
@@ -410,6 +446,14 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
         $key = implode(':', [$scope, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash]);
         if (isset($this->technologyPlanningHistory[$key])) {
+            if ($this->latestProjectionKey($this->technologyPlanningHistory, $scope, $sourceVersion, $inputFingerprint) !== $key) {
+                return false;
+            }
+            $existing = $this->technologyPlanningHistory[$key];
+            if ([$existing['recommendations'], $existing['limitations']] !== [$recommendations, $limitations]) {
+                throw new InvalidArgumentException('Technology recommendation replay content differs.');
+            }
+
             return true;
         }
         foreach ($this->technologyPlanningHistory as $existingKey => $run) {
@@ -418,6 +462,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             }
         }
         $this->technologyPlanningHistory[$key] = [
+            'run_id' => count($this->technologyPlanningHistory) + 1,
             'source_version' => $sourceVersion,
             'input_fingerprint' => $inputFingerprint,
             'catalog_version' => $catalogVersion,
@@ -455,6 +500,15 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         if (! isset($this->technologyPlanningHistory[$key])) {
             return null;
         }
+        if ($this->beforeTechnologyReplayLock !== null) {
+            $hook = $this->beforeTechnologyReplayLock;
+            $this->beforeTechnologyReplayLock = null;
+            $hook();
+        }
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+            || $this->latestProjectionKey($this->technologyPlanningHistory, implode(':', [$organizationId, $projectId, $sessionId]), $sourceVersion, $inputFingerprint) !== $key) {
+            return null;
+        }
         $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
         foreach ($this->technologyPlanningHistory as $existingKey => $run) {
             if (str_starts_with($existingKey, $prefix)) {
@@ -470,7 +524,9 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
         foreach (array_reverse($this->technologyPlanningHistory, true) as $key => $run) {
             if (str_starts_with($key, $prefix) && $run['is_current']) {
-                return $run;
+                return hash_equals($run['input_fingerprint'], $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+                    ? $run
+                    : null;
             }
         }
 
@@ -496,6 +552,14 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
         $key = implode(':', [$scope, $sourceVersion, $inputFingerprint, $catalogVersion, $catalogHash, $ruleCatalogVersion, $ruleCatalogHash]);
         if (isset($this->completenessHistory[$key])) {
+            if ($this->latestProjectionKey($this->completenessHistory, $scope, $sourceVersion, $inputFingerprint) !== $key) {
+                return false;
+            }
+            $existing = $this->completenessHistory[$key];
+            if ([$existing['findings'], $existing['limitations']] !== [$findings, $limitations]) {
+                throw new InvalidArgumentException('Completeness replay content differs.');
+            }
+
             return true;
         }
         foreach ($this->completenessHistory as $existingKey => $run) {
@@ -504,6 +568,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             }
         }
         $this->completenessHistory[$key] = [
+            'run_id' => count($this->completenessHistory) + 1,
             'source_version' => $sourceVersion,
             'input_fingerprint' => $inputFingerprint,
             'catalog_version' => $catalogVersion,
@@ -537,6 +602,15 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         if (! isset($this->completenessHistory[$key])) {
             return null;
         }
+        if ($this->beforeCompletenessReplayLock !== null) {
+            $hook = $this->beforeCompletenessReplayLock;
+            $this->beforeCompletenessReplayLock = null;
+            $hook();
+        }
+        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+            || $this->latestProjectionKey($this->completenessHistory, implode(':', [$organizationId, $projectId, $sessionId]), $sourceVersion, $inputFingerprint) !== $key) {
+            return null;
+        }
         $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
         foreach ($this->completenessHistory as $existingKey => $run) {
             if (str_starts_with($existingKey, $prefix)) {
@@ -552,7 +626,9 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
         foreach (array_reverse($this->completenessHistory, true) as $key => $run) {
             if (str_starts_with($key, $prefix) && $run['is_current']) {
-                return $run;
+                return hash_equals($run['input_fingerprint'], $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))
+                    ? $run
+                    : null;
             }
         }
 
@@ -611,6 +687,19 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 unset($this->projection[$key]);
             }
         }
+    }
+
+    private function latestProjectionKey(array $history, string $scope, string $sourceVersion, string $inputFingerprint): ?string
+    {
+        $prefix = implode(':', [$scope, $sourceVersion, $inputFingerprint]).':';
+        $latest = null;
+        foreach ($history as $key => $run) {
+            if (str_starts_with($key, $prefix)) {
+                $latest = $key;
+            }
+        }
+
+        return $latest;
     }
 
     private function factById(object $scope, string $factId): Fact
