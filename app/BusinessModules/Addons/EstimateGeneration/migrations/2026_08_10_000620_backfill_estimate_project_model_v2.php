@@ -90,7 +90,7 @@ SET fact_origin = CASE fact.payload->>'source' WHEN 'ai_candidate' THEN 'ai_infe
         ) THEN 'confirmed'
         ELSE 'candidate'
     END,
-    fact_value = CASE WHEN fact.payload ? 'value' THEN jsonb_build_object('value', fact.payload->'value') ELSE fact.payload - 'source' - 'unit' END,
+    fact_value = CASE WHEN fact.payload->'value' IS NOT NULL THEN jsonb_build_object('value', fact.payload->'value') ELSE fact.payload - 'source' - 'unit' END,
     fact_unit = NULLIF(fact.payload->>'unit', '')
 FROM batch WHERE fact.id = batch.id
 SQL);
@@ -158,7 +158,7 @@ SELECT building_model_id, organization_id, project_id, session_id, source_versio
        'fact:decision:' || substring(stable_key from 12 for 48), entity_id, assertion_type,
        jsonb_build_object('source','user_assumption','value',payload->'canonical_value'),
        1.0, 'user_assumption', 'confirmed', decision_version + 1, assertion_id,
-       CASE WHEN jsonb_typeof(payload->'canonical_value') = 'object' AND payload->'canonical_value' ? 'value'
+       CASE WHEN jsonb_typeof(payload->'canonical_value') = 'object' AND payload->'canonical_value'->'value' IS NOT NULL
             THEN jsonb_build_object('value', payload->'canonical_value'->'value')
             ELSE jsonb_build_object('value', payload->'canonical_value') END,
        NULLIF(payload->'canonical_value'->>'unit',''), created_at

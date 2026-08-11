@@ -88,4 +88,16 @@ final class ProjectModelV2MigrationContractTest extends TestCase
             self::assertStringContainsString($required, $migration);
         }
     }
+
+    #[Test]
+    public function backfill_sql_does_not_expose_jsonb_question_operator_to_pdo_placeholders(): void
+    {
+        $migration = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000620_backfill_estimate_project_model_v2.php'
+        );
+
+        self::assertStringNotContainsString(" ? 'value'", $migration);
+        self::assertStringContainsString("fact.payload->'value' IS NOT NULL", $migration);
+        self::assertStringContainsString("payload->'canonical_value'->'value' IS NOT NULL", $migration);
+    }
 }
