@@ -177,6 +177,48 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         self::assertSame(0, $assignments['scope_mismatch_assets_with_multiple_candidates']);
     }
 
+    public function test_details_report_scope_repair_evidence_without_exposing_names(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreign = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $localCurrentProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $otherLocalProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        $legacy = MachineryAsset::query()->create([
+            'organization_id' => $organizationId,
+            'current_project_id' => $localCurrentProject->id,
+            'asset_code' => 'CUTOVER-SCOPE-EVIDENCE',
+            'name' => 'Техника с восстанавливаемым проектом',
+            'ownership_type' => 'owned',
+            'status' => 'available',
+            'operating_cost_per_hour' => 0,
+            'meter_hours' => 0,
+        ]);
+        MachineryAssignment::query()->create([
+            'organization_id' => $organizationId,
+            'asset_id' => $legacy->id,
+            'project_id' => $foreignProject->id,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+        ]);
+
+        Artisan::call('assets:verify-cutover', ['--format' => 'json', '--details' => true]);
+        $evidence = $this->jsonOutput()['details']['scope_repair_evidence'];
+
+        self::assertSame([[
+            'asset_id' => (int) $legacy->id,
+            'organization_id' => $organizationId,
+            'foreign_assignment_project_ids' => [(int) $foreignProject->id],
+            'legacy_current_project_id' => (int) $localCurrentProject->id,
+            'legacy_current_project_is_local' => true,
+            'schedule_project_ids' => [],
+            'operation_project_ids' => [(int) $foreignProject->id],
+            'local_operation_project_ids' => [],
+            'local_candidate_project_ids' => collect([$localCurrentProject->id, $otherLocalProject->id])->map(static fn ($id): int => (int) $id)->sort()->values()->all(),
+        ]], $evidence);
+    }
+
     /** @return array<string, mixed> */
     private function jsonOutput(): array
     {
