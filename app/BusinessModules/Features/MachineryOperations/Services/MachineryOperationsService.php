@@ -4,6 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\MachineryOperations\Services;
 
+use App\BusinessModules\Core\AssetManagement\DTO\AssetPlacementData;
+use App\BusinessModules\Core\AssetManagement\DTO\CreateOrganizationAssetData;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetOperationalMode;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
+use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
+use App\BusinessModules\Core\AssetManagement\Services\OrganizationAssetService;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
@@ -24,20 +31,15 @@ final class MachineryOperationsService
 
     private const SHIFT_RELATIONS = ['asset:id,name,asset_code,status', 'project:id,name', 'assignment:id,status'];
 
+    public function __construct(
+        private readonly MachineryAssetReadRepository $assets,
+        private readonly OrganizationAssetService $organizationAssets,
+        private readonly MachineryWorkflowPolicy $workflow,
+    ) {}
+
     public function paginateAssets(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
     {
-        return MachineryAsset::forOrganization($organizationId)
-            ->with(self::ASSET_RELATIONS)
-            ->when(array_key_exists('project_ids', $filters), function ($query) use ($filters): void {
-                $query->where(function ($projectQuery) use ($filters): void {
-                    $projectQuery->whereNull('current_project_id')
-                        ->orWhereIn('current_project_id', $filters['project_ids']);
-                });
-            })
-            ->when(! empty($filters['project_id']), fn ($query) => $query->where('current_project_id', (int) $filters['project_id']))
-            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->orderBy('name')
-            ->paginate($perPage);
+        return $this->assets->paginate($organizationId, $perPage, $filters);
     }
 
     public function paginateShifts(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
@@ -69,29 +71,52 @@ final class MachineryOperationsService
         $this->assertOptionalProjectBelongsToOrganization($data['current_project_id'] ?? null, $organizationId);
         $this->assertOptionalScheduleTaskBelongsToOrganization($data['current_schedule_task_id'] ?? null, $organizationId);
 
-        return MachineryAsset::query()->create([
-            'organization_id' => $organizationId,
-            'machinery_id' => $data['machinery_id'] ?? null,
-            'current_project_id' => $data['current_project_id'] ?? null,
-            'current_schedule_task_id' => $data['current_schedule_task_id'] ?? null,
-            'asset_code' => $data['asset_code'],
-            'name' => $data['name'],
-            'inventory_number' => $data['inventory_number'] ?? null,
-            'ownership_type' => $data['ownership_type'] ?? 'owned',
-            'status' => 'available',
-            'operating_cost_per_hour' => $data['operating_cost_per_hour'] ?? 0,
-            'fuel_type' => $data['fuel_type'] ?? null,
-            'fuel_consumption_rate' => $data['fuel_consumption_rate'] ?? null,
-            'meter_hours' => $data['meter_hours'] ?? 0,
-            'metadata' => $data['metadata'] ?? null,
-        ])->fresh(self::ASSET_RELATIONS);
+        return DB::transaction(function () use ($organizationId, $data): MachineryAsset {
+            $initialStatus = isset($data['current_project_id']) ? 'assigned' : 'available';
+            $legacy = MachineryAsset::query()->create([
+                'organization_id' => $organizationId,
+                'machinery_id' => $data['machinery_id'] ?? null,
+                'current_project_id' => $data['current_project_id'] ?? null,
+                'current_schedule_task_id' => $data['current_schedule_task_id'] ?? null,
+                'asset_code' => $data['asset_code'],
+                'name' => $data['name'],
+                'inventory_number' => $data['inventory_number'] ?? null,
+                'ownership_type' => $data['ownership_type'] ?? 'owned',
+                'status' => $initialStatus,
+                'operating_cost_per_hour' => $data['operating_cost_per_hour'] ?? 0,
+                'fuel_type' => $data['fuel_type'] ?? null,
+                'fuel_consumption_rate' => $data['fuel_consumption_rate'] ?? null,
+                'meter_hours' => $data['meter_hours'] ?? 0,
+                'metadata' => $data['metadata'] ?? null,
+            ]);
+            $canonical = $this->organizationAssets->create($organizationId, new CreateOrganizationAssetData(
+                name: (string) $legacy->name,
+                inventoryNumber: (string) ($legacy->inventory_number ?: $legacy->asset_code),
+                ownershipType: (string) $legacy->ownership_type,
+                machineryId: $legacy->machinery_id !== null ? (int) $legacy->machinery_id : null,
+                placement: $legacy->current_project_id !== null
+                    ? new AssetPlacementData(projectId: (int) $legacy->current_project_id)
+                    : null,
+                metadata: [
+                    'legacy_source' => ['table' => 'machinery_assets', 'id' => (int) $legacy->id],
+                    'machinery_operation_status' => $initialStatus,
+                ],
+                operationalMode: AssetOperationalMode::ShiftOperation,
+                tracksMeter: true,
+                tracksFuel: $legacy->fuel_type !== null || $legacy->fuel_consumption_rate !== null,
+                tracksProduction: true,
+                maintenanceEnabled: true,
+                meterUnit: 'hour',
+            ));
+            $legacy->update(['organization_asset_id' => $canonical->id]);
+
+            return $this->assets->find($organizationId, (int) $legacy->id) ?? $legacy;
+        });
     }
 
     public function findAsset(int $organizationId, int $id): ?MachineryAsset
     {
-        return MachineryAsset::forOrganization($organizationId)
-            ->with(self::ASSET_RELATIONS)
-            ->find($id);
+        return $this->assets->find($organizationId, $id);
     }
 
     public function assignAsset(MachineryAsset $asset, int $userId, array $data): MachineryAssignment
@@ -99,7 +124,7 @@ final class MachineryOperationsService
         return DB::transaction(function () use ($asset, $userId, $data): MachineryAssignment {
             $lockedAsset = $this->requireLockedAsset((int) $asset->id, (int) $asset->organization_id);
 
-            if (! in_array($lockedAsset->status, ['available', 'assigned'], true)) {
+            if (! in_array($this->workflow->status($lockedAsset), ['available', 'assigned'], true)) {
                 throw new DomainException(trans_message('machinery_operations.errors.asset_assign_invalid_status'));
             }
 
@@ -119,6 +144,7 @@ final class MachineryOperationsService
 
             $assignment = MachineryAssignment::query()->create([
                 'organization_id' => $lockedAsset->organization_id,
+                'organization_asset_id' => $lockedAsset->organization_asset_id,
                 'asset_id' => $lockedAsset->id,
                 'project_id' => (int) $data['project_id'],
                 'schedule_task_id' => $data['schedule_task_id'] ?? null,
@@ -137,6 +163,7 @@ final class MachineryOperationsService
                 'current_project_id' => (int) $data['project_id'],
                 'current_schedule_task_id' => $data['schedule_task_id'] ?? null,
             ]);
+            $this->moveCanonicalToProject($lockedAsset, (int) $data['project_id'], $userId, 'assigned');
 
             return $assignment->fresh(['asset', 'project', 'scheduleTask']);
         });
@@ -144,40 +171,43 @@ final class MachineryOperationsService
 
     public function startOperation(MachineryAsset $asset): MachineryAsset
     {
-        if ($asset->status !== 'assigned') {
+        if ($this->workflow->status($asset) !== 'assigned') {
             throw new DomainException(trans_message('machinery_operations.errors.asset_start_invalid_status'));
         }
 
         $asset->update(['status' => 'in_operation']);
+        $this->updateCanonicalState($asset, operationStatus: 'in_operation');
 
         return $asset->fresh(self::ASSET_RELATIONS);
     }
 
     public function setMaintenance(MachineryAsset $asset): MachineryAsset
     {
-        if (! in_array($asset->status, ['available', 'assigned', 'in_operation', 'unavailable'], true)) {
+        if (! in_array($this->workflow->status($asset), ['available', 'assigned', 'in_operation', 'unavailable'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.asset_maintenance_invalid_status'));
         }
 
         $asset->update(['status' => 'maintenance']);
+        $this->updateCanonicalState($asset, technicalStatus: AssetTechnicalStatus::Maintenance);
 
         return $asset->fresh(self::ASSET_RELATIONS);
     }
 
     public function setUnavailable(MachineryAsset $asset): MachineryAsset
     {
-        if ($asset->status === 'archived') {
+        if ($this->workflow->status($asset) === 'archived') {
             throw new DomainException(trans_message('machinery_operations.errors.asset_unavailable_invalid_status'));
         }
 
         $asset->update(['status' => 'unavailable']);
+        $this->updateCanonicalState($asset, technicalStatus: AssetTechnicalStatus::Unavailable);
 
         return $asset->fresh(self::ASSET_RELATIONS);
     }
 
     public function returnAvailable(MachineryAsset $asset): MachineryAsset
     {
-        if (! in_array($asset->status, ['assigned', 'in_operation', 'maintenance', 'unavailable'], true)) {
+        if (! in_array($this->workflow->status($asset), ['assigned', 'in_operation', 'maintenance', 'unavailable'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.asset_available_invalid_status'));
         }
 
@@ -186,6 +216,12 @@ final class MachineryOperationsService
             'current_project_id' => null,
             'current_schedule_task_id' => null,
         ]);
+        $this->updateCanonicalState(
+            $asset,
+            operationStatus: 'available',
+            technicalStatus: AssetTechnicalStatus::Serviceable,
+            clearPlacement: true,
+        );
 
         MachineryAssignment::forOrganization((int) $asset->organization_id)
             ->where('asset_id', $asset->id)
@@ -197,7 +233,7 @@ final class MachineryOperationsService
 
     public function archiveAsset(MachineryAsset $asset): MachineryAsset
     {
-        if (in_array($asset->status, ['assigned', 'in_operation'], true)) {
+        if (in_array($this->workflow->status($asset), ['assigned', 'in_operation'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.asset_archive_invalid_status'));
         }
 
@@ -205,6 +241,7 @@ final class MachineryOperationsService
             'status' => 'archived',
             'archived_at' => now(),
         ]);
+        $this->updateCanonicalState($asset, lifecycleStatus: AssetLifecycleStatus::Retired);
 
         return $asset->fresh(self::ASSET_RELATIONS);
     }
@@ -223,12 +260,13 @@ final class MachineryOperationsService
                 $projectId,
             );
 
-            if (! in_array($asset->status, ['assigned', 'in_operation'], true)) {
+            if (! in_array($this->workflow->status($asset), ['assigned', 'in_operation'], true)) {
                 throw new DomainException(trans_message('machinery_operations.errors.shift_asset_not_operational'));
             }
 
             return MachineryShiftReport::query()->create([
                 'organization_id' => $organizationId,
+                'organization_asset_id' => $asset->organization_asset_id,
                 'asset_id' => $asset->id,
                 'project_id' => $projectId,
                 'assignment_id' => $data['assignment_id'] ?? null,
@@ -278,6 +316,15 @@ final class MachineryOperationsService
 
             if ($shift->meter_end !== null) {
                 $shift->asset()->update(['meter_hours' => $shift->meter_end]);
+                $asset = $shift->asset()->first();
+                if ($asset !== null) {
+                    $canonical = $this->canonicalAsset($asset, true);
+                    if ($canonical !== null) {
+                        $metadata = is_array($canonical->metadata) ? $canonical->metadata : [];
+                        $metadata['meter_hours'] = (float) $shift->meter_end;
+                        $canonical->update(['metadata' => $metadata]);
+                    }
+                }
             }
 
             return $shift->fresh(self::SHIFT_RELATIONS);
@@ -315,6 +362,7 @@ final class MachineryOperationsService
 
             return MachineryDowntime::query()->create([
                 'organization_id' => $organizationId,
+                'organization_asset_id' => $asset->organization_asset_id,
                 'asset_id' => $asset->id,
                 'project_id' => $projectId,
                 'shift_report_id' => $data['shift_report_id'] ?? null,
@@ -342,6 +390,7 @@ final class MachineryOperationsService
 
             return MachineryProductionRecord::query()->create([
                 'organization_id' => $organizationId,
+                'organization_asset_id' => $asset->organization_asset_id,
                 'asset_id' => $asset->id,
                 'project_id' => $projectId,
                 'shift_report_id' => $data['shift_report_id'] ?? null,
@@ -364,6 +413,7 @@ final class MachineryOperationsService
 
             return MachineryFuelIssue::query()->create([
                 'organization_id' => $organizationId,
+                'organization_asset_id' => $asset->organization_asset_id,
                 'asset_id' => $asset->id,
                 'project_id' => $projectId,
                 'issued_by_user_id' => $userId,
@@ -385,6 +435,7 @@ final class MachineryOperationsService
         return DB::transaction(function () use ($organizationId, $userId, $data, $asset): MachineryMaintenanceOrder {
             $order = MachineryMaintenanceOrder::query()->create([
                 'organization_id' => $organizationId,
+                'organization_asset_id' => $asset->organization_asset_id,
                 'asset_id' => $asset->id,
                 'project_id' => $data['project_id'] ?? $asset->current_project_id,
                 'requested_by_user_id' => $userId,
@@ -399,6 +450,7 @@ final class MachineryOperationsService
             ]);
 
             $asset->update(['status' => 'maintenance']);
+            $this->updateCanonicalState($asset, technicalStatus: AssetTechnicalStatus::Maintenance);
 
             return $order->fresh(['asset:id,name,asset_code,status', 'project:id,name']);
         });
@@ -419,6 +471,10 @@ final class MachineryOperationsService
             ]);
 
             $order->asset()->update(['status' => 'available']);
+            $asset = $order->asset()->first();
+            if ($asset !== null) {
+                $this->completeCanonicalMaintenance($asset, $order, $userId, $comment);
+            }
 
             return $order->fresh(['asset:id,name,asset_code,status', 'project:id,name']);
         });
@@ -642,5 +698,92 @@ final class MachineryOperationsService
     private function nextNumber(string $prefix, int $organizationId): string
     {
         return sprintf('%s-%d-%s', $prefix, $organizationId, now()->format('YmdHisv'));
+    }
+
+    private function moveCanonicalToProject(MachineryAsset $asset, int $projectId, int $actorId, string $operationStatus): void
+    {
+        $canonical = $this->canonicalAsset($asset);
+        if ($canonical === null) {
+            return;
+        }
+
+        $this->organizationAssets->move(
+            $canonical,
+            new AssetPlacementData(projectId: $projectId),
+            $actorId,
+            'machinery_assigned',
+        );
+        $this->updateCanonicalState($asset, operationStatus: $operationStatus);
+    }
+
+    private function updateCanonicalState(
+        MachineryAsset $asset,
+        ?string $operationStatus = null,
+        ?AssetTechnicalStatus $technicalStatus = null,
+        ?AssetLifecycleStatus $lifecycleStatus = null,
+        bool $clearPlacement = false,
+    ): void {
+        $canonical = $this->canonicalAsset($asset, true);
+        if ($canonical === null) {
+            return;
+        }
+
+        $metadata = is_array($canonical->metadata) ? $canonical->metadata : [];
+        if ($operationStatus !== null) {
+            $metadata['machinery_operation_status'] = $operationStatus;
+        }
+
+        $attributes = ['metadata' => $metadata];
+        if ($technicalStatus !== null) {
+            $attributes['technical_status'] = $technicalStatus;
+        }
+        if ($lifecycleStatus !== null) {
+            $attributes['lifecycle_status'] = $lifecycleStatus;
+        }
+        if ($clearPlacement) {
+            $attributes['current_project_id'] = null;
+            $attributes['current_warehouse_id'] = null;
+            $attributes['responsible_user_id'] = null;
+        }
+
+        $canonical->update($attributes);
+    }
+
+    private function completeCanonicalMaintenance(
+        MachineryAsset $asset,
+        MachineryMaintenanceOrder $order,
+        int $userId,
+        ?string $comment,
+    ): void {
+        $canonical = $this->canonicalAsset($asset, true);
+        if ($canonical === null) {
+            return;
+        }
+
+        $metadata = is_array($canonical->metadata) ? $canonical->metadata : [];
+        $metadata['machinery_operation_status'] = $canonical->current_project_id === null ? 'available' : 'assigned';
+        $metadata['last_control_inspection'] = [
+            'result' => 'serviceable',
+            'maintenance_order_id' => (int) $order->id,
+            'inspected_by_user_id' => $userId,
+            'comment' => $comment,
+            'occurred_at' => now()->toIso8601String(),
+        ];
+        $canonical->update([
+            'technical_status' => AssetTechnicalStatus::Serviceable,
+            'metadata' => $metadata,
+        ]);
+    }
+
+    private function canonicalAsset(MachineryAsset $asset, bool $lock = false): ?OrganizationAsset
+    {
+        if ($asset->organization_asset_id === null) {
+            return null;
+        }
+
+        return OrganizationAsset::forOrganization((int) $asset->organization_id)
+            ->whereKey((int) $asset->organization_asset_id)
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->first();
     }
 }

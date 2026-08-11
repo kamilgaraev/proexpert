@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Http\Resources;
 
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetProjection;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryWorkflowPolicy;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -15,28 +18,23 @@ final class MachineryAssetResource extends JsonResource
     {
         /** @var MachineryAsset $asset */
         $asset = $this->resource;
-        $actions = $this->actions($asset->status);
+        $view = app(MachineryAssetProjection::class)->project($asset);
+        $actor = $request->user();
+        $actions = app(MachineryWorkflowPolicy::class)->availableActions(
+            $asset,
+            $actor instanceof User ? $actor : null,
+        );
+        $status = (string) $view['status'];
+        $machinery = $asset->organizationAsset?->machinery ?? $asset->machinery;
+        $currentProject = $asset->organizationAsset?->currentProject ?? $asset->currentProject;
 
         return [
-            'id' => $asset->id,
-            'organization_id' => $asset->organization_id,
-            'machinery_id' => $asset->machinery_id,
-            'current_project_id' => $asset->current_project_id,
-            'current_schedule_task_id' => $asset->current_schedule_task_id,
-            'asset_code' => $asset->asset_code,
-            'name' => $asset->name,
-            'inventory_number' => $asset->inventory_number,
-            'ownership_type' => $asset->ownership_type,
-            'status' => $asset->status,
-            'status_label' => trans_message("machinery_operations.asset_statuses.{$asset->status}"),
-            'operating_cost_per_hour' => $asset->operating_cost_per_hour,
-            'fuel_type' => $asset->fuel_type,
-            'fuel_consumption_rate' => $asset->fuel_consumption_rate,
-            'meter_hours' => $asset->meter_hours,
+            ...$view,
+            'status_label' => trans_message("machinery_operations.asset_statuses.{$status}"),
             'workflow_summary' => [
-                'stage' => $asset->status,
-                'status' => $asset->status,
-                'stage_label' => trans_message("machinery_operations.asset_statuses.{$asset->status}"),
+                'stage' => $status,
+                'status' => $status,
+                'stage_label' => trans_message("machinery_operations.asset_statuses.{$status}"),
                 'next_action' => $actions[0] ?? null,
                 'next_action_label' => $actions === [] ? null : trans_message("machinery_operations.actions.{$actions[0]}"),
                 'available_actions' => $actions,
@@ -46,46 +44,35 @@ final class MachineryAssetResource extends JsonResource
             'problem_flags' => $this->problemFlags($asset),
             'available_actions' => $actions,
             'linked_entities' => [
-                'machinery_id' => $asset->machinery_id,
-                'project_id' => $asset->current_project_id,
+                'machinery_id' => $view['machinery_id'],
+                'organization_asset_id' => $asset->organization_asset_id,
+                'project_id' => $view['current_project_id'],
                 'schedule_task_id' => $asset->current_schedule_task_id,
             ],
-            'machinery' => $this->whenLoaded('machinery', fn () => $asset->machinery ? [
-                'id' => $asset->machinery->id,
-                'name' => $asset->machinery->name,
-                'code' => $asset->machinery->code,
-                'category' => $asset->machinery->category,
-            ] : null),
-            'current_project' => $this->whenLoaded('currentProject', fn () => $asset->currentProject ? [
-                'id' => $asset->currentProject->id,
-                'name' => $asset->currentProject->name,
-            ] : null),
+            'machinery' => $machinery ? [
+                'id' => $machinery->id,
+                'name' => $machinery->name,
+                'code' => $machinery->code,
+                'category' => $machinery->category,
+            ] : null,
+            'current_project' => $currentProject ? [
+                'id' => $currentProject->id,
+                'name' => $currentProject->name,
+            ] : null,
             'current_schedule_task' => $this->whenLoaded('currentScheduleTask', fn () => $asset->currentScheduleTask ? [
                 'id' => $asset->currentScheduleTask->id,
                 'name' => $asset->currentScheduleTask->name,
             ] : null),
-            'metadata' => $asset->metadata,
             'archived_at' => $asset->archived_at?->toIso8601String(),
             'created_at' => $asset->created_at?->toIso8601String(),
             'updated_at' => $asset->updated_at?->toIso8601String(),
         ];
     }
 
-    private function actions(string $status): array
-    {
-        return match ($status) {
-            'available' => ['assign', 'maintenance', 'unavailable', 'archive'],
-            'assigned' => ['start_operation', 'return_available', 'maintenance'],
-            'in_operation' => ['return_available', 'maintenance', 'unavailable'],
-            'maintenance' => ['return_available'],
-            'unavailable' => ['return_available', 'maintenance', 'archive'],
-            default => [],
-        };
-    }
-
     private function problemFlags(MachineryAsset $asset): array
     {
-        if ($asset->status === 'unavailable') {
+        $status = app(MachineryWorkflowPolicy::class)->status($asset);
+        if ($status === 'unavailable') {
             return [[
                 'code' => 'asset_unavailable',
                 'severity' => 'warning',
@@ -93,7 +80,7 @@ final class MachineryAssetResource extends JsonResource
             ]];
         }
 
-        if ($asset->status === 'maintenance') {
+        if ($status === 'maintenance') {
             return [[
                 'code' => 'asset_in_maintenance',
                 'severity' => 'warning',
